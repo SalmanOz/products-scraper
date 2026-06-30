@@ -357,62 +357,149 @@ class KimovilScraper:
             r = self.cursor.fetchone(); return r['id'] if r else None
         except: return None
 
+    def clean_phone_model_name(self, name):
+        # Remove storage/ram like 256GB, 128GB, 8GB Ram, 4GB Ram, 6GB, 12GB etc
+        name = re.sub(r'\b\d+GB\b', '', name, flags=re.IGNORECASE)
+        name = re.sub(r'\b\d+TB\b', '', name, flags=re.IGNORECASE)
+        name = re.sub(r'\b\d+GB\s+Ram\b', '', name, flags=re.IGNORECASE)
+        name = re.sub(r'\b\d+\s+Ram\b', '', name, flags=re.IGNORECASE)
+        # Remove common colors
+        colors = ['siyah', 'beyaz', 'gri', 'mavi', 'sarı', 'yeşil', 'pembe', 'gümüş', 'turuncu', 'altın', 'mor', 'kırmızı', 'lacivert', 'kahverengi', 'titanyum', 'kozmik']
+        for color in colors:
+            name = re.sub(rf'\b{color}\b', '', name, flags=re.IGNORECASE)
+        # Remove extra whitespace and trailing hyphens
+        name = re.sub(r'\s+', ' ', name).strip()
+        return name
+
+    def search_product_on_kimovil(self, query):
+        url = f"https://www.kimovil.com/_json/autocomplete_devicemodels_joined.json?device_type=0&name={requests.utils.quote(query)}"
+        html = self.get_via_flaresolverr(url)
+        if not html: return None
+        
+        try:
+            if html.strip().startswith("<html"):
+                soup = BeautifulSoup(html, 'html.parser')
+                json_str = soup.get_text()
+            else:
+                json_str = html
+            data = json.loads(json_str)
+            results = data.get('results', [])
+            if results:
+                slug = results[0].get('url')
+                if slug:
+                    return f"https://www.kimovil.com/en/compare/{slug}"
+            return None
+        except Exception as e:
+            logging.error(f"❌ Error parsing Kimovil autocomplete API: {e}")
+            return None
+
     def scrape_latest_smartphones(self):
         new_added = 0
         max_new_products = 10
         page = 1
-        max_pages = 10
         
-        logging.info(f"🚀 Starting daily sync to find and insert exactly {max_new_products} new products for SEO...")
+        logging.info(f"🚀 Starting daily sync to find and insert exactly {max_new_products} popular products in Turkey...")
         
-        while new_added < max_new_products and page <= max_pages:
-            url = f"{self.base_url}compare-smartphones"
-            if page > 1:
-                url = f"{self.base_url}compare-smartphones/page/{page}"
-                
-            logging.info(f"📄 Fetching listing page {page}: {url}")
-            html = self.get_via_flaresolverr(url)
+        # 1. Step: Try to fetch popular phones from Cimri Turkey
+        popular_titles = []
+        while page <= 3 and len(popular_titles) < 80:
+            cimri_url = f"https://www.cimri.com/cep-telefonlari?page={page}"
+            logging.info(f"📄 Fetching Cimri popular phones page {page}: {cimri_url}")
+            html = self.get_via_flaresolverr(cimri_url)
             if not html:
-                logging.error(f"❌ Failed to fetch page {page}")
+                logging.warning(f"⚠️ Failed to load Cimri page {page}. Falling back to default list.")
                 break
-                
             soup = BeautifulSoup(html, 'html.parser')
-            urls = []
-            for a in soup.find_all('a', href=re.compile(r'where-to-buy')):
-                u = a.get('href')
-                if u: urls.append(u if u.startswith('http') else f"https://www.kimovil.com{u}")
-            urls = list(dict.fromkeys(urls))
+            items = soup.select('article, .product-card, [class*="product-card"]')
+            page_titles = []
+            for item in items:
+                title_el = item.select_one('h3, [class*="title"]')
+                if title_el:
+                    t = title_el.get_text().strip()
+                    if t and t not in popular_titles:
+                        page_titles.append(t)
             
-            if not urls:
-                logging.warning(f"⚠️ No product URLs found on page {page}")
+            if not page_titles:
                 break
-                
-            logging.info(f"🔍 Found {len(urls)} products on page {page}. Checking for new ones...")
+            popular_titles.extend(page_titles)
+            page += 1
+            time.sleep(2)
             
-            for u in urls:
+        logging.info(f"🔍 Collected {len(popular_titles)} popular product titles from Cimri Turkey.")
+        
+        # 2. Step: Process the collected popular titles
+        if popular_titles:
+            for title in popular_titles:
                 if new_added >= max_new_products:
                     break
                     
-                slug = u.split('/')[-1]
-                # Check if product is already in the database
-                product_id = self.get_product_id_by_slug(slug)
-                if product_id:
-                    # Product already exists in the database, skip
+                cleaned_name = self.clean_phone_model_name(title)
+                slug = re.sub(r'[^a-z0-9]+', '-', cleaned_name.lower()).strip('-')
+                
+                # Check if already in DB
+                if self.get_product_id_by_slug(slug):
                     continue
                     
-                # Product is new! Scrape and insert
-                logging.info(f"✨ Found new product: {slug}. Scraping details...")
-                success = self.scrape_product_details(u)
+                # Search on Kimovil
+                logging.info(f"🔍 Searching Kimovil for popular Turkish model: {cleaned_name} (Original: {title})")
+                kimovil_url = self.search_product_on_kimovil(cleaned_name)
+                if not kimovil_url:
+                    logging.warning(f"⚠️ Could not find {cleaned_name} on Kimovil")
+                    continue
+                    
+                k_slug = kimovil_url.split('/')[-1]
+                if self.get_product_id_by_slug(k_slug):
+                    continue
+                    
+                # Scrape and insert
+                logging.info(f"✨ Scraping new popular product details: {k_slug}")
+                success = self.scrape_product_details(kimovil_url)
                 if success:
                     new_added += 1
-                    logging.info(f"📈 Added new product ({new_added}/{max_new_products}): {slug}")
-                    time.sleep(5) # Gentle rate limiting
+                    logging.info(f"📈 Added popular product ({new_added}/{max_new_products}): {k_slug}")
+                    time.sleep(5)
                 else:
-                    logging.error(f"❌ Failed to scrape new product: {slug}")
+                    logging.error(f"❌ Failed to scrape: {k_slug}")
                     
-            page += 1
-            
-        logging.info(f"✅ Finished daily sync. Added {new_added} new products to the database.")
+        # 3. Step: Fallback to Kimovil latest releases if we couldn't get 10 products from Cimri Turkey
+        if new_added < max_new_products:
+            logging.info(f"⚠️ Only found {new_added} products from Cimri. Falling back to Kimovil latest releases...")
+            k_page = 1
+            while new_added < max_new_products and k_page <= 5:
+                k_url = f"{self.base_url}compare-smartphones"
+                if k_page > 1:
+                    k_url = f"{self.base_url}compare-smartphones/page/{k_page}"
+                    
+                logging.info(f"📄 Fetching Kimovil latest releases page {k_page}: {k_url}")
+                html = self.get_via_flaresolverr(k_url)
+                if not html:
+                    break
+                soup = BeautifulSoup(html, 'html.parser')
+                urls = []
+                for a in soup.find_all('a', href=re.compile(r'where-to-buy')):
+                    u = a.get('href')
+                    if u: urls.append(u if u.startswith('http') else f"https://www.kimovil.com{u}")
+                urls = list(dict.fromkeys(urls))
+                
+                if not urls:
+                    break
+                    
+                for u in urls:
+                    if new_added >= max_new_products:
+                        break
+                    slug = u.split('/')[-1]
+                    if self.get_product_id_by_slug(slug):
+                        continue
+                        
+                    logging.info(f"✨ Scraping new latest release: {slug}")
+                    success = self.scrape_product_details(u)
+                    if success:
+                        new_added += 1
+                        logging.info(f"📈 Added latest product ({new_added}/{max_new_products}): {slug}")
+                        time.sleep(5)
+                k_page += 1
+                
+        logging.info(f"✅ Finished daily sync. Added {new_added} new popular/latest products to the database.")
 
 if __name__ == "__main__":
     try:
