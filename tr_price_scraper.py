@@ -250,8 +250,8 @@ class TRPriceScraper:
         if not html: return None
         
         soup = BeautifulSoup(html, 'html.parser')
-        # Get the first matching product link
-        items = soup.select('li.w, li[class*="v8"]')
+        # Get the first matching product link (Updated class check to match 'v-8' structure)
+        items = soup.select('li.w, li.v-8, li[class*="v-8"]')
         product_url = None
         for item in items:
             title_el = item.select_one('h3, .pn_v8')
@@ -271,10 +271,10 @@ class TRPriceScraper:
         detail_soup = BeautifulSoup(detail_html, 'html.parser')
         results = []
         
-        # EXTRACT FROM JSON-LD (THE GOLD MINE)
+        # EXTRACT FROM JSON-LD (THE GOLD MINE) - Using get_text() instead of .string which returns None
         for script in detail_soup.find_all('script', type='application/ld+json'):
             try:
-                data = json.loads(script.string)
+                data = json.loads(script.get_text())
                 
                 def extract_offers(obj):
                     if not isinstance(obj, dict): return
