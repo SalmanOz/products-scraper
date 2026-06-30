@@ -125,7 +125,7 @@ class TRPriceScraper:
         except:
             return 0
 
-    def get_via_flaresolverr(self, url):
+    def get_via_flaresolverr(self, url, return_solution=False):
         try:
             payload = {
                 "cmd": "request.get",
@@ -135,6 +135,8 @@ class TRPriceScraper:
             response = requests.post(self.flaresolverr_url, json=payload, timeout=90)
             res_data = response.json()
             if res_data.get('status') == 'ok':
+                if return_solution:
+                    return res_data['solution']
                 return res_data['solution']['response']
             return None
         except:
@@ -246,29 +248,37 @@ class TRPriceScraper:
         search_name = self.clean_search_query(product_name)
         logging.info(f"🔍 Searching Akakçe for: {search_name} (Original: {product_name})")
         url = f"https://www.akakce.com/arama/?q={quote_plus(search_name)}"
-        html = self.get_via_flaresolverr(url)
-        if not html: return None
+        solution = self.get_via_flaresolverr(url, return_solution=True)
+        if not solution: return None
         
+        html = solution['response']
+        final_url = solution['url']
         soup = BeautifulSoup(html, 'html.parser')
-        # Get the first matching product link (Updated class check to match 'v-8' structure)
-        items = soup.select('li.w, li.v-8, li[class*="v-8"]')
-        product_url = None
-        for item in items:
-            title_el = item.select_one('h3, .pn_v8')
-            link_el = item.select_one('a')
-            if title_el and link_el and self.is_strict_match(product_name, title_el.get_text()):
-                product_url = link_el.get('href', '')
-                if not product_url.startswith('http'): product_url = "https://www.akakce.com" + product_url
-                break
         
-        if not product_url: return None
-        
-        # Now visit the product detail page to get actual merchants
-        logging.info(f"📄 Visiting Akakçe Detail: {product_url}")
-        detail_html = self.get_via_flaresolverr(product_url)
-        if not detail_html: return None
-        
-        detail_soup = BeautifulSoup(detail_html, 'html.parser')
+        # If we were redirected directly to a product detail page (e.g. exact match on Akakçe)
+        if "arama" not in final_url and ".html" in final_url:
+            logging.info(f"⚡ Redirected directly to product detail page: {final_url}")
+            detail_soup = soup
+        else:
+            # Get the first matching product link (Updated class check to match 'v-8' structure)
+            items = soup.select('li.w, li.v-8, li[class*="v-8"]')
+            product_url = None
+            for item in items:
+                title_el = item.select_one('h3, .pn_v8')
+                link_el = item.select_one('a')
+                if title_el and link_el and self.is_strict_match(product_name, title_el.get_text()):
+                    product_url = link_el.get('href', '')
+                    if not product_url.startswith('http'): product_url = "https://www.akakce.com" + product_url
+                    break
+            
+            if not product_url: return None
+            
+            # Now visit the product detail page to get actual merchants
+            logging.info(f"📄 Visiting Akakçe Detail: {product_url}")
+            detail_html = self.get_via_flaresolverr(product_url)
+            if not detail_html: return None
+            detail_soup = BeautifulSoup(detail_html, 'html.parser')
+            
         results = []
         
         # EXTRACT FROM JSON-LD (THE GOLD MINE) - Using get_text() instead of .string which returns None
