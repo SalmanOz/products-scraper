@@ -417,9 +417,12 @@ class KimovilScraper:
             query_variations = set(w for w in query_words if w in variations)
 
             for result in results:
-                result_name = (result.get('name') or '').lower().replace('+', 'plus')
+                # Skip rumor/unannounced phones
+                if result.get('is_rumor'):
+                    continue
+                result_name = (result.get('full_name') or result.get('alias') or '').lower().replace('+', 'plus')
                 result_slug = result.get('url')
-                if not result_slug:
+                if not result_slug or not result_name:
                     continue
 
                 # Check all important query words exist in result name
@@ -433,11 +436,11 @@ class KimovilScraper:
                 if query_variations != result_variations:
                     continue
                     
-                logging.info(f"  ✅ Kimovil match: '{result.get('name')}' for query '{query}'")
+                logging.info(f"  ✅ Kimovil match: '{result.get('full_name')}' for query '{query}'")
                 return f"https://www.kimovil.com/en/compare/{result_slug}"
 
             # No validated match found
-            logging.warning(f"  ⚠️ Kimovil autocomplete returned {len(results)} results but none matched '{query}': {[r.get('name') for r in results[:3]]}")
+            logging.warning(f"  ⚠️ Kimovil autocomplete returned {len(results)} results but none matched '{query}': {[r.get('full_name') for r in results[:3]]}")
             return None
         except Exception as e:
             logging.error(f"❌ Error parsing Kimovil autocomplete API: {e}")
