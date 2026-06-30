@@ -388,10 +388,42 @@ class KimovilScraper:
                 json_str = html
             data = json.loads(json_str)
             results = data.get('results', [])
-            if results:
-                slug = results[0].get('url')
-                if slug:
-                    return f"https://www.kimovil.com/en/compare/{slug}"
+            if not results:
+                return None
+
+            # Extract important words from query for validation
+            query_lower = query.lower().replace('+', 'plus')
+            brands = ['apple', 'samsung', 'xiaomi', 'huawei', 'oppo', 'vivo', 'realme', 'poco', 'google', 'oneplus', 'honor', 'redmi']
+            common = ['4g', '5g', 'gb', 'ram', 'nfc', 'tb', 'phone', 'smartphone', 'galaxy']
+            query_words = re.findall(r'\w+', query_lower)
+            important_words = [w for w in query_words if len(w) > 1 and w not in common and w not in brands]
+            
+            # Variation words that must match both directions
+            variations = ['pro', 'max', 'plus', 'ultra', 'lite', 'fe', 'mini', 'se', 'note']
+            query_variations = set(w for w in query_words if w in variations)
+
+            for result in results:
+                result_name = (result.get('name') or '').lower().replace('+', 'plus')
+                result_slug = result.get('url')
+                if not result_slug:
+                    continue
+
+                # Check all important query words exist in result name
+                all_found = all(re.search(rf'\b{re.escape(w)}\b', result_name) for w in important_words)
+                if not all_found:
+                    continue
+
+                # Check variation words match both directions
+                result_words = re.findall(r'\w+', result_name)
+                result_variations = set(w for w in result_words if w in variations)
+                if query_variations != result_variations:
+                    continue
+                    
+                logging.info(f"  ✅ Kimovil match: '{result.get('name')}' for query '{query}'")
+                return f"https://www.kimovil.com/en/compare/{result_slug}"
+
+            # No validated match found
+            logging.warning(f"  ⚠️ Kimovil autocomplete returned {len(results)} results but none matched '{query}': {[r.get('name') for r in results[:3]]}")
             return None
         except Exception as e:
             logging.error(f"❌ Error parsing Kimovil autocomplete API: {e}")
