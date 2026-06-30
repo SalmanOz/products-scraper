@@ -358,18 +358,61 @@ class KimovilScraper:
         except: return None
 
     def scrape_latest_smartphones(self):
-        logging.info("Fetching listing...")
-        html = self.get_via_flaresolverr(f"{self.base_url}compare-smartphones")
-        if not html: return
-        soup = BeautifulSoup(html, 'html.parser')
-        urls = []
-        for a in soup.find_all('a', href=re.compile(r'where-to-buy')):
-            u = a.get('href')
-            if u: urls.append(u if u.startswith('http') else f"https://www.kimovil.com{u}")
-        urls = list(dict.fromkeys(urls)); logging.info(f"Found {len(urls)} products.")
-        for u in urls[:50]:
-            self.scrape_product_details(u)
-            time.sleep(3)
+        new_added = 0
+        max_new_products = 10
+        page = 1
+        max_pages = 10
+        
+        logging.info(f"🚀 Starting daily sync to find and insert exactly {max_new_products} new products for SEO...")
+        
+        while new_added < max_new_products and page <= max_pages:
+            url = f"{self.base_url}compare-smartphones"
+            if page > 1:
+                url = f"{self.base_url}compare-smartphones/page/{page}"
+                
+            logging.info(f"📄 Fetching listing page {page}: {url}")
+            html = self.get_via_flaresolverr(url)
+            if not html:
+                logging.error(f"❌ Failed to fetch page {page}")
+                break
+                
+            soup = BeautifulSoup(html, 'html.parser')
+            urls = []
+            for a in soup.find_all('a', href=re.compile(r'where-to-buy')):
+                u = a.get('href')
+                if u: urls.append(u if u.startswith('http') else f"https://www.kimovil.com{u}")
+            urls = list(dict.fromkeys(urls))
+            
+            if not urls:
+                logging.warning(f"⚠️ No product URLs found on page {page}")
+                break
+                
+            logging.info(f"🔍 Found {len(urls)} products on page {page}. Checking for new ones...")
+            
+            for u in urls:
+                if new_added >= max_new_products:
+                    break
+                    
+                slug = u.split('/')[-1]
+                # Check if product is already in the database
+                product_id = self.get_product_id_by_slug(slug)
+                if product_id:
+                    # Product already exists in the database, skip
+                    continue
+                    
+                # Product is new! Scrape and insert
+                logging.info(f"✨ Found new product: {slug}. Scraping details...")
+                success = self.scrape_product_details(u)
+                if success:
+                    new_added += 1
+                    logging.info(f"📈 Added new product ({new_added}/{max_new_products}): {slug}")
+                    time.sleep(5) # Gentle rate limiting
+                else:
+                    logging.error(f"❌ Failed to scrape new product: {slug}")
+                    
+            page += 1
+            
+        logging.info(f"✅ Finished daily sync. Added {new_added} new products to the database.")
 
 if __name__ == "__main__":
     try:
