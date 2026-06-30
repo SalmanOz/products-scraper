@@ -357,6 +357,83 @@ class TRPriceScraper:
         
         return None
 
+    def get_cimri_price(self, product_name):
+        search_name = self.clean_search_query(product_name)
+        logging.info(f"🔍 Searching Cimri for: {search_name} (Original: {product_name})")
+        url = f"https://www.cimri.com/arama?q={quote_plus(search_name)}"
+        solution = self.get_via_flaresolverr(url, return_solution=True)
+        if not solution: return None
+        
+        html = solution['response']
+        final_url = solution['url']
+        soup = BeautifulSoup(html, 'html.parser')
+        
+        # If we were redirected directly to a product detail page (exact match on Cimri)
+        if "arama" not in final_url and ("/fiyatlar" in final_url or ",a" in final_url or "," in final_url):
+            logging.info(f"⚡ Redirected directly to Cimri product page: {final_url}")
+            detail_soup = soup
+        else:
+            items = soup.select('article, .product-card, [class*="product-card"]')
+            product_url = None
+            for item in items:
+                title_el = item.select_one('h3, [class*="title"]')
+                link_el = item.select_one('a')
+                if title_el and link_el and self.is_strict_match(product_name, title_el.get_text()):
+                    product_url = link_el.get('href', '')
+                    if not product_url.startswith('http'): product_url = "https://www.cimri.com" + product_url
+                    break
+            
+            if not product_url: return None
+            
+            logging.info(f"📄 Visiting Cimri Detail: {product_url}")
+            detail_html = self.get_via_flaresolverr(product_url)
+            if not detail_html: return None
+            detail_soup = BeautifulSoup(detail_html, 'html.parser')
+            
+        # Parse offers from __OCTOPUS_DATA__ script
+        data_script = detail_soup.find('script', id='__OCTOPUS_DATA__')
+        if not data_script: return None
+        
+        try:
+            data = json.loads(data_script.get_text())
+            offers = []
+            def find_offers(obj):
+                if isinstance(obj, dict):
+                    if 'offers' in obj and isinstance(obj['offers'], list):
+                        offers.extend(obj['offers'])
+                    for v in obj.values(): find_offers(v)
+                elif isinstance(obj, list):
+                    for item in obj: find_offers(item)
+            find_offers(data)
+            
+            results = []
+            for off in offers:
+                merchant_name = off.get('merchant', {}).get('name', 'Mağaza')
+                price = off.get('price')
+                offer_id = off.get('id')
+                if price and offer_id:
+                    results.append({
+                        "merchant": merchant_name,
+                        "price": float(price),
+                        "url": f"https://www.cimri.com/offer/{offer_id}"
+                    })
+            
+            # Filter and De-duplicate
+            if results:
+                final_agg = []
+                seen = set()
+                for r in results:
+                    key = f"{r['merchant']}-{r['price']}"
+                    if key not in seen:
+                        seen.add(key)
+                        final_agg.append(r)
+                final_agg.sort(key=lambda x: x['price'])
+                return final_agg
+            return None
+        except Exception as e:
+            logging.error(f"    ⚠️ Cimri JSON Parse Error: {str(e)}")
+            return None
+
     async def scrape_site_async(self, site_name, config, search_name, product_name, semaphore):
         async with semaphore:
             url = config['url'].format(query=quote_plus(search_name))
@@ -392,16 +469,16 @@ class TRPriceScraper:
     async def get_best_prices(self, product_name):
         results = []
         
-        # 1. Try Akakçe
-        results = self.get_akakce_price(product_name)
+        # 1. Try Cimri
+        results = self.get_cimri_price(product_name)
         if results:
-            logging.info(f"  ✨ Found {len(results)} offers on Akakçe")
+            logging.info(f"  ✨ Found {len(results)} offers on Cimri")
             
-        # 2. Specific sites fallback if Akakçe failed (Our own direct scraper engine)
+        # 2. Specific sites fallback if Cimri failed (Our own direct scraper engine)
         if not results:
             search_name = self.clean_search_query(product_name)
             results = [] 
-            logging.warning(f"  ⚠️ Akakçe found nothing. Falling back to multi-site direct search engine for {search_name}...")
+            logging.warning(f"  ⚠️ Cimri found nothing. Falling back to multi-site direct search engine for {search_name}...")
             
             # Safe concurrency of 3 tasks in parallel to prevent FlareSolverr crashes
             sem = asyncio.Semaphore(3)
