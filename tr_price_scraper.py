@@ -351,7 +351,7 @@ class TRPriceScraper:
         import urllib.parse
         search_name = self.clean_search_query(product_name)
         logging.info(f"🔍 Searching Epey for: {search_name} (Original: {product_name})")
-        url = f"https://www.epey.com/ara/?q={quote_plus(search_name)}"
+        url = f"https://www.epey.com/ara/?ara={quote_plus(search_name)}"
         solution = self.get_via_flaresolverr(url, return_solution=True)
         if not solution: return None
         
