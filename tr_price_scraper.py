@@ -469,16 +469,16 @@ class TRPriceScraper:
     async def get_best_prices(self, product_name):
         results = []
         
-        # 1. Try Cimri
-        results = self.get_cimri_price(product_name)
+        # 1. Try Akakçe
+        results = self.get_akakce_price(product_name)
         if results:
-            logging.info(f"  ✨ Found {len(results)} offers on Cimri")
+            logging.info(f"  ✨ Found {len(results)} offers on Akakçe")
             
-        # 2. Specific sites fallback if Cimri failed (Our own direct scraper engine)
+        # 2. Specific sites fallback if Akakçe failed (Our own direct scraper engine)
         if not results:
             search_name = self.clean_search_query(product_name)
             results = [] 
-            logging.warning(f"  ⚠️ Cimri found nothing. Falling back to multi-site direct search engine for {search_name}...")
+            logging.warning(f"  ⚠️ Akakçe found nothing. Falling back to multi-site direct search engine for {search_name}...")
             
             # Safe concurrency of 3 tasks in parallel to prevent FlareSolverr crashes
             sem = asyncio.Semaphore(3)
