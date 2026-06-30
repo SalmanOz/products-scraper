@@ -354,7 +354,9 @@ class TRPriceScraper:
         logging.info(f"🔍 Searching Epey for: {search_name} (Original: {product_name})")
         url = f"https://www.epey.com/ara/?ara={quote_plus(search_name)}"
         solution = self.get_via_flaresolverr(url, return_solution=True)
-        if not solution: return None
+        if not solution:
+            logging.warning(f"  ⚠️ Epey: FlareSolverr returned no response for {url}")
+            return None
         
         html = solution['response']
         final_url = solution['url']
@@ -438,7 +440,9 @@ class TRPriceScraper:
         logging.info(f"🔍 Searching Cimri for: {search_name} (Original: {product_name})")
         url = f"https://www.cimri.com/arama?q={quote_plus(search_name)}"
         solution = self.get_via_flaresolverr(url, return_solution=True)
-        if not solution: return None
+        if not solution:
+            logging.warning(f"  ⚠️ Cimri: FlareSolverr returned no response for {url}")
+            return None
         
         html = solution['response']
         final_url = solution['url']
@@ -562,11 +566,14 @@ class TRPriceScraper:
             results = [] 
             logging.warning(f"  ⚠️ Epey and Cimri found nothing. Falling back to multi-site direct search engine for {search_name}...")
             
-            # Safe concurrency of 3 tasks in parallel to prevent FlareSolverr crashes
-            sem = asyncio.Semaphore(3)
+            # Priority order: datacenter-friendly sites first, then others
+            priority_sites = ['Hepsiburada', 'PttAVM', 'n11', 'Trendyol', 'Amazon TR', 'Vatan Bilgisayar', 'MediaMarkt', 'Pasaj', 'Pazarama', 'Gürgençler']
+            sem = asyncio.Semaphore(2)
             tasks = []
-            for site_name, config in self.site_configs.items():
-                tasks.append(self.scrape_site_async(site_name, config, search_name, product_name, sem))
+            for site_name in priority_sites:
+                config = self.site_configs.get(site_name)
+                if config:
+                    tasks.append(self.scrape_site_async(site_name, config, search_name, product_name, sem))
             
             scraped_results = await asyncio.gather(*tasks)
             for r in scraped_results:
