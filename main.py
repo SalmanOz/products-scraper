@@ -40,7 +40,7 @@ class KimovilScraper:
             self.bucket_name = os.getenv("R2_BUCKET_NAME")
             self.public_domain = os.getenv("R2_PUBLIC_DOMAIN", "").rstrip('/')
 
-    def ensure_connection(self, max_retries=3):
+    def ensure_connection(self, max_retries=5):
         try:
             if self.db and self.db.is_connected():
                 self.db.ping(reconnect=True, attempts=3, delay=2)
@@ -73,7 +73,7 @@ class KimovilScraper:
             except Exception as e:
                 logging.warning(f"  ⚠️ DB connection attempt {attempt}/{max_retries} failed: {e}")
                 if attempt < max_retries:
-                    wait = 5 * attempt
+                    wait = 10 * attempt
                     logging.info(f"  ⏳ Retrying in {wait}s...")
                     time.sleep(wait)
                 else:
