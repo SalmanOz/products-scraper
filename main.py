@@ -437,7 +437,7 @@ class KimovilScraper:
                     continue
                     
                 logging.info(f"  ✅ Kimovil match: '{result.get('full_name')}' for query '{query}'")
-                return f"https://www.kimovil.com/en/compare/{result_slug}"
+                return f"https://www.kimovil.com/en/where-to-buy-{result_slug}"
 
             # No validated match found
             logging.warning(f"  ⚠️ Kimovil autocomplete returned {len(results)} results but none matched '{query}': {[r.get('full_name') for r in results[:3]]}")
@@ -500,7 +500,7 @@ class KimovilScraper:
                     logging.warning(f"⚠️ Could not find {cleaned_name} on Kimovil")
                     continue
                     
-                k_slug = kimovil_url.split('/')[-1]
+                k_slug = kimovil_url.split('/')[-1].replace('where-to-buy-', '')
                 if self.get_product_id_by_slug(k_slug):
                     continue
                     
@@ -540,7 +540,8 @@ class KimovilScraper:
                 for u in urls:
                     if new_added >= max_new_products:
                         break
-                    slug = u.split('/')[-1]
+                    raw_slug = u.split('/')[-1]
+                    slug = raw_slug.replace('where-to-buy-', '')
                     if self.get_product_id_by_slug(slug):
                         continue
                         
