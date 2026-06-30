@@ -148,8 +148,9 @@ class TRPriceScraper:
         return clean.strip()
 
     def is_strict_match(self, product_name, item_title):
-        name = product_name.lower()
-        title = item_title.lower()
+        # Standardize + to plus for suffix variation check (e.g. Pro+ vs Pro)
+        name = product_name.lower().replace('+', 'plus')
+        title = item_title.lower().replace('+', 'plus')
         
         # 1. Alphanumeric word extraction
         name_words = re.findall(r'\w+', name)
