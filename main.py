@@ -40,7 +40,7 @@ class KimovilScraper:
             self.bucket_name = os.getenv("R2_BUCKET_NAME")
             self.public_domain = os.getenv("R2_PUBLIC_DOMAIN", "").rstrip('/')
 
-    def ensure_connection(self):
+    def ensure_connection(self, max_retries=3):
         try:
             if self.db and self.db.is_connected():
                 self.db.ping(reconnect=True, attempts=3, delay=2)
@@ -56,15 +56,29 @@ class KimovilScraper:
         except Exception:
             pass
 
-        self.db = mysql.connector.connect(
-            host=os.getenv("DB_HOST"),
-            user=os.getenv("DB_USER"),
-            password=os.getenv("DB_PASSWORD"),
-            database=os.getenv("DB_NAME"),
-            port=int(os.getenv("DB_PORT", 3306)),
-            buffered=True
-        )
-        self.cursor = self.db.cursor(dictionary=True, buffered=True)
+        for attempt in range(1, max_retries + 1):
+            try:
+                self.db = mysql.connector.connect(
+                    host=os.getenv("DB_HOST"),
+                    user=os.getenv("DB_USER"),
+                    password=os.getenv("DB_PASSWORD"),
+                    database=os.getenv("DB_NAME"),
+                    port=int(os.getenv("DB_PORT", 3306)),
+                    buffered=True,
+                    connection_timeout=30
+                )
+                self.cursor = self.db.cursor(dictionary=True, buffered=True)
+                logging.info(f"  ✅ DB connected (attempt {attempt}/{max_retries})")
+                return
+            except Exception as e:
+                logging.warning(f"  ⚠️ DB connection attempt {attempt}/{max_retries} failed: {e}")
+                if attempt < max_retries:
+                    wait = 5 * attempt
+                    logging.info(f"  ⏳ Retrying in {wait}s...")
+                    time.sleep(wait)
+                else:
+                    logging.error(f"  ❌ All {max_retries} DB connection attempts failed.")
+                    raise
 
     def upload_image_to_r2(self, source_url, destination_path):
         if not self.r2_enabled: return source_url
