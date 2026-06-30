@@ -179,8 +179,8 @@ class KimovilScraper:
             
             full_name = device_ki.get('name') or device_compare.get('name') or (soup.find('h1').get_text().strip() if soup.find('h1') else "Unknown Device")
             
-            if "Page not found" in full_name or "Unknown Device" == full_name:
-                logging.warning(f"⚠️ Skipping: {full_name} (Invalid page)")
+            if "Compare smartphones" in full_name or "Unknown Device" == full_name or "Page not found" in full_name or not (device_ki or device_compare):
+                logging.warning(f"⚠️ Skipping: {full_name} (Invalid or general comparison page)")
                 return False
 
             brand_name = device_compare.get('brand_name') or (full_name.split(' ')[0] if ' ' in full_name else full_name)
@@ -358,18 +358,22 @@ class KimovilScraper:
         except: return None
 
     def clean_phone_model_name(self, name):
-        # Remove storage/ram like 256GB, 128GB, 8GB Ram, 4GB Ram, 6GB, 12GB etc
-        name = re.sub(r'\b\d+GB\b', '', name, flags=re.IGNORECASE)
-        name = re.sub(r'\b\d+TB\b', '', name, flags=re.IGNORECASE)
-        name = re.sub(r'\b\d+GB\s+Ram\b', '', name, flags=re.IGNORECASE)
-        name = re.sub(r'\b\d+\s+Ram\b', '', name, flags=re.IGNORECASE)
-        # Remove common colors
-        colors = ['siyah', 'beyaz', 'gri', 'mavi', 'sarı', 'yeşil', 'pembe', 'gümüş', 'turuncu', 'altın', 'mor', 'kırmızı', 'lacivert', 'kahverengi', 'titanyum', 'kozmik']
+        # 1. Split on the first occurrence of storage or RAM indicator, and discard everything after it.
+        # This matches patterns like: 256GB, 256 GB, 128 GB, 8GB, 8 GB, 1TB, 1 TB, 8GB RAM, 8 RAM, etc.
+        # We also match the word "ram" (case-insensitive) as a boundary.
+        # Example: "Xiaomi Redmi 15 256GB 8GB Ram Siyah" -> Splits at "256GB" -> "Xiaomi Redmi 15"
+        parts = re.split(r'\b\d+\s*(?:GB|TB|ram)\b|\b(?:gb|tb|ram)\b', name, flags=re.IGNORECASE)
+        name = parts[0]
+        
+        # 2. Remove common Turkish/English color words and metadata at the end of the remaining string
+        colors = ['siyah', 'beyaz', 'gri', 'mavi', 'sarı', 'yeşil', 'pembe', 'gümüş', 'turuncu', 'altın', 'mor', 'kırmızı', 'lacivert', 'kahverengi', 'titanyum', 'kozmik', 'sis', 'ada', 'çayı', 'lavanta', 'çöl']
         for color in colors:
             name = re.sub(rf'\b{color}\b', '', name, flags=re.IGNORECASE)
-        # Remove extra whitespace and trailing hyphens
+            
+        # 3. Clean up extra whitespaces
         name = re.sub(r'\s+', ' ', name).strip()
         return name
+
 
     def search_product_on_kimovil(self, query):
         url = f"https://www.kimovil.com/_json/autocomplete_devicemodels_joined.json?device_type=0&name={requests.utils.quote(query)}"
