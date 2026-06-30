@@ -5,6 +5,7 @@ import json
 from bs4 import BeautifulSoup
 from urllib.parse import quote_plus
 import time
+import asyncio
 
 class TRPriceScraper:
     def __init__(self):
@@ -346,6 +347,38 @@ class TRPriceScraper:
         
         return None
 
+    async def scrape_site_async(self, site_name, config, search_name, product_name, semaphore):
+        async with semaphore:
+            url = config['url'].format(query=quote_plus(search_name))
+            loop = asyncio.get_running_loop()
+            try:
+                # Run the blocking network request in a thread pool executor
+                html = await loop.run_in_executor(None, self.get_via_flaresolverr, url)
+                if not html: return None
+                
+                soup = BeautifulSoup(html, 'html.parser')
+                offers = []
+                items = soup.select(config['container'])
+                for item in items:
+                    title_el = item.select_one(config['title'])
+                    price_el = item.select_one(config['price'])
+                    link_el = item if item.name == 'a' else item.find('a') if config['link'] == 'self' else item.select_one(config['link'])
+                    
+                    if title_el and price_el and link_el:
+                        title = title_el.get_text().strip()
+                        price = self.clean_price(price_el.get_text())
+                        link = link_el.get('href', '')
+                        if not link.startswith('http'): link = config['base_url'] + link
+                        
+                        if price > 5000 and self.is_strict_match(product_name, title):
+                            offers.append({"merchant": site_name, "price": price, "url": self.clean_merchant_url(link)})
+                
+                if offers:
+                    return min(offers, key=lambda x: x['price'])
+            except:
+                pass
+            return None
+
     async def get_best_prices(self, product_name):
         results = []
         
@@ -359,36 +392,18 @@ class TRPriceScraper:
             search_name = self.clean_search_query(product_name)
             results = [] 
             logging.warning(f"  ⚠️ Akakçe found nothing. Falling back to multi-site direct search engine for {search_name}...")
+            
+            # Safe concurrency of 3 tasks in parallel to prevent FlareSolverr crashes
+            sem = asyncio.Semaphore(3)
+            tasks = []
             for site_name, config in self.site_configs.items():
-                url = config['url'].format(query=quote_plus(search_name))
-                time.sleep(1)
-                html = self.get_via_flaresolverr(url)
-                if not html: continue
-                
-                soup = BeautifulSoup(html, 'html.parser')
-                offers = []
-                try:
-                    items = soup.select(config['container'])
-                    for item in items:
-                        title_el = item.select_one(config['title'])
-                        price_el = item.select_one(config['price'])
-                        link_el = item if item.name == 'a' else item.find('a') if config['link'] == 'self' else item.select_one(config['link'])
-                        
-                        if title_el and price_el and link_el:
-                            title = title_el.get_text().strip()
-                            price = self.clean_price(price_el.get_text())
-                            link = link_el.get('href', '')
-                            if not link.startswith('http'): link = config['base_url'] + link
-                            
-                            if price > 5000 and self.is_strict_match(product_name, title):
-                                offers.append({"merchant": site_name, "price": price, "url": self.clean_merchant_url(link)})
-                except: continue
-
-                if offers:
-                    # Multi-site search might return variations, we take the cheapest strict match
-                    best = min(offers, key=lambda x: x['price'])
-                    results.append(best)
-                    logging.info(f"  ✅ {site_name}: {best['price']} ₺")
+                tasks.append(self.scrape_site_async(site_name, config, search_name, product_name, sem))
+            
+            scraped_results = await asyncio.gather(*tasks)
+            for r in scraped_results:
+                if r:
+                    results.append(r)
+                    logging.info(f"  ✅ {r['merchant']}: {r['price']} ₺")
 
         # De-duplicate: ONLY ONE LOWEST PRICE PER MERCHANT
         merchant_best = {}
