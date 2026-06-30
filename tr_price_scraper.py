@@ -151,29 +151,21 @@ class TRPriceScraper:
         name = product_name.lower()
         title = item_title.lower()
         
-        # 1. Essential: Title must contain the main model name
-        # We split name into words and check if MOST important words are present
+        # 1. Alphanumeric word extraction
         name_words = re.findall(r'\w+', name)
         
-        # Remove common words and brands from mandatory word check
-        # But if the brand is present in title, it must match
+        # Brands & common words to exclude from the main match requirement
         brands = ['apple', 'samsung', 'xiaomi', 'huawei', 'oppo', 'vivo', 'realme', 'poco', 'google', 'oneplus', 'honor']
-        common = ['the', 'and', 'cep', 'telefonu', 'akıllı', 'phone', 'smartphone', '4g', '5g', 'gb', 'ram', 'nfc', 'tb', 'rom']
+        common = ['the', 'and', 'cep', 'telefonu', 'akıllı', 'phone', 'smartphone', '4g', '5g', 'gb', 'ram', 'nfc', 'tb', 'rom', 'galaxy']
         
         important_words = [w for w in name_words if len(w) > 1 and w not in common and w not in brands]
         
-        # Special case for iPhones (some sites list as "iPhone 15" others as "Apple iPhone 15")
-        if 'iphone' in name:
-            if 'iphone' not in title: return False
-            # Check model number (15, 14, etc.)
-            model_num = next((w for w in name_words if w.isdigit()), None)
-            if model_num and model_num not in title: return False
-        else:
-            # Generic matching for other brands
-            if not all(w in title for w in important_words):
+        # We check that every important word in the product name is present in the title as a WHOLE word
+        for w in important_words:
+            if not re.search(rf'\b{re.escape(w)}\b', title):
                 return False
             
-        # 2. Avoid accessories, refurbished, and non-phone items - expanded list
+        # 2. Avoid accessories, refurbished, and non-phone items
         bad_keywords = [
             "kılıf", "case", "cam", "protector", "adaptör", "şarj", "kablo", "kulaklık", "earbuds", 
             "watch", "saat", "askı", "zincir", "koruyucu", "kapak", "film", "çanta", "stand", 
@@ -182,17 +174,15 @@ class TRPriceScraper:
             "traş", "köpüğü", "parfüm", "bakım", "kozmetik", "oyuncak", "lego", "puzzle", "kutu", 
             "boş", "aksesuar", "yedek parça", "pil", "batarya", "ekran", "parça", "uyumlu", "for", "için"
         ]
-        if any(k in title.lower() for k in bad_keywords) and not any(k in name.lower() for k in bad_keywords):
+        if any(k in title for k in bad_keywords) and not any(k in name for k in bad_keywords):
             return False
             
         # 3. Handle Pro/Max/Ultra variations strictly
         variations = ["pro", "max", "plus", "ultra", "lite", "fe", "mini", "se"]
         for var in variations:
             if var in title and var not in name:
-                # Special case: 'pro max' contains 'pro', but if name only has 'pro', it's a mismatch
                 if var == 'max' and 'max' not in name: return False
                 if var == 'pro' and 'pro' not in name: return False
-                # Generic check for others
                 if var not in name: return False
             if var in name and var not in title:
                 return False
