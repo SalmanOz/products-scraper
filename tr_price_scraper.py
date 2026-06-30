@@ -347,6 +347,91 @@ class TRPriceScraper:
         
         return None
 
+    def get_epey_price(self, product_name):
+        import urllib.parse
+        search_name = self.clean_search_query(product_name)
+        logging.info(f"🔍 Searching Epey for: {search_name} (Original: {product_name})")
+        url = f"https://www.epey.com/ara/?q={quote_plus(search_name)}"
+        solution = self.get_via_flaresolverr(url, return_solution=True)
+        if not solution: return None
+        
+        html = solution['response']
+        final_url = solution['url']
+        soup = BeautifulSoup(html, 'html.parser')
+        
+        # If we were redirected directly to a product page
+        if "ara" not in final_url and ".html" in final_url:
+            logging.info(f"⚡ Redirected directly to Epey product page: {final_url}")
+            detail_soup = soup
+        else:
+            # Search results page, find first match
+            product_url = None
+            for a in soup.find_all('a', href=True):
+                href = a['href']
+                if '/akilli-telefonlar/' in href and href.endswith('.html'):
+                    title = a.get('title', '') or a.get_text().strip()
+                    if title and self.is_strict_match(product_name, title):
+                        product_url = href
+                        if not product_url.startswith('http'): 
+                            product_url = "https://www.epey.com" + product_url
+                        break
+            
+            if not product_url: 
+                return None
+                
+            logging.info(f"📄 Visiting Epey Detail: {product_url}")
+            detail_html = self.get_via_flaresolverr(product_url)
+            if not detail_html: return None
+            detail_soup = BeautifulSoup(detail_html, 'html.parser')
+            
+        results = []
+        git_links = detail_soup.select('a.git')
+        
+        for a in git_links:
+            encoded_link = a.get('data-link', '')
+            if not encoded_link: continue
+            
+            direct_url = urllib.parse.unquote(encoded_link)
+            
+            price_el = a.select_one('.urun_fiyat')
+            price_text = price_el.get_text().strip() if price_el else ""
+            
+            price_val = 0
+            if price_text:
+                price_part = price_text.split(' ')[0].strip()
+                price_str = price_part.replace('.', '').replace(',', '.')
+                try:
+                    price_val = float(price_str)
+                except:
+                    pass
+                    
+            if price_val == 0: continue
+            
+            title_attr = a.get('title', '')
+            merchant = "Mağaza"
+            if title_attr:
+                merchant = title_attr.split(' ')[0].strip()
+                
+            results.append({
+                "merchant": merchant,
+                "price": price_val,
+                "url": direct_url
+            })
+            
+        if results:
+            final_agg = []
+            seen = set()
+            for r in results:
+                # Keep only lowest price per merchant
+                key = f"{r['merchant']}"
+                if key not in seen:
+                    seen.add(key)
+                    final_agg.append(r)
+            final_agg.sort(key=lambda x: x['price'])
+            return final_agg
+            
+        return None
+
     def get_cimri_price(self, product_name):
         search_name = self.clean_search_query(product_name)
         logging.info(f"🔍 Searching Cimri for: {search_name} (Original: {product_name})")
@@ -459,16 +544,22 @@ class TRPriceScraper:
     async def get_best_prices(self, product_name):
         results = []
         
-        # 1. Try Akakçe
-        results = self.get_akakce_price(product_name)
+        # 1. Try Epey.com (Best direct URL aggregator)
+        results = self.get_epey_price(product_name)
         if results:
-            logging.info(f"  ✨ Found {len(results)} offers on Akakçe")
+            logging.info(f"  ✨ Found {len(results)} offers on Epey")
             
-        # 2. Specific sites fallback if Akakçe failed (Our own direct scraper engine)
+        # 2. Try Cimri.com if Epey failed
+        if not results:
+            results = self.get_cimri_price(product_name)
+            if results:
+                logging.info(f"  ✨ Found {len(results)} offers on Cimri")
+            
+        # 3. Specific sites fallback if aggregators failed (Our own direct scraper engine)
         if not results:
             search_name = self.clean_search_query(product_name)
             results = [] 
-            logging.warning(f"  ⚠️ Akakçe found nothing. Falling back to multi-site direct search engine for {search_name}...")
+            logging.warning(f"  ⚠️ Epey and Cimri found nothing. Falling back to multi-site direct search engine for {search_name}...")
             
             # Safe concurrency of 3 tasks in parallel to prevent FlareSolverr crashes
             sem = asyncio.Semaphore(3)
@@ -486,6 +577,19 @@ class TRPriceScraper:
         merchant_best = {}
         for r in results:
             m_name = r['merchant']
+            # Standardize merchant names
+            if 'hepsiburada' in m_name.lower(): m_name = 'Hepsiburada'
+            elif 'trendyol' in m_name.lower(): m_name = 'Trendyol'
+            elif 'amazon' in m_name.lower(): m_name = 'Amazon TR'
+            elif 'n11' in m_name.lower(): m_name = 'n11'
+            elif 'ptt' in m_name.lower(): m_name = 'PttAVM'
+            elif 'pasaj' in m_name.lower(): m_name = 'Pasaj'
+            elif 'pazarama' in m_name.lower(): m_name = 'Pazarama'
+            elif 'vatan' in m_name.lower(): m_name = 'Vatan Bilgisayar'
+            elif 'mediamarkt' in m_name.lower(): m_name = 'MediaMarkt'
+            elif 'teknosa' in m_name.lower(): m_name = 'Teknosa'
+            
+            r['merchant'] = m_name
             if m_name not in merchant_best or r['price'] < merchant_best[m_name]['price']:
                 merchant_best[m_name] = r
         
