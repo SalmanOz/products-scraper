@@ -44,10 +44,10 @@ class PriceUpdater:
 
     def get_all_products(self):
         self.ensure_connection()
-        self.cursor.execute("SELECT id, name, slug FROM products WHERE status = 'published'")
+        self.cursor.execute("SELECT id, name, slug, base_price FROM products WHERE status = 'published'")
         return self.cursor.fetchall()
 
-    def update_product_offers(self, product_id, offers):
+    def update_product_offers(self, product_id, offers, current_base_price):
         if not offers:
             return
         
@@ -69,6 +69,16 @@ class PriceUpdater:
                 min_price = min([o['price'] for o in offers])
                 self.cursor.execute("UPDATE products SET base_price = %s WHERE id = %s", (min_price, product_id))
                 
+                # If the lowest price has changed, log it to the price history table
+                curr_price = float(current_base_price) if current_base_price is not None else 0.0
+                new_price = float(min_price)
+                if abs(curr_price - new_price) > 0.01:
+                    logging.info(f"  📈 Price change detected! Old: {curr_price} TL, New: {new_price} TL. Logging to history.")
+                    self.cursor.execute("""
+                        INSERT INTO product_prices (product_id, price)
+                        VALUES (%s, %s)
+                    """, (product_id, min_price))
+                
                 self.db.commit()
                 logging.info(f"  ✅ Updated {len(offers)} offers. Min Price: {min_price} TL")
                 break
@@ -89,7 +99,7 @@ class PriceUpdater:
     async def run_update(self, product_id=None):
         self.ensure_connection()
         if product_id:
-            self.cursor.execute("SELECT id, name, slug FROM products WHERE id = %s", (product_id,))
+            self.cursor.execute("SELECT id, name, slug, base_price FROM products WHERE id = %s", (product_id,))
             products = self.cursor.fetchall()
         else:
             products = self.get_all_products()
@@ -106,7 +116,7 @@ class PriceUpdater:
                 offers = await self.price_scraper.get_best_prices(clean_name)
                 self.ensure_connection()
                 if offers:
-                    self.update_product_offers(p['id'], offers)
+                    self.update_product_offers(p['id'], offers, p['base_price'])
                 else:
                     # Clear base_price if no offers found to avoid stale data
                     self.cursor.execute("UPDATE products SET base_price = 0 WHERE id = %s", (p['id'],))
