@@ -100,9 +100,9 @@ def generate_ai_analysis(product_data, api_key):
                 last_exception = e
                 logging.warning(f"⚠️ Model {model_name} failed or rate-limited: {e}")
                 
-                # If the error indicates resource exhaustion or limit 0, disable this model dynamically
-                if "RESOURCE_EXHAUSTED" in err_msg or "limit: 0" in err_msg or "quota" in err_msg.lower():
-                    logging.info(f"🚫 Disabling model {model_name} for the remainder of this run (quota limits).")
+                # Only disable if the model has a limit of 0 (not provisioned under free tier)
+                if "limit: 0" in err_msg:
+                    logging.info(f"🚫 Disabling model {model_name} for the remainder of this run (not provisioned).")
                     DISABLED_MODELS.add(model_name)
                     
                 # Wait 2 seconds before fallback retry
@@ -110,6 +110,8 @@ def generate_ai_analysis(product_data, api_key):
                 time.sleep(2)
                 break
             
+    if last_exception is None:
+        raise Exception("All Gemini models are currently disabled or unavailable.")
     raise last_exception
 
 def clean_hallucinations(analysis_json, product_specs):
