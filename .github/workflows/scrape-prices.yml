@@ -11,6 +11,11 @@ on:
         required: false
         type: boolean
         default: false
+      run_ai_migration:
+        description: 'Run bulk_generate_verdicts.py to generate Gemini AI verdicts'
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   sync-data:
@@ -86,11 +91,12 @@ jobs:
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
           R2_PUBLIC_DOMAIN: ${{ secrets.R2_PUBLIC_DOMAIN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           python main.py
 
       - name: Run Price Update Scraper (TR Merchants)
-        if: ${{ github.event.inputs.run_fix_images != 'true' }}
+        if: ${{ github.event.inputs.run_fix_images != 'true' && github.event.inputs.run_ai_migration != 'true' }}
         env:
           DB_HOST: ${{ secrets.DB_HOST }}
           DB_USER: ${{ secrets.DB_USER }}
@@ -99,6 +105,18 @@ jobs:
           DB_PORT: ${{ secrets.DB_PORT }}
         run: |
           python update_prices.py
+
+      - name: Run AI Verdict Migration (bulk_generate_verdicts.py)
+        if: ${{ github.event.inputs.run_ai_migration == 'true' }}
+        env:
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          DB_PORT: ${{ secrets.DB_PORT }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          python bulk_generate_verdicts.py
 
       - name: Dump FlareSolverr Logs (Diagnostics)
         if: always()
