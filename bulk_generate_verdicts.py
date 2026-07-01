@@ -64,18 +64,31 @@ def generate_ai_analysis(product_data, api_key):
         f"Lütfen sonucu pros, cons ve verdict alanlarını içeren JSON formatında döndür."
     )
     
-    response = client.models.generate_content(
-        model="gemini-3.1-pro-preview",
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            system_instruction=system_instruction,
-            response_mime_type="application/json",
-            response_schema=AIAnalysis,
-            temperature=0.7
-        )
-    )
+    models_to_try = ["gemini-3.1-pro-preview", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-1.5-flash"]
+    last_exception = None
     
-    return json.loads(response.text)
+    for model_name in models_to_try:
+        try:
+            logging.info(f"🤖 Attempting with model: {model_name}...")
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_instruction,
+                    response_mime_type="application/json",
+                    response_schema=AIAnalysis,
+                    temperature=0.7
+                )
+            )
+            return json.loads(response.text)
+        except Exception as e:
+            last_exception = e
+            logging.warning(f"⚠️ Model {model_name} failed or rate-limited: {e}")
+            # Wait 2 seconds before fallback retry
+            import time
+            time.sleep(2)
+            
+    raise last_exception
 
 def clean_hallucinations(analysis_json, product_specs):
     # Algorithmic guardrail to clean any forbidden words or uydurma details
@@ -175,8 +188,14 @@ def run_migration(limit=None):
             conn.commit()
             success_count += 1
             logging.info(f"✅ Saved AI Verdict for: {p['name']}")
+            # Wait 4 seconds to comply with Free Tier rate limits (15 RPM)
+            import time
+            time.sleep(4)
         except Exception as e:
             logging.error(f"❌ Failed to generate verdict for {p['name']}: {e}")
+            # Wait 10 seconds on error/rate-limit before proceeding
+            import time
+            time.sleep(10)
             
     cursor.close()
     conn.close()
