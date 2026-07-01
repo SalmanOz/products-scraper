@@ -378,9 +378,25 @@ class KimovilScraper:
     def get_product_id_by_slug(self, slug):
         try:
             self.ensure_connection()
+            # 1. Try exact slug match
             self.cursor.execute("SELECT id FROM products WHERE slug = %s", (slug,))
-            r = self.cursor.fetchone(); return r['id'] if r else None
-        except: return None
+            r = self.cursor.fetchone()
+            if r: return r['id']
+            
+            # 2. Try suffix-agnostic match (stripping/appending -4g or -5g)
+            base_slug = re.sub(r'-(?:4g|5g)$', '', slug)
+            if base_slug != slug:
+                self.cursor.execute("SELECT id FROM products WHERE slug = %s", (base_slug,))
+                r = self.cursor.fetchone()
+                if r: return r['id']
+            else:
+                self.cursor.execute("SELECT id FROM products WHERE slug IN (%s, %s)", (f"{slug}-4g", f"{slug}-5g"))
+                r = self.cursor.fetchone()
+                if r: return r['id']
+                
+            return None
+        except: 
+            return None
 
     def clean_phone_model_name(self, name):
         # 1. Split on the first occurrence of storage or RAM indicator, and discard everything after it.
