@@ -68,8 +68,7 @@ jobs:
           R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
           R2_PUBLIC_DOMAIN: ${{ secrets.R2_PUBLIC_DOMAIN }}
         run: |
-          python inspect_db_images.py
-          python inspect_iphone16pro.py
+          python inspect_r2_bucket.py
           python fix_images.py
 
       - name: Run Technical Data Scraper (Kimovil)
