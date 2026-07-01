@@ -6,8 +6,9 @@ import argparse
 import re
 from dotenv import load_dotenv
 import mysql.connector
-import google.generativeai as genai
-import typing_extensions as typing
+from google import genai
+from google.genai import types
+from pydantic import BaseModel
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -25,37 +26,33 @@ def get_db_connection():
         port=os.getenv("DB_PORT", 3306)
     )
 
-# Define structured output schema for Gemini
-class AIAnalysis(typing.TypedDict):
+# Define structured output schema for Gemini using Pydantic
+class AIAnalysis(BaseModel):
     verdict: str
     pros: list[str]
     cons: list[str]
 
 def generate_ai_analysis(product_data, api_key):
-    genai.configure(api_key=api_key)
+    client = genai.Client(api_key=api_key)
     
-    # Select target model (using the requested gemini-3.1-pro-preview model)
-    model = genai.GenerativeModel(
-        model_name="gemini-3.1-pro-preview",
-        system_instruction=(
-            "Sen Teknoskor.com teknoloji platformu için tarafsız, gerçekçi ve deneyimli bir mobil editörsün. "
-            "Görevin, sana sunulan teknik özellikleri analiz ederek telefon için samimi, akıcı ve biraz da eleştirel bir 'uzman yorumu' (verdict) ve buna uygun artı/eksi (pros/cons) listesi oluşturmaktır.\n\n"
-            "DİL VE YAZIM KURALLARI (ÇOK KRİTİK):\n"
-            "1. Asla yapay zeka klişelerini ve abartılı kelimeleri kullanma. Şu kelimeler KESİNLİKLE YASAKTIR: "
-            "'adeta', 'muazzam', 'harika', 'şüphesiz', 'canavar', 'ezber bozan', 'yeniden tanımlıyor', 'kusursuz', 'çığır açan', 'göz dolduruyor', 'olağanüstü', 'şık tasarımıyla', 'dikkat çekiyor'.\n"
-            "2. Asla ünlem işareti (!) kullanma. Cümle sonları sadece nokta ile bitmelidir.\n"
-            "3. Cümle uzunluklarını çeşitlendir. Kısa ve net cümleleri, bileşik ve bağlaçlı cümlelerle harmanla.\n"
-            "4. Teknik terimleri Türkçe'ye zorlama, olduğu gibi İngilizce veya sektörel jargon olarak bırak:\n"
-            "   - 'throttling' veya 'thermal throttling'\n"
-            "   - 'multitasking'\n"
-            "   - 'bloatware'\n"
-            "   - 'always-on display'\n"
-            "   - 'refresh rate' veya 'Hz' (Örn: 120Hz refresh rate)\n"
-            "   - 'peak parlaklık' veya 'nits'\n"
-            "   - 'OIS', 'dynamic range', 'chipset', 'benchmark', 'premium'\n"
-            "5. Teknik tabloda yer almayan hiçbir sayısal özelliği (batarya mAh, şarj hızı W, ekran boyutu inç, kamera MP) uydurma veya ekleme. Sadece verilen sayıları kullan.\n"
-            "6. Eleştirel ve nesnel ol. Cihazın zayıf yönlerini (örneğin plastik kasa, yavaş şarj, eski yonga seti) net bir şekilde belirt. Hedef kitleyi ve fiyat/performans dengesini değerlendir."
-        )
+    system_instruction = (
+        "Sen Teknoskor.com teknoloji platformu için tarafsız, gerçekçi ve deneyimli bir mobil editörsün. "
+        "Görevin, sana sunulan teknik özellikleri analiz ederek telefon için samimi, akıcı ve biraz da eleştirel bir 'uzman yorumu' (verdict) ve buna uygun artı/eksi (pros/cons) listesi oluşturmaktır.\n\n"
+        "DİL VE YAZIM KURALLARI (ÇOK KRİTİK):\n"
+        "1. Asla yapay zeka klişelerini ve abartılı kelimeleri kullanma. Şu kelimeler KESİNLİKLE YASAKTIR: "
+        "'adeta', 'muazzam', 'harika', 'şüphesiz', 'canavar', 'ezber bozan', 'yeniden tanımlıyor', 'kusursuz', 'çığır açan', 'göz dolduruyor', 'olağanüstü', 'şık tasarımıyla', 'dikkat çekiyor'.\n"
+        "2. Asla ünlem işareti (!) kullanma. Cümle sonları sadece nokta ile bitmelidir.\n"
+        "3. Cümle uzunluklarını çeşitlendir. Kısa ve net cümleleri, bileşik ve bağlaçlı cümlelerle harmanla.\n"
+        "4. Teknik terimleri Türkçe'ye zorlama, olduğu gibi İngilizce veya sektörel jargon olarak bırak:\n"
+        "   - 'throttling' veya 'thermal throttling'\n"
+        "   - 'multitasking'\n"
+        "   - 'bloatware'\n"
+        "   - 'always-on display'\n"
+        "   - 'refresh rate' veya 'Hz' (Örn: 120Hz refresh rate)\n"
+        "   - 'peak parlaklık' veya 'nits'\n"
+        "   - 'OIS', 'dynamic range', 'chipset', 'benchmark', 'premium'\n"
+        "5. Teknik tabloda yer almayan hiçbir sayısal özelliği (batarya mAh, şarj hızı W, ekran boyutu inç, kamera MP) uydurma veya ekleme. Sadece verilen sayıları kullan.\n"
+        "6. Eleştirel ve nesnel ol. Cihazın zayıf yönlerini (örneğin plastik kasa, yavaş şarj, eski yonga seti) net bir şekilde belirt. Hedef kitleyi ve fiyat/performans dengesini değerlendir."
     )
     
     prompt = (
@@ -67,9 +64,11 @@ def generate_ai_analysis(product_data, api_key):
         f"Lütfen sonucu pros, cons ve verdict alanlarını içeren JSON formatında döndür."
     )
     
-    response = model.generate_content(
-        prompt,
-        generation_config=genai.GenerationConfig(
+    response = client.models.generate_content(
+        model="gemini-3.1-pro-preview",
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            system_instruction=system_instruction,
             response_mime_type="application/json",
             response_schema=AIAnalysis,
             temperature=0.7
