@@ -121,18 +121,23 @@ def run_migration(limit=None):
         logging.error("❌ GEMINI_API_KEY environment variable is missing.")
         sys.exit(1)
         
-    logging.info("🔄 Connecting to database...")
-    conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
-    
-    query = """
-        SELECT p.id, p.name, p.slug, p.teknoskor_score, p.attributes, b.name as brand_name 
-        FROM products p
-        JOIN brands b ON p.brand_id = b.id
-        WHERE p.status = 'published'
-    """
-    cursor.execute(query)
-    all_products = cursor.fetchall()
+    logging.info("🔄 Fetching products from database...")
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        query = """
+            SELECT p.id, p.name, p.slug, p.teknoskor_score, p.attributes, b.name as brand_name 
+            FROM products p
+            JOIN brands b ON p.brand_id = b.id
+            WHERE p.status = 'published'
+        """
+        cursor.execute(query)
+        all_products = cursor.fetchall()
+        cursor.close()
+        conn.close()
+    except Exception as db_err:
+        logging.error(f"❌ Failed to fetch products from database: {db_err}")
+        sys.exit(1)
     
     # Filter products missing ai_analysis
     target_products = []
@@ -179,26 +184,29 @@ def run_migration(limit=None):
             analysis = generate_ai_analysis(product_data, api_key)
             analysis = clean_hallucinations(analysis, attrs)
             
-            # Save back to database
+            # Save back to database (Open new connection to prevent timeout)
             attrs['ai_analysis'] = analysis
+            conn = get_db_connection()
+            cursor = conn.cursor()
             cursor.execute(
                 "UPDATE products SET attributes = %s WHERE id = %s",
                 (json.dumps(attrs, ensure_ascii=False), p['id'])
             )
             conn.commit()
+            cursor.close()
+            conn.close()
+            
             success_count += 1
             logging.info(f"✅ Saved AI Verdict for: {p['name']}")
             # Wait 4 seconds to comply with Free Tier rate limits (15 RPM)
             import time
             time.sleep(4)
         except Exception as e:
-            logging.error(f"❌ Failed to generate verdict for {p['name']}: {e}")
+            logging.error(f"❌ Failed to generate or save verdict for {p['name']}: {e}")
             # Wait 10 seconds on error/rate-limit before proceeding
             import time
             time.sleep(10)
             
-    cursor.close()
-    conn.close()
     logging.info(f"🏁 Finished migration. Successfully updated {success_count} products.")
 
 if __name__ == "__main__":
