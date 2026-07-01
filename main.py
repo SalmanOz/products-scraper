@@ -353,6 +353,38 @@ class KimovilScraper:
                 else: teknoskor = int(round(ki_score*10))
             else: teknoskor = int(round(ki_score*10))
 
+            # Generate AI Verdict using Gemini Pro if API key is configured
+            gemini_api_key = os.getenv("GEMINI_API_KEY")
+            if gemini_api_key:
+                try:
+                    logging.info(f"✨ Generating AI Verdict for new product: {full_name}")
+                    specs = {
+                        "antutu_score": attributes.get("antutu_score"),
+                        "ram_gb": attributes.get("ram_gb"),
+                        "storage_gb": attributes.get("storage_gb"),
+                        "battery_mah": attributes.get("battery_mah"),
+                        "screen_size_inch": attributes.get("screen_size_inch"),
+                        "screen_refresh_rate": attributes.get("screen_refresh_rate"),
+                        "charging_speed_w": attributes.get("charging_speed_w"),
+                        "camera_score": attributes.get("camera_score"),
+                        "gaming_performance": attributes.get("gaming_performance"),
+                        "Technical sheet": attributes.get("Technical sheet")
+                    }
+                    specs = {k: v for k, v in specs.items() if v is not None}
+                    product_data = {
+                        "name": full_name,
+                        "brand": brand_name,
+                        "score": teknoskor,
+                        "specs": specs
+                    }
+                    from bulk_generate_verdicts import generate_ai_analysis, clean_hallucinations
+                    analysis = generate_ai_analysis(product_data, gemini_api_key)
+                    analysis = clean_hallucinations(analysis, attributes)
+                    attributes['ai_analysis'] = analysis
+                    logging.info(f"✅ Generated AI Verdict successfully.")
+                except Exception as ex:
+                    logging.error(f"⚠️ Failed to generate AI Verdict for {full_name} during scrape: {ex}")
+
             # Database operations with retry
             self.execute_with_retry("SELECT id FROM brands WHERE name LIKE %s LIMIT 1", (f"%{brand_name}%",))
             br = self.cursor.fetchone(); b_id = br['id'] if br else 0

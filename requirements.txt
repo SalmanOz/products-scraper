@@ -6,3 +6,4 @@ beautifulsoup4
 nest-asyncio
 boto3
 Pillow
+google-generativeai
