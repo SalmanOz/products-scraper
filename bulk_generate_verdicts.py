@@ -26,6 +26,9 @@ def get_db_connection():
         port=os.getenv("DB_PORT", 3306)
     )
 
+# Global list to keep track of models that are rate-limited or have 0 quota limits
+DISABLED_MODELS = set()
+
 # Define structured output schema for Gemini using Pydantic
 class AIAnalysis(BaseModel):
     verdict: str
@@ -33,6 +36,7 @@ class AIAnalysis(BaseModel):
     cons: list[str]
 
 def generate_ai_analysis(product_data, api_key):
+    global DISABLED_MODELS
     client = genai.Client(api_key=api_key)
     
     system_instruction = (
@@ -64,7 +68,7 @@ def generate_ai_analysis(product_data, api_key):
         f"Lütfen sonucu pros, cons ve verdict alanlarını içeren JSON formatında döndür."
     )
     
-    models_to_try = ["gemini-3.1-pro-preview", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-1.5-flash"]
+    models_to_try = [m for m in ["gemini-3.1-pro-preview", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"] if m not in DISABLED_MODELS]
     last_exception = None
     
     for model_name in models_to_try:
@@ -84,6 +88,13 @@ def generate_ai_analysis(product_data, api_key):
         except Exception as e:
             last_exception = e
             logging.warning(f"⚠️ Model {model_name} failed or rate-limited: {e}")
+            
+            # If the error indicates resource exhaustion or limit 0, disable this model dynamically
+            err_msg = str(e)
+            if "RESOURCE_EXHAUSTED" in err_msg or "limit: 0" in err_msg or "quota" in err_msg.lower():
+                logging.info(f"🚫 Disabling model {model_name} for the remainder of this run (quota limits).")
+                DISABLED_MODELS.add(model_name)
+                
             # Wait 2 seconds before fallback retry
             import time
             time.sleep(2)
@@ -203,9 +214,13 @@ def run_migration(limit=None):
             time.sleep(4)
         except Exception as e:
             logging.error(f"❌ Failed to generate or save verdict for {p['name']}: {e}")
-            # Wait 10 seconds on error/rate-limit before proceeding
             import time
-            time.sleep(10)
+            # If it's a rate limit on the active models, sleep for 30 seconds to let the rate limit decay
+            if "RESOURCE_EXHAUSTED" in str(e) or "429" in str(e):
+                logging.info("⏳ Rate limit reached. Sleeping for 30 seconds to recover...")
+                time.sleep(30)
+            else:
+                time.sleep(10)
             
     logging.info(f"🏁 Finished migration. Successfully updated {success_count} products.")
 
