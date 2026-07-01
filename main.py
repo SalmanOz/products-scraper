@@ -38,7 +38,10 @@ class KimovilScraper:
             logging.info("☁️ R2 enabled.")
             self.s3 = boto3.client('s3', endpoint_url=f"https://{os.getenv('R2_ACCOUNT_ID')}.r2.cloudflarestorage.com", aws_access_key_id=os.getenv("R2_ACCESS_KEY_ID"), aws_secret_access_key=os.getenv("R2_SECRET_ACCESS_KEY"), config=Config(signature_version='s3v4'), region_name='auto')
             self.bucket_name = os.getenv("R2_BUCKET_NAME")
-            self.public_domain = os.getenv("R2_PUBLIC_DOMAIN", "").rstrip('/')
+            pub_dom = os.getenv("R2_PUBLIC_DOMAIN", "").rstrip('/')
+            if pub_dom and not pub_dom.startswith(('http://', 'https://')):
+                pub_dom = 'https://' + pub_dom
+            self.public_domain = pub_dom
 
     def ensure_connection(self, max_retries=5):
         try:
@@ -81,11 +84,15 @@ class KimovilScraper:
                     raise
 
     def upload_image_to_r2(self, source_url, destination_path):
-        if not self.r2_enabled: return source_url
+        if not self.r2_enabled: 
+            logging.warning("⚠️ R2 is not enabled, skipping image upload.")
+            return source_url
         try:
             headers = {'User-Agent': 'Mozilla/5.0'}
             img_res = requests.get(source_url, headers=headers, timeout=15)
-            if img_res.status_code != 200: return source_url
+            if img_res.status_code != 200: 
+                logging.error(f"❌ Failed to download source image {source_url}, status code: {img_res.status_code}")
+                return source_url
             img = Image.open(BytesIO(img_res.content))
             if img.mode in ("RGBA", "P"): img = img.convert("RGBA")
             else: img = img.convert("RGB")
@@ -94,8 +101,12 @@ class KimovilScraper:
             buffer.seek(0)
             webp_path = os.path.splitext(destination_path)[0] + ".webp"
             self.s3.put_object(Bucket=self.bucket_name, Key=webp_path, Body=buffer.getvalue(), ContentType='image/webp')
-            return f"{self.public_domain}/{webp_path}"
-        except: return source_url
+            final_url = f"{self.public_domain}/{webp_path}"
+            logging.info(f"☁️ Successfully uploaded image to R2: {final_url}")
+            return final_url
+        except Exception as e: 
+            logging.error(f"❌ R2 Upload Exception for {source_url} to {destination_path}: {str(e)}")
+            return source_url
 
     def execute_with_retry(self, query, params=None, retries=3):
         self.ensure_connection()
