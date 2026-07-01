@@ -5,7 +5,12 @@ on:
     # Runs every day at 03:00 UTC (06:00 AM Turkish Time)
     - cron: '0 3 * * *'
   workflow_dispatch:
-    # Allows manual triggering from the GitHub Actions tab
+    inputs:
+      run_fix_images:
+        description: 'Run fix_images.py standalone to repair broken image URLs'
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   sync-data:
@@ -49,7 +54,24 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Run Image Repair Script (fix_images.py)
+        if: ${{ github.event.inputs.run_fix_images == 'true' }}
+        env:
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          DB_PORT: ${{ secrets.DB_PORT }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+          R2_PUBLIC_DOMAIN: ${{ secrets.R2_PUBLIC_DOMAIN }}
+        run: |
+          python fix_images.py
+
       - name: Run Technical Data Scraper (Kimovil)
+        if: ${{ github.event.inputs.run_fix_images != 'true' }}
         env:
           DB_HOST: ${{ secrets.DB_HOST }}
           DB_USER: ${{ secrets.DB_USER }}
@@ -66,6 +88,7 @@ jobs:
           python main.py
 
       - name: Run Price Update Scraper (TR Merchants)
+        if: ${{ github.event.inputs.run_fix_images != 'true' }}
         env:
           DB_HOST: ${{ secrets.DB_HOST }}
           DB_USER: ${{ secrets.DB_USER }}
