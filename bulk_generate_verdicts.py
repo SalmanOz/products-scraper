@@ -72,32 +72,42 @@ def generate_ai_analysis(product_data, api_key):
     last_exception = None
     
     for model_name in models_to_try:
-        try:
-            logging.info(f"🤖 Attempting with model: {model_name}...")
-            response = client.models.generate_content(
-                model=model_name,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    system_instruction=system_instruction,
-                    response_mime_type="application/json",
-                    response_schema=AIAnalysis,
-                    temperature=0.7
+        retries = 2
+        for attempt in range(retries + 1):
+            try:
+                logging.info(f"🤖 Attempting with model: {model_name}...")
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_instruction,
+                        response_mime_type="application/json",
+                        response_schema=AIAnalysis,
+                        temperature=0.7
+                    )
                 )
-            )
-            return json.loads(response.text)
-        except Exception as e:
-            last_exception = e
-            logging.warning(f"⚠️ Model {model_name} failed or rate-limited: {e}")
-            
-            # If the error indicates resource exhaustion or limit 0, disable this model dynamically
-            err_msg = str(e)
-            if "RESOURCE_EXHAUSTED" in err_msg or "limit: 0" in err_msg or "quota" in err_msg.lower():
-                logging.info(f"🚫 Disabling model {model_name} for the remainder of this run (quota limits).")
-                DISABLED_MODELS.add(model_name)
+                return json.loads(response.text)
+            except Exception as e:
+                err_msg = str(e)
+                # If it's a transient server error (503 or 500) and we have retries left, wait and retry the same model
+                if ("503" in err_msg or "500" in err_msg or "unavailable" in err_msg.lower()) and attempt < retries:
+                    logging.warning(f"⚠️ Model {model_name} returned transient error: {e}. Retrying same model (attempt {attempt + 1}/{retries})...")
+                    import time
+                    time.sleep(3)
+                    continue
                 
-            # Wait 2 seconds before fallback retry
-            import time
-            time.sleep(2)
+                last_exception = e
+                logging.warning(f"⚠️ Model {model_name} failed or rate-limited: {e}")
+                
+                # If the error indicates resource exhaustion or limit 0, disable this model dynamically
+                if "RESOURCE_EXHAUSTED" in err_msg or "limit: 0" in err_msg or "quota" in err_msg.lower():
+                    logging.info(f"🚫 Disabling model {model_name} for the remainder of this run (quota limits).")
+                    DISABLED_MODELS.add(model_name)
+                    
+                # Wait 2 seconds before fallback retry
+                import time
+                time.sleep(2)
+                break
             
     raise last_exception
 
