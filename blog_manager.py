@@ -106,15 +106,15 @@ def fetch_phone_data(topic_type="performance"):
 # 2. Markdown to HTML Converter
 # ----------------------------------------------------------------------
 def markdown_to_html(md_text: str) -> str:
-    html = md_text
+    html = md_text.replace('\r\n', '\n')
     
     # Convert blockquotes
-    html = re.sub(r'^\s*>\s+(.*?)$', r'<blockquote>\1</blockquote>', html, flags=re.MULTILINE)
+    html = re.sub(r'^[ \t]*>\s+(.*?)$', r'<blockquote>\1</blockquote>', html, flags=re.MULTILINE)
     
     # Convert headings
-    html = re.sub(r'^\s*###\s+(.*?)$', r'<h3>\1</h3>', html, flags=re.MULTILINE)
-    html = re.sub(r'^\s*##\s+(.*?)$', r'<h2>\1</h2>', html, flags=re.MULTILINE)
-    html = re.sub(r'^\s*#\s+(.*?)$', r'<h1>\1</h1>', html, flags=re.MULTILINE)
+    html = re.sub(r'^[ \t]*###\s+(.*?)$', r'<h3>\1</h3>', html, flags=re.MULTILINE)
+    html = re.sub(r'^[ \t]*##\s+(.*?)$', r'<h2>\1</h2>', html, flags=re.MULTILINE)
+    html = re.sub(r'^[ \t]*#\s+(.*?)$', r'<h1>\1</h1>', html, flags=re.MULTILINE)
     
     # Convert bold and italic
     html = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', html)
@@ -124,8 +124,27 @@ def markdown_to_html(md_text: str) -> str:
     html = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2">\1</a>', html)
     
     # Convert list items
-    html = re.sub(r'^\s*[\-\*]\s+(.*?)$', r'<li>\1</li>', html, flags=re.MULTILINE)
-    html = re.sub(r'((?:<li>.*?</li>\s*)+)', r'<ul>\1</ul>', html)
+    html = re.sub(r'^[ \t]*[\-\*]\s+(.*?)$', r'<li>\1</li>', html, flags=re.MULTILINE)
+    
+    # Wrap lists (line-by-line processing is 100% bulletproof)
+    lines = html.split('\n')
+    new_lines = []
+    in_list = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith('<li>') and stripped.endswith('</li>'):
+            if not in_list:
+                new_lines.append('<ul>')
+                in_list = True
+            new_lines.append(line)
+        else:
+            if in_list:
+                new_lines.append('</ul>')
+                in_list = False
+            new_lines.append(line)
+    if in_list:
+        new_lines.append('</ul>')
+    html = '\n'.join(new_lines)
     
     # Wrap paragraphs
     paragraphs = []
@@ -213,7 +232,7 @@ GOOGLE HELPFUL CONTENT & SEO REQUIREMENTS:
    Use the exact `image_url` provided in the database records. If a phone has no image_url, do not embed an image for it. Do not invent fake URLs.
 
 REQUIRED STRUCTURAL BLUEPRINT:
-You must structure your response EXACTLY like the following example. Keep the literal tags '[TITLE]', '[SUMMARY]', and '[CONTENT]' intact as tokens:
+You must structure your response EXACTLY like the following example. Do not use three dots or write a short summary placeholder in the CONTENT tag. Write a full, highly detailed 1500+ words article inside the [CONTENT] tag:
 
 [TITLE]
 2026'nın En İyi Kameralı Telefonları: Megapiksel Yalanı ve Gerçekler
@@ -222,7 +241,7 @@ You must structure your response EXACTLY like the following example. Keep the li
 Bu makalede 2026 model amiral gemisi telefonların kamera sensör boyutlarını ve gerçek dünya fotoğraf performanslarını Teknoskor verileriyle analiz ediyoruz.
 
 [CONTENT]
-Akıllı telefon kameraları, günümüzde en çok...
+[Buraya en az 8-12 geniş paragraftan oluşan, her bir telefon modelini kendi alt başlığında detaylıca kıyaslayan, cihaz görsellerini img etiketleriyle barındıran ve tablo dizilimlerini içeren minimum 1500 kelimelik eksiksiz ve uzun makale içeriği gelecektir. Metni kesinlikle kısa kesmeyin veya yarım bırakmayın.]
 """
 
     formatted_data = []
@@ -250,19 +269,18 @@ Akıllı telefon kameraları, günümüzde en çok...
         formatted_data.append(phone_info)
 
     prompt = f"{system_prompt}\n\nTOPIC TYPE: {topic_type}\n\nDATA:\n{json.dumps(formatted_data, indent=2, ensure_ascii=False)}"
-
+    
     headers = {"Content-Type": "application/json"}
     payload = {
         "contents": [
             {
-                "parts": [
-                    {"text": prompt}
-                ]
+                "role": "user",
+                "parts": [{"text": prompt}]
             }
         ],
         "generationConfig": {
             "temperature": 0.7,
-            "maxOutputTokens": 4096
+            "maxOutputTokens": 8192
         }
     }
 
@@ -270,15 +288,64 @@ Akıllı telefon kameraları, günümüzde en çok...
     models = ["gemini-2.5-flash", "gemini-2.0-flash"]
     response = None
     last_error_msg = ""
+    full_text = ""
 
     for model in models:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
         retry_delay = 5
+        success = False
+        
         for attempt in range(3):
             try:
                 print(f"[*] Requesting generation from {model} (Attempt {attempt+1}/3)...")
                 response = requests.post(url, headers=headers, json=payload)
                 if response.status_code == 200:
+                    res_json = response.json()
+                    candidate = res_json["candidates"][0]
+                    text_part = candidate["content"]["parts"][0]["text"]
+                    finish_reason = candidate.get("finishReason", "STOP")
+                    
+                    full_text = text_part
+                    
+                    # Continue generation loop if response was truncated (MAX_TOKENS)
+                    contents = list(payload["contents"])
+                    continue_count = 0
+                    
+                    while finish_reason == "MAX_TOKENS" and continue_count < 3:
+                        continue_count += 1
+                        print(f"[!] Generation truncated (MAX_TOKENS). Continuing text generation (Attempt {continue_count}/3)...")
+                        
+                        contents.append({
+                            "role": "model",
+                            "parts": [{"text": text_part}]
+                        })
+                        contents.append({
+                            "role": "user",
+                            "parts": [{"text": "Yazın yarım kaldı. En son kaldığın cümleden/kelimeden itibaren makaleyi yazmaya devam et. Tamamen bitirene kadar devam et."}]
+                        })
+                        
+                        continue_payload = {
+                            "contents": contents,
+                            "generationConfig": {
+                                "temperature": 0.7,
+                                "maxOutputTokens": 8192
+                            }
+                        }
+                        
+                        cont_response = requests.post(url, headers=headers, json=continue_payload)
+                        if cont_response.status_code != 200:
+                            print(f"[!] Continuation request failed with status {cont_response.status_code}: {cont_response.text}")
+                            break
+                            
+                        cont_json = cont_response.json()
+                        cont_candidate = cont_json["candidates"][0]
+                        cont_text_part = cont_candidate["content"]["parts"][0]["text"]
+                        
+                        full_text += " " + cont_text_part.strip()
+                        text_part = cont_text_part
+                        finish_reason = cont_candidate.get("finishReason", "STOP")
+                        
+                    success = True
                     break
                 elif response.status_code in [429, 503] and attempt < 2:
                     print(f"[!] API returned {response.status_code}. Retrying in {retry_delay}s...")
@@ -291,17 +358,13 @@ Akıllı telefon kameraları, günümüzde en çok...
                 last_error_msg = f"{model} exception: {str(e)}"
                 break
                 
-        if response and response.status_code == 200:
+        if success:
             break
 
-    if not response or response.status_code != 200:
+    if not success:
         raise Exception(f"All Gemini model invocations failed. Last error details: {last_error_msg}")
 
-    res_json = response.json()
-    try:
-        return res_json["candidates"][0]["content"]["parts"][0]["text"]
-    except KeyError:
-        raise Exception(f"Invalid Gemini API response structure: {json.dumps(res_json)}")
+    return full_text
 
 # ----------------------------------------------------------------------
 # 4. Turkish Slugify Utility
