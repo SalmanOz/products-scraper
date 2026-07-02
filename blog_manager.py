@@ -163,15 +163,16 @@ def markdown_to_html(md_text: str) -> str:
 # ----------------------------------------------------------------------
 # 3. Suffix-Aware Exact-Match Regex Internal Linking Engine
 # ----------------------------------------------------------------------
-def inject_internal_links(content: str) -> str:
+def inject_internal_links(content: str, lang: str = "tr") -> str:
+    lang_prefix = f"/{lang}" if lang and lang != "tr" else ""
     keyword_map = {
-        "pubg performansı": "https://teknoskor.com/pubg-performansi-en-yuksek-telefonlar",
-        "oyun telefonu": "https://teknoskor.com/pubg-performansi-en-yuksek-telefonlar",
-        "kameralı telefon": "https://teknoskor.com/en-iyi-kamerali-telefonlar",
-        "kamera performansı": "https://teknoskor.com/en-iyi-kamerali-telefonlar",
-        "şarjı en uzun": "https://teknoskor.com/sarji-en-uzun-giden-telefonlar",
-        "şarjı uzun": "https://teknoskor.com/sarji-en-uzun-giden-telefonlar",
-        "pil ömrü": "https://teknoskor.com/sarji-en-uzun-giden-telefonlar"
+        "pubg performansı": f"{lang_prefix}/pubg-performansi-en-yuksek-telefonlar",
+        "oyun telefonu": f"{lang_prefix}/pubg-performansi-en-yuksek-telefonlar",
+        "kameralı telefon": f"{lang_prefix}/en-iyi-kamera-skorlu-telefonlar",
+        "kamera performansı": f"{lang_prefix}/en-iyi-kamera-skorlu-telefonlar",
+        "şarjı en uzun": f"{lang_prefix}/sarji-en-uzun-giden-fiyat-performans-telefonlari",
+        "şarjı uzun": f"{lang_prefix}/sarji-en-uzun-giden-fiyat-performans-telefonlari",
+        "pil ömrü": f"{lang_prefix}/sarji-en-uzun-giden-fiyat-performans-telefonlari"
     }
     
     # Split content by HTML anchor tags, regular HTML tags, and Markdown links
@@ -528,7 +529,7 @@ def main():
     html_content = markdown_to_html(content)
 
     print(f"[*] Injecting internal links into the article content...")
-    content_with_links = inject_internal_links(html_content)
+    content_with_links = inject_internal_links(html_content, lang="tr")
     
     slug = turkish_slugify(title)
     
