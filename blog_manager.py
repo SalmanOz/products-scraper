@@ -168,7 +168,6 @@ REQUIRED STRUCTURAL BLUEPRINT:
 
     prompt = f"{system_prompt}\n\nTOPIC TYPE: {topic_type}\n\nDATA:\n{json.dumps(topic_data, indent=2, ensure_ascii=False)}"
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
     headers = {"Content-Type": "application/json"}
     payload = {
         "contents": [
@@ -184,9 +183,36 @@ REQUIRED STRUCTURAL BLUEPRINT:
         }
     }
 
-    response = requests.post(url, headers=headers, json=payload)
-    if response.status_code != 200:
-        raise Exception(f"Gemini API request failed: {response.status_code} - {response.text}")
+    import time
+    models = ["gemini-2.5-flash", "gemini-1.5-flash"]
+    response = None
+    last_error_msg = ""
+
+    for model in models:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+        retry_delay = 5
+        for attempt in range(3):
+            try:
+                print(f"[*] Requesting generation from {model} (Attempt {attempt+1}/3)...")
+                response = requests.post(url, headers=headers, json=payload)
+                if response.status_code == 200:
+                    break
+                elif response.status_code in [429, 503] and attempt < 2:
+                    print(f"[!] API returned {response.status_code}. Retrying in {retry_delay}s...")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2
+                else:
+                    last_error_msg = f"{model} failed: {response.status_code} - {response.text}"
+                    break
+            except Exception as e:
+                last_error_msg = f"{model} exception: {str(e)}"
+                break
+                
+        if response and response.status_code == 200:
+            break
+
+    if not response or response.status_code != 200:
+        raise Exception(f"All Gemini model invocations failed. Last error details: {last_error_msg}")
 
     res_json = response.json()
     try:
