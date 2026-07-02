@@ -37,7 +37,7 @@ def fetch_phone_data(topic_type="performance"):
     if topic_type == "camera":
         query = """
             SELECT p.name, p.slug, p.base_price, b.name as brand_name, 
-                   p.teknoskor_score, 
+                   p.teknoskor_score, p.images,
                    CAST(JSON_UNQUOTE(JSON_EXTRACT(p.attributes, '$.camera_score')) AS DECIMAL(3,1)) as camera_score,
                    p.attributes 
             FROM products p 
@@ -49,7 +49,7 @@ def fetch_phone_data(topic_type="performance"):
     elif topic_type == "battery":
         query = """
             SELECT p.name, p.slug, p.base_price, b.name as brand_name, 
-                   p.teknoskor_score, 
+                   p.teknoskor_score, p.images,
                    CAST(JSON_UNQUOTE(JSON_EXTRACT(p.attributes, '$.battery_score')) AS DECIMAL(3,1)) as battery_score,
                    p.attributes 
             FROM products p 
@@ -61,7 +61,7 @@ def fetch_phone_data(topic_type="performance"):
     else: # Default: performance
         query = """
             SELECT p.name, p.slug, p.base_price, b.name as brand_name, 
-                   p.teknoskor_score, 
+                   p.teknoskor_score, p.images,
                    CAST(JSON_UNQUOTE(JSON_EXTRACT(p.attributes, '$.antutu_score')) AS SIGNED) as antutu_score,
                    p.attributes 
             FROM products p 
@@ -74,11 +74,16 @@ def fetch_phone_data(topic_type="performance"):
     cursor.execute(query)
     rows = cursor.fetchall()
     
-    # Parse attributes if they are returned as string/JSON
+    # Parse attributes and images if they are returned as string/JSON
     for row in rows:
         if "attributes" in row and isinstance(row["attributes"], str):
             try:
                 row["attributes"] = json.loads(row["attributes"])
+            except:
+                pass
+        if "images" in row and isinstance(row["images"], str):
+            try:
+                row["images"] = json.loads(row["images"])
             except:
                 pass
                 
@@ -98,7 +103,45 @@ def fetch_phone_data(topic_type="performance"):
     return rows
 
 # ----------------------------------------------------------------------
-# 2. Suffix-Aware Exact-Match Regex Internal Linking Engine
+# 2. Markdown to HTML Converter
+# ----------------------------------------------------------------------
+def markdown_to_html(md_text: str) -> str:
+    html = md_text
+    
+    # Convert blockquotes
+    html = re.sub(r'^\s*>\s+(.*?)$', r'<blockquote>\1</blockquote>', html, flags=re.MULTILINE)
+    
+    # Convert headings
+    html = re.sub(r'^\s*###\s+(.*?)$', r'<h3>\1</h3>', html, flags=re.MULTILINE)
+    html = re.sub(r'^\s*##\s+(.*?)$', r'<h2>\1</h2>', html, flags=re.MULTILINE)
+    html = re.sub(r'^\s*#\s+(.*?)$', r'<h1>\1</h1>', html, flags=re.MULTILINE)
+    
+    # Convert bold and italic
+    html = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', html)
+    html = re.sub(r'\*(.*?)\*', r'<em>\1</em>', html)
+    
+    # Convert Markdown Links to HTML anchors
+    html = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2">\1</a>', html)
+    
+    # Convert list items
+    html = re.sub(r'^\s*[\-\*]\s+(.*?)$', r'<li>\1</li>', html, flags=re.MULTILINE)
+    html = re.sub(r'((?:<li>.*?</li>\s*)+)', r'<ul>\1</ul>', html)
+    
+    # Wrap paragraphs
+    paragraphs = []
+    for block in html.split('\n\n'):
+        block = block.strip()
+        if not block:
+            continue
+        if block.startswith('<h') or block.startswith('<u') or block.startswith('<o') or block.startswith('<l') or block.startswith('<b') or block.startswith('<i') or block.startswith('<p'):
+            paragraphs.append(block)
+        else:
+            paragraphs.append(f"<p>{block}</p>")
+            
+    return "\n".join(paragraphs)
+
+# ----------------------------------------------------------------------
+# 3. Suffix-Aware Exact-Match Regex Internal Linking Engine
 # ----------------------------------------------------------------------
 def inject_internal_links(content: str) -> str:
     keyword_map = {
@@ -154,19 +197,55 @@ ANTI-SPAM & CRITICAL STYLE RULES:
    - Use bold text for critical data comparisons.
    - Use clean Markdown bullet points to break down complex technical trade-offs.
 
+GOOGLE HELPFUL CONTENT & SEO REQUIREMENTS:
+1. TABLE OF CONTENTS (İÇİNDEKİLER): Include a structured "İçindekiler" index at the very beginning of the post (immediately following the intro hook paragraph). Write it as a clean Markdown list of links linking to H2 headings. E.g.:
+   - [Giriş](#giris)
+   - [Donanım ve AnTuTu Analizi](#donanim-ve-antutu-analizi)
+   ...
+   You MUST write all corresponding H2 headings using the HTML syntax with matching IDs so clicking on the TOC link scrolls down correctly. E.g.:
+   <h2 id="donanim-ve-antutu-analizi">Donanım ve AnTuTu Analizi</h2>
+2. DEVICE IMAGES: In the sections of the article where you discuss/compare a specific phone model, embed its image using the HTML img tag exactly as shown below:
+   <img class="my-6 rounded-3xl max-h-[350px] object-contain mx-auto shadow-sm" src="IMAGE_URL" alt="Phone Name" />
+   Use the exact `image_url` provided in the database records. If a phone has no image_url, do not embed an image for it. Do not invent fake URLs.
+
 REQUIRED STRUCTURAL BLUEPRINT:
-- You must return your response inside the following tag structure so the script can parse it cleanly:
-[TITLE] Put a catchy, click-worthy, non-clickbait Turkish title with the current year (2026) here.
-[SUMMARY] Put a 1-2 sentence meta description/summary of the post here.
-[CONTENT] Put the article content here. Start with a hook addressing real pain points. Use H2/H3 Markdown subheadings. Make sure to structure it with:
-  - Intro: Addressing pain points.
-  - H2: Hardware & Performance Score Synthesis.
-  - H2: Real-World Use Case Scenarios (Megapixel myths vs. sensor size, frame rates).
-  - H2: The Teknoskor Score Breakdown.
-  - Verdict: Definitive buying recommendation for different budgets.
+You must structure your response EXACTLY like the following example. Keep the literal tags '[TITLE]', '[SUMMARY]', and '[CONTENT]' intact as tokens:
+
+[TITLE]
+2026'nın En İyi Kameralı Telefonları: Megapiksel Yalanı ve Gerçekler
+
+[SUMMARY]
+Bu makalede 2026 model amiral gemisi telefonların kamera sensör boyutlarını ve gerçek dünya fotoğraf performanslarını Teknoskor verileriyle analiz ediyoruz.
+
+[CONTENT]
+Akıllı telefon kameraları, günümüzde en çok...
 """
 
-    prompt = f"{system_prompt}\n\nTOPIC TYPE: {topic_type}\n\nDATA:\n{json.dumps(topic_data, indent=2, ensure_ascii=False)}"
+    formatted_data = []
+    for item in topic_data:
+        image_url = None
+        if "images" in item and item["images"]:
+            if isinstance(item["images"], list) and len(item["images"]) > 0:
+                image_url = item["images"][0]
+            elif isinstance(item["images"], str):
+                try:
+                    imgs = json.loads(item["images"])
+                    if imgs and len(imgs) > 0:
+                        image_url = imgs[0]
+                except:
+                    pass
+        
+        phone_info = {
+            "name": item.get("name"),
+            "brand": item.get("brand_name"),
+            "price": item.get("base_price"),
+            "teknoskor_score": item.get("teknoskor_score"),
+            "specs": item.get("attributes"),
+            "image_url": image_url
+        }
+        formatted_data.append(phone_info)
+
+    prompt = f"{system_prompt}\n\nTOPIC TYPE: {topic_type}\n\nDATA:\n{json.dumps(formatted_data, indent=2, ensure_ascii=False)}"
 
     headers = {"Content-Type": "application/json"}
     payload = {
@@ -240,7 +319,7 @@ def turkish_slugify(text: str) -> str:
 # ----------------------------------------------------------------------
 # 5. Database Save Operations
 # ----------------------------------------------------------------------
-def save_blog_post(title, slug, summary, content, status="draft", lang="tr"):
+def save_blog_post(title, slug, summary, content, image_url=None, status="draft", lang="tr"):
     conn = get_db_connection()
     cursor = conn.conn.cursor() if hasattr(conn, 'conn') else conn.cursor()
     
@@ -264,9 +343,6 @@ def save_blog_post(title, slug, summary, content, status="draft", lang="tr"):
     """
     cursor.execute(create_table_query)
     conn.commit()
-
-    # We will use a placeholder generic thumbnail or leave it NULL
-    image_url = None
     
     # In case slug already exists in this language, append a unique modifier
     check_query = "SELECT COUNT(*) FROM blog_posts WHERE slug = %s AND lang = %s"
@@ -318,27 +394,73 @@ def main():
     print(f"[*] Compiling payload and calling LLM model API...")
     raw_response = generate_article_with_llm(data, topic)
     
-    # Parse LLM response tags
+    # Parse LLM response tags using robust normalization
+    normalized_response = raw_response
+    normalized_response = re.sub(r'\*\*\[?(TITLE|SUMMARY|CONTENT)\]?[:\*]*', r'[\1]', normalized_response, flags=re.IGNORECASE)
+    normalized_response = re.sub(r'\[?(TITLE|SUMMARY|CONTENT)\]?:', r'[\1]', normalized_response, flags=re.IGNORECASE)
+    
     title = ""
     summary = ""
     content = ""
     
-    if "[TITLE]" in raw_response:
-        title = raw_response.split("[TITLE]")[1].split("[SUMMARY]")[0].strip()
-    if "[SUMMARY]" in raw_response:
-        summary = raw_response.split("[SUMMARY]")[1].split("[CONTENT]")[0].strip()
-    if "[CONTENT]" in raw_response:
-        content = raw_response.split("[CONTENT]")[1].strip()
-        
+    if "[TITLE]" in normalized_response:
+        parts = normalized_response.split("[TITLE]")
+        if len(parts) > 1:
+            title = parts[1].split("[SUMMARY]")[0].split("[CONTENT]")[0].strip()
+    if "[SUMMARY]" in normalized_response:
+        parts = normalized_response.split("[SUMMARY]")
+        if len(parts) > 1:
+            summary = parts[1].split("[CONTENT]")[0].strip()
+    if "[CONTENT]" in normalized_response:
+        parts = normalized_response.split("[CONTENT]")
+        if len(parts) > 1:
+            content = parts[1].strip()
+
+    # Fallback to smart bracket parser in case the LLM wrapped sections directly
     if not title or not content:
-        # Fallback in case tags are missing/misplaced
+        brackets = re.findall(r'\[([^\]]+)\]', raw_response)
+        if len(brackets) >= 2:
+            title = brackets[0]
+            summary = brackets[1]
+            temp_content = raw_response
+            temp_content = temp_content.replace(f"[{title}]", "", 1)
+            temp_content = temp_content.replace(f"[{summary}]", "", 1)
+            temp_content = re.sub(r'(?i)\[?CONTENT\]?[:\*]*', '', temp_content)
+            content = temp_content.strip()
+
+    # Clean formatting marks from parsed fields
+    if title:
+        title = title.strip('[]"\'* \t\n\r')
+    if summary:
+        summary = summary.strip('[]"\'* \t\n\r')
+
+    # Ultimate fallback in case parsing still fails
+    if not title or not content:
         print("[!] LLM output did not contain correct parsing tags. Saving raw text as fallback content.")
-        title = f"{args.topic.capitalize()} Odaklı Akıllı Telefon İncelemesi (2026)"
+        title = f"{topic.capitalize()} Odaklı Akıllı Telefon İncelemesi (2026)"
         summary = "Otomatik üretilmiş teknik özellikler karşılaştırma rehberi."
         content = raw_response
         
+    cover_image = None
+    if data and len(data) > 0:
+        first_phone = data[0]
+        phone_images = first_phone.get("images")
+        if phone_images:
+            if isinstance(phone_images, str):
+                try:
+                    imgs = json.loads(phone_images)
+                    if imgs and len(imgs) > 0:
+                        cover_image = imgs[0]
+                except:
+                    pass
+            elif isinstance(phone_images, list) and len(phone_images) > 0:
+                cover_image = phone_images[0]
+
+    print(f"[*] Converting Markdown to HTML...")
+    html_content = markdown_to_html(content)
+
     print(f"[*] Injecting internal links into the article content...")
-    content_with_links = inject_internal_links(content)
+    content_with_links = inject_internal_links(html_content)
     
     slug = turkish_slugify(title)
     
@@ -346,12 +468,13 @@ def main():
     print(f"TITLE: {title}")
     print(f"SLUG: {slug}")
     print(f"SUMMARY: {summary}")
+    print(f"COVER IMAGE: {cover_image}")
     print(f"CONTENT LENGTH: {len(content_with_links)} chars")
     print("=======================================================\n")
     
     if args.save:
         print("[*] Saving article to database...")
-        post_id = save_blog_post(title, slug, summary, content_with_links, args.status, "tr")
+        post_id = save_blog_post(title, slug, summary, content_with_links, cover_image, args.status, "tr")
         print(f"[+] Successfully saved! Post ID in database: {post_id}")
     else:
         print("[*] Dry run finished. Use '--save' to insert into MySQL.")
