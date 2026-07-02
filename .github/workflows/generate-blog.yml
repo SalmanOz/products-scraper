@@ -1,0 +1,64 @@
+name: Scheduled Blog Generation & Link Injection
+
+on:
+  schedule:
+    # Runs at 03:00 UTC (06:00 AM Turkish Time) on Monday, Wednesday, and Friday
+    - cron: '0 3 * * 1,3,5'
+  workflow_dispatch:
+    inputs:
+      topic:
+        description: 'Target data focus metric (performance, camera, battery, random)'
+        required: false
+        type: choice
+        options:
+          - random
+          - performance
+          - camera
+          - battery
+        default: 'random'
+      status:
+        description: 'Publishing state of the generated post (published, draft)'
+        required: false
+        type: choice
+        options:
+          - published
+          - draft
+        default: 'published'
+
+jobs:
+  generate-blog:
+    name: Generate E-E-A-T Blog Post
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-blog-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-blog-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Blog Generation Script (blog_manager.py)
+        env:
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          DB_PORT: ${{ secrets.DB_PORT }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          python blog_manager.py --topic "${{ github.event.inputs.topic || 'random' }}" --status "${{ github.event.inputs.status || 'published' }}" --save
