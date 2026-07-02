@@ -2,6 +2,7 @@
 import os
 import re
 import json
+import decimal
 import argparse
 import requests
 import mysql.connector
@@ -80,6 +81,17 @@ def fetch_phone_data(topic_type="performance"):
                 row["attributes"] = json.loads(row["attributes"])
             except:
                 pass
+                
+    def convert_decimals(obj):
+        if isinstance(obj, decimal.Decimal):
+            return float(obj)
+        elif isinstance(obj, dict):
+            return {k: convert_decimals(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [convert_decimals(v) for v in obj]
+        return obj
+
+    rows = convert_decimals(rows)
                 
     cursor.close()
     conn.close()
