@@ -61,4 +61,4 @@ jobs:
           DB_PORT: ${{ secrets.DB_PORT }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          python blog_manager.py --topic "${{ github.event.inputs.topic || 'random' }}" --status "${{ github.event.inputs.status || 'published' }}" --save
+          python -u blog_manager.py --topic "${{ github.event.inputs.topic || 'random' }}" --status "${{ github.event.inputs.status || 'published' }}" --save

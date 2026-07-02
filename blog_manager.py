@@ -27,7 +27,8 @@ def get_db_connection():
         port=port,
         user=user,
         password=password,
-        database=database
+        database=database,
+        connection_timeout=10
     )
 
 def fetch_phone_data(topic_type="performance"):
@@ -298,7 +299,7 @@ Bu makalede 2026 model amiral gemisi telefonların kamera sensör boyutlarını 
         for attempt in range(3):
             try:
                 print(f"[*] Requesting generation from {model} (Attempt {attempt+1}/3)...")
-                response = requests.post(url, headers=headers, json=payload)
+                response = requests.post(url, headers=headers, json=payload, timeout=60)
                 if response.status_code == 200:
                     res_json = response.json()
                     candidate = res_json["candidates"][0]
@@ -332,7 +333,7 @@ Bu makalede 2026 model amiral gemisi telefonların kamera sensör boyutlarını 
                             }
                         }
                         
-                        cont_response = requests.post(url, headers=headers, json=continue_payload)
+                        cont_response = requests.post(url, headers=headers, json=continue_payload, timeout=60)
                         if cont_response.status_code != 200:
                             print(f"[!] Continuation request failed with status {cont_response.status_code}: {cont_response.text}")
                             break
