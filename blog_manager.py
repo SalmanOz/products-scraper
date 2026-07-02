@@ -184,7 +184,7 @@ REQUIRED STRUCTURAL BLUEPRINT:
     }
 
     import time
-    models = ["gemini-2.5-flash", "gemini-1.5-flash"]
+    models = ["gemini-2.5-flash", "gemini-2.0-flash"]
     response = None
     last_error_msg = ""
 
@@ -244,6 +244,27 @@ def save_blog_post(title, slug, summary, content, status="draft", lang="tr"):
     conn = get_db_connection()
     cursor = conn.conn.cursor() if hasattr(conn, 'conn') else conn.cursor()
     
+    # Self-healing database structure initialization
+    create_table_query = """
+    CREATE TABLE IF NOT EXISTS blog_posts (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      title VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+      slug VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+      summary TEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL,
+      content LONGTEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+      image_url VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL,
+      status ENUM('draft', 'published') NOT NULL DEFAULT 'draft',
+      lang VARCHAR(10) NOT NULL DEFAULT 'tr',
+      views INT NOT NULL DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY slug_lang (slug, lang),
+      INDEX idx_lang_status_created (lang, status, created_at DESC)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    """
+    cursor.execute(create_table_query)
+    conn.commit()
+
     # We will use a placeholder generic thumbnail or leave it NULL
     image_url = None
     
