@@ -145,9 +145,13 @@ def markdown_to_html(md_text: str) -> str:
 # ----------------------------------------------------------------------
 def inject_internal_links(content: str) -> str:
     keyword_map = {
-        "pubg performansı en yüksek telefonlar": "https://teknoskor.com/pubg-performansi-en-yuksek-telefonlar",
-        "en iyi kameralı telefonlar": "https://teknoskor.com/en-iyi-kamerali-telefonlar",
-        "şarjı en uzun giden telefonlar": "https://teknoskor.com/sarji-en-uzun-giden-telefonlar"
+        "pubg performansı": "https://teknoskor.com/pubg-performansi-en-yuksek-telefonlar",
+        "oyun telefonu": "https://teknoskor.com/pubg-performansi-en-yuksek-telefonlar",
+        "kameralı telefon": "https://teknoskor.com/en-iyi-kamerali-telefonlar",
+        "kamera performansı": "https://teknoskor.com/en-iyi-kamerali-telefonlar",
+        "şarjı en uzun": "https://teknoskor.com/sarji-en-uzun-giden-telefonlar",
+        "şarjı uzun": "https://teknoskor.com/sarji-en-uzun-giden-telefonlar",
+        "pil ömrü": "https://teknoskor.com/sarji-en-uzun-giden-telefonlar"
     }
     
     # Split content by HTML anchor tags, regular HTML tags, and Markdown links
@@ -185,7 +189,7 @@ def generate_article_with_llm(topic_data, topic_type="performance"):
     if not api_key:
         raise ValueError("GEMINI_API_KEY or GOOGLE_API_KEY environment variable is missing.")
 
-    system_prompt = """You are a senior tech editor and hardware reviewer for Teknoskor. Write a deeply comprehensive, long-form blog post (Minimum 1000 words) in Turkish analyzing the provided phone data.
+    system_prompt = """You are a senior tech editor and hardware reviewer for Teknoskor. Write an extremely detailed, high-depth review article (Minimum 1500 to 2000 words, at least 8 to 12 extensive paragraphs) in Turkish comparing the provided phone data. You must cover every phone in the dataset in its own dedicated section, detail its score, camera performance, gaming/Antutu stats, and battery capacity based on the parameters. Do not write short summaries or cut the text short; expand fully on user real-world value.
 
 ANTI-SPAM & CRITICAL STYLE RULES:
 1. BAN ALL AI CLICHÉS: Never use words like 'devrimsel', 'şık tasarım', 'büyüleyici deneyim', 'sonuç olarak', 'göz kamaştırıcı', 'özetlemek gerekirse', 'unutmamak gerekir ki', 'derinlemesine dalış'. If you use these, the post fails.
