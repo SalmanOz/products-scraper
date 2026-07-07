@@ -482,11 +482,18 @@ class TRPriceScraper:
         if results:
             logging.info(f"  ✨ Found {len(results)} offers on Epey")
             
-        # 2. Specific sites fallback if aggregators failed (Our own direct scraper engine)
+        # 2. Try Akakçe as fallback aggregator
+        if not results:
+            logging.info(f"  🔄 Epey failed, trying Akakçe...")
+            results = self.get_akakce_price(product_name)
+            if results:
+                logging.info(f"  ✨ Found {len(results)} offers on Akakçe")
+
+        # 3. Specific sites fallback if aggregators failed (Our own direct scraper engine)
         if not results:
             search_name = self.clean_search_query(product_name)
             results = [] 
-            logging.warning(f"  ⚠️ Epey found nothing. Falling back to multi-site direct search engine for {search_name}...")
+            logging.warning(f"  ⚠️ Both aggregators found nothing. Falling back to multi-site direct search engine for {search_name}...")
             
             # Priority order: datacenter-friendly sites first, then others
             priority_sites = ['Hepsiburada', 'PttAVM', 'n11', 'Trendyol', 'Amazon TR', 'Vatan Bilgisayar', 'MediaMarkt', 'Pasaj', 'Pazarama', 'Gürgençler']
