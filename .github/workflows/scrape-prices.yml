@@ -31,20 +31,20 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Start FlareSolverr
+      - name: Start Byparr (FlareSolverr-compatible)
         run: |
           docker run -d \
-            --name=flaresolverr \
+            --name=byparr \
             -p 8191:8191 \
             -e LOG_LEVEL=info \
             --restart always \
-            ghcr.io/flaresolverr/flaresolverr:latest
+            ghcr.io/thephaseless/byparr:latest
           
-          echo "Waiting for FlareSolverr to start..."
+          echo "Waiting for Byparr to start..."
           until curl -s http://localhost:8191/ > /dev/null; do
             sleep 2
           done
-          echo "FlareSolverr is up and running!"
+          echo "Byparr is up and running!"
 
       - name: Cache pip dependencies
         uses: actions/cache@v4
@@ -118,7 +118,7 @@ jobs:
         run: |
           python bulk_generate_verdicts.py
 
-      - name: Dump FlareSolverr Logs (Diagnostics)
+      - name: Dump Byparr Logs (Diagnostics)
         if: always()
         run: |
-          docker logs flaresolverr
+          docker logs byparr
