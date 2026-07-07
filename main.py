@@ -508,82 +508,18 @@ class KimovilScraper:
     def scrape_latest_smartphones(self):
         new_added = 0
         max_new_products = 10
-        page = 1
         
         logging.info(f"🚀 Starting daily sync to find and insert exactly {max_new_products} popular products in Turkey...")
         
-        # 1. Step: Try to fetch popular phones from Cimri Turkey
-        popular_titles = []
-        while page <= 3 and len(popular_titles) < 80:
-            cimri_url = f"https://www.cimri.com/cep-telefonlari?page={page}"
-            logging.info(f"📄 Fetching Cimri popular phones page {page}: {cimri_url}")
-            html = self.get_via_flaresolverr(cimri_url)
-            if not html:
-                logging.warning(f"⚠️ Failed to load Cimri page {page}. Falling back to default list.")
-                break
-            soup = BeautifulSoup(html, 'html.parser')
-            items = soup.select('article, .product-card, [class*="product-card"]')
-            page_titles = []
-            for item in items:
-                title_el = item.select_one('h3, [class*="title"]')
-                if title_el:
-                    t = title_el.get_text().strip()
-                    if t and t not in popular_titles:
-                        page_titles.append(t)
-            
-            if not page_titles:
-                break
-            popular_titles.extend(page_titles)
-            page += 1
-            time.sleep(2)
-            
-        logging.info(f"🔍 Collected {len(popular_titles)} popular product titles from Cimri Turkey.")
-        
-        # 2. Step: Process the collected popular titles
-        if popular_titles:
-            for title in popular_titles:
-                if new_added >= max_new_products:
-                    break
-                    
-                cleaned_name = self.clean_phone_model_name(title)
-                slug = re.sub(r'[^a-z0-9]+', '-', cleaned_name.lower()).strip('-')
+        # Fetch latest releases directly from Kimovil
+        k_page = 1
+        while new_added < max_new_products and k_page <= 5:
+            k_url = f"{self.base_url}compare-smartphones"
+            if k_page > 1:
+                k_url = f"{self.base_url}compare-smartphones/page/{k_page}"
                 
-                # Check if already in DB
-                if self.get_product_id_by_slug(slug):
-                    continue
-                    
-                # Search on Kimovil
-                logging.info(f"🔍 Searching Kimovil for popular Turkish model: {cleaned_name} (Original: {title})")
-                kimovil_url = self.search_product_on_kimovil(cleaned_name)
-                if not kimovil_url:
-                    logging.warning(f"⚠️ Could not find {cleaned_name} on Kimovil")
-                    continue
-                    
-                k_slug = kimovil_url.split('/')[-1].replace('where-to-buy-', '')
-                if self.get_product_id_by_slug(k_slug):
-                    continue
-                    
-                # Scrape and insert
-                logging.info(f"✨ Scraping new popular product details: {k_slug}")
-                success = self.scrape_product_details(kimovil_url)
-                if success:
-                    new_added += 1
-                    logging.info(f"📈 Added popular product ({new_added}/{max_new_products}): {k_slug}")
-                    time.sleep(5)
-                else:
-                    logging.error(f"❌ Failed to scrape: {k_slug}")
-                    
-        # 3. Step: Fallback to Kimovil latest releases if we couldn't get 10 products from Cimri Turkey
-        if new_added < max_new_products:
-            logging.info(f"⚠️ Only found {new_added} products from Cimri. Falling back to Kimovil latest releases...")
-            k_page = 1
-            while new_added < max_new_products and k_page <= 5:
-                k_url = f"{self.base_url}compare-smartphones"
-                if k_page > 1:
-                    k_url = f"{self.base_url}compare-smartphones/page/{k_page}"
-                    
-                logging.info(f"📄 Fetching Kimovil latest releases page {k_page}: {k_url}")
-                html = self.get_via_flaresolverr(k_url)
+            logging.info(f"📄 Fetching Kimovil latest releases page {k_page}: {k_url}")
+            html = self.get_via_flaresolverr(k_url)
                 if not html:
                     break
                 soup = BeautifulSoup(html, 'html.parser')

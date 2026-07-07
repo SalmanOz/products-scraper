@@ -5,8 +5,8 @@ from tr_price_scraper import TRPriceScraper
 
 def test_resolve_with_canonical():
     scraper = TRPriceScraper()
-    # Cimri offer URL
-    offer_url = "https://www.cimri.com/offer/1980150603"
+    # Test with a known merchant URL
+    offer_url = "https://www.hepsiburada.com/test-product"
     logging.info(f"Original URL: {offer_url}")
     
     # Let FlareSolverr follow the redirect and get the final HTML
