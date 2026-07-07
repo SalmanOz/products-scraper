@@ -125,22 +125,29 @@ class TRPriceScraper:
         except:
             return 0
 
-    def get_via_flaresolverr(self, url, return_solution=False):
-        try:
-            payload = {
-                "cmd": "request.get",
-                "url": url,
-                "maxTimeout": 60000
-            }
-            response = requests.post(self.flaresolverr_url, json=payload, timeout=90)
-            res_data = response.json()
-            if res_data.get('status') == 'ok':
-                if return_solution:
-                    return res_data['solution']
-                return res_data['solution']['response']
-            return None
-        except:
-            return None
+    def get_via_flaresolverr(self, url, return_solution=False, max_retries=3):
+        for attempt in range(1, max_retries + 1):
+            try:
+                payload = {
+                    "cmd": "request.get",
+                    "url": url,
+                    "maxTimeout": 60000
+                }
+                response = requests.post(self.flaresolverr_url, json=payload, timeout=90)
+                res_data = response.json()
+                if res_data.get('status') == 'ok':
+                    if return_solution:
+                        return res_data['solution']
+                    return res_data['solution']['response']
+                logging.warning(f"  ⚠️ FlareSolverr attempt {attempt}/{max_retries} failed for {url}: status={res_data.get('status')}, message={res_data.get('message', 'unknown')}")
+            except Exception as e:
+                logging.warning(f"  ⚠️ FlareSolverr attempt {attempt}/{max_retries} exception for {url}: {e}")
+            if attempt < max_retries:
+                wait = 5 * (2 ** (attempt - 1))
+                logging.info(f"  ⏳ Retrying in {wait}s...")
+                time.sleep(wait)
+        logging.error(f"  ❌ FlareSolverr failed after {max_retries} attempts for {url}")
+        return None
 
     def clean_search_query(self, product_name):
         clean = re.sub(r'\b(4G|5G)\b', '', product_name, flags=re.IGNORECASE)
