@@ -363,40 +363,59 @@ class TRPriceScraper:
         import urllib.parse
         search_name = self.clean_search_query(product_name)
         logging.info(f"🔍 Searching Epey for: {search_name} (Original: {product_name})")
-        url = f"https://www.epey.com/ara/?ara={quote_plus(search_name)}"
-        solution = self.get_via_flaresolverr(url, return_solution=True)
-        if not solution:
-            logging.warning(f"  ⚠️ Epey: FlareSolverr returned no response for {url}")
-            return None
         
-        html = solution['response']
-        final_url = solution['url']
-        soup = BeautifulSoup(html, 'html.parser')
+        detail_soup = None
         
-        # If we were redirected directly to a product page
-        if "ara" not in final_url and ".html" in final_url:
-            logging.info(f"⚡ Redirected directly to Epey product page: {final_url}")
-            detail_soup = soup
-        else:
-            # Search results page, find first match
-            product_url = None
-            for a in soup.find_all('a', href=True):
-                href = a['href']
-                if '/akilli-telefonlar/' in href and href.endswith('.html'):
-                    title = a.get('title', '') or a.get_text().strip()
-                    if title and self.is_strict_match(product_name, title):
-                        product_url = href
-                        if not product_url.startswith('http'): 
-                            product_url = "https://www.epey.com" + product_url
-                        break
-            
-            if not product_url: 
+        # Strategy 1: Try direct product URL (lighter Cloudflare protection than search pages)
+        slug = re.sub(r'[^a-z0-9]+', '-', search_name.lower()).strip('-')
+        direct_url = f"https://www.epey.com/akilli-telefonlar/{slug}.html"
+        logging.info(f"  📎 Trying direct Epey URL: {direct_url}")
+        direct_html = self.get_via_flaresolverr(direct_url, max_retries=1)
+        if direct_html:
+            soup = BeautifulSoup(direct_html, 'html.parser')
+            # Verify it's a real product page (has price links)
+            if soup.select('a.git'):
+                logging.info(f"  ✅ Direct URL worked for Epey!")
+                detail_soup = soup
+            else:
+                logging.info(f"  ⚠️ Direct URL returned a page but no price data (likely 404/redirect)")
+        
+        # Strategy 2: Fall back to search page
+        if not detail_soup:
+            url = f"https://www.epey.com/ara/?ara={quote_plus(search_name)}"
+            solution = self.get_via_flaresolverr(url, return_solution=True)
+            if not solution:
+                logging.warning(f"  ⚠️ Epey: Both direct URL and search failed for {product_name}")
                 return None
+            
+            html = solution['response']
+            final_url = solution['url']
+            soup = BeautifulSoup(html, 'html.parser')
+            
+            # If we were redirected directly to a product page
+            if "ara" not in final_url and ".html" in final_url:
+                logging.info(f"⚡ Redirected directly to Epey product page: {final_url}")
+                detail_soup = soup
+            else:
+                # Search results page, find first match
+                product_url = None
+                for a in soup.find_all('a', href=True):
+                    href = a['href']
+                    if '/akilli-telefonlar/' in href and href.endswith('.html'):
+                        title = a.get('title', '') or a.get_text().strip()
+                        if title and self.is_strict_match(product_name, title):
+                            product_url = href
+                            if not product_url.startswith('http'): 
+                                product_url = "https://www.epey.com" + product_url
+                            break
                 
-            logging.info(f"📄 Visiting Epey Detail: {product_url}")
-            detail_html = self.get_via_flaresolverr(product_url)
-            if not detail_html: return None
-            detail_soup = BeautifulSoup(detail_html, 'html.parser')
+                if not product_url: 
+                    return None
+                    
+                logging.info(f"📄 Visiting Epey Detail: {product_url}")
+                detail_html = self.get_via_flaresolverr(product_url)
+                if not detail_html: return None
+                detail_soup = BeautifulSoup(detail_html, 'html.parser')
             
         results = []
         git_links = detail_soup.select('a.git')
