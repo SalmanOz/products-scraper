@@ -139,6 +139,10 @@ class TRPriceScraper:
                     if return_solution:
                         return res_data['solution']
                     return res_data['solution']['response']
+                # Log raw response keys on first failure for debugging
+                if attempt == 1:
+                    logging.warning(f"  🔍 Raw response keys: {list(res_data.keys())}, HTTP {response.status_code}")
+                    logging.warning(f"  🔍 Raw response (truncated): {str(res_data)[:500]}")
                 logging.warning(f"  ⚠️ FlareSolverr attempt {attempt}/{max_retries} failed for {url}: status={res_data.get('status')}, message={res_data.get('message', 'unknown')}")
             except Exception as e:
                 logging.warning(f"  ⚠️ FlareSolverr attempt {attempt}/{max_retries} exception for {url}: {e}")
