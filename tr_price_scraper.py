@@ -123,24 +123,36 @@ class TRPriceScraper:
         
         logging.info(f"  📋 Fetched {len(raw_proxies)} raw proxies, validating...")
         
-        # Quick validation: test against a lightweight endpoint
+        # Quick validation in parallel using thread pool to make it fast
         validated = []
-        # Shuffle and test a subset to save time
         import random
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        
         random.shuffle(raw_proxies)
-        for proxy_str in raw_proxies[:40]:  # Test at most 40
+        test_proxies = raw_proxies[:50]  # Test a subset of 50
+        
+        def test_proxy(proxy_str):
             try:
                 resp = requests.get(
                     "https://httpbin.org/ip", 
                     proxies={"http": f"http://{proxy_str}", "https": f"http://{proxy_str}"},
-                    timeout=5
+                    timeout=3
                 )
                 if resp.status_code == 200:
-                    validated.append(proxy_str)
+                    return proxy_str
+            except Exception:
+                pass
+            return None
+
+        logging.info(f"  ⚡ Validating {len(test_proxies)} proxies in parallel...")
+        with ThreadPoolExecutor(max_workers=15) as executor:
+            futures = {executor.submit(test_proxy, p): p for p in test_proxies}
+            for fut in as_completed(futures):
+                res = fut.result()
+                if res:
+                    validated.append(res)
                     if len(validated) >= 5:  # 5 working proxies is enough
                         break
-            except Exception:
-                continue
         
         logging.info(f"  ✅ Validated {len(validated)} working proxies")
         return validated
@@ -208,27 +220,7 @@ class TRPriceScraper:
         except:
             return 0
 
-    def _try_curl_cffi(self, url):
-        """Fast TLS-impersonation fetch. Returns (html, final_url) or None."""
-        try:
-            from curl_cffi import requests as cffi_requests
-        except ImportError:
-            logging.warning("  ⚠️ curl_cffi not installed, skipping TLS impersonation")
-            return None
-        
-        for browser in ["chrome", "safari"]:
-            try:
-                resp = cffi_requests.get(
-                    url, impersonate=browser, timeout=30,
-                    headers={"Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7"}
-                )
-                logging.warning(f"  🔍 curl_cffi ({browser}): HTTP {resp.status_code} for {url} ({len(resp.text)} bytes)")
-                if resp.status_code == 200 and len(resp.text) > 1000:
-                    if 'Just a moment...' not in resp.text and 'cf-browser-verification' not in resp.text:
-                        return resp.text, str(resp.url)
-            except Exception as e:
-                logging.warning(f"  ⚠️ curl_cffi ({browser}) error for {url}: {e}")
-        return None
+
 
     def get_via_flaresolverr(self, url, return_solution=False, max_retries=3):
         # Fast path: TLS impersonation (no headless browser needed)
@@ -246,9 +238,9 @@ class TRPriceScraper:
                 payload = {
                     "cmd": "request.get",
                     "url": url,
-                    "maxTimeout": 60000
+                    "maxTimeout": 20000
                 }
-                response = requests.post(self.flaresolverr_url, json=payload, timeout=90)
+                response = requests.post(self.flaresolverr_url, json=payload, timeout=30)
                 res_data = response.json()
                 if res_data.get('status') == 'ok':
                     if return_solution:
@@ -481,8 +473,19 @@ class TRPriceScraper:
         url = f"https://www.google.com.tr/search?q={quote_plus(search_name)}+fiyat&tbm=shop&gl=tr&hl=tr"
         logging.info(f"🛒 Searching Google Shopping for: {search_name}")
         
-        html = self.get_via_flaresolverr(url, max_retries=1)
-        if not html:
+        # Google Shopping is JS-rendered — curl_cffi returns empty shells.
+        # Call FlareSolverr directly (Google doesn't use Cloudflare, so it should work).
+        try:
+            payload = {"cmd": "request.get", "url": url, "maxTimeout": 20000}
+            response = requests.post(self.flaresolverr_url, json=payload, timeout=30)
+            res_data = response.json()
+            if res_data.get('status') == 'ok':
+                html = res_data['solution']['response']
+            else:
+                logging.warning(f"  ⚠️ Google Shopping FlareSolverr: {res_data.get('message', 'unknown')}")
+                return None
+        except Exception as e:
+            logging.warning(f"  ⚠️ Google Shopping FlareSolverr error: {e}")
             return None
         
         soup = BeautifulSoup(html, 'html.parser')
@@ -490,6 +493,7 @@ class TRPriceScraper:
         
         # Google Shopping product cards — multiple possible selectors as Google changes them
         card_selectors = [
+            'g-inner-card',
             '.sh-dgr__content',
             '.sh-dlr__list-result', 
             '[data-docid]',
@@ -505,29 +509,32 @@ class TRPriceScraper:
         
         for card in cards:
             try:
+                # Target the main inner block if it's a g-inner-card with hover clones
+                wrapper = card.select_one('.rRCm8') or card
+                
                 # Title
-                title_el = card.select_one('h3, .tAxDx, [role="heading"], .EI11Pd')
+                title_el = wrapper.select_one('.gkQHve, h3, .tAxDx, [role="heading"], .EI11Pd')
                 title = title_el.get_text().strip() if title_el else ""
                 
                 if title and not self.is_strict_match(product_name, title):
                     continue
                 
                 # Price
-                price_el = card.select_one('.a8Pemb, .lmQWe, .HRLxBb')
+                price_el = wrapper.select_one('.lmQWe, .a8Pemb, .HRLxBb')
                 price_text = price_el.get_text().strip() if price_el else ""
                 price_val = self.clean_price(price_text)
                 if price_val < 1000:
                     continue
                 
                 # Merchant
-                merchant_el = card.select_one('.aULzUe, .WJMUdc, .IuHnof, .E5ocAb')
+                merchant_el = wrapper.select_one('.WJMUdc, .aULzUe, .IuHnof, .E5ocAb')
                 merchant = merchant_el.get_text().strip() if merchant_el else "Mağaza"
                 merchant = re.sub(r'\.com(\.tr)?$', '', merchant).strip()
                 
                 # Link
-                link_el = card.select_one('a[href*="/shopping/"], a[href*="url?"]')
+                link_el = wrapper.select_one('a[href*="/shopping/"], a[href*="url?"]')
                 if not link_el:
-                    link_el = card.select_one('a[href]')
+                    link_el = wrapper.select_one('a[href]') or card.select_one('a[href]')
                 link = link_el.get('href', '') if link_el else ""
                 if link and not link.startswith('http'):
                     link = "https://www.google.com.tr" + link
