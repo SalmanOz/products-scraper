@@ -475,6 +475,100 @@ class TRPriceScraper:
         
         return None
 
+    def get_google_shopping_price(self, product_name):
+        """Scrape Google Shopping Turkey for multi-merchant price comparison via FlareSolverr."""
+        search_name = self.clean_search_query(product_name)
+        url = f"https://www.google.com.tr/search?q={quote_plus(search_name)}+fiyat&tbm=shop&gl=tr&hl=tr"
+        logging.info(f"🛒 Searching Google Shopping for: {search_name}")
+        
+        html = self.get_via_flaresolverr(url, max_retries=1)
+        if not html:
+            return None
+        
+        soup = BeautifulSoup(html, 'html.parser')
+        results = []
+        
+        # Google Shopping product cards — multiple possible selectors as Google changes them
+        card_selectors = [
+            '.sh-dgr__content',
+            '.sh-dlr__list-result', 
+            '[data-docid]',
+            '.sh-pr__product-results-grid .sh-pr__product-result',
+        ]
+        
+        cards = []
+        for sel in card_selectors:
+            cards = soup.select(sel)
+            if cards:
+                logging.info(f"  📦 Found {len(cards)} cards with selector: {sel}")
+                break
+        
+        for card in cards:
+            try:
+                # Title
+                title_el = card.select_one('h3, .tAxDx, [role="heading"], .EI11Pd')
+                title = title_el.get_text().strip() if title_el else ""
+                
+                if title and not self.is_strict_match(product_name, title):
+                    continue
+                
+                # Price
+                price_el = card.select_one('.a8Pemb, .lmQWe, .HRLxBb')
+                price_text = price_el.get_text().strip() if price_el else ""
+                price_val = self.clean_price(price_text)
+                if price_val < 1000:
+                    continue
+                
+                # Merchant
+                merchant_el = card.select_one('.aULzUe, .WJMUdc, .IuHnof, .E5ocAb')
+                merchant = merchant_el.get_text().strip() if merchant_el else "Mağaza"
+                merchant = re.sub(r'\.com(\.tr)?$', '', merchant).strip()
+                
+                # Link
+                link_el = card.select_one('a[href*="/shopping/"], a[href*="url?"]')
+                if not link_el:
+                    link_el = card.select_one('a[href]')
+                link = link_el.get('href', '') if link_el else ""
+                if link and not link.startswith('http'):
+                    link = "https://www.google.com.tr" + link
+                
+                results.append({
+                    "merchant": merchant,
+                    "price": price_val,
+                    "url": link
+                })
+            except Exception:
+                continue
+        
+        # Broader fallback: find ANY element with price in the page
+        if not results:
+            import re as re_mod
+            body_text = soup.get_text()
+            price_matches = re_mod.findall(r'([\d]+\.[\d]{3}(?:,[\d]+)?)\s*(?:₺|TL)', body_text)
+            if price_matches:
+                logging.info(f"  📦 Found {len(price_matches)} prices in body text (using fallback)")
+                for pm in price_matches[:10]:
+                    price_val = self.clean_price(pm)
+                    if price_val >= 1000:
+                        results.append({
+                            "merchant": "Google Shopping",
+                            "price": price_val,
+                            "url": url
+                        })
+        
+        if results:
+            seen = {}
+            for r in results:
+                key = r['merchant']
+                if key not in seen or r['price'] < seen[key]['price']:
+                    seen[key] = r
+            final = sorted(seen.values(), key=lambda x: x['price'])
+            logging.info(f"  🛒 Google Shopping found {len(final)} merchants")
+            return final
+        
+        logging.warning(f"  ⚠️ Google Shopping: No matching results for {product_name}")
+        return None
+
     def get_epey_price(self, product_name):
         import urllib.parse
         search_name = self.clean_search_query(product_name)
@@ -616,12 +710,19 @@ class TRPriceScraper:
     async def get_best_prices(self, product_name):
         results = []
         
-        # 1. Try Epey.com (Best direct URL aggregator)
-        results = self.get_epey_price(product_name)
+        # 1. Try Google Shopping (no Cloudflare, most reliable from CI)
+        results = self.get_google_shopping_price(product_name)
         if results:
-            logging.info(f"  ✨ Found {len(results)} offers on Epey")
+            logging.info(f"  ✨ Found {len(results)} offers on Google Shopping")
+
+        # 2. Try Epey.com as fallback
+        if not results:
+            logging.info(f"  🔄 Google Shopping found nothing, trying Epey...")
+            results = self.get_epey_price(product_name)
+            if results:
+                logging.info(f"  ✨ Found {len(results)} offers on Epey")
             
-        # 2. Try Akakçe as fallback aggregator
+        # 3. Try Akakçe as fallback aggregator
         if not results:
             logging.info(f"  🔄 Epey failed, trying Akakçe...")
             results = self.get_akakce_price(product_name)
@@ -632,7 +733,7 @@ class TRPriceScraper:
         if not results:
             search_name = self.clean_search_query(product_name)
             results = [] 
-            logging.warning(f"  ⚠️ Both aggregators found nothing. Falling back to multi-site direct search engine for {search_name}...")
+            logging.warning(f"  ⚠️ All aggregators found nothing. Falling back to multi-site direct search engine for {search_name}...")
             
             # Priority order: datacenter-friendly sites first, then others
             priority_sites = ['Hepsiburada', 'PttAVM', 'n11', 'Trendyol', 'Amazon TR', 'Vatan Bilgisayar', 'MediaMarkt', 'Pasaj', 'Pazarama', 'Gürgençler']
