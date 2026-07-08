@@ -125,7 +125,33 @@ class TRPriceScraper:
         except:
             return 0
 
+    def _try_curl_cffi(self, url):
+        """Fast TLS-impersonation fetch. Returns (html, final_url) or None."""
+        try:
+            from curl_cffi import requests as cffi_requests
+            resp = cffi_requests.get(
+                url, impersonate="chrome", timeout=30,
+                headers={"Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7"}
+            )
+            if resp.status_code == 200 and len(resp.text) > 1000:
+                # Reject Cloudflare challenge/block pages
+                if 'Just a moment...' not in resp.text and 'cf-browser-verification' not in resp.text:
+                    return resp.text, str(resp.url)
+        except Exception as e:
+            logging.info(f"  curl_cffi skipped for {url}: {e}")
+        return None
+
     def get_via_flaresolverr(self, url, return_solution=False, max_retries=3):
+        # Fast path: TLS impersonation (no headless browser needed)
+        result = self._try_curl_cffi(url)
+        if result:
+            html, final_url = result
+            logging.info(f"  ⚡ curl_cffi succeeded for {url}")
+            if return_solution:
+                return {'response': html, 'url': final_url}
+            return html
+        
+        # Slow path: FlareSolverr headless browser
         for attempt in range(1, max_retries + 1):
             try:
                 payload = {
@@ -139,11 +165,12 @@ class TRPriceScraper:
                     if return_solution:
                         return res_data['solution']
                     return res_data['solution']['response']
-                # Log raw response keys on first failure for debugging
-                if attempt == 1:
-                    logging.warning(f"  🔍 Raw response keys: {list(res_data.keys())}, HTTP {response.status_code}")
-                    logging.warning(f"  🔍 Raw response (truncated): {str(res_data)[:500]}")
-                logging.warning(f"  ⚠️ FlareSolverr attempt {attempt}/{max_retries} failed for {url}: status={res_data.get('status')}, message={res_data.get('message', 'unknown')}")
+                msg = res_data.get('message', '')
+                # Detect IP bans — retrying won't help
+                if 'banned' in msg.lower() or 'blocked' in msg.lower():
+                    logging.warning(f"  🚫 IP banned/blocked for {url}, skipping retries")
+                    return None
+                logging.warning(f"  ⚠️ FlareSolverr attempt {attempt}/{max_retries} failed for {url}: {msg[:120]}")
             except Exception as e:
                 logging.warning(f"  ⚠️ FlareSolverr attempt {attempt}/{max_retries} exception for {url}: {e}")
             if attempt < max_retries:
@@ -383,7 +410,7 @@ class TRPriceScraper:
         # Strategy 2: Fall back to search page
         if not detail_soup:
             url = f"https://www.epey.com/ara/?ara={quote_plus(search_name)}"
-            solution = self.get_via_flaresolverr(url, return_solution=True)
+            solution = self.get_via_flaresolverr(url, return_solution=True, max_retries=1)
             if not solution:
                 logging.warning(f"  ⚠️ Epey: Both direct URL and search failed for {product_name}")
                 return None

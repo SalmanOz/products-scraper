@@ -8,3 +8,4 @@ boto3
 Pillow
 google-genai
 pydantic
+curl_cffi
