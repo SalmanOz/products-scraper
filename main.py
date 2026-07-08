@@ -534,33 +534,33 @@ class KimovilScraper:
                 
             logging.info(f"📄 Fetching Kimovil latest releases page {k_page}: {k_url}")
             html = self.get_via_flaresolverr(k_url)
-                if not html:
+            if not html:
+                break
+            soup = BeautifulSoup(html, 'html.parser')
+            urls = []
+            for a in soup.find_all('a', href=re.compile(r'where-to-buy')):
+                u = a.get('href')
+                if u: urls.append(u if u.startswith('http') else f"https://www.kimovil.com{u}")
+            urls = list(dict.fromkeys(urls))
+
+            if not urls:
+                break
+
+            for u in urls:
+                if new_added >= max_new_products:
                     break
-                soup = BeautifulSoup(html, 'html.parser')
-                urls = []
-                for a in soup.find_all('a', href=re.compile(r'where-to-buy')):
-                    u = a.get('href')
-                    if u: urls.append(u if u.startswith('http') else f"https://www.kimovil.com{u}")
-                urls = list(dict.fromkeys(urls))
-                
-                if not urls:
-                    break
-                    
-                for u in urls:
-                    if new_added >= max_new_products:
-                        break
-                    raw_slug = u.split('/')[-1]
-                    slug = raw_slug.replace('where-to-buy-', '')
-                    if self.get_product_id_by_slug(slug):
-                        continue
-                        
-                    logging.info(f"✨ Scraping new latest release: {slug}")
-                    success = self.scrape_product_details(u)
-                    if success:
-                        new_added += 1
-                        logging.info(f"📈 Added latest product ({new_added}/{max_new_products}): {slug}")
-                        time.sleep(5)
-                k_page += 1
+                raw_slug = u.split('/')[-1]
+                slug = raw_slug.replace('where-to-buy-', '')
+                if self.get_product_id_by_slug(slug):
+                    continue
+
+                logging.info(f"✨ Scraping new latest release: {slug}")
+                success = self.scrape_product_details(u)
+                if success:
+                    new_added += 1
+                    logging.info(f"📈 Added latest product ({new_added}/{max_new_products}): {slug}")
+                    time.sleep(5)
+            k_page += 1
                 
         logging.info(f"✅ Finished daily sync. Added {new_added} new popular/latest products to the database.")
 

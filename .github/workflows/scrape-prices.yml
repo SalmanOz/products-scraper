@@ -26,6 +26,7 @@ jobs:
   sync-data:
     name: Sync Specifications & Prices
     runs-on: ubuntu-latest
+    timeout-minutes: 120
 
     steps:
       - name: Checkout Repository

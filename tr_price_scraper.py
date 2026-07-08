@@ -3,13 +3,19 @@ import requests
 import re
 import json
 from bs4 import BeautifulSoup
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlparse
 import time
 import asyncio
+from functools import partial
 
 class TRPriceScraper:
+    # After this many consecutive fetch failures a domain is skipped for the rest of the run
+    DOMAIN_FAILURE_THRESHOLD = 3
+
     def __init__(self):
         self.flaresolverr_url = "http://localhost:8191/v1"
+        self.domain_failures = {}
+        self.dead_domains = set()
         # Search URL templates and selectors for each site
         self.site_configs = {
             "Hepsiburada": {
@@ -170,7 +176,7 @@ class TRPriceScraper:
         # Try without proxy first (direct)
         for browser in ["chrome", "safari"]:
             try:
-                resp = cffi_requests.get(url, impersonate=browser, timeout=30, headers=headers)
+                resp = cffi_requests.get(url, impersonate=browser, timeout=15, headers=headers)
                 logging.warning(f"  🔍 curl_cffi ({browser}): HTTP {resp.status_code} for {url} ({len(resp.text)} bytes)")
                 if resp.status_code == 200 and len(resp.text) > 1000:
                     if 'Just a moment...' not in resp.text and 'cf-browser-verification' not in resp.text:
@@ -178,11 +184,11 @@ class TRPriceScraper:
             except Exception as e:
                 logging.warning(f"  ⚠️ curl_cffi ({browser}) error for {url}: {e}")
         
-        # Try with proxies
-        for proxy_str in self.proxies:
+        # Try with proxies (cap attempts — free proxies rarely beat Cloudflare, don't burn minutes on them)
+        for proxy_str in self.proxies[:3]:
             try:
                 resp = cffi_requests.get(
-                    url, impersonate="chrome", timeout=20, headers=headers,
+                    url, impersonate="chrome", timeout=10, headers=headers,
                     proxies={"http": f"http://{proxy_str}", "https": f"http://{proxy_str}"}
                 )
                 if resp.status_code == 200 and len(resp.text) > 1000:
@@ -222,16 +228,31 @@ class TRPriceScraper:
 
 
 
+    def _record_domain_result(self, domain, success):
+        if success:
+            self.domain_failures[domain] = 0
+            return
+        count = self.domain_failures.get(domain, 0) + 1
+        self.domain_failures[domain] = count
+        if count >= self.DOMAIN_FAILURE_THRESHOLD:
+            self.dead_domains.add(domain)
+            logging.warning(f"  ⛔ {domain} failed {count} times in a row — skipping it for the rest of this run")
+
     def get_via_flaresolverr(self, url, return_solution=False, max_retries=3):
+        domain = urlparse(url).netloc
+        if domain in self.dead_domains:
+            return None
+
         # Fast path: TLS impersonation (no headless browser needed)
         result = self._try_curl_cffi(url)
         if result:
             html, final_url = result
             logging.info(f"  ⚡ curl_cffi succeeded for {url}")
+            self._record_domain_result(domain, True)
             if return_solution:
                 return {'response': html, 'url': final_url}
             return html
-        
+
         # Slow path: FlareSolverr headless browser
         for attempt in range(1, max_retries + 1):
             try:
@@ -243,6 +264,7 @@ class TRPriceScraper:
                 response = requests.post(self.flaresolverr_url, json=payload, timeout=30)
                 res_data = response.json()
                 if res_data.get('status') == 'ok':
+                    self._record_domain_result(domain, True)
                     if return_solution:
                         return res_data['solution']
                     return res_data['solution']['response']
@@ -250,15 +272,17 @@ class TRPriceScraper:
                 # Detect IP bans — retrying won't help
                 if 'banned' in msg.lower() or 'blocked' in msg.lower():
                     logging.warning(f"  🚫 IP banned/blocked for {url}, skipping retries")
+                    self._record_domain_result(domain, False)
                     return None
                 logging.warning(f"  ⚠️ FlareSolverr attempt {attempt}/{max_retries} failed for {url}: {msg[:120]}")
             except Exception as e:
                 logging.warning(f"  ⚠️ FlareSolverr attempt {attempt}/{max_retries} exception for {url}: {e}")
             if attempt < max_retries:
-                wait = 5 * (2 ** (attempt - 1))
+                wait = 3
                 logging.info(f"  ⏳ Retrying in {wait}s...")
                 time.sleep(wait)
         logging.error(f"  ❌ FlareSolverr failed after {max_retries} attempts for {url}")
+        self._record_domain_result(domain, False)
         return None
 
     def clean_search_query(self, product_name):
@@ -687,8 +711,13 @@ class TRPriceScraper:
             url = config['url'].format(query=quote_plus(search_name))
             loop = asyncio.get_running_loop()
             try:
-                # Run the blocking network request in a thread pool executor
-                html = await loop.run_in_executor(None, self.get_via_flaresolverr, url)
+                # Run the blocking network request in a thread pool executor.
+                # Single FlareSolverr attempt: challenge timeouts almost never
+                # succeed on retry from the same CI IP, and retries here
+                # multiply across ~10 sites x every product.
+                html = await loop.run_in_executor(
+                    None, partial(self.get_via_flaresolverr, url, False, 1)
+                )
                 if not html: return None
                 
                 soup = BeautifulSoup(html, 'html.parser')
@@ -744,7 +773,7 @@ class TRPriceScraper:
             
             # Priority order: datacenter-friendly sites first, then others
             priority_sites = ['Hepsiburada', 'PttAVM', 'n11', 'Trendyol', 'Amazon TR', 'Vatan Bilgisayar', 'MediaMarkt', 'Pasaj', 'Pazarama', 'Gürgençler']
-            sem = asyncio.Semaphore(2)
+            sem = asyncio.Semaphore(3)
             tasks = []
             for site_name in priority_sites:
                 config = self.site_configs.get(site_name)
