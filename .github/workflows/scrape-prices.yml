@@ -16,6 +16,11 @@ on:
         required: false
         type: boolean
         default: false
+      run_fix_seo_data:
+        description: 'Run fix_seo_data.py to repair screen sizes and FAQ number formats'
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   sync-data:
@@ -95,8 +100,19 @@ jobs:
         run: |
           python main.py
 
+      - name: Run SEO Data Repair (fix_seo_data.py)
+        if: ${{ github.event.inputs.run_fix_seo_data == 'true' }}
+        env:
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          DB_PORT: ${{ secrets.DB_PORT }}
+        run: |
+          python fix_seo_data.py
+
       - name: Run Price Update Scraper (TR Merchants)
-        if: ${{ github.event.inputs.run_fix_images != 'true' && github.event.inputs.run_ai_migration != 'true' }}
+        if: ${{ github.event.inputs.run_fix_images != 'true' && github.event.inputs.run_ai_migration != 'true' && github.event.inputs.run_fix_seo_data != 'true' }}
         env:
           DB_HOST: ${{ secrets.DB_HOST }}
           DB_USER: ${{ secrets.DB_USER }}

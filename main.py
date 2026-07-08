@@ -179,6 +179,19 @@ class KimovilScraper:
         except:
             return 0
 
+    def extract_decimal(self, text):
+        """Like extract_number but keeps the decimal point — for values such as
+        screen size where "6.67" must not collapse to 667."""
+        if not text: return 0.0
+        t = str(text).replace('\t', '').replace('\n', '').strip()
+        t = re.sub(r'\(.*?\)', '', t).strip()
+        m = re.search(r'\d+(?:[\.,]\d+)?', t)
+        if not m: return 0.0
+        try:
+            return float(m.group(0).replace(',', '.'))
+        except:
+            return 0.0
+
     def scrape_product_details(self, url, category_id=1):
         try:
             html = self.get_via_flaresolverr(url)
@@ -254,7 +267,7 @@ class KimovilScraper:
                 **map_specs_to_turkish(raw_specs),
                 "quick_specs": {"ram": ram_v, "storage": storage_v, "cpu": cpu_v, "screen": screen_v, "battery": battery_v, "camera_main": all_key_values.get('Main', '---')},
                 "ram_gb": int(self.extract_number(ram_v)), "storage_gb": int(self.extract_number(storage_v)),
-                "battery_mah": int(self.extract_number(battery_v)), "screen_size_inch": float(self.extract_number(screen_v)),
+                "battery_mah": int(self.extract_number(battery_v)), "screen_size_inch": self.extract_decimal(screen_v),
                 "kiscore": float(ki_score), "antutu_score": int(self.extract_number(antutu_v)),
                 "camera_score": partials.get('camera', 0), "performance_score": partials.get('hardware', 0),
                 "battery_score": partials.get('battery', 0), "screen_score": partials.get('design', 0), "partials": partials
@@ -274,7 +287,8 @@ class KimovilScraper:
                 pool = []
                 antutu = attr.get("antutu_score", 0); bat = attr.get("battery_mah", 0); cam = parts.get("camera", 0)
                 hz = attr.get("screen_refresh_rate", 60); ch = attr.get("charging_speed_w", 18); sc = attr.get("kiscore", 0)
-                pool.append({"q": random.choice([f"{name} oyun performansı nasıl?", f"{name} oyunlarda kasar mı?"]), "a": random.choice([f"{name}, {antutu:,} AnTuTu skoruyla " + ("tüm oyunları en yüksek ayarlarda akıcı çalıştırır." if antutu > 1200000 else "orta-yüksek ayarlarda dengeli deneyim sunar." if antutu > 700000 else "temel oyunlar için uygundur.")])})
+                antutu_tr = f"{antutu:,}".replace(",", ".")  # Turkish thousands separator
+                pool.append({"q": random.choice([f"{name} oyun performansı nasıl?", f"{name} oyunlarda kasar mı?"]), "a": random.choice([f"{name}, {antutu_tr} AnTuTu skoruyla " + ("tüm oyunları en yüksek ayarlarda akıcı çalıştırır." if antutu > 1200000 else "orta-yüksek ayarlarda dengeli deneyim sunar." if antutu > 700000 else "temel oyunlar için uygundur.")])})
                 pool.append({"q": random.choice([f"{name} bataryası ne kadar gider?", f"{name} şarjı çabuk biter mi?"]), "a": random.choice([f"{bat} mAh kapasitesiyle " + ("normal kullanımda 1.5-2 gün pil ömrü sunar." if bat >= 5000 else "günlük standart kullanımı karşılar.")])})
                 pool.append({"q": random.choice([f"{name} kamerası gece çekimi için iyi mi?", f"{name} fotoğraf kalitesi nasıl?"]), "a": [("Evet, düşük ışıkta profesyonel sonuçlar verir." if cam >= 8.5 else "Gün ışığında başarılı olsa da gece çekimlerinde kumlanma yapabilir.")][0]})
                 pool.append({"q": random.choice([f"{name} ekranı kaç Hz?", f"{name} ekran akıcılığı nasıl?"]), "a": [f"{hz}Hz yenileme hızıyla " + ("ipeksi bir akıcılık sunar." if hz >= 120 else "standart bir akıcılık sunar.")][0]})
