@@ -93,15 +93,98 @@ class TRPriceScraper:
                 "base_url": "https://www.gurgencler.com.tr"
             }
         }
+        self.proxies = self._fetch_proxies()
+        logging.info(f"🌐 Loaded {len(self.proxies)} proxies for rotation")
 
+    def _fetch_proxies(self):
+        """Fetch and validate free proxies from public APIs."""
+        proxy_urls = [
+            "https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&proxy_format=protocolipport&format=text&timeout=5000&protocol=http",
+            "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/http.txt",
+        ]
+        raw_proxies = []
+        for api_url in proxy_urls:
+            try:
+                resp = requests.get(api_url, timeout=10)
+                if resp.status_code == 200:
+                    for line in resp.text.strip().split('\n'):
+                        line = line.strip()
+                        if line and ':' in line:
+                            # Normalize to ip:port format
+                            clean = line.replace('http://', '').replace('https://', '').split('/')[0]
+                            if re.match(r'^\d+\.\d+\.\d+\.\d+:\d+$', clean):
+                                raw_proxies.append(clean)
+            except Exception:
+                continue
+        
+        if not raw_proxies:
+            logging.warning("  ⚠️ No proxies fetched from any source")
+            return []
+        
+        logging.info(f"  📋 Fetched {len(raw_proxies)} raw proxies, validating...")
+        
+        # Quick validation: test against a lightweight endpoint
+        validated = []
+        # Shuffle and test a subset to save time
+        import random
+        random.shuffle(raw_proxies)
+        for proxy_str in raw_proxies[:40]:  # Test at most 40
+            try:
+                resp = requests.get(
+                    "https://httpbin.org/ip", 
+                    proxies={"http": f"http://{proxy_str}", "https": f"http://{proxy_str}"},
+                    timeout=5
+                )
+                if resp.status_code == 200:
+                    validated.append(proxy_str)
+                    if len(validated) >= 5:  # 5 working proxies is enough
+                        break
+            except Exception:
+                continue
+        
+        logging.info(f"  ✅ Validated {len(validated)} working proxies")
+        return validated
+
+    def _try_curl_cffi(self, url):
+        """Fast TLS-impersonation fetch with optional proxy rotation. Returns (html, final_url) or None."""
+        try:
+            from curl_cffi import requests as cffi_requests
+        except ImportError:
+            logging.warning("  ⚠️ curl_cffi not installed, skipping TLS impersonation")
+            return None
+        
+        headers = {"Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7"}
+        
+        # Try without proxy first (direct)
+        for browser in ["chrome", "safari"]:
+            try:
+                resp = cffi_requests.get(url, impersonate=browser, timeout=30, headers=headers)
+                logging.warning(f"  🔍 curl_cffi ({browser}): HTTP {resp.status_code} for {url} ({len(resp.text)} bytes)")
+                if resp.status_code == 200 and len(resp.text) > 1000:
+                    if 'Just a moment...' not in resp.text and 'cf-browser-verification' not in resp.text:
+                        return resp.text, str(resp.url)
+            except Exception as e:
+                logging.warning(f"  ⚠️ curl_cffi ({browser}) error for {url}: {e}")
+        
+        # Try with proxies
+        for proxy_str in self.proxies:
+            try:
+                resp = cffi_requests.get(
+                    url, impersonate="chrome", timeout=20, headers=headers,
+                    proxies={"http": f"http://{proxy_str}", "https": f"http://{proxy_str}"}
+                )
+                if resp.status_code == 200 and len(resp.text) > 1000:
+                    if 'Just a moment...' not in resp.text and 'cf-browser-verification' not in resp.text:
+                        logging.info(f"  ✅ curl_cffi via proxy {proxy_str} succeeded for {url}")
+                        return resp.text, str(resp.url)
+            except Exception:
+                continue
+        
+        return None
 
     def clean_price(self, price_str):
         if not price_str: return 0
-        # Remove TL, symbols, extra text
         price_str = price_str.replace('TL', '').replace('₺', '').replace('–', '').strip()
-        
-        # Heuristic for cases like "Sepette 12.345,00 TL" - we want the first/main price
-        # Extract the numeric part (handling TR format dots and commas)
         match = re.search(r'(\d[\d.,]*)', price_str)
         if not match: return 0
         price_str = match.group(1)
@@ -129,16 +212,22 @@ class TRPriceScraper:
         """Fast TLS-impersonation fetch. Returns (html, final_url) or None."""
         try:
             from curl_cffi import requests as cffi_requests
-            resp = cffi_requests.get(
-                url, impersonate="chrome", timeout=30,
-                headers={"Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7"}
-            )
-            if resp.status_code == 200 and len(resp.text) > 1000:
-                # Reject Cloudflare challenge/block pages
-                if 'Just a moment...' not in resp.text and 'cf-browser-verification' not in resp.text:
-                    return resp.text, str(resp.url)
-        except Exception as e:
-            logging.info(f"  curl_cffi skipped for {url}: {e}")
+        except ImportError:
+            logging.warning("  ⚠️ curl_cffi not installed, skipping TLS impersonation")
+            return None
+        
+        for browser in ["chrome", "safari"]:
+            try:
+                resp = cffi_requests.get(
+                    url, impersonate=browser, timeout=30,
+                    headers={"Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7"}
+                )
+                logging.warning(f"  🔍 curl_cffi ({browser}): HTTP {resp.status_code} for {url} ({len(resp.text)} bytes)")
+                if resp.status_code == 200 and len(resp.text) > 1000:
+                    if 'Just a moment...' not in resp.text and 'cf-browser-verification' not in resp.text:
+                        return resp.text, str(resp.url)
+            except Exception as e:
+                logging.warning(f"  ⚠️ curl_cffi ({browser}) error for {url}: {e}")
         return None
 
     def get_via_flaresolverr(self, url, return_solution=False, max_retries=3):
