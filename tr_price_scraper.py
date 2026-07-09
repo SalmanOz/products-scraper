@@ -12,6 +12,21 @@ class TRPriceScraper:
     # After this many consecutive fetch failures a domain is skipped for the rest of the run
     DOMAIN_FAILURE_THRESHOLD = 3
 
+    # Only offers from these known Turkish retailers are trusted. Google Shopping
+    # lists countless gray-import/dropship sellers ("Wireless Source" etc.) whose
+    # prices are unreliable and would corrupt base_price (min of all offers).
+    TRUSTED_MERCHANTS = [
+        'hepsiburada', 'trendyol', 'amazon', 'n11', 'pttavm', 'ptt avm',
+        'mediamarkt', 'media markt', 'teknosa', 'vatan', 'pasaj', 'turkcell',
+        'pazarama', 'gürgençler', 'gurgencler', 'idefix', 'vodafone',
+        'türk telekom', 'turk telekom', 'apple', 'samsung', 'xiaomi', 'mi store',
+        'd&r', 'boyner', 'a101', 'migros', 'carrefoursa', 'gittigidiyor', 'çiçeksepeti', 'ciceksepeti',
+    ]
+
+    def is_trusted_merchant(self, merchant):
+        m = (merchant or '').lower()
+        return any(t in m for t in self.TRUSTED_MERCHANTS)
+
     def __init__(self):
         self.flaresolverr_url = "http://localhost:8191/v1"
         self.domain_failures = {}
@@ -491,12 +506,109 @@ class TRPriceScraper:
         
         return None
 
+    GOOGLE_SHOPPING_DOMAIN = 'google-shopping'
+
+    # Google-internal anchors that must never be stored as a merchant URL
+    # (the old code grabbed the first <a> and shipped users to Google's
+    # "how Shopping works" help page: support.google.com/googleshopping/answer/9128904)
+    GOOGLE_INTERNAL_HOSTS = ('support.google.com', 'policies.google.com', 'accounts.google.com', 'myactivity.google.com')
+
+    def _extract_merchant_link(self, card, merchant=None):
+        """Return the best outbound merchant URL from a shopping card, or ''.
+
+        Priority: direct external link matching the merchant > any external
+        link > decoded /url? redirect > Google Shopping product page.
+        Google help/policy/account anchors are always rejected.
+        """
+        import urllib.parse
+
+        external, redirects, product_pages = [], [], []
+        for a in card.find_all('a', href=True):
+            href = a['href']
+            if href.startswith('javascript:') or href.startswith('#'):
+                continue
+            if href.startswith('/url?') or 'google.com/url?' in href:
+                # Decode Google redirect to the real destination
+                parsed = urllib.parse.urlparse(href if href.startswith('http') else 'https://www.google.com' + href)
+                qs = urllib.parse.parse_qs(parsed.query)
+                for key in ('q', 'url', 'adurl'):
+                    for val in qs.get(key, []):
+                        if val.startswith('http') and 'google.com' not in urllib.parse.urlparse(val).netloc:
+                            redirects.append(val)
+                continue
+            if href.startswith('http'):
+                host = urllib.parse.urlparse(href).netloc.lower()
+                if any(h in host for h in self.GOOGLE_INTERNAL_HOSTS):
+                    continue
+                if 'google.com' in host or 'google.com.tr' in host:
+                    if '/shopping/product' in href:
+                        product_pages.append(href)
+                    continue
+                external.append(href)
+            elif href.startswith('/shopping/product'):
+                product_pages.append('https://www.google.com' + href)
+
+        candidates = redirects + external
+        if merchant:
+            m = merchant.lower().replace(' ', '')
+            for url in candidates:
+                host = urllib.parse.urlparse(url).netloc.lower().replace('-', '').replace(' ', '')
+                if m[:6] in host:
+                    return self.clean_merchant_url(url)
+        if candidates:
+            return self.clean_merchant_url(candidates[0])
+        if product_pages:
+            return product_pages[0]
+        return ''
+
+    def _parse_shopping_cards_generic(self, soup, product_name):
+        """Selector-free card extraction: find the smallest DOM blocks that hold a
+        matching product title, a TL price, and a known Turkish retailer name."""
+        price_re = re.compile(r'\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?\s*(?:₺|TL)')
+        offers = []
+        for el in soup.find_all(['div', 'li', 'article']):
+            text = el.get_text(' ', strip=True)
+            if not (30 < len(text) < 400):
+                continue
+            price_m = price_re.search(text)
+            if not price_m:
+                continue
+            # smallest block: skip if a child block also matches (we'll visit it too)
+            if any(price_re.search(c.get_text(' ', strip=True) or '')
+                   for c in el.find_all(['div', 'li', 'article'], recursive=False)):
+                continue
+            if not self.is_strict_match(product_name, text):
+                continue
+            # Anchor on retailer names only — phone brand names ('samsung', 'apple')
+            # appear in every product title and would mislabel unknown sellers
+            phone_brands = {'apple', 'samsung', 'xiaomi', 'mi store'}
+            retailers = [t for t in self.TRUSTED_MERCHANTS if t not in phone_brands]
+            merchant = next((t for t in retailers if t in text.lower()), None)
+            if not merchant:
+                continue
+            price_val = self.clean_price(price_m.group(0))
+            if price_val < 1000:
+                continue
+            link = self._extract_merchant_link(el, merchant)
+            if not link:
+                parent_a = el.find_parent('a', href=True)
+                if parent_a:
+                    link = self._extract_merchant_link(parent_a.parent or parent_a, merchant)
+            if not link:
+                continue
+            offers.append({"merchant": merchant.title(), "price": price_val, "url": link})
+        return offers
+
     def get_google_shopping_price(self, product_name):
         """Scrape Google Shopping Turkey for multi-merchant price comparison via FlareSolverr."""
+        if self.GOOGLE_SHOPPING_DOMAIN in self.dead_domains:
+            return None
+
         search_name = self.clean_search_query(product_name)
-        url = f"https://www.google.com.tr/search?q={quote_plus(search_name)}+fiyat&tbm=shop&gl=tr&hl=tr"
+        # tbm=shop was retired by Google (redirects to udm=28) — use udm=28 directly
+        url = f"https://www.google.com/search?q={quote_plus(search_name)}+fiyat&udm=28&gl=tr&hl=tr"
         logging.info(f"🛒 Searching Google Shopping for: {search_name}")
-        
+
         # Google Shopping is JS-rendered — curl_cffi returns empty shells.
         # Call FlareSolverr directly (Google doesn't use Cloudflare, so it should work).
         try:
@@ -505,12 +617,22 @@ class TRPriceScraper:
             res_data = response.json()
             if res_data.get('status') == 'ok':
                 html = res_data['solution']['response']
+                final_url = res_data['solution'].get('url', '')
+                # Google serves /sorry/ (CAPTCHA) when rate-limited; keeping up the
+                # per-product hammering only extends the ban — trip the breaker instead
+                if '/sorry/' in final_url or 'recaptcha' in html[:5000].lower():
+                    logging.warning("  🚫 Google Shopping rate-limited (CAPTCHA page)")
+                    self._record_domain_result(self.GOOGLE_SHOPPING_DOMAIN, False)
+                    return None
             else:
                 logging.warning(f"  ⚠️ Google Shopping FlareSolverr: {res_data.get('message', 'unknown')}")
+                self._record_domain_result(self.GOOGLE_SHOPPING_DOMAIN, False)
                 return None
         except Exception as e:
             logging.warning(f"  ⚠️ Google Shopping FlareSolverr error: {e}")
+            self._record_domain_result(self.GOOGLE_SHOPPING_DOMAIN, False)
             return None
+        self._record_domain_result(self.GOOGLE_SHOPPING_DOMAIN, True)
         
         soup = BeautifulSoup(html, 'html.parser')
         results = []
@@ -550,19 +672,23 @@ class TRPriceScraper:
                 if price_val < 1000:
                     continue
                 
-                # Merchant
+                # Merchant — require a real, known Turkish retailer. Unknown sellers
+                # (gray imports, dropshippers) are skipped entirely.
                 merchant_el = wrapper.select_one('.WJMUdc, .aULzUe, .IuHnof, .E5ocAb')
-                merchant = merchant_el.get_text().strip() if merchant_el else "Mağaza"
+                if not merchant_el:
+                    continue
+                merchant = merchant_el.get_text().strip()
                 merchant = re.sub(r'\.com(\.tr)?$', '', merchant).strip()
+                if not self.is_trusted_merchant(merchant):
+                    logging.info(f"  🚷 Skipping untrusted Google Shopping seller: {merchant} ({price_val} TL)")
+                    continue
                 
-                # Link
-                link_el = wrapper.select_one('a[href*="/shopping/"], a[href*="url?"]')
-                if not link_el:
-                    link_el = wrapper.select_one('a[href]') or card.select_one('a[href]')
-                link = link_el.get('href', '') if link_el else ""
-                if link and not link.startswith('http'):
-                    link = "https://www.google.com.tr" + link
-                
+                # Link — pick the real merchant URL, not Google help/ad-info anchors
+                link = self._extract_merchant_link(card, merchant)
+                if not link:
+                    logging.info(f"  🔗 No usable merchant URL in card for {merchant}, skipping offer")
+                    continue
+
                 results.append({
                     "merchant": merchant,
                     "price": price_val,
@@ -571,21 +697,15 @@ class TRPriceScraper:
             except Exception:
                 continue
         
-        # Broader fallback: find ANY element with price in the page
+        # Fallback for markup drift: Google rotates its obfuscated class names, so
+        # when no known card selector matches, scan compact DOM blocks that contain
+        # a strict product-title match + a TL price + a *trusted merchant* name.
+        # (The old fallback that scraped any bare price from body text was removed —
+        # it produced fake offers with no title or merchant validation.)
         if not results:
-            import re as re_mod
-            body_text = soup.get_text()
-            price_matches = re_mod.findall(r'([\d]+\.[\d]{3}(?:,[\d]+)?)\s*(?:₺|TL)', body_text)
-            if price_matches:
-                logging.info(f"  📦 Found {len(price_matches)} prices in body text (using fallback)")
-                for pm in price_matches[:10]:
-                    price_val = self.clean_price(pm)
-                    if price_val >= 1000:
-                        results.append({
-                            "merchant": "Google Shopping",
-                            "price": price_val,
-                            "url": url
-                        })
+            results = self._parse_shopping_cards_generic(soup, product_name)
+            if results:
+                logging.info(f"  📦 Generic card parser recovered {len(results)} offers (selector drift?)")
         
         if results:
             seen = {}
@@ -807,6 +927,19 @@ class TRPriceScraper:
                 merchant_best[m_name] = r
         
         unique_results = list(merchant_best.values())
+
+        # Outlier guard: an offer far below the median is almost always a wrong
+        # variant (different storage, refurbished, gray import). Since base_price
+        # is set to the MINIMUM offer, one bad listing corrupts the product price.
+        if len(unique_results) >= 3:
+            prices = sorted(r['price'] for r in unique_results)
+            median = prices[len(prices) // 2]
+            filtered = [r for r in unique_results if r['price'] >= median * 0.6]
+            dropped = [r for r in unique_results if r['price'] < median * 0.6]
+            for d in dropped:
+                logging.warning(f"  📉 Dropping outlier offer: {d['merchant']} {d['price']} TL (median {median} TL)")
+            unique_results = filtered
+
         return sorted(unique_results, key=lambda x: x['price'])
 
 if __name__ == "__main__":
