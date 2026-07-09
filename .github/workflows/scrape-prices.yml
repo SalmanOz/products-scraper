@@ -21,6 +21,11 @@ on:
         required: false
         type: boolean
         default: false
+      run_brand_logos:
+        description: 'Run scrape_brand_logos.py standalone to fetch and update brand logos'
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   sync-data:
@@ -134,6 +139,22 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           python bulk_generate_verdicts.py
+
+      - name: Run Brand Logo Scraper (scrape_brand_logos.py)
+        if: ${{ github.event.inputs.run_brand_logos == 'true' || github.event_name == 'schedule' }}
+        env:
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          DB_PORT: ${{ secrets.DB_PORT }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+          R2_PUBLIC_DOMAIN: ${{ secrets.R2_PUBLIC_DOMAIN }}
+        run: |
+          python scrape_brand_logos.py
 
       - name: Dump FlareSolverr Logs (Diagnostics)
         if: always()
