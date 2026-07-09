@@ -284,15 +284,22 @@ class KimovilScraper:
             attributes["gaming_performance"] = calc_gaming(attributes["antutu_score"], attributes["battery_mah"], nm_v)
 
             def gen_faq(name, attr, parts):
+                # Only generate FAQ claims backed by real data — never fall back to
+                # invented defaults (a missing refresh rate is NOT 60Hz)
                 pool = []
                 antutu = attr.get("antutu_score", 0); bat = attr.get("battery_mah", 0); cam = parts.get("camera", 0)
-                hz = attr.get("screen_refresh_rate", 60); ch = attr.get("charging_speed_w", 18); sc = attr.get("kiscore", 0)
-                antutu_tr = f"{antutu:,}".replace(",", ".")  # Turkish thousands separator
-                pool.append({"q": random.choice([f"{name} oyun performansı nasıl?", f"{name} oyunlarda kasar mı?"]), "a": random.choice([f"{name}, {antutu_tr} AnTuTu skoruyla " + ("tüm oyunları en yüksek ayarlarda akıcı çalıştırır." if antutu > 1200000 else "orta-yüksek ayarlarda dengeli deneyim sunar." if antutu > 700000 else "temel oyunlar için uygundur.")])})
-                pool.append({"q": random.choice([f"{name} bataryası ne kadar gider?", f"{name} şarjı çabuk biter mi?"]), "a": random.choice([f"{bat} mAh kapasitesiyle " + ("normal kullanımda 1.5-2 gün pil ömrü sunar." if bat >= 5000 else "günlük standart kullanımı karşılar.")])})
-                pool.append({"q": random.choice([f"{name} kamerası gece çekimi için iyi mi?", f"{name} fotoğraf kalitesi nasıl?"]), "a": [("Evet, düşük ışıkta profesyonel sonuçlar verir." if cam >= 8.5 else "Gün ışığında başarılı olsa da gece çekimlerinde kumlanma yapabilir.")][0]})
-                pool.append({"q": random.choice([f"{name} ekranı kaç Hz?", f"{name} ekran akıcılığı nasıl?"]), "a": [f"{hz}Hz yenileme hızıyla " + ("ipeksi bir akıcılık sunar." if hz >= 120 else "standart bir akıcılık sunar.")][0]})
-                pool.append({"q": random.choice([f"{name} hızlı şarj oluyor mu?", f"{name} kaç Watt destekliyor?"]), "a": [f"{ch}W desteğiyle " + ("ultra hızlı şarj imkanı sağlar." if ch >= 67 else "makul sürelerde dolum sağlar.")][0]})
+                hz = attr.get("screen_refresh_rate"); ch = attr.get("charging_speed_w")
+                if antutu > 0:
+                    antutu_tr = f"{antutu:,}".replace(",", ".")  # Turkish thousands separator
+                    pool.append({"q": random.choice([f"{name} oyun performansı nasıl?", f"{name} oyunlarda kasar mı?"]), "a": random.choice([f"{name}, {antutu_tr} AnTuTu skoruyla " + ("tüm oyunları en yüksek ayarlarda akıcı çalıştırır." if antutu > 1200000 else "orta-yüksek ayarlarda dengeli deneyim sunar." if antutu > 700000 else "temel oyunlar için uygundur.")])})
+                if bat > 0:
+                    pool.append({"q": random.choice([f"{name} bataryası ne kadar gider?", f"{name} şarjı çabuk biter mi?"]), "a": random.choice([f"{bat} mAh kapasitesiyle " + ("normal kullanımda 1.5-2 gün pil ömrü sunar." if bat >= 5000 else "günlük standart kullanımı karşılar.")])})
+                if cam > 0:
+                    pool.append({"q": random.choice([f"{name} kamerası gece çekimi için iyi mi?", f"{name} fotoğraf kalitesi nasıl?"]), "a": [("Evet, düşük ışıkta profesyonel sonuçlar verir." if cam >= 8.5 else "Gün ışığında başarılı olsa da gece çekimlerinde kumlanma yapabilir.")][0]})
+                if hz:
+                    pool.append({"q": random.choice([f"{name} ekranı kaç Hz?", f"{name} ekran akıcılığı nasıl?"]), "a": [f"{hz}Hz yenileme hızıyla " + ("ipeksi bir akıcılık sunar." if hz >= 120 else "standart bir akıcılık sunar.")][0]})
+                if ch:
+                    pool.append({"q": random.choice([f"{name} hızlı şarj oluyor mu?", f"{name} kaç Watt destekliyor?"]), "a": [f"{ch}W desteğiyle " + ("ultra hızlı şarj imkanı sağlar." if ch >= 67 else "makul sürelerde dolum sağlar.")][0]})
                 random.shuffle(pool)
                 return pool[:5]
             attributes["faq"] = gen_faq(full_name, attributes, partials)

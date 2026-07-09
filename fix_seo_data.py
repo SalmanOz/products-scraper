@@ -2,6 +2,9 @@
 
 1. screen_size_inch corrupted by decimal stripping (667 -> 6.67, 61 -> 6.1)
 2. US-format thousands separators in stored FAQ answers ("1,934,662" -> "1.934.662")
+3. Fabricated FAQ claims: entries asserting a refresh rate / charging wattage /
+   battery life for products whose attributes lack that data (e.g. "60Hz" on a
+   120Hz phone whose screen_refresh_rate was never scraped)
 
 Safe to re-run; only rows that actually change are updated.
 """
@@ -44,6 +47,29 @@ def fix_faq_number_format(faq):
     return faq, changed
 
 
+def drop_unbacked_faq_claims(faq, attrs):
+    """Remove FAQ entries whose claims aren't backed by scraped attribute data."""
+    changed = False
+    if not isinstance(faq, list):
+        return faq, changed
+    kept = []
+    for item in faq:
+        if not isinstance(item, dict):
+            kept.append(item)
+            continue
+        text = f"{item.get('q', '')} {item.get('a', '')}"
+        fabricated = (
+            (re.search(r"\d+\s*Hz", text, re.I) and not attrs.get("screen_refresh_rate")) or
+            (re.search(r"\d+\s*W\b", text) and not attrs.get("charging_speed_w")) or
+            (re.search(r"\d+\s*mAh", text, re.I) and not attrs.get("battery_mah"))
+        )
+        if fabricated:
+            changed = True
+        else:
+            kept.append(item)
+    return kept, changed
+
+
 def run():
     db = mysql.connector.connect(
         host=os.getenv("DB_HOST"),
@@ -78,6 +104,11 @@ def run():
             attrs["faq"], faq_changed = fix_faq_number_format(attrs["faq"])
             if faq_changed:
                 logging.info(f"🔢 {row['name']}: fixed FAQ number format")
+                modified = True
+
+            attrs["faq"], faq_pruned = drop_unbacked_faq_claims(attrs["faq"], attrs)
+            if faq_pruned:
+                logging.info(f"🧹 {row['name']}: removed fabricated FAQ claims")
                 modified = True
 
         if modified:
