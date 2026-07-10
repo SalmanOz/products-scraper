@@ -129,7 +129,7 @@ jobs:
           python update_prices.py
 
       - name: Run AI Verdict Migration (bulk_generate_verdicts.py)
-        if: ${{ github.event.inputs.run_ai_migration == 'true' }}
+        if: ${{ github.event.inputs.run_ai_migration == 'true' || github.event_name == 'schedule' }}
         env:
           DB_HOST: ${{ secrets.DB_HOST }}
           DB_USER: ${{ secrets.DB_USER }}
