@@ -121,7 +121,11 @@ def clean_hallucinations(analysis_json, product_specs):
     # Strip exclamation marks
     verdict = verdict.replace('!', '.')
     
-    # Replace forbidden words
+    # Replace forbidden words. Keep this in sync with the banned-word list in
+    # system_instruction above — the system prompt lists 13 words/phrases but this
+    # algorithmic guardrail previously only covered 8 of them, so if the model
+    # ignored the instruction the remaining 5 shipped straight into stored "honest"
+    # analysis unfiltered (the exact hype language this pipeline exists to avoid).
     forbidden = {
         r'\badeta\b': '',
         r'\bmuazzam\b': 'oldukça başarılı',
@@ -130,7 +134,12 @@ def clean_hallucinations(analysis_json, product_specs):
         r'\bcanavar\b': 'yüksek performanslı',
         r'\bkusursuz\b': 'başarılı',
         r'\bçığır açan\b': 'yenilikçi',
-        r'\bgöz dolduruyor\b': 'iyi performans gösteriyor'
+        r'\bgöz dolduruyor\b': 'iyi performans gösteriyor',
+        r'\bezber bozan\b': 'farklı bir yaklaşım sunan',
+        r'\byeniden tanımlıyor\b': 'geliştiriyor',
+        r'\bolağanüstü\b': 'iyi',
+        r'\bşık tasarımıyla\b': 'tasarımıyla',
+        r'\bdikkat çekiyor\b': 'öne çıkıyor',
     }
     
     for pattern, replacement in forbidden.items():
