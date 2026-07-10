@@ -1,0 +1,11 @@
+venv/
+.env
+__pycache__/
+*.pyc
+.git/
+.github/
+debug_*.html
+*_raw.txt
+*.png
+.DS_Store
+teknoskor_production_backup.sql
