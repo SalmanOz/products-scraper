@@ -335,7 +335,22 @@ class TRPriceScraper:
         ]
         if any(k in title for k in bad_keywords) and not any(k in name for k in bad_keywords):
             return False
-            
+
+        # 2.5. Category safety net: require SOME phone-brand marker or phone-category
+        # word in the title. Without this, a title can pass step 1 purely by
+        # coincidence — e.g. sunglasses SKU "MJ0439S-003-15T-58" contains "15T" as a
+        # hyphen-delimited token and matches a "15T" search even though the title
+        # never mentions a phone brand or "telefon" at all. Model-number tokens alone
+        # are not sufficient proof this is the right product, let alone a phone.
+        #
+        # Deliberately checks for ANY known brand in the title, not "the searched
+        # brand" — callers (e.g. update_prices.py) strip brand prefixes from
+        # product_name before searching ("Xiaomi 15T" -> "15T") to widen search
+        # results, so `name` itself frequently has no brand for us to compare against.
+        phone_category_words = ['telefon', 'akıllı telefon', 'akilli telefon', 'smartphone', 'cep telefonu', 'gsm']
+        if not any(b in title for b in brands) and not any(c in title for c in phone_category_words):
+            return False
+
         # 3. Handle Pro/Max/Ultra variations strictly
         variations = ["pro", "max", "plus", "ultra", "lite", "fe", "mini", "se"]
         for var in variations:
@@ -492,6 +507,17 @@ class TRPriceScraper:
                         "url": self.clean_merchant_url(link)
                     })
         
+        # Trust filter: Akakçe aggregates the same gray-import/dropship sellers Google
+        # Shopping does (see TRUSTED_MERCHANTS), but unlike get_google_shopping_price
+        # this path never checked is_trusted_merchant() — it only relied on
+        # is_strict_match() for product matching, which says nothing about seller
+        # reliability. That gap matters more now that get_best_prices() falls through
+        # to Akakçe whenever Google Shopping's own coverage is thin.
+        untrusted = [r for r in results if not self.is_trusted_merchant(r['merchant'])]
+        for u in untrusted:
+            logging.info(f"  🚷 Skipping untrusted Akakçe seller: {u['merchant']} ({u['price']} TL)")
+        results = [r for r in results if self.is_trusted_merchant(r['merchant'])]
+
         # Filter and De-duplicate
         if results:
             final_agg = []
@@ -503,7 +529,7 @@ class TRPriceScraper:
                     seen.add(key)
                     final_agg.append(r)
             return final_agg
-        
+
         return None
 
     GOOGLE_SHOPPING_DOMAIN = 'google-shopping'
@@ -812,18 +838,27 @@ class TRPriceScraper:
                 "url": direct_url
             })
             
+        # Trust filter: same gap as Akakçe above — Epey's merchant list was never
+        # checked against TRUSTED_MERCHANTS, only Google Shopping was.
+        untrusted = [r for r in results if not self.is_trusted_merchant(r['merchant'])]
+        for u in untrusted:
+            logging.info(f"  🚷 Skipping untrusted Epey seller: {u['merchant']} ({u['price']} TL)")
+        results = [r for r in results if self.is_trusted_merchant(r['merchant'])]
+
         if results:
+            # Sort by price FIRST so "keep first occurrence per merchant" below
+            # actually keeps the lowest price per merchant, not just whichever
+            # listing happened to appear first in DOM order.
+            results.sort(key=lambda x: x['price'])
             final_agg = []
             seen = set()
             for r in results:
-                # Keep only lowest price per merchant
                 key = f"{r['merchant']}"
                 if key not in seen:
                     seen.add(key)
                     final_agg.append(r)
-            final_agg.sort(key=lambda x: x['price'])
             return final_agg
-            
+
         return None
 
     async def scrape_site_async(self, site_name, config, search_name, product_name, semaphore):
@@ -863,34 +898,63 @@ class TRPriceScraper:
                 pass
             return None
 
+    @staticmethod
+    def _standardize_merchant_name(m_name):
+        m = m_name.lower()
+        if 'hepsiburada' in m: return 'Hepsiburada'
+        if 'trendyol' in m: return 'Trendyol'
+        if 'amazon' in m: return 'Amazon TR'
+        if 'n11' in m: return 'n11'
+        if 'ptt' in m: return 'PttAVM'
+        if 'pasaj' in m: return 'Pasaj'
+        if 'pazarama' in m: return 'Pazarama'
+        if 'vatan' in m: return 'Vatan Bilgisayar'
+        if 'mediamarkt' in m: return 'MediaMarkt'
+        if 'teknosa' in m: return 'Teknosa'
+        return m_name
+
     async def get_best_prices(self, product_name):
         results = []
-        
+        # /about claims broad coverage (Hepsiburada, Trendyol, Amazon TR, n11 and more).
+        # Stopping at the first source that returns anything left products with only
+        # 1-2 offers whenever Google Shopping alone was thin — keep pulling from
+        # additional aggregators until we hit a reasonable number of distinct merchants.
+        TARGET_MERCHANT_COUNT = 4
+
+        def merchant_count():
+            return len({self._standardize_merchant_name(r['merchant']) for r in results})
+
         # 1. Try Google Shopping (no Cloudflare, most reliable from CI)
-        results = self.get_google_shopping_price(product_name)
-        if results:
-            logging.info(f"  ✨ Found {len(results)} offers on Google Shopping")
+        gs_results = self.get_google_shopping_price(product_name)
+        if gs_results:
+            results.extend(gs_results)
+            logging.info(f"  ✨ Found {len(gs_results)} offers on Google Shopping")
 
-        # 2. Try Epey.com as fallback
-        if not results:
-            logging.info(f"  🔄 Google Shopping found nothing, trying Epey...")
-            results = self.get_epey_price(product_name)
-            if results:
-                logging.info(f"  ✨ Found {len(results)} offers on Epey")
-            
-        # 3. Try Akakçe as fallback aggregator
-        if not results:
-            logging.info(f"  🔄 Epey failed, trying Akakçe...")
-            results = self.get_akakce_price(product_name)
-            if results:
-                logging.info(f"  ✨ Found {len(results)} offers on Akakçe")
+        # 2. Try Epey.com to add more merchants if coverage is still thin
+        if merchant_count() < TARGET_MERCHANT_COUNT:
+            logging.info(f"  🔄 {merchant_count()} merchant(s) so far, trying Epey for more coverage...")
+            epey_results = self.get_epey_price(product_name)
+            if epey_results:
+                results.extend(epey_results)
+                logging.info(f"  ✨ Found {len(epey_results)} offers on Epey")
 
-        # 3. Specific sites fallback if aggregators failed (Our own direct scraper engine)
+        # 3. Try Akakçe to add more merchants if coverage is still thin
+        if merchant_count() < TARGET_MERCHANT_COUNT:
+            logging.info(f"  🔄 {merchant_count()} merchant(s) so far, trying Akakçe...")
+            akakce_results = self.get_akakce_price(product_name)
+            if akakce_results:
+                results.extend(akakce_results)
+                logging.info(f"  ✨ Found {len(akakce_results)} offers on Akakçe")
+
+        # 4. Specific sites fallback (our own direct scraper engine, concurrent across
+        #    ~10 sites) — this is the slowest path, so it only runs when the aggregators
+        #    combined still found nothing at all, not merely "not enough" (unchanged from
+        #    prior behavior to keep the CI time budget predictable).
         if not results:
             search_name = self.clean_search_query(product_name)
-            results = [] 
+            results = []
             logging.warning(f"  ⚠️ All aggregators found nothing. Falling back to multi-site direct search engine for {search_name}...")
-            
+
             # Priority order: datacenter-friendly sites first, then others
             priority_sites = ['Hepsiburada', 'PttAVM', 'n11', 'Trendyol', 'Amazon TR', 'Vatan Bilgisayar', 'MediaMarkt', 'Pasaj', 'Pazarama', 'Gürgençler']
             sem = asyncio.Semaphore(3)
@@ -899,7 +963,7 @@ class TRPriceScraper:
                 config = self.site_configs.get(site_name)
                 if config:
                     tasks.append(self.scrape_site_async(site_name, config, search_name, product_name, sem))
-            
+
             scraped_results = await asyncio.gather(*tasks)
             for r in scraped_results:
                 if r:
@@ -909,23 +973,11 @@ class TRPriceScraper:
         # De-duplicate: ONLY ONE LOWEST PRICE PER MERCHANT
         merchant_best = {}
         for r in results:
-            m_name = r['merchant']
-            # Standardize merchant names
-            if 'hepsiburada' in m_name.lower(): m_name = 'Hepsiburada'
-            elif 'trendyol' in m_name.lower(): m_name = 'Trendyol'
-            elif 'amazon' in m_name.lower(): m_name = 'Amazon TR'
-            elif 'n11' in m_name.lower(): m_name = 'n11'
-            elif 'ptt' in m_name.lower(): m_name = 'PttAVM'
-            elif 'pasaj' in m_name.lower(): m_name = 'Pasaj'
-            elif 'pazarama' in m_name.lower(): m_name = 'Pazarama'
-            elif 'vatan' in m_name.lower(): m_name = 'Vatan Bilgisayar'
-            elif 'mediamarkt' in m_name.lower(): m_name = 'MediaMarkt'
-            elif 'teknosa' in m_name.lower(): m_name = 'Teknosa'
-            
+            m_name = self._standardize_merchant_name(r['merchant'])
             r['merchant'] = m_name
             if m_name not in merchant_best or r['price'] < merchant_best[m_name]['price']:
                 merchant_best[m_name] = r
-        
+
         unique_results = list(merchant_best.values())
 
         # Outlier guard: an offer far below the median is almost always a wrong
