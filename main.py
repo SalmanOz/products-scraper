@@ -204,9 +204,7 @@ class KimovilScraper:
             soup = BeautifulSoup(html, 'html.parser')
             device_ki = {}; device_compare = {}
             ki_meta = soup.find('meta', {'name': 'deviceki'})
-            device_ki = {}; device_compare = {}
-            ki_meta = soup.find('meta', {'name': 'deviceki'})
-            if ki_meta and ki_meta.get('content'): 
+            if ki_meta and ki_meta.get('content'):
                 try: device_ki = json.loads(html_lib.unescape(ki_meta['content']))
                 except: pass
             
@@ -295,7 +293,14 @@ class KimovilScraper:
                 if bat > 0:
                     pool.append({"q": random.choice([f"{name} bataryası ne kadar gider?", f"{name} şarjı çabuk biter mi?"]), "a": random.choice([f"{bat} mAh kapasitesiyle " + ("normal kullanımda 1.5-2 gün pil ömrü sunar." if bat >= 5000 else "günlük standart kullanımı karşılar.")])})
                 if cam > 0:
-                    pool.append({"q": random.choice([f"{name} kamerası gece çekimi için iyi mi?", f"{name} fotoğraf kalitesi nasıl?"]), "a": [("Evet, düşük ışıkta profesyonel sonuçlar verir." if cam >= 8.5 else "Gün ışığında başarılı olsa da gece çekimlerinde kumlanma yapabilir.")][0]})
+                    # Answer must not open with a yes/no marker ("Evet, ...") — the
+                    # question is randomly one of a yes/no phrasing ("... iyi mi?")
+                    # or an open "nasıl?" phrasing, and "Evet, ..." only makes
+                    # grammatical sense as a reply to the former. Every other FAQ
+                    # answer in this function is phrased descriptively with no
+                    # yes/no marker; match that style here too so it works for
+                    # either question.
+                    pool.append({"q": random.choice([f"{name} kamerası gece çekimi için iyi mi?", f"{name} fotoğraf kalitesi nasıl?"]), "a": ("Düşük ışıkta profesyonel sonuçlar verir." if cam >= 8.5 else "Gün ışığında başarılı olsa da gece çekimlerinde kumlanma yapabilir.")})
                 if hz:
                     pool.append({"q": random.choice([f"{name} ekranı kaç Hz?", f"{name} ekran akıcılığı nasıl?"]), "a": [f"{hz}Hz yenileme hızıyla " + ("ipeksi bir akıcılık sunar." if hz >= 120 else "standart bir akıcılık sunar.")][0]})
                 if ch:
@@ -420,10 +425,7 @@ class KimovilScraper:
             """, (full_name, slug, b_id, category_id, 0, json.dumps(images), json.dumps(attributes), teknoskor, 'published'))
             
             # --- Price separation: prices are now handled by update_prices.py ---
-            
-            logging.info(f"✅ Success: {full_name}")
-            return True
-                
+
             logging.info(f"✅ Success: {full_name}")
             return True
         except Exception as e: logging.error(f"❌ Error: {str(e)}"); return False

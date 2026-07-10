@@ -2,10 +2,15 @@
 
 1. screen_size_inch corrupted by decimal stripping (667 -> 6.67, 61 -> 6.1)
 2. US-format thousands separators in stored FAQ answers ("1,934,662" -> "1.934.662")
-3. Fabricated FAQ claims: entries asserting a refresh rate / charging wattage /
+3. FAQ answers that open with "Evet,"/"Hayır," (a yes/no marker) paired with a
+   question that isn't phrased as yes/no (e.g. "... nasıl?" instead of "... mı?")
+   — a gen_faq() (main.py) bug that randomized the question independently of
+   the answer, producing nonsensical pairs like "Q: fotoğraf kalitesi nasıl?
+   A: Evet, düşük ışıkta profesyonel sonuçlar verir."
+4. Fabricated FAQ claims: entries asserting a refresh rate / charging wattage /
    battery life for products whose attributes lack that data (e.g. "60Hz" on a
    120Hz phone whose screen_refresh_rate was never scraped)
-4. Offers from untrusted gray-import/dropship sellers (e.g. "Wireless Source")
+5. Offers from untrusted gray-import/dropship sellers (e.g. "Wireless Source")
    left over from before the merchant whitelist existed; base_price is
    recomputed from the remaining trusted offers
 
@@ -46,6 +51,34 @@ def fix_faq_number_format(faq):
         answer = item.get("a")
         if isinstance(answer, str) and re.search(r"\d,\d{3}", answer):
             item["a"] = re.sub(r"(?<=\d),(?=\d{3})", ".", answer)
+            changed = True
+    return faq, changed
+
+
+def fix_faq_grammar_mismatch(faq):
+    """Strip a leading 'Evet,'/'Hayır,' from FAQ answers paired with a question
+    that isn't phrased as a yes/no question (e.g. "... nasıl?" instead of
+    "... mı?"). A yes/no marker only makes grammatical sense as a reply to a
+    question ending in the Turkish yes/no particle (mı/mi/mu/mü) — this is the
+    bug where gen_faq() (main.py) randomized the question independently of the
+    answer, producing e.g. "Q: fotoğraf kalitesi nasıl? A: Evet, ..."."""
+    changed = False
+    if not isinstance(faq, list):
+        return faq, changed
+    yesno_particle = re.compile(r"\b(mı|mi|mu|mü)\s*\?\s*$", re.IGNORECASE)
+    marker = re.compile(r"^(Evet|Hayır),?\s+", re.IGNORECASE)
+    for item in faq:
+        if not isinstance(item, dict):
+            continue
+        q = item.get("q", "")
+        a = item.get("a")
+        if not isinstance(a, str) or not isinstance(q, str):
+            continue
+        if marker.match(a) and not yesno_particle.search(q.strip()):
+            new_a = marker.sub("", a)
+            if new_a:
+                new_a = new_a[0].upper() + new_a[1:]
+            item["a"] = new_a
             changed = True
     return faq, changed
 
@@ -143,6 +176,11 @@ def run():
             attrs["faq"], faq_changed = fix_faq_number_format(attrs["faq"])
             if faq_changed:
                 logging.info(f"🔢 {row['name']}: fixed FAQ number format")
+                modified = True
+
+            attrs["faq"], faq_grammar_fixed = fix_faq_grammar_mismatch(attrs["faq"])
+            if faq_grammar_fixed:
+                logging.info(f"🗣️ {row['name']}: fixed FAQ yes/no answer paired with a non-yes/no question")
                 modified = True
 
             attrs["faq"], faq_pruned = drop_unbacked_faq_claims(attrs["faq"], attrs)
