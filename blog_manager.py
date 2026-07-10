@@ -366,7 +366,42 @@ Bu makalede 2026 model amiral gemisi telefonların kamera sensör boyutlarını 
     if not success:
         raise Exception(f"All Gemini model invocations failed. Last error details: {last_error_msg}")
 
-    return full_text
+    return clean_forbidden_phrases(full_text)
+
+
+def clean_forbidden_phrases(text):
+    """Algorithmic guardrail: strip the system prompt's banned AI-cliché phrases
+    from generated article text in case the model ignores the instruction. Blog
+    posts are generated on a cron schedule and default to status=published (see
+    .github/workflows/generate-blog.yml), so unlike a manually-reviewed draft
+    this has no human checkpoint — bulk_generate_verdicts.py has an equivalent
+    fallback (clean_hallucinations) for the same reason.
+
+    Only single-word/short-phrase bans get a direct substitution. The three
+    sentence-opening transition phrases ("sonuç olarak" etc.) are removed along
+    with a trailing comma, since leaving the comma behind reads as broken
+    grammar; a possible lowercase first letter after removal is a minor
+    cosmetic tradeoff against leaving a banned cliché in place.
+    """
+    word_replacements = {
+        r'\bdevrimsel\b': 'gelişmiş',
+        r'\bşık tasarım\b': 'tasarım',
+        r'\bbüyüleyici deneyim\b': 'iyi bir deneyim',
+        r'\bgöz kamaştırıcı\b': 'başarılı',
+        r'\bderinlemesine dalış\b': 'detaylı inceleme',
+    }
+    transition_phrases = [r'\bsonuç olarak\b', r'\bözetlemek gerekirse\b', r'\bunutmamak gerekir ki\b']
+
+    cleaned = text
+    for pattern, replacement in word_replacements.items():
+        cleaned = re.sub(pattern, replacement, cleaned, flags=re.IGNORECASE)
+    for pattern in transition_phrases:
+        cleaned = re.sub(pattern + r',?\s*', '', cleaned, flags=re.IGNORECASE)
+    # Collapse extra spaces left by empty replacements, but preserve newlines
+    # so Markdown paragraph/heading structure isn't destroyed.
+    cleaned = re.sub(r'[ \t]+', ' ', cleaned)
+    cleaned = re.sub(r'[ \t]+\n', '\n', cleaned)
+    return cleaned
 
 # ----------------------------------------------------------------------
 # 4. Turkish Slugify Utility
