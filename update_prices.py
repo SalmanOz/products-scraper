@@ -6,6 +6,7 @@ import os
 import time
 from dotenv import load_dotenv
 from tr_price_scraper import TRPriceScraper
+from indexnow import submit_urls
 
 load_dotenv()
 
@@ -119,18 +120,20 @@ class PriceUpdater:
             products = self.get_all_products()
             
         logging.info(f"🚀 Starting price update for {len(products)} products...")
-        
+
+        updated_paths = []
         for p in products:
             name = p['name']
             # Remove brand prefixes for better search on TR sites
             clean_name = name.replace('Apple ', '').replace('Samsung ', '').replace('Xiaomi ', '')
-            
+
             logging.info(f"\n🔍 Updating prices for: {name}")
             try:
                 offers = await self.price_scraper.get_best_prices(clean_name)
                 self.ensure_connection()
                 if offers:
                     self.update_product_offers(p['id'], offers, p['base_price'])
+                    updated_paths.append(f"/product/{p['slug']}")
                 else:
                     # Clear base_price if no offers found to avoid stale data
                     self.cursor.execute("UPDATE products SET base_price = 0 WHERE id = %s", (p['id'],))
@@ -138,9 +141,15 @@ class PriceUpdater:
                     logging.warning(f"  ⚠️ No offers found for {name}. Base price reset.")
             except Exception as e:
                 logging.error(f"  ❌ Error fetching prices for {name}: {str(e)}")
-            
+
             # Small delay to avoid aggressive scraping
             await asyncio.sleep(1)
+
+        # Ping IndexNow with every product page whose offers changed, plus the
+        # listing surfaces that reflect those prices. Best-effort — never fails
+        # the run.
+        if updated_paths:
+            submit_urls(updated_paths + ["/", "/products"])
 
         logging.info("\n🏁 Price update completed!")
         try:
