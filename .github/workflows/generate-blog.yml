@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       topic:
-        description: 'Target data focus metric (performance, camera, battery, random)'
+        description: 'Article archetype (random rotates, skipping recently covered angles)'
         required: false
         type: choice
         options:
@@ -15,6 +15,13 @@ on:
           - performance
           - camera
           - battery
+          - value
+          - budget
+          - flagship
+          - gaming
+          - midrange
+          - brand_showdown
+          - versus
         default: 'random'
       status:
         description: 'Publishing state of the generated post (published, draft)'

@@ -9,7 +9,10 @@ from blog_manager import clean_forbidden_phrases
 FORBIDDEN_PHRASES = [
     'devrimsel', 'şık tasarım', 'büyüleyici deneyim', 'sonuç olarak',
     'göz kamaştırıcı', 'özetlemek gerekirse', 'unutmamak gerekir ki',
-    'derinlemesine dalış',
+    'derinlemesine dalış', 'ezber bozan', 'kendine hayran bırakıyor',
+    'kullanıcı deneyimini üst seviyeye taşıyor', 'iddialı bir seçenek',
+    'fark yaratıyor', 'hayatımızın vazgeçilmezi', 'adeta',
+    'teknoloji dünyasında',
 ]
 
 

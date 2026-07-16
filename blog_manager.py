@@ -31,10 +31,188 @@ def get_db_connection():
         connection_timeout=10
     )
 
+# ----------------------------------------------------------------------
+# Topic archetypes.
+#
+# The generator used to know only 3 topics (performance/camera/battery), each
+# built from a near-identical top-5 dataset — so every run produced the same
+# phones under a slightly reworded "2026'nın en iyileri" headline. Each
+# archetype below pulls a *different slice* of the catalog and carries its own
+# editorial angle, and pick_topic() skips angles the blog covered recently.
+#
+# `keywords` are matched against recent post titles for the dedup guard.
+# ----------------------------------------------------------------------
+BASE_SELECT = """
+    SELECT p.name, p.slug, p.base_price, b.name as brand_name,
+           p.teknoskor_score, p.images,
+           CAST(JSON_UNQUOTE(JSON_EXTRACT(p.attributes, '$.antutu_score')) AS SIGNED) as antutu_score,
+           p.attributes
+    FROM products p
+    JOIN brands b ON p.brand_id = b.id
+    WHERE p.status IN ('published', 'draft')
+"""
+
+TOPIC_ARCHETYPES = {
+    "performance": {
+        "keywords": ["performans", "antutu", "hız"],
+        "angle": "Ham güç analizi: AnTuTu skorlarının günlük kullanımda ve oyunda gerçekte neye karşılık geldiğini anlat.",
+    },
+    "camera": {
+        "keywords": ["kamera", "fotoğraf", "megapiksel"],
+        "angle": "Kamera gerçekleri: megapiksel pazarlamasıyla gerçek fotoğraf kalitesi arasındaki farkı skorlarla göster.",
+    },
+    "battery": {
+        "keywords": ["batarya", "şarj", "pil"],
+        "angle": "Batarya ve şarj dengesi: mAh rakamının tek başına neden yetmediğini, işlemci verimliliğiyle birlikte değerlendir.",
+    },
+    "value": {
+        "keywords": ["fiyat/performans", "fiyat performans", "değer"],
+        "angle": "Puan/TL analizi: ödenen her 1.000 TL'nin karşılığını en çok veren modelleri, pahalıların neden kaybettiğini de açıklayarak sırala.",
+    },
+    "budget": {
+        "keywords": ["bütçe", "ucuz", "20.000", "uygun fiyat"],
+        "angle": "Dar bütçe rehberi: 20 bin TL altında neyin gerçekten alınabilir olduğunu, hangi fedakarlıkların kabul edilebilir olduğunu anlat.",
+    },
+    "flagship": {
+        "keywords": ["amiral gemisi", "en pahalı", "premium"],
+        "angle": "Amiral gemisi sorgulaması: 50 bin TL üstü telefonların hangileri parasını hak ediyor, hangileri marka vergisi ödetiyor?",
+    },
+    "gaming": {
+        "keywords": ["oyun", "pubg", "fps"],
+        "angle": "Oyuncu odaklı analiz: FPS verileri, ısınma ve dokunmatik tepkime üzerinden gerçek oyun deneyimini karşılaştır.",
+    },
+    "midrange": {
+        "keywords": ["orta segment", "20-40", "dengeli"],
+        "angle": "Orta segment savaşı: 20-40 bin TL bandında amiral gemisi deneyimine en çok yaklaşan modelleri karşılaştır.",
+    },
+    "brand_showdown": {
+        "keywords": ["kapışma", "karşı karşıya", "marka savaşı"],
+        "angle": "Marka kapışması: iki büyük markanın güncel kadrolarını segment segment karşılaştır, hangisi hangi bütçede kazanıyor söyle.",
+    },
+    "versus": {
+        "keywords": [" vs ", "hangisi alınır", "düello"],
+        "angle": "İkili düello: birbirine en yakın iki rakibi derinlemesine karşılaştır ve net bir kazanan ilan et.",
+    },
+}
+
+
+def fetch_topic_data(topic_type):
+    """Returns (rows, extra_note) for the new archetypes; legacy topics fall
+    through to fetch_phone_data. extra_note carries archetype-specific context
+    the prompt needs (e.g. the /karsilastir URL for a versus duel)."""
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    rows, note = [], ""
+
+    try:
+        if topic_type == "value":
+            cursor.execute(BASE_SELECT + """
+                AND p.base_price > 0 AND p.teknoskor_score >= 70
+                ORDER BY p.teknoskor_score / (p.base_price / 1000) DESC LIMIT 5
+            """)
+            rows = cursor.fetchall()
+        elif topic_type == "budget":
+            cursor.execute(BASE_SELECT + """
+                AND p.base_price BETWEEN 1 AND 20000
+                ORDER BY p.teknoskor_score DESC LIMIT 5
+            """)
+            rows = cursor.fetchall()
+        elif topic_type == "flagship":
+            cursor.execute(BASE_SELECT + """
+                AND p.base_price >= 50000
+                ORDER BY p.teknoskor_score DESC LIMIT 5
+            """)
+            rows = cursor.fetchall()
+        elif topic_type == "gaming":
+            cursor.execute(BASE_SELECT + """
+                AND JSON_EXTRACT(p.attributes, '$.gaming_performance') IS NOT NULL
+                ORDER BY antutu_score DESC LIMIT 5
+            """)
+            rows = cursor.fetchall()
+        elif topic_type == "midrange":
+            cursor.execute(BASE_SELECT + """
+                AND p.base_price BETWEEN 20000 AND 40000
+                ORDER BY p.teknoskor_score DESC LIMIT 5
+            """)
+            rows = cursor.fetchall()
+        elif topic_type == "brand_showdown":
+            cursor.execute("""
+                SELECT b.id, b.name, COUNT(*) as cnt FROM products p
+                JOIN brands b ON p.brand_id = b.id
+                WHERE p.status IN ('published', 'draft') AND p.teknoskor_score > 0
+                GROUP BY b.id, b.name ORDER BY cnt DESC LIMIT 2
+            """)
+            brands = cursor.fetchall()
+            if len(brands) == 2:
+                for br in brands:
+                    cursor.execute(BASE_SELECT + """
+                        AND p.brand_id = %s AND p.teknoskor_score > 0
+                        ORDER BY p.teknoskor_score DESC LIMIT 3
+                    """, (br["id"],))
+                    rows.extend(cursor.fetchall())
+                note = f"Bu bir marka kapışması yazısı: {brands[0]['name']} vs {brands[1]['name']}. Her markadan 3 model var; segment segment kıyasla."
+        elif topic_type == "versus":
+            # Closest matchup by relative price gap + score gap — the same
+            # buyer-indecision heuristic as frontend versus.ts, so the duel
+            # article always has a matching /karsilastir page to link to.
+            cursor.execute(BASE_SELECT + " AND p.base_price > 0 AND p.teknoskor_score > 0")
+            pool = cursor.fetchall()
+            best, best_d = None, None
+            for i in range(len(pool)):
+                for j in range(i + 1, len(pool)):
+                    a, b = pool[i], pool[j]
+                    pa, pb = float(a["base_price"]), float(b["base_price"])
+                    d = abs(pa - pb) / max(pa, pb) + abs(float(a["teknoskor_score"]) - float(b["teknoskor_score"])) / 100 * 0.5
+                    if best_d is None or d < best_d:
+                        best, best_d = (a, b), d
+            if best:
+                rows = list(best)
+                pair = "-vs-".join(sorted([best[0]["slug"], best[1]["slug"]]))
+                note = (f"Bu bir ikili düello yazısı: {best[0]['name']} vs {best[1]['name']}. "
+                        f"Yazının içinde bir yerde şu karşılaştırma sayfasına doğal bir cümleyle link ver: "
+                        f"[detaylı karşılaştırma tablosu](/karsilastir/{pair})")
+    finally:
+        cursor.close()
+        conn.close()
+
+    if rows:
+        rows = _normalize_rows(rows)
+    return rows, note
+
+
+def fetch_recent_post_titles(limit=12):
+    """Titles of the newest posts — the dedup guard reads these so the
+    generator stops rewriting the same article. Fails soft: no table yet
+    (fresh install) just means no dedup context."""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute(
+            "SELECT title FROM blog_posts WHERE lang = 'tr' ORDER BY created_at DESC LIMIT %s",
+            (limit,),
+        )
+        titles = [r["title"] for r in cursor.fetchall()]
+        cursor.close()
+        conn.close()
+        return titles
+    except Exception:
+        return []
+
+
+def pick_topic(recent_titles):
+    """Random archetype, excluding any whose signature keywords appear in a
+    recent title — cheap rotation without needing a topic column in the DB."""
+    import random
+    recent_blob = " ".join(recent_titles).lower()
+    fresh = [t for t, cfg in TOPIC_ARCHETYPES.items()
+             if not any(kw in recent_blob for kw in cfg["keywords"])]
+    return random.choice(fresh if fresh else list(TOPIC_ARCHETYPES.keys()))
+
+
 def fetch_phone_data(topic_type="performance"):
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
-    
+
     if topic_type == "camera":
         query = """
             SELECT p.name, p.slug, p.base_price, b.name as brand_name, 
@@ -74,8 +252,14 @@ def fetch_phone_data(topic_type="performance"):
         
     cursor.execute(query)
     rows = cursor.fetchall()
-    
-    # Parse attributes and images if they are returned as string/JSON
+    cursor.close()
+    conn.close()
+    return _normalize_rows(rows)
+
+
+def _normalize_rows(rows):
+    """Parse attributes/images JSON strings and convert Decimals — shared by
+    the legacy queries and the archetype fetchers."""
     for row in rows:
         if "attributes" in row and isinstance(row["attributes"], str):
             try:
@@ -87,7 +271,7 @@ def fetch_phone_data(topic_type="performance"):
                 row["images"] = json.loads(row["images"])
             except:
                 pass
-                
+
     def convert_decimals(obj):
         if isinstance(obj, decimal.Decimal):
             return float(obj)
@@ -97,11 +281,7 @@ def fetch_phone_data(topic_type="performance"):
             return [convert_decimals(v) for v in obj]
         return obj
 
-    rows = convert_decimals(rows)
-                
-    cursor.close()
-    conn.close()
-    return rows
+    return convert_decimals(rows)
 
 # ----------------------------------------------------------------------
 # 2. Markdown to HTML Converter
@@ -168,11 +348,19 @@ def inject_internal_links(content: str, lang: str = "tr") -> str:
     keyword_map = {
         "pubg performansı": f"{lang_prefix}/pubg-performansi-en-yuksek-telefonlar",
         "oyun telefonu": f"{lang_prefix}/pubg-performansi-en-yuksek-telefonlar",
+        "oyun telefonları": f"{lang_prefix}/en-iyi-oyun-telefonlari",
         "kameralı telefon": f"{lang_prefix}/en-iyi-kamera-skorlu-telefonlar",
         "kamera performansı": f"{lang_prefix}/en-iyi-kamera-skorlu-telefonlar",
         "şarjı en uzun": f"{lang_prefix}/sarji-en-uzun-giden-fiyat-performans-telefonlari",
         "şarjı uzun": f"{lang_prefix}/sarji-en-uzun-giden-fiyat-performans-telefonlari",
-        "pil ömrü": f"{lang_prefix}/sarji-en-uzun-giden-fiyat-performans-telefonlari"
+        "pil ömrü": f"{lang_prefix}/sarji-en-uzun-giden-fiyat-performans-telefonlari",
+        # Config-driven pillar pages (frontend/src/lib/pillars.ts)
+        "antutu sıralaması": f"{lang_prefix}/antutu-siralamasi",
+        "fiyat/performans oranı": f"{lang_prefix}/en-iyi-fiyat-performans-telefonlar",
+        "fiyat performans telefonu": f"{lang_prefix}/en-iyi-fiyat-performans-telefonlar",
+        "hızlı şarj": f"{lang_prefix}/en-hizli-sarj-olan-telefonlar",
+        "suya dayanıklı": f"{lang_prefix}/en-dayanikli-telefonlar",
+        "6000 mah": f"{lang_prefix}/6000-mah-uzeri-batarya-telefonlar",
     }
     
     # Split content by HTML anchor tags, regular HTML tags, and Markdown links
@@ -205,45 +393,79 @@ def inject_internal_links(content: str, lang: str = "tr") -> str:
 # ----------------------------------------------------------------------
 # 3. LLM Completion Invoker
 # ----------------------------------------------------------------------
-def generate_article_with_llm(topic_data, topic_type="performance"):
+# Structure templates — one is picked per run so consecutive posts don't share
+# the same skeleton. The old prompt forced "TOC + one section per phone" on
+# every article, which is the single most recognizable AI-listicle fingerprint.
+STRUCTURE_TEMPLATES = {
+    "verdict_first": """YAPI: HÜKÜM ÖNCE. İlk paragrafta net kararını açıkla (hangi telefon[lar] kazandı ve neden), sonra kararın gerekçesini veriyle savun. İçindekiler listesi KULLANMA. Her telefona eşit yer AYIRMA — kazanan ve en yakın rakibi derin işle, kalanlara neden elendiklerini anlatan kısa birer paragraf yeter.""",
+    "problem_led": """YAPI: SORUN ODAKLI. Gerçek bir okuyucu sorusuyla aç (örn. "Bütçen belli, kafan karışık: hangisi?") ve yazıyı o sorunun cevabı olarak kur. İçindekiler listesi KULLANMA. Senaryolar üzerinden ilerle (yoğun kullanan, oyuncu, fotoğrafçı gibi) ve her senaryoya net bir model öner.""",
+    "myth_buster": """YAPI: EFSANE YIKICI. Yaygın bir satın alma inancını başa koy (örn. "daha çok mAh = daha uzun pil"), önce inancı adil biçimde anlat, sonra veriyle çürüt veya doğrula. Telefonları bu tez etrafında kanıt olarak kullan; klasik tek tek inceleme listesi yapma.""",
+    "guide": """YAPI: REHBER. Uzun ve kapsamlı bir satın alma rehberi yaz. Girişten hemen sonra "İçindekiler" ver: Markdown link listesi (- [Bölüm](#bolum-id)) ve her H2'yi eşleşen id ile HTML olarak yaz: <h2 id="bolum-id">Bölüm</h2>. Telefonları mantıklı gruplara ayırarak işle, sonda net bir öneri tablosu ver.""",
+}
+
+# Voice notes — small register shifts between runs so the byline doesn't read
+# like the same template every Monday.
+VOICE_NOTES = [
+    "Ses: tecrübeli ama yorgun editör — abartıya tahammülü yok, rakamı sever, gerektiğinde tek cümlelik paragrafla vurgu yapar.",
+    "Ses: forumlarda yıllarını geçirmiş meraklı — okuyucuya 'sen' diye hitap eder, pazarlama dilini gördüğü yerde söyler.",
+    "Ses: veri analisti — iddiaları ölçülebilir şeylere bağlar, emin olmadığı yerde 'veri bunu söylemiyor' demekten çekinmez.",
+]
+
+
+def generate_article_with_llm(topic_data, topic_type="performance", extra_note="", recent_titles=None):
+    import random
     api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
     if not api_key:
         raise ValueError("GEMINI_API_KEY or GOOGLE_API_KEY environment variable is missing.")
 
-    system_prompt = """You are a senior tech editor and hardware reviewer for Teknoskor. Write an extremely detailed, high-depth review article (Minimum 1500 to 2000 words, at least 8 to 12 extensive paragraphs) in Turkish comparing the provided phone data. You must cover every phone in the dataset in its own dedicated section, detail its score, camera performance, gaming/Antutu stats, and battery capacity based on the parameters. Do not write short summaries or cut the text short; expand fully on user real-world value.
+    archetype = TOPIC_ARCHETYPES.get(topic_type, {})
+    angle = archetype.get("angle", "")
+    structure_key = "guide" if topic_type in ("budget", "midrange") else random.choice(list(STRUCTURE_TEMPLATES.keys()))
+    structure = STRUCTURE_TEMPLATES[structure_key]
+    voice = random.choice(VOICE_NOTES)
 
-ANTI-SPAM & CRITICAL STYLE RULES:
-1. BAN ALL AI CLICHÉS: Never use words like 'devrimsel', 'şık tasarım', 'büyüleyici deneyim', 'sonuç olarak', 'göz kamaştırıcı', 'özetlemek gerekirse', 'unutmamak gerekir ki', 'derinlemesine dalış'. If you use these, the post fails.
-2. NO THIN CONTENT / NO REPEATING SPECS: Do not just list RAM and CPU numbers. Explain WHAT those numbers mean for the user in real life. (e.g., Instead of "It has 8GB RAM", write "With 8GB of RAM, this phone prevents background apps like Discord or Spotify from crashing while you are in a heavy PUBG gunfight").
-3. CRITICAL HUMAN TONE: The tone must be blunt, objective, analytical, and data-driven. Highlight the WEAKNESSES of the phones as much as their strengths. True authority comes from honesty.
-4. HIGH UX / MOBILE FORMATTING: 
-   - Keep paragraphs short (maximum 2-3 sentences per paragraph) for extreme mobile readability.
-   - Use clean Markdown subheadings (H2, H3).
-   - Use bold text for critical data comparisons.
-   - Use clean Markdown bullet points to break down complex technical trade-offs.
+    recent_titles = recent_titles or []
+    dedup_block = ""
+    if recent_titles:
+        titles_list = "\n".join(f"- {t}" for t in recent_titles)
+        dedup_block = f"""
+DAHA ÖNCE YAYINLANAN BAŞLIKLAR (bunlara benzeyen başlık ve açı ÜRETME — ne kelime kalıbı ne konu açısı tekrar etmeli):
+{titles_list}
+"""
 
-GOOGLE HELPFUL CONTENT & SEO REQUIREMENTS:
-1. TABLE OF CONTENTS (İÇİNDEKİLER): Include a structured "İçindekiler" index at the very beginning of the post (immediately following the intro hook paragraph). Write it as a clean Markdown list of links linking to H2 headings. E.g.:
-   - [Giriş](#giris)
-   - [Donanım ve AnTuTu Analizi](#donanim-ve-antutu-analizi)
-   ...
-   You MUST write all corresponding H2 headings using the HTML syntax with matching IDs so clicking on the TOC link scrolls down correctly. E.g.:
-   <h2 id="donanim-ve-antutu-analizi">Donanım ve AnTuTu Analizi</h2>
-2. DEVICE IMAGES: In the sections of the article where you discuss/compare a specific phone model, embed its image using the HTML img tag exactly as shown below:
-   <img class="my-6 rounded-3xl max-h-[350px] object-contain mx-auto shadow-sm" src="IMAGE_URL" alt="Phone Name" />
-   Use the exact `image_url` provided in the database records. If a phone has no image_url, do not embed an image for it. Do not invent fake URLs.
+    system_prompt = f"""Sen Teknoskor'un kıdemli donanım editörüsün. Sana verilen telefon verisiyle Türkçe, 1500-2000 kelimelik, derinlikli bir yazı yazacaksın.
 
-REQUIRED STRUCTURAL BLUEPRINT:
-You must structure your response EXACTLY like the following example. Do not use three dots or write a short summary placeholder in the CONTENT tag. Write a full, highly detailed 1500+ words article inside the [CONTENT] tag:
+EDİTORYAL AÇI: {angle}
+{structure}
+{voice}
+{dedup_block}
+İNSAN GİBİ YAZMA KURALLARI (en kritik bölüm):
+1. YASAKLI KLİŞELER — bunları kullanırsan yazı reddedilir: 'devrimsel', 'şık tasarım', 'büyüleyici deneyim', 'sonuç olarak', 'göz kamaştırıcı', 'özetlemek gerekirse', 'unutmamak gerekir ki', 'derinlemesine dalış', 'adeta', 'ezber bozan', 'kendine hayran bırakıyor', 'kullanıcı deneyimini üst seviyeye taşıyor', 'teknoloji dünyasında', 'hayatımızın vazgeçilmezi', 'fark yaratıyor', 'iddialı bir seçenek'.
+2. YASAKLI AÇILIŞLAR: "Bu makalede/yazıda ... inceleyeceğiz/ele alacağız" tarzı meta-açılış yapma. Doğrudan konuya, bir gözleme, bir rakama veya bir soruya gir.
+3. CÜMLE RİTMİ: Cümle uzunluklarını bilinçli değiştir. Uzun bir analiz cümlesinin ardından kısa bir hüküm gelsin. Bazen tek cümlelik paragraf kullan. Her paragrafı aynı kalıpla ("X modeli ise...") başlatma.
+4. SOMUTLUK: Soyut övgü yerine yaşanan senaryo yaz: sabah metrosunda navigasyon + Spotify, akşam PUBG oturumu, tatilde şarjsız geçen gün. Fiyatları TL olarak yaz ve pahalıysa "pahalı" de.
+5. SİMETRİ YASAĞI: Her telefona eşit paragraf ayırmak zorunda değilsin (rehber yapısı hariç). Gerçek bir editör gibi önemliye çok, önemsize az yer ver.
+6. DÜRÜSTLÜK: Her cihazın zayıf yönünü net söyle. Verinin desteklemediği iddia kurma; birinci elden test izlenimi UYDURMA — sen spesifikasyon ve benchmark verisiyle çalışıyorsun, "elimize aldık", "testlerimizde" gibi fiziksel test iması kesinlikle yasak. "Veriler gösteriyor", "skorlara göre" de.
+7. RAKAM ANLAMLANDIRMA: Spec tekrarı yapma; rakamın hayattaki karşılığını yaz ("5500 mAh + verimli işlemci = sosyal medya ağırlıklı kullanımda akşama %30 pil").
+
+BİÇİM:
+- Paragraflar kısa (2-3 cümle), mobilde okunacak.
+- Markdown H2/H3 alt başlıklar; kritik kıyaslarda **kalın**; karmaşık ödünleşimlerde madde işareti.
+- BAŞLIK KURALI: "2026'nın En İyi..." kalıbını KULLANMA (bu kalıp zaten defalarca kullanıldı). Başlık merak uyandırsın veya net bir iddia taşısın; yıl geçebilir ama başa koyma.
+- CİHAZ GÖRSELLERİ: Bir modeli işlediğin bölümde görselini şu etiketle göm (image_url alanı boşsa görsel koyma, URL uydurma):
+  <img class="my-6 rounded-3xl max-h-[350px] object-contain mx-auto shadow-sm" src="IMAGE_URL" alt="Telefon Adı" />
+- İç link: metinde doğal biçimde geçen kavramlar zaten otomatik linkleniyor; sen sadece akıcı yaz.
+
+ÇIKTI SÖZLEŞMESİ — yanıtını TAM OLARAK bu üç etiketle yapılandır, [CONTENT] içine kısaltma/özet değil eksiksiz yazıyı koy:
 
 [TITLE]
-2026'nın En İyi Kameralı Telefonları: Megapiksel Yalanı ve Gerçekler
+(başlık)
 
 [SUMMARY]
-Bu makalede 2026 model amiral gemisi telefonların kamera sensör boyutlarını ve gerçek dünya fotoğraf performanslarını Teknoskor verileriyle analiz ediyoruz.
+(1-2 cümlelik özet — "bu makalede" deme)
 
 [CONTENT]
-[Buraya en az 8-12 geniş paragraftan oluşan, her bir telefon modelini kendi alt başlığında detaylıca kıyaslayan, cihaz görsellerini img etiketleriyle barındıran ve tablo dizilimlerini içeren minimum 1500 kelimelik eksiksiz ve uzun makale içeriği gelecektir. Metni kesinlikle kısa kesmeyin veya yarım bırakmayın.]
+(1500+ kelimelik tam yazı)
 """
 
     formatted_data = []
@@ -270,7 +492,8 @@ Bu makalede 2026 model amiral gemisi telefonların kamera sensör boyutlarını 
         }
         formatted_data.append(phone_info)
 
-    prompt = f"{system_prompt}\n\nTOPIC TYPE: {topic_type}\n\nDATA:\n{json.dumps(formatted_data, indent=2, ensure_ascii=False)}"
+    note_block = f"\n\nÖZEL TALİMAT: {extra_note}" if extra_note else ""
+    prompt = f"{system_prompt}{note_block}\n\nVERİ:\n{json.dumps(formatted_data, indent=2, ensure_ascii=False)}"
     
     headers = {"Content-Type": "application/json"}
     payload = {
@@ -389,8 +612,17 @@ def clean_forbidden_phrases(text):
         r'\bbüyüleyici deneyim\b': 'iyi bir deneyim',
         r'\bgöz kamaştırıcı\b': 'başarılı',
         r'\bderinlemesine dalış\b': 'detaylı inceleme',
+        r'\bezber bozan\b': 'dikkat çeken',
+        r'\bkendine hayran bırakıyor\b': 'öne çıkıyor',
+        r'\bkullanıcı deneyimini üst seviyeye taşıyor\b': 'kullanımı belirgin iyileştiriyor',
+        r'\biddialı bir seçenek\b': 'güçlü bir seçenek',
+        r'\bfark yaratıyor\b': 'öne çıkıyor',
+        r'\bhayatımızın vazgeçilmezi\b': 'vazgeçilmez',
     }
-    transition_phrases = [r'\bsonuç olarak\b', r'\bözetlemek gerekirse\b', r'\bunutmamak gerekir ki\b']
+    transition_phrases = [
+        r'\bsonuç olarak\b', r'\bözetlemek gerekirse\b', r'\bunutmamak gerekir ki\b',
+        r'\badeta\b', r'\bteknoloji dünyasında\b',
+    ]
 
     cleaned = text
     for pattern, replacement in word_replacements.items():
@@ -475,8 +707,8 @@ def save_blog_post(title, slug, summary, content, image_url=None, status="draft"
 # ----------------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser(description="Teknoskor Automated E-E-A-T Blog Generator")
-    parser.add_argument("--topic", type=str, choices=["performance", "camera", "battery", "random"], default="random",
-                        help="The data source metric to focus the blog content on.")
+    parser.add_argument("--topic", type=str, choices=list(TOPIC_ARCHETYPES.keys()) + ["random"], default="random",
+                        help="The article archetype. 'random' rotates, skipping angles covered by recent post titles.")
     parser.add_argument("--status", type=str, choices=["draft", "published"], default="draft",
                         help="Status of the saved blog post in the database.")
     parser.add_argument("--save", action="store_true",
@@ -484,20 +716,90 @@ def main():
     
     args = parser.parse_args()
     
+    recent_titles = fetch_recent_post_titles()
+
     topic = args.topic
     if topic == "random":
-        import random
-        topic = random.choice(["performance", "camera", "battery"])
-        
-    print(f"[*] Fetching comparison data for focus metric: '{topic}'...")
-    data = fetch_phone_data(topic)
+        topic = pick_topic(recent_titles)
+        print(f"[*] Rotation picked archetype: '{topic}' (avoiding {len(recent_titles)} recent titles)")
+
+    print(f"[*] Fetching comparison data for archetype: '{topic}'...")
+    extra_note = ""
+    if topic in ("performance", "camera", "battery"):
+        data = fetch_phone_data(topic)
+    else:
+        data, extra_note = fetch_topic_data(topic)
     if not data:
-        print("[!] No phone records found in the database. Aborting.")
+        print("[!] No phone records found for this archetype. Aborting.")
         return
-        
-    print(f"[*] Compiling payload and calling LLM model API...")
-    raw_response = generate_article_with_llm(data, topic)
-    
+
+    # Generate → quality gate → (on failure) one retry with the failure report
+    # fed back as an instruction → still failing forces DRAFT status, so a bad
+    # article never auto-publishes (the cron workflow publishes by default).
+    from blog_quality_check import run_quality_gate
+
+    status = args.status
+    content_with_links, title, summary = "", "", ""
+    for attempt in (1, 2):
+        note = extra_note
+        if attempt == 2:
+            note = (extra_note + "\n\nÖNCEKİ DENEME ŞU SEBEPLERLE REDDEDİLDİ — hepsini düzelterek YENİDEN yaz:\n" + report).strip()
+            print("[!] Quality gate failed. Regenerating once with feedback...")
+
+        print(f"[*] Compiling payload and calling LLM model API (attempt {attempt}/2)...")
+        raw_response = generate_article_with_llm(data, topic, extra_note=note, recent_titles=recent_titles)
+        title, summary, content = parse_article_response(raw_response, topic)
+
+        print(f"[*] Converting Markdown to HTML...")
+        html_content = markdown_to_html(content)
+        print(f"[*] Injecting internal links into the article content...")
+        content_with_links = inject_internal_links(html_content, lang="tr")
+
+        print(f"[*] Running quality gate...")
+        passed, report = run_quality_gate(title, summary, content_with_links, data, recent_titles)
+        print(report + "\n")
+        if passed:
+            break
+    else:
+        if status == "published":
+            status = "draft"
+            print("[!] Both attempts failed the quality gate — saving as DRAFT for human review instead of publishing.")
+
+    cover_image = None
+    if data and len(data) > 0:
+        first_phone = data[0]
+        phone_images = first_phone.get("images")
+        if phone_images:
+            if isinstance(phone_images, str):
+                try:
+                    imgs = json.loads(phone_images)
+                    if imgs and len(imgs) > 0:
+                        cover_image = imgs[0]
+                except:
+                    pass
+            elif isinstance(phone_images, list) and len(phone_images) > 0:
+                cover_image = phone_images[0]
+
+    slug = turkish_slugify(title)
+
+    print("\n=======================================================")
+    print(f"TITLE: {title}")
+    print(f"SLUG: {slug}")
+    print(f"SUMMARY: {summary}")
+    print(f"COVER IMAGE: {cover_image}")
+    print(f"STATUS: {status}")
+    print(f"CONTENT LENGTH: {len(content_with_links)} chars")
+    print("=======================================================\n")
+
+    if args.save:
+        print("[*] Saving article to database...")
+        post_id = save_blog_post(title, slug, summary, content_with_links, cover_image, status, "tr")
+        print(f"[+] Successfully saved! Post ID in database: {post_id}")
+    else:
+        print("[*] Dry run finished. Use '--save' to insert into MySQL.")
+
+
+def parse_article_response(raw_response, topic):
     # Parse LLM response tags using robust normalization
     normalized_response = raw_response
     normalized_response = re.sub(r'\*\*\[?(TITLE|SUMMARY|CONTENT)\]?[:\*]*', r'[\1]', normalized_response, flags=re.IGNORECASE)
@@ -544,44 +846,9 @@ def main():
         title = f"{topic.capitalize()} Odaklı Akıllı Telefon İncelemesi (2026)"
         summary = "Otomatik üretilmiş teknik özellikler karşılaştırma rehberi."
         content = raw_response
-        
-    cover_image = None
-    if data and len(data) > 0:
-        first_phone = data[0]
-        phone_images = first_phone.get("images")
-        if phone_images:
-            if isinstance(phone_images, str):
-                try:
-                    imgs = json.loads(phone_images)
-                    if imgs and len(imgs) > 0:
-                        cover_image = imgs[0]
-                except:
-                    pass
-            elif isinstance(phone_images, list) and len(phone_images) > 0:
-                cover_image = phone_images[0]
 
-    print(f"[*] Converting Markdown to HTML...")
-    html_content = markdown_to_html(content)
+    return title, summary, content
 
-    print(f"[*] Injecting internal links into the article content...")
-    content_with_links = inject_internal_links(html_content, lang="tr")
-    
-    slug = turkish_slugify(title)
-    
-    print("\n=======================================================")
-    print(f"TITLE: {title}")
-    print(f"SLUG: {slug}")
-    print(f"SUMMARY: {summary}")
-    print(f"COVER IMAGE: {cover_image}")
-    print(f"CONTENT LENGTH: {len(content_with_links)} chars")
-    print("=======================================================\n")
-    
-    if args.save:
-        print("[*] Saving article to database...")
-        post_id = save_blog_post(title, slug, summary, content_with_links, cover_image, args.status, "tr")
-        print(f"[+] Successfully saved! Post ID in database: {post_id}")
-    else:
-        print("[*] Dry run finished. Use '--save' to insert into MySQL.")
 
 if __name__ == "__main__":
     main()
