@@ -7,6 +7,7 @@ import time
 from dotenv import load_dotenv
 from tr_price_scraper import TRPriceScraper
 from indexnow import submit_urls
+from price_sanity import filter_price_outliers
 
 load_dotenv()
 
@@ -65,7 +66,17 @@ class PriceUpdater:
     def update_product_offers(self, product_id, offers, current_base_price):
         if not offers:
             return
-        
+
+        # Wrong-listing guard: a fuzzy-matched accessory/wrong variant surfaces
+        # as a price far below the rest of the market and would poison both the
+        # stored offers and the min() that becomes products.base_price
+        clean = filter_price_outliers(offers)
+        if len(clean) < len(offers):
+            dropped = [o for o in offers if o not in clean]
+            for d in dropped:
+                logging.warning(f"  🚫 Outlier offer dropped: {d['merchant']} {d['price']} TL ({d['url'][:80]})")
+            offers = clean
+
         # Deadlock protection with retry
         for i in range(3):
             try:

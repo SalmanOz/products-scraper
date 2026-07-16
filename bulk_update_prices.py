@@ -5,6 +5,7 @@ import asyncio
 import mysql.connector
 from dotenv import load_dotenv
 from tr_price_scraper import TRPriceScraper
+from price_sanity import filter_price_outliers
 
 load_dotenv()
 
@@ -38,9 +39,13 @@ async def bulk_update_prices():
             offers = await tr_scraper.get_best_prices(product_name)
             
             if offers:
+                # Wrong-listing guard — see price_sanity.py (Xiaomi 15T /
+                # Maui Jim incident: unfiltered min() poisoned base_price)
+                offers = filter_price_outliers(offers)
+
                 # 1. Clear old offers
                 cursor.execute("DELETE FROM product_offers WHERE product_id = %s", (product_id,))
-                
+
                 # 2. Insert new offers
                 lowest_price = min([o['price'] for o in offers])
                 for offer in offers:
