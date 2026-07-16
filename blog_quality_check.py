@@ -240,35 +240,23 @@ YAZI:
 
 
 def llm_judge(title, summary, content, source_data):
-    """Returns judge dict or None when unavailable (no key / API error) —
-    the deterministic layer alone still gates in that case."""
-    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-    if not api_key:
-        return None
-
+    """Returns judge dict or None when unavailable (no provider / API error) —
+    the deterministic layer alone still gates in that case. Provider routing
+    (Gemini -> NVIDIA fallback) lives in llm_client."""
     prompt = (JUDGE_PROMPT
               .replace("%%DATA%%", json.dumps(source_data, ensure_ascii=False, default=str)[:8000])
               .replace("%%TITLE%%", title)
               .replace("%%SUMMARY%%", summary)
               .replace("%%CONTENT%%", _strip_html(content)[:16000]))
 
-    payload = {
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0, "maxOutputTokens": 2048,
-                             "responseMimeType": "application/json"},
-    }
-    for model in ["gemini-2.5-flash", "gemini-2.0-flash"]:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-        try:
-            resp = requests.post(url, json=payload, timeout=60)
-            if resp.status_code != 200:
-                continue
-            text = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
-            verdict = json.loads(text)
-            if all(k in verdict for k in ("human_score", "factual_score", "seo_score", "verdict")):
-                return verdict
-        except Exception:
-            continue
+    try:
+        from llm_client import chat as llm_chat
+        text = llm_chat(prompt, temperature=0, max_tokens=2048, json_mode=True)
+        verdict = json.loads(text)
+        if all(k in verdict for k in ("human_score", "factual_score", "seo_score", "verdict")):
+            return verdict
+    except Exception:
+        pass
     return None
 
 

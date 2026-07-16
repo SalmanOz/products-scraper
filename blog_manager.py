@@ -7,6 +7,7 @@ import argparse
 import requests
 import mysql.connector
 from dotenv import load_dotenv
+from llm_client import chat as llm_chat
 
 # Load environment variables from .env if present
 load_dotenv()
@@ -414,9 +415,6 @@ VOICE_NOTES = [
 
 def generate_article_with_llm(topic_data, topic_type="performance", extra_note="", recent_titles=None):
     import random
-    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-    if not api_key:
-        raise ValueError("GEMINI_API_KEY or GOOGLE_API_KEY environment variable is missing.")
 
     archetype = TOPIC_ARCHETYPES.get(topic_type, {})
     angle = archetype.get("angle", "")
@@ -494,101 +492,10 @@ BİÇİM:
 
     note_block = f"\n\nÖZEL TALİMAT: {extra_note}" if extra_note else ""
     prompt = f"{system_prompt}{note_block}\n\nVERİ:\n{json.dumps(formatted_data, indent=2, ensure_ascii=False)}"
-    
-    headers = {"Content-Type": "application/json"}
-    payload = {
-        "contents": [
-            {
-                "role": "user",
-                "parts": [{"text": prompt}]
-            }
-        ],
-        "generationConfig": {
-            "temperature": 0.7,
-            "maxOutputTokens": 8192
-        }
-    }
 
-    import time
-    models = ["gemini-2.5-flash", "gemini-2.0-flash"]
-    response = None
-    last_error_msg = ""
-    full_text = ""
-
-    for model in models:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-        retry_delay = 5
-        success = False
-        
-        for attempt in range(3):
-            try:
-                print(f"[*] Requesting generation from {model} (Attempt {attempt+1}/3)...")
-                response = requests.post(url, headers=headers, json=payload, timeout=60)
-                if response.status_code == 200:
-                    res_json = response.json()
-                    candidate = res_json["candidates"][0]
-                    text_part = candidate["content"]["parts"][0]["text"]
-                    finish_reason = candidate.get("finishReason", "STOP")
-                    
-                    full_text = text_part
-                    
-                    # Continue generation loop if response was truncated (MAX_TOKENS)
-                    contents = list(payload["contents"])
-                    continue_count = 0
-                    
-                    while finish_reason == "MAX_TOKENS" and continue_count < 3:
-                        continue_count += 1
-                        print(f"[!] Generation truncated (MAX_TOKENS). Continuing text generation (Attempt {continue_count}/3)...")
-                        
-                        contents.append({
-                            "role": "model",
-                            "parts": [{"text": text_part}]
-                        })
-                        contents.append({
-                            "role": "user",
-                            "parts": [{"text": "Yazın yarım kaldı. En son kaldığın cümleden/kelimeden itibaren makaleyi yazmaya devam et. Tamamen bitirene kadar devam et."}]
-                        })
-                        
-                        continue_payload = {
-                            "contents": contents,
-                            "generationConfig": {
-                                "temperature": 0.7,
-                                "maxOutputTokens": 8192
-                            }
-                        }
-                        
-                        cont_response = requests.post(url, headers=headers, json=continue_payload, timeout=60)
-                        if cont_response.status_code != 200:
-                            print(f"[!] Continuation request failed with status {cont_response.status_code}: {cont_response.text}")
-                            break
-                            
-                        cont_json = cont_response.json()
-                        cont_candidate = cont_json["candidates"][0]
-                        cont_text_part = cont_candidate["content"]["parts"][0]["text"]
-                        
-                        full_text += " " + cont_text_part.strip()
-                        text_part = cont_text_part
-                        finish_reason = cont_candidate.get("finishReason", "STOP")
-                        
-                    success = True
-                    break
-                elif response.status_code in [429, 503] and attempt < 2:
-                    print(f"[!] API returned {response.status_code}. Retrying in {retry_delay}s...")
-                    time.sleep(retry_delay)
-                    retry_delay *= 2
-                else:
-                    last_error_msg = f"{model} failed: {response.status_code} - {response.text}"
-                    break
-            except Exception as e:
-                last_error_msg = f"{model} exception: {str(e)}"
-                break
-                
-        if success:
-            break
-
-    if not success:
-        raise Exception(f"All Gemini model invocations failed. Last error details: {last_error_msg}")
-
+    # Provider routing (Gemini -> NVIDIA fallback), retries and MAX_TOKENS
+    # continuation all live in llm_client.chat
+    full_text = llm_chat(prompt, temperature=0.7, max_tokens=8192)
     return clean_forbidden_phrases(full_text)
 
 

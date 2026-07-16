@@ -67,6 +67,7 @@ jobs:
           DB_NAME: ${{ secrets.DB_NAME }}
           DB_PORT: ${{ secrets.DB_PORT }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           BLOG_TOPIC: ${{ github.event.inputs.topic || 'random' }}
           BLOG_STATUS: ${{ github.event.inputs.status || 'published' }}
         run: |

@@ -69,6 +69,35 @@ def generate_ai_analysis(product_data, api_key):
         f"Please return the verdict, pros, and cons in Turkish as a structured JSON object."
     )
     
+    def try_nvidia():
+        """Schema-validated NIM attempt; returns dict or None. Malformed
+        output fails Pydantic validation instead of reaching the DB."""
+        if not os.getenv("NVIDIA_API_KEY"):
+            return None
+        try:
+            from llm_client import _nvidia_chat
+            schema_hint = (
+                '\n\nReturn ONLY a JSON object exactly matching this schema: '
+                '{"verdict": "string (Turkish)", "pros": ["string", ...], "cons": ["string", ...]}'
+            )
+            text = _nvidia_chat(system_instruction + "\n\n" + prompt + schema_hint,
+                                os.getenv("NVIDIA_API_KEY"),
+                                temperature=0.7, max_tokens=2048, json_mode=True)
+            if text:
+                return AIAnalysis(**json.loads(text)).model_dump()
+        except Exception as e:
+            logging.warning(f"⚠️ NVIDIA attempt failed: {e}")
+        return None
+
+    # Same provider preference as llm_client.chat: NVIDIA-first by default,
+    # LLM_PRIMARY=gemini restores the old order.
+    nvidia_first = os.getenv("LLM_PRIMARY", "nvidia").strip().lower() != "gemini"
+    if nvidia_first:
+        result = try_nvidia()
+        if result:
+            return result
+        logging.warning("⚠️ NVIDIA primary failed/unavailable — falling back to Gemini SDK...")
+
     models_to_try = [m for m in ["gemini-3.1-pro-preview", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"] if m not in DISABLED_MODELS]
     last_exception = None
     
@@ -110,6 +139,14 @@ def generate_ai_analysis(product_data, api_key):
                 time.sleep(2)
                 break
             
+    # Gemini exhausted — if NVIDIA wasn't already tried as primary, give it a
+    # chance as the fallback before failing the product entirely.
+    if not nvidia_first:
+        logging.warning("⚠️ All Gemini models failed — falling back to NVIDIA NIM...")
+        result = try_nvidia()
+        if result:
+            return result
+
     if last_exception is None:
         raise Exception("All Gemini models are currently disabled or unavailable.")
     raise last_exception
