@@ -11,7 +11,7 @@ Env:
   LLM_PRIMARY                      — "nvidia" (default) or "gemini"
   NVIDIA_MODEL                     — override the default NIM model
 
-Default NIM model is qwen/qwen3.5-397b — the strongest verified multilingual
+Default NIM model is qwen/qwen3.5-397b-a17b — the strongest verified multilingual
 writer on the catalog (Turkish quality + structure adherence, which the
 [TITLE]/[SUMMARY]/[CONTENT] output contract depends on). If the configured
 model ever 404s (catalog rotation), the client silently retries with the
@@ -30,7 +30,7 @@ import requests
 
 GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash"]
 NVIDIA_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
-NVIDIA_DEFAULT_MODEL = "qwen/qwen3.5-397b"
+NVIDIA_DEFAULT_MODEL = "qwen/qwen3.5-397b-a17b"
 NVIDIA_SAFE_MODEL = "meta/llama-3.3-70b-instruct"
 
 

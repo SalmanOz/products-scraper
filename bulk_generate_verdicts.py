@@ -37,8 +37,9 @@ class AIAnalysis(BaseModel):
 
 def generate_ai_analysis(product_data, api_key):
     global DISABLED_MODELS
-    client = genai.Client(api_key=api_key)
-    
+    # Gemini client is created lazily (only when the SDK path actually runs) so
+    # a NVIDIA-only setup with no Gemini key doesn't crash at construction.
+
     system_instruction = (
         "You are an objective, realistic, and highly experienced mobile technology editor writing for Teknoskor.com. "
         "Your task is to analyze the provided phone specifications and generate an honest, slightly critical, and engaging review along with short, punchy pros/cons.\n\n"
@@ -98,9 +99,15 @@ def generate_ai_analysis(product_data, api_key):
             return result
         logging.warning("⚠️ NVIDIA primary failed/unavailable — falling back to Gemini SDK...")
 
+    # Gemini SDK path — skip entirely if no Gemini key (NVIDIA-only setup)
+    if not api_key:
+        logging.error("❌ No Gemini key and NVIDIA unavailable — cannot generate verdict.")
+        raise Exception("All configured LLM providers failed for this product.")
+    client = genai.Client(api_key=api_key)
+
     models_to_try = [m for m in ["gemini-3.1-pro-preview", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"] if m not in DISABLED_MODELS]
     last_exception = None
-    
+
     for model_name in models_to_try:
         retries = 2
         for attempt in range(retries + 1):
@@ -185,12 +192,15 @@ def clean_hallucinations(analysis_json, product_specs):
     analysis_json['verdict'] = re.sub(r'\s+', ' ', verdict).strip()
     return analysis_json
 
-def run_migration(limit=None):
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        logging.error("❌ GEMINI_API_KEY environment variable is missing.")
+def run_migration(limit=None, force=False):
+    # generate_ai_analysis routes NVIDIA-first (LLM_PRIMARY) and only touches
+    # the Gemini SDK as a fallback, so a NVIDIA-only setup is valid now. Require
+    # at least one provider rather than Gemini specifically.
+    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if not api_key and not os.getenv("NVIDIA_API_KEY"):
+        logging.error("❌ No LLM provider configured (set NVIDIA_API_KEY and/or GEMINI_API_KEY).")
         sys.exit(1)
-        
+
     logging.info("🔄 Fetching products from database...")
     try:
         conn = get_db_connection()
@@ -209,14 +219,14 @@ def run_migration(limit=None):
         logging.error(f"❌ Failed to fetch products from database: {db_err}")
         sys.exit(1)
     
-    # Filter products missing ai_analysis
-    target_products = []
-    for p in all_products:
-        attrs = json.loads(p['attributes'] or '{}')
-        if 'ai_analysis' not in attrs:
-            target_products.append(p)
-            
-    logging.info(f"📊 Found {len(all_products)} total products. {len(target_products)} are missing AI verdicts.")
+    # --force regenerates every published product (e.g. after a model change);
+    # default only fills products missing ai_analysis.
+    if force:
+        target_products = list(all_products)
+        logging.info(f"📊 Found {len(all_products)} total products. --force: regenerating ALL verdicts.")
+    else:
+        target_products = [p for p in all_products if 'ai_analysis' not in json.loads(p['attributes'] or '{}')]
+        logging.info(f"📊 Found {len(all_products)} total products. {len(target_products)} are missing AI verdicts.")
     
     if limit:
         target_products = target_products[:limit]
@@ -284,8 +294,9 @@ def run_migration(limit=None):
     logging.info(f"🏁 Finished migration. Successfully updated {success_count} products.")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Bulk generate expert verdicts using Gemini API.")
+    parser = argparse.ArgumentParser(description="Bulk generate expert verdicts (NVIDIA-first, Gemini fallback).")
     parser.add_argument("--limit", type=int, default=None, help="Limit the number of products to process.")
+    parser.add_argument("--force", action="store_true", help="Regenerate verdicts for ALL products, not just those missing one.")
     args = parser.parse_args()
-    
-    run_migration(limit=args.limit)
+
+    run_migration(limit=args.limit, force=args.force)
