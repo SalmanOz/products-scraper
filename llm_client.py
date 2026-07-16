@@ -98,16 +98,22 @@ def _nvidia_chat(prompt, api_key, temperature, max_tokens, json_mode):
         for attempt in range(3):
             try:
                 resp = requests.post(NVIDIA_URL, headers=headers, json=payload, timeout=120)
-                if resp.status_code == 429 and attempt < 2:
-                    time.sleep(10 * (attempt + 1))
+                # Transient: rate limit or server-side hiccup — back off and
+                # retry the SAME payload (stripping response_format here would
+                # silently lose JSON enforcement over a blip)
+                if resp.status_code in (429, 500, 502, 503, 504) and attempt < 2:
+                    wait = 10 * (attempt + 1)
+                    logging.warning(f"[llm] nvidia {model} -> {resp.status_code}, retrying in {wait}s")
+                    time.sleep(wait)
                     continue
                 if resp.status_code == 404:
                     logging.warning(f"[llm] nvidia model '{model}' not found, trying next candidate")
                     break
                 if resp.status_code != 200:
-                    # Some NIM models reject response_format — retry once without it
-                    if json_mode and "response_format" in payload:
-                        logging.warning(f"[llm] nvidia {resp.status_code}, retrying without response_format")
+                    # Only a 4xx request rejection suggests the model doesn't
+                    # support response_format — retry once without it
+                    if resp.status_code in (400, 422) and json_mode and "response_format" in payload:
+                        logging.warning(f"[llm] nvidia {model} rejected request ({resp.status_code}), retrying without response_format")
                         payload.pop("response_format")
                         continue
                     logging.warning(f"[llm] nvidia {model} failed: {resp.status_code} {resp.text[:150]}")
