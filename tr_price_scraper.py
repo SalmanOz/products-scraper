@@ -3,7 +3,7 @@ import requests
 import re
 import json
 from bs4 import BeautifulSoup
-from urllib.parse import quote_plus, urlparse
+from urllib.parse import quote, quote_plus, urlparse
 import time
 import asyncio
 from functools import partial
@@ -45,16 +45,16 @@ class TRPriceScraper:
                 "url": "https://www.trendyol.com/sr?q={query}&wc=103498",
                 "container": ".p-card-wrppr, .product-card",
                 "title": ".prdct-desc-cntnr-name, .prdct-desc-cntnr-ttl, .product-name",
-                "price": ".prc-box-dscntd, .p-card-price, .sale-price",
+                "price": ".sale-price, .single-price, .price-section, .prc-box-dscntd, .p-card-price",
                 "link": "a",
                 "base_url": "https://www.trendyol.com"
             },
             "Amazon TR": {
                 "url": "https://www.amazon.com.tr/s?k={query}",
                 "container": "[data-component-type='s-search-result']",
-                "title": "h2 a span",
-                "price": ".a-price-whole",
-                "link": "h2 a",
+                "title": "h2 span, h2",
+                "price": ".a-price, .a-price-whole",
+                "link": "a[href*='/dp/']",
                 "base_url": "https://www.amazon.com.tr"
             },
             "Vatan Bilgisayar": {
@@ -63,34 +63,35 @@ class TRPriceScraper:
                 "title": ".product-list__product-name",
                 "price": ".product-list__price",
                 "link": "a.product-list-link",
-                "base_url": "https://www.vatanbilgisayar.com"
+                "base_url": "https://www.vatanbilgisayar.com",
+                "query_encoding": "path"
             },
             "n11": {
                 "url": "https://www.n11.com/arama?q={query}",
-                "container": ".product-item",
-                "title": ".product-name",
-                "price": ".newPrice",
-                "link": "a",
+                "container": "a.product-item, .product-item",
+                "title": ".product-item-title, .product-name",
+                "price": ".price-currency, .newPrice, .price",
+                "link": "self",
                 "base_url": "https://www.n11.com"
             },
             "PttAVM": {
                 "url": "https://www.pttavm.com/arama?q={query}",
-                "container": ".product-list-card",
-                "title": ".product-list-card__title",
-                "price": ".product-list-card__price-new",
-                "link": "a",
+                "container": "article[class^='article__'], .product-list-card",
+                "title": "h2[class^='name__'], .product-list-card__title",
+                "price": "div[class^='price__'], .product-list-card__price-new",
+                "link": "a[class^='card__'], a",
                 "base_url": "https://www.pttavm.com"
             },
             "MediaMarkt": {
                 "url": "https://www.mediamarkt.com.tr/tr/search.html?query={query}",
                 "container": "[data-test='mms-product-card']",
                 "title": "[data-test='product-title']",
-                "price": "[data-test='mms-price-display']",
+                "price": "[data-test='mms-price'] span, [data-test='mms-price-display']",
                 "link": "a",
                 "base_url": "https://www.mediamarkt.com.tr"
             },
             "Pasaj": {
-                "url": "https://www.turkcell.com.tr/pasaj/arama?q={query}",
+                "url": "https://www.turkcell.com.tr/pasaj/search?qx={query}",
                 "container": ".p-card, .m-p-pc-new",
                 "title": ".p-card-title, .m-p-pc-new__title",
                 "price": ".p-card-price, .m-p-pc-new__price",
@@ -114,72 +115,9 @@ class TRPriceScraper:
                 "base_url": "https://www.gurgencler.com.tr"
             }
         }
-        self.proxies = self._fetch_proxies()
-        logging.info(f"🌐 Loaded {len(self.proxies)} proxies for rotation")
-
-    def _fetch_proxies(self):
-        """Fetch and validate free proxies from public APIs."""
-        proxy_urls = [
-            "https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&proxy_format=protocolipport&format=text&timeout=5000&protocol=http",
-            "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/http.txt",
-        ]
-        raw_proxies = []
-        for api_url in proxy_urls:
-            try:
-                resp = requests.get(api_url, timeout=10)
-                if resp.status_code == 200:
-                    for line in resp.text.strip().split('\n'):
-                        line = line.strip()
-                        if line and ':' in line:
-                            # Normalize to ip:port format
-                            clean = line.replace('http://', '').replace('https://', '').split('/')[0]
-                            if re.match(r'^\d+\.\d+\.\d+\.\d+:\d+$', clean):
-                                raw_proxies.append(clean)
-            except Exception:
-                continue
-        
-        if not raw_proxies:
-            logging.warning("  ⚠️ No proxies fetched from any source")
-            return []
-        
-        logging.info(f"  📋 Fetched {len(raw_proxies)} raw proxies, validating...")
-        
-        # Quick validation in parallel using thread pool to make it fast
-        validated = []
-        import random
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-        
-        random.shuffle(raw_proxies)
-        test_proxies = raw_proxies[:50]  # Test a subset of 50
-        
-        def test_proxy(proxy_str):
-            try:
-                resp = requests.get(
-                    "https://httpbin.org/ip", 
-                    proxies={"http": f"http://{proxy_str}", "https": f"http://{proxy_str}"},
-                    timeout=3
-                )
-                if resp.status_code == 200:
-                    return proxy_str
-            except Exception:
-                pass
-            return None
-
-        logging.info(f"  ⚡ Validating {len(test_proxies)} proxies in parallel...")
-        with ThreadPoolExecutor(max_workers=15) as executor:
-            futures = {executor.submit(test_proxy, p): p for p in test_proxies}
-            for fut in as_completed(futures):
-                res = fut.result()
-                if res:
-                    validated.append(res)
-                    if len(validated) >= 5:  # 5 working proxies is enough
-                        break
-        
-        logging.info(f"  ✅ Validated {len(validated)} working proxies")
-        return validated
 
     def _try_curl_cffi(self, url):
-        """Fast TLS-impersonation fetch with optional proxy rotation. Returns (html, final_url) or None."""
+        """Fast TLS-impersonation fetch. Returns (html, final_url) or None."""
         try:
             from curl_cffi import requests as cffi_requests
         except ImportError:
@@ -198,21 +136,7 @@ class TRPriceScraper:
                         return resp.text, str(resp.url)
             except Exception as e:
                 logging.warning(f"  ⚠️ curl_cffi ({browser}) error for {url}: {e}")
-        
-        # Try with proxies (cap attempts — free proxies rarely beat Cloudflare, don't burn minutes on them)
-        for proxy_str in self.proxies[:3]:
-            try:
-                resp = cffi_requests.get(
-                    url, impersonate="chrome", timeout=10, headers=headers,
-                    proxies={"http": f"http://{proxy_str}", "https": f"http://{proxy_str}"}
-                )
-                if resp.status_code == 200 and len(resp.text) > 1000:
-                    if 'Just a moment...' not in resp.text and 'cf-browser-verification' not in resp.text:
-                        logging.info(f"  ✅ curl_cffi via proxy {proxy_str} succeeded for {url}")
-                        return resp.text, str(resp.url)
-            except Exception:
-                continue
-        
+
         return None
 
     def clean_price(self, price_str):
@@ -305,7 +229,47 @@ class TRPriceScraper:
         clean = clean.replace(' / ', ' ').replace('/', ' ')
         return clean.strip()
 
-    def is_strict_match(self, product_name, item_title):
+    @staticmethod
+    def _spec_int(value):
+        if value is None:
+            return None
+        match = re.search(r'\d+', str(value))
+        return int(match.group(0)) if match else None
+
+    @staticmethod
+    def _extract_listing_capacities(item_title):
+        """Return explicit RAM/storage values from a merchant title when present."""
+        title = item_title.lower()
+
+        pair = re.search(
+            r'\b(\d{1,2})\s*(?:gb)?\s*/\s*(\d{2,4})\s*(gb|tb)\b',
+            title,
+        )
+        if pair:
+            storage = int(pair.group(2))
+            if pair.group(3) == 'tb':
+                storage *= 1024
+            return int(pair.group(1)), storage
+
+        ram = None
+        ram_match = (
+            re.search(r'\b(\d{1,2})\s*gb\s*(?:ram|bellek)\b', title)
+            or re.search(r'\b(?:ram|bellek)\s*(\d{1,2})\s*gb\b', title)
+        )
+        if ram_match:
+            ram = int(ram_match.group(1))
+
+        capacities = []
+        for amount, unit in re.findall(r'\b(\d{1,4})\s*(gb|tb)\b', title):
+            value = int(amount) * (1024 if unit == 'tb' else 1)
+            capacities.append(value)
+
+        if ram is None:
+            ram = next((value for value in capacities if value <= 24), None)
+        storage = next((value for value in capacities if value >= 32), None)
+        return ram, storage
+
+    def is_strict_match(self, product_name, item_title, expected_specs=None):
         # Standardize + to plus for suffix variation check (e.g. Pro+ vs Pro)
         name = product_name.lower().replace('+', 'plus')
         title = item_title.lower().replace('+', 'plus')
@@ -343,10 +307,9 @@ class TRPriceScraper:
         # never mentions a phone brand or "telefon" at all. Model-number tokens alone
         # are not sufficient proof this is the right product, let alone a phone.
         #
-        # Deliberately checks for ANY known brand in the title, not "the searched
-        # brand" — callers (e.g. update_prices.py) strip brand prefixes from
-        # product_name before searching ("Xiaomi 15T" -> "15T") to widen search
-        # results, so `name` itself frequently has no brand for us to compare against.
+        # Deliberately checks for ANY known brand in the title, not only the
+        # searched brand, because this helper is also used by maintenance scripts
+        # that can supply a shortened product name.
         phone_category_words = ['telefon', 'akıllı telefon', 'akilli telefon', 'smartphone', 'cep telefonu', 'gsm']
         if not any(b in title for b in brands) and not any(c in title for c in phone_category_words):
             return False
@@ -360,8 +323,28 @@ class TRPriceScraper:
                 if var not in name: return False
             if var in name and var not in title:
                 return False
-        
+
+        # 4. A product row represents a concrete RAM/storage variant. When a
+        # merchant title states a different capacity, reject it instead of
+        # attaching (for example) an 8/256 offer to a 4/128 product.
+        expected_specs = expected_specs or {}
+        expected_ram = self._spec_int(expected_specs.get('ram_gb'))
+        expected_storage = self._spec_int(expected_specs.get('storage_gb'))
+        listing_ram, listing_storage = self._extract_listing_capacities(item_title)
+        if expected_ram and listing_ram and expected_ram != listing_ram:
+            return False
+        if expected_storage and listing_storage and expected_storage != listing_storage:
+            return False
+
         return True
+
+    @staticmethod
+    def _build_search_url(config, search_name):
+        if config.get('query_encoding') == 'path':
+            encoded_query = quote(search_name, safe='')
+        else:
+            encoded_query = quote_plus(search_name)
+        return config['url'].format(query=encoded_query)
 
     def clean_merchant_url(self, url):
         if not url: return ""
@@ -408,7 +391,7 @@ class TRPriceScraper:
         
         return url
 
-    def get_akakce_price(self, product_name):
+    def get_akakce_price(self, product_name, expected_specs=None):
         search_name = self.clean_search_query(product_name)
         logging.info(f"🔍 Searching Akakçe for: {search_name} (Original: {product_name})")
         url = f"https://www.akakce.com/arama/?q={quote_plus(search_name)}"
@@ -430,7 +413,9 @@ class TRPriceScraper:
             for item in items:
                 title_el = item.select_one('h3, .pn_v8')
                 link_el = item.select_one('a')
-                if title_el and link_el and self.is_strict_match(product_name, title_el.get_text()):
+                if title_el and link_el and self.is_strict_match(
+                    product_name, title_el.get_text(), expected_specs
+                ):
                     product_url = link_el.get('href', '')
                     if not product_url.startswith('http'): product_url = "https://www.akakce.com" + product_url
                     break
@@ -587,7 +572,7 @@ class TRPriceScraper:
             return product_pages[0]
         return ''
 
-    def _parse_shopping_cards_generic(self, soup, product_name):
+    def _parse_shopping_cards_generic(self, soup, product_name, expected_specs=None):
         """Selector-free card extraction: find the smallest DOM blocks that hold a
         matching product title, a TL price, and a known Turkish retailer name."""
         price_re = re.compile(r'\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?\s*(?:₺|TL)')
@@ -603,7 +588,7 @@ class TRPriceScraper:
             if any(price_re.search(c.get_text(' ', strip=True) or '')
                    for c in el.find_all(['div', 'li', 'article'], recursive=False)):
                 continue
-            if not self.is_strict_match(product_name, text):
+            if not self.is_strict_match(product_name, text, expected_specs):
                 continue
             # Anchor on retailer names only — phone brand names ('samsung', 'apple')
             # appear in every product title and would mislabel unknown sellers
@@ -625,7 +610,7 @@ class TRPriceScraper:
             offers.append({"merchant": merchant.title(), "price": price_val, "url": link})
         return offers
 
-    def get_google_shopping_price(self, product_name):
+    def get_google_shopping_price(self, product_name, expected_specs=None):
         """Scrape Google Shopping Turkey for multi-merchant price comparison via FlareSolverr."""
         if self.GOOGLE_SHOPPING_DOMAIN in self.dead_domains:
             return None
@@ -688,7 +673,7 @@ class TRPriceScraper:
                 title_el = wrapper.select_one('.gkQHve, h3, .tAxDx, [role="heading"], .EI11Pd')
                 title = title_el.get_text().strip() if title_el else ""
                 
-                if title and not self.is_strict_match(product_name, title):
+                if title and not self.is_strict_match(product_name, title, expected_specs):
                     continue
                 
                 # Price
@@ -729,7 +714,7 @@ class TRPriceScraper:
         # (The old fallback that scraped any bare price from body text was removed —
         # it produced fake offers with no title or merchant validation.)
         if not results:
-            results = self._parse_shopping_cards_generic(soup, product_name)
+            results = self._parse_shopping_cards_generic(soup, product_name, expected_specs)
             if results:
                 logging.info(f"  📦 Generic card parser recovered {len(results)} offers (selector drift?)")
         
@@ -746,7 +731,7 @@ class TRPriceScraper:
         logging.warning(f"  ⚠️ Google Shopping: No matching results for {product_name}")
         return None
 
-    def get_epey_price(self, product_name):
+    def get_epey_price(self, product_name, expected_specs=None):
         import urllib.parse
         search_name = self.clean_search_query(product_name)
         logging.info(f"🔍 Searching Epey for: {search_name} (Original: {product_name})")
@@ -790,7 +775,7 @@ class TRPriceScraper:
                     href = a['href']
                     if '/akilli-telefonlar/' in href and href.endswith('.html'):
                         title = a.get('title', '') or a.get_text().strip()
-                        if title and self.is_strict_match(product_name, title):
+                        if title and self.is_strict_match(product_name, title, expected_specs):
                             product_url = href
                             if not product_url.startswith('http'): 
                                 product_url = "https://www.epey.com" + product_url
@@ -861,9 +846,53 @@ class TRPriceScraper:
 
         return None
 
-    async def scrape_site_async(self, site_name, config, search_name, product_name, semaphore):
+    def parse_site_offer(self, site_name, config, html, product_name, expected_specs=None):
+        soup = BeautifulSoup(html, 'html.parser')
+        offers = []
+        items = soup.select(config['container'])
+        for item in items:
+            title_el = item.select_one(config['title'])
+            price_el = item.select_one(config['price'])
+            if config['link'] in ('self', '') or item.name == 'a':
+                link_el = item
+            else:
+                link_el = item.select_one(config['link'])
+
+            if not (title_el and price_el and link_el):
+                continue
+
+            title = title_el.get_text(' ', strip=True)
+            price = self.clean_price(price_el.get_text(' ', strip=True))
+            link = link_el.get('href', '')
+            if link and not link.startswith('http'):
+                link = config['base_url'] + link
+
+            if (
+                price > 5000
+                and link
+                and self.is_strict_match(product_name, title, expected_specs)
+            ):
+                offers.append({
+                    "merchant": site_name,
+                    "price": price,
+                    "url": self.clean_merchant_url(link),
+                })
+
+        if offers:
+            return min(offers, key=lambda offer: offer['price'])
+        return None
+
+    async def scrape_site_async(
+        self,
+        site_name,
+        config,
+        search_name,
+        product_name,
+        semaphore,
+        expected_specs=None,
+    ):
         async with semaphore:
-            url = config['url'].format(query=quote_plus(search_name))
+            url = self._build_search_url(config, search_name)
             loop = asyncio.get_running_loop()
             try:
                 # Run the blocking network request in a thread pool executor.
@@ -874,28 +903,12 @@ class TRPriceScraper:
                     None, partial(self.get_via_flaresolverr, url, False, 1)
                 )
                 if not html: return None
-                
-                soup = BeautifulSoup(html, 'html.parser')
-                offers = []
-                items = soup.select(config['container'])
-                for item in items:
-                    title_el = item.select_one(config['title'])
-                    price_el = item.select_one(config['price'])
-                    link_el = item if item.name == 'a' else item.find('a') if config['link'] == 'self' else item.select_one(config['link'])
-                    
-                    if title_el and price_el and link_el:
-                        title = title_el.get_text().strip()
-                        price = self.clean_price(price_el.get_text())
-                        link = link_el.get('href', '')
-                        if not link.startswith('http'): link = config['base_url'] + link
-                        
-                        if price > 5000 and self.is_strict_match(product_name, title):
-                            offers.append({"merchant": site_name, "price": price, "url": self.clean_merchant_url(link)})
-                
-                if offers:
-                    return min(offers, key=lambda x: x['price'])
-            except:
-                pass
+
+                return self.parse_site_offer(
+                    site_name, config, html, product_name, expected_specs
+                )
+            except Exception as exc:
+                logging.warning(f"  ⚠️ {site_name} direct scrape failed: {exc}")
             return None
 
     @staticmethod
@@ -913,7 +926,7 @@ class TRPriceScraper:
         if 'teknosa' in m: return 'Teknosa'
         return m_name
 
-    async def get_best_prices(self, product_name):
+    async def get_best_prices(self, product_name, expected_specs=None):
         results = []
         # /about claims broad coverage (Hepsiburada, Trendyol, Amazon TR, n11 and more).
         # Stopping at the first source that returns anything left products with only
@@ -925,7 +938,7 @@ class TRPriceScraper:
             return len({self._standardize_merchant_name(r['merchant']) for r in results})
 
         # 1. Try Google Shopping (no Cloudflare, most reliable from CI)
-        gs_results = self.get_google_shopping_price(product_name)
+        gs_results = self.get_google_shopping_price(product_name, expected_specs)
         if gs_results:
             results.extend(gs_results)
             logging.info(f"  ✨ Found {len(gs_results)} offers on Google Shopping")
@@ -933,7 +946,7 @@ class TRPriceScraper:
         # 2. Try Epey.com to add more merchants if coverage is still thin
         if merchant_count() < TARGET_MERCHANT_COUNT:
             logging.info(f"  🔄 {merchant_count()} merchant(s) so far, trying Epey for more coverage...")
-            epey_results = self.get_epey_price(product_name)
+            epey_results = self.get_epey_price(product_name, expected_specs)
             if epey_results:
                 results.extend(epey_results)
                 logging.info(f"  ✨ Found {len(epey_results)} offers on Epey")
@@ -941,28 +954,42 @@ class TRPriceScraper:
         # 3. Try Akakçe to add more merchants if coverage is still thin
         if merchant_count() < TARGET_MERCHANT_COUNT:
             logging.info(f"  🔄 {merchant_count()} merchant(s) so far, trying Akakçe...")
-            akakce_results = self.get_akakce_price(product_name)
+            akakce_results = self.get_akakce_price(product_name, expected_specs)
             if akakce_results:
                 results.extend(akakce_results)
                 logging.info(f"  ✨ Found {len(akakce_results)} offers on Akakçe")
 
-        # 4. Specific sites fallback (our own direct scraper engine, concurrent across
-        #    ~10 sites) — this is the slowest path, so it only runs when the aggregators
-        #    combined still found nothing at all, not merely "not enough" (unchanged from
-        #    prior behavior to keep the CI time budget predictable).
-        if not results:
+        # 4. Fill thin aggregator coverage from direct retailer searches. Keep this
+        # list to sites that currently return useful HTML from GitHub-hosted runners;
+        # blocked/broken searches only consume the workflow timeout.
+        if merchant_count() < TARGET_MERCHANT_COUNT:
             search_name = self.clean_search_query(product_name)
-            results = []
-            logging.warning(f"  ⚠️ All aggregators found nothing. Falling back to multi-site direct search engine for {search_name}...")
+            logging.info(
+                f"  🔄 {merchant_count()} merchant(s) after aggregators, "
+                f"trying direct retailer searches for {search_name}..."
+            )
 
-            # Priority order: datacenter-friendly sites first, then others
-            priority_sites = ['Hepsiburada', 'PttAVM', 'n11', 'Trendyol', 'Amazon TR', 'Vatan Bilgisayar', 'MediaMarkt', 'Pasaj', 'Pazarama', 'Gürgençler']
-            sem = asyncio.Semaphore(3)
+            priority_sites = [
+                'Trendyol',
+                'n11',
+                'PttAVM',
+                'MediaMarkt',
+                'Pasaj',
+                'Pazarama',
+            ]
+            sem = asyncio.Semaphore(4)
             tasks = []
             for site_name in priority_sites:
                 config = self.site_configs.get(site_name)
                 if config:
-                    tasks.append(self.scrape_site_async(site_name, config, search_name, product_name, sem))
+                    tasks.append(self.scrape_site_async(
+                        site_name,
+                        config,
+                        search_name,
+                        product_name,
+                        sem,
+                        expected_specs,
+                    ))
 
             scraped_results = await asyncio.gather(*tasks)
             for r in scraped_results:

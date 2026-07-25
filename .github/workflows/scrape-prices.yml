@@ -70,6 +70,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Run scraper regression tests
+        run: |
+          python test_matching.py
+          python test_price_scraper_sources.py
+          python test_price_update_resilience.py
+
       - name: Run Image Repair Script (fix_images.py)
         if: ${{ github.event.inputs.run_fix_images == 'true' }}
         env:

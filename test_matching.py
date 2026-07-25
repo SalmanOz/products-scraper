@@ -65,6 +65,45 @@ CASES = [
      'production repro: brand-stripped iPhone search'),
 ]
 
+CAPACITY_CASES = [
+    # (product_name, title, specs, expected, description)
+    (
+        'Samsung Galaxy A16 4G',
+        'Samsung Galaxy A16 4 GB 128 GB Akıllı Telefon',
+        {'ram_gb': 4, 'storage_gb': 128},
+        True,
+        'matching RAM/storage variant',
+    ),
+    (
+        'Samsung Galaxy A16 4G',
+        'Samsung Galaxy A16 8 GB 256 GB Akıllı Telefon',
+        {'ram_gb': 4, 'storage_gb': 128},
+        False,
+        'must reject the wrong RAM/storage variant seen in production',
+    ),
+    (
+        'Apple iPhone 16 Pro',
+        'Apple iPhone 16 Pro 8GB/128GB Cep Telefonu',
+        {'ram_gb': 8, 'storage_gb': 128},
+        True,
+        'slash-separated matching capacities',
+    ),
+    (
+        'Apple iPhone 16 Pro',
+        'Apple iPhone 16 Pro 8/256GB Cep Telefonu',
+        {'ram_gb': 8, 'storage_gb': 128},
+        False,
+        'slash-separated storage mismatch',
+    ),
+    (
+        'Xiaomi 15T',
+        'Xiaomi 15T Akıllı Telefon',
+        {'ram_gb': 12, 'storage_gb': 256},
+        True,
+        'missing merchant capacity is not treated as a contradiction',
+    ),
+]
+
 
 def test_is_strict_match():
     scraper = TRPriceScraper.__new__(TRPriceScraper)  # skip __init__ (no network/proxy fetch)
@@ -73,6 +112,19 @@ def test_is_strict_match():
         result = scraper.is_strict_match(name, title)
         if result != expected:
             failures.append(f'FAIL [{desc}]: is_strict_match({name!r}, {title!r}) = {result} (expected {expected})')
+    assert not failures, '\n' + '\n'.join(failures)
+
+
+def test_capacity_matching():
+    scraper = TRPriceScraper.__new__(TRPriceScraper)
+    failures = []
+    for name, title, specs, expected, desc in CAPACITY_CASES:
+        result = scraper.is_strict_match(name, title, specs)
+        if result != expected:
+            failures.append(
+                f'FAIL [{desc}]: is_strict_match({name!r}, {title!r}, {specs!r}) '
+                f'= {result} (expected {expected})'
+            )
     assert not failures, '\n' + '\n'.join(failures)
 
 
@@ -107,6 +159,8 @@ def test_gsmarena_is_title_match():
 if __name__ == '__main__':
     test_is_strict_match()
     print(f'✅ All {len(CASES)} is_strict_match cases passed')
+    test_capacity_matching()
+    print(f'✅ All {len(CAPACITY_CASES)} capacity matching cases passed')
     test_standardize_merchant_name()
     print(f'✅ All {len(MERCHANT_CASES)} _standardize_merchant_name cases passed')
     test_is_trusted_merchant()

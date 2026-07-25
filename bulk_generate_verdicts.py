@@ -40,34 +40,35 @@ def generate_ai_analysis(product_data, api_key):
     # Gemini client is created lazily (only when the SDK path actually runs) so
     # a NVIDIA-only setup with no Gemini key doesn't crash at construction.
 
+    from datetime import datetime
+    current_year = datetime.now().year
+
     system_instruction = (
         "You are an objective, realistic, and highly experienced mobile technology editor writing for Teknoskor.com. "
         "Your task is to analyze the provided phone specifications and generate an honest, slightly critical, and engaging review along with short, punchy pros/cons.\n\n"
         "CRITICAL WRITING RULES:\n"
-        "1. Output language MUST be Turkish.\n"
+        "1. Output language MUST be Turkish, and it must read as NATURAL Turkish written by a person — not translated.\n"
         "2. Absolutely ban AI clichés and hype words in Turkish. Do NOT use: "
-        "'adeta', 'muazzam', 'harika', 'şüphesiz', 'canavar', 'ezber bozan', 'yeniden tanımlıyor', 'kusursuz', 'çığır açan', 'göz dolduruyor', 'olağanüstü', 'şık tasarımıyla', 'dikkat çekiyor'.\n"
+        "'adeta', 'muazzam', 'harika', 'şüphesiz', 'canavar', 'ezber bozan', 'yeniden tanımlıyor', 'kusursuz', 'çığır açan', 'göz dolduruyor', 'olağanüstü', 'şık tasarımıyla', 'dikkat çekiyor', 'acımasızca'.\n"
         "3. Do NOT use exclamation marks (!). Use periods (.) to maintain a neutral, professional editorial tone.\n"
         "4. Vary sentence lengths. Mix short, punchy sentences with compound ones.\n"
-        "5. Keep common tech terms in their original English form or standard local tech jargon (do NOT translate them un-naturally):\n"
-        "   - Use: 'throttling' or 'thermal throttling'\n"
-        "   - Use: 'multitasking'\n"
-        "   - Use: 'bloatware'\n"
-        "   - Use: 'always-on display'\n"
-        "   - Use: 'refresh rate' or 'Hz' (e.g., '120Hz ekran' or '120Hz refresh rate')\n"
-        "   - Use: 'peak parlaklık' or 'nits' (e.g., '2000 nits peak parlaklık')\n"
-        "   - Use: 'OIS', 'dynamic range', 'chipset', 'benchmark', 'premium'\n"
-        "6. Do NOT hallucinate or invent specifications not present in the provided tech sheet. Only comment on numbers provided.\n"
-        "7. Be objective and call out weaknesses (e.g., plastic frame, slow charging, outdated chipset). Analyze the target audience and value-for-money."
+        "5. NO CODE-SWITCHING for everyday words. A specific short list of established tech jargon may stay English; everything else must be natural Turkish.\n"
+        "   - ALLOWED English: 'throttling'/'thermal throttling', 'multitasking', 'bloatware', 'always-on display', 'refresh rate', 'Hz', 'nits', 'OIS', 'dynamic range', 'chipset', 'benchmark', 'premium', 'AnTuTu', 'FPS'.\n"
+        "   - BANNED code-switching (use the Turkish instead): 'title/titles' -> 'oyun/oyunlar', 'game' -> 'oyun', 'display' -> 'ekran', 'battery' -> 'batarya', 'camera' -> 'kamera', 'performance' -> 'performans'. Never glue a Turkish suffix onto an English word (e.g. 'titleslarda' is forbidden).\n"
+        "6. FACTUAL DISCIPLINE — this is the most important rule. Comment ONLY on numbers that literally appear in the provided Specs JSON. Do NOT invent, estimate, or extrapolate figures. Specifically: if the data has no battery-life or play-time hours, NEVER state a play-time like '1.3 saat oyun süresi'. FPS values are frames-per-second, not durations. If a spec is absent, simply don't mention it.\n"
+        f"7. TIME ANCHOR: the current year is {current_year}. When you mention the device's age or 'today's standards', compute it from {current_year}. Do not guess a different year.\n"
+        "8. STRUCTURE: the 'verdict' field must be 2 to 3 short paragraphs separated by a blank line (\\n\\n), each 2-4 sentences, for mobile readability. Not one giant block of text.\n"
+        "9. Be objective and call out real weaknesses (plastic frame, slow charging, dated chipset, small battery). Analyze the target audience and value-for-money honestly."
     )
-    
+
     prompt = (
-        f"Analyze the following phone specifications and generate a review:\n\n"
+        f"Analyze the following phone specifications and generate a review.\n"
+        f"Current year: {current_year}.\n\n"
         f"Phone Name: {product_data['name']}\n"
         f"Brand: {product_data['brand']}\n"
         f"Teknoskor Score: {product_data['score']}/100\n"
-        f"Specs: {json.dumps(product_data['specs'], ensure_ascii=False, indent=2)}\n\n"
-        f"Please return the verdict, pros, and cons in Turkish as a structured JSON object."
+        f"Specs (ONLY cite numbers that appear here): {json.dumps(product_data['specs'], ensure_ascii=False, indent=2)}\n\n"
+        f"Return the verdict (2-3 short paragraphs), pros, and cons in natural Turkish as a structured JSON object."
     )
     
     def try_nvidia():
@@ -184,12 +185,24 @@ def clean_hallucinations(analysis_json, product_specs):
         r'\bolağanüstü\b': 'iyi',
         r'\bşık tasarımıyla\b': 'tasarımıyla',
         r'\bdikkat çekiyor\b': 'öne çıkıyor',
+        r'\bacımasızca\b': 'net biçimde',
+        # Code-switch cleanup for the most common offenders the model glues
+        # Turkish suffixes onto (e.g. "titleslarda", "gamelerde")
+        r'\btitles?(larda|lerde|lar|ler|da|de)?\b': 'oyunlarda',
+        r'\bgame(lerde|ler|de)?\b': 'oyunlarda',
     }
-    
+
     for pattern, replacement in forbidden.items():
         verdict = re.sub(pattern, replacement, verdict, flags=re.IGNORECASE)
-        
-    analysis_json['verdict'] = re.sub(r'\s+', ' ', verdict).strip()
+
+    # Collapse runs of spaces/tabs but PRESERVE paragraph breaks (\n\n) — the
+    # prompt now asks for 2-3 short paragraphs for mobile readability, so
+    # flattening every newline to a space (the previous behavior) would undo
+    # exactly the structure we want.
+    verdict = re.sub(r'[ \t]+', ' ', verdict)
+    verdict = re.sub(r'\n{3,}', '\n\n', verdict)
+    verdict = re.sub(r'[ \t]*\n[ \t]*', '\n', verdict)
+    analysis_json['verdict'] = verdict.strip()
     return analysis_json
 
 def run_migration(limit=None, force=False):

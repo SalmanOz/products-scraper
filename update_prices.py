@@ -4,6 +4,7 @@ import asyncio
 import mysql.connector
 import os
 import time
+import json
 from dotenv import load_dotenv
 from tr_price_scraper import TRPriceScraper
 from indexnow import submit_urls
@@ -60,8 +61,25 @@ class PriceUpdater:
 
     def get_all_products(self):
         self.ensure_connection()
-        self.cursor.execute("SELECT id, name, slug, base_price FROM products WHERE status = 'published'")
+        self.cursor.execute(
+            "SELECT id, name, slug, base_price, attributes "
+            "FROM products WHERE status = 'published'"
+        )
         return self.cursor.fetchall()
+
+    @staticmethod
+    def get_expected_specs(attributes):
+        if isinstance(attributes, str):
+            try:
+                attributes = json.loads(attributes)
+            except (TypeError, ValueError):
+                return {}
+        if not isinstance(attributes, dict):
+            return {}
+        return {
+            'ram_gb': attributes.get('ram_gb'),
+            'storage_gb': attributes.get('storage_gb'),
+        }
 
     def update_product_offers(self, product_id, offers, current_base_price):
         if not offers:
@@ -125,7 +143,11 @@ class PriceUpdater:
     async def run_update(self, product_id=None):
         self.ensure_connection()
         if product_id:
-            self.cursor.execute("SELECT id, name, slug, base_price FROM products WHERE id = %s", (product_id,))
+            self.cursor.execute(
+                "SELECT id, name, slug, base_price, attributes "
+                "FROM products WHERE id = %s",
+                (product_id,),
+            )
             products = self.cursor.fetchall()
         else:
             products = self.get_all_products()
@@ -135,21 +157,23 @@ class PriceUpdater:
         updated_paths = []
         for p in products:
             name = p['name']
-            # Remove brand prefixes for better search on TR sites
-            clean_name = name.replace('Apple ', '').replace('Samsung ', '').replace('Xiaomi ', '')
+            expected_specs = self.get_expected_specs(p.get('attributes'))
 
             logging.info(f"\n🔍 Updating prices for: {name}")
             try:
-                offers = await self.price_scraper.get_best_prices(clean_name)
+                offers = await self.price_scraper.get_best_prices(name, expected_specs)
                 self.ensure_connection()
                 if offers:
                     self.update_product_offers(p['id'], offers, p['base_price'])
                     updated_paths.append(f"/product/{p['slug']}")
                 else:
-                    # Clear base_price if no offers found to avoid stale data
-                    self.cursor.execute("UPDATE products SET base_price = 0 WHERE id = %s", (p['id'],))
-                    self.db.commit()
-                    logging.warning(f"  ⚠️ No offers found for {name}. Base price reset.")
+                    # A scrape miss is not proof that every retailer is out of
+                    # stock. Preserve the last known-good offers/price so a
+                    # temporary block on a GitHub runner cannot erase live data.
+                    logging.warning(
+                        f"  ⚠️ No verified offers found for {name}. "
+                        "Keeping the last known price."
+                    )
             except Exception as e:
                 logging.error(f"  ❌ Error fetching prices for {name}: {str(e)}")
 
