@@ -5,6 +5,7 @@ Run: python3 test_matching.py
 """
 from tr_price_scraper import TRPriceScraper
 from gsmarena_scraper import GSMArenaScraper
+from bs4 import BeautifulSoup
 
 GSMARENA_CASES = [
     # (product_name, title, expected, description)
@@ -168,23 +169,33 @@ def test_is_trusted_merchant():
     assert not failures, '\n' + '\n'.join(failures)
 
 
-def test_generic_card_merchant_detection_is_boundary_safe():
+def test_generic_card_merchant_detection_requires_standalone_identity():
     scraper = TRPriceScraper.__new__(TRPriceScraper)
+    trusted_card = BeautifulSoup(
+        """
+        <article>
+          <span>Samsung Galaxy A16 4G 128GB Akıllı Telefon</span>
+          <span>Hepsiburada.com</span>
+          <span>12.999 TL</span>
+        </article>
+        """,
+        "html.parser",
+    ).article
+    fake_card = BeautifulSoup(
+        """
+        <article>
+          <span>Samsung Galaxy A16 4G 128GB Akıllı Telefon</span>
+          <span>Amazon Sahte</span>
+          <span>12.999 TL</span>
+        </article>
+        """,
+        "html.parser",
+    ).article
     assert (
-        scraper._trusted_merchant_alias_in_text(
-            'Samsung Galaxy A16 Hepsiburada 12.999 TL',
-            include_official_brands=False,
-        )
-        == 'hepsiburada'
+        scraper._trusted_merchant_in_card(trusted_card)
+        == 'Hepsiburada'
     )
-    assert scraper._trusted_merchant_alias_in_text(
-        'Samsung Galaxy A16 NotAmazonFake 12.999 TL',
-        include_official_brands=False,
-    ) is None
-    assert scraper._trusted_merchant_alias_in_text(
-        'Apple iPhone 16 Samsung Cep Dünyası 49.999 TL',
-        include_official_brands=False,
-    ) is None
+    assert scraper._trusted_merchant_in_card(fake_card) is None
 
 
 def test_gsmarena_is_title_match():
@@ -205,7 +216,7 @@ if __name__ == '__main__':
     print(f'✅ All {len(MERCHANT_CASES)} _standardize_merchant_name cases passed')
     test_is_trusted_merchant()
     print(f'✅ All {len(TRUST_CASES)} is_trusted_merchant cases passed')
-    test_generic_card_merchant_detection_is_boundary_safe()
-    print('✅ Generic shopping-card merchant detection is boundary-safe')
+    test_generic_card_merchant_detection_requires_standalone_identity()
+    print('✅ Generic shopping-card merchant identity fails closed')
     test_gsmarena_is_title_match()
     print(f'✅ All {len(GSMARENA_CASES)} GSMArenaScraper.is_title_match cases passed')

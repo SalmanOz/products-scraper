@@ -119,38 +119,6 @@ class TRPriceScraper:
         return ' '.join(re.findall(r'[a-z0-9]+', normalized))
 
     @classmethod
-    def _trusted_merchant_alias_in_text(
-        cls,
-        value,
-        include_official_brands=True,
-    ):
-        normalized = cls._normalize_words(value)
-        if not normalized:
-            return None
-
-        official_names = {
-            cls._normalize_words(name)
-            for name in cls.OFFICIAL_BRAND_MERCHANT_NAMES
-        }
-        if include_official_brands and normalized in official_names:
-            return normalized
-
-        padded = f' {normalized} '
-        aliases = sorted(
-            {
-                cls._normalize_words(alias)
-                for alias in cls.TRUSTED_MERCHANTS
-                if alias not in cls.BRAND_ONLY_MERCHANT_ALIASES
-            },
-            key=len,
-            reverse=True,
-        )
-        return next(
-            (alias for alias in aliases if f' {alias} ' in padded),
-            None,
-        )
-
-    @classmethod
     def _canonical_merchant_name(cls, merchant):
         normalized = cls._normalize_words(merchant)
         suffixes = (
@@ -165,6 +133,32 @@ class TRPriceScraper:
                 normalized = normalized[:-len(suffix)].strip()
                 break
         return cls.CANONICAL_MERCHANT_NAMES.get(normalized)
+
+    @classmethod
+    def _trusted_merchant_in_card(cls, card):
+        """Read a retailer only from a standalone card element.
+
+        Searching the whole card text for a trusted substring would turn a
+        seller such as "Amazon Sahte" into "Amazon". Google cards normally
+        render the merchant in its own span/div, so fail closed when that
+        standalone identity is unavailable.
+        """
+        official_brand_names = {
+            'Apple Store',
+            'Samsung',
+            'Xiaomi',
+            'Mi Store',
+        }
+        for candidate in card.find_all(
+            ['span', 'div', 'p', 'small'],
+            recursive=True,
+        ):
+            canonical = cls._canonical_merchant_name(
+                candidate.get_text(' ', strip=True)
+            )
+            if canonical and canonical not in official_brand_names:
+                return canonical
+        return None
 
     def is_trusted_merchant(self, merchant):
         return self._canonical_merchant_name(merchant) is not None
@@ -796,10 +790,7 @@ class TRPriceScraper:
                 continue
             # Anchor on retailer names only — phone brand names ('samsung', 'apple')
             # appear in every product title and would mislabel unknown sellers
-            merchant = self._trusted_merchant_alias_in_text(
-                text,
-                include_official_brands=False,
-            )
+            merchant = self._trusted_merchant_in_card(el)
             if not merchant:
                 continue
             price_val = self.clean_price(price_m.group(0))
@@ -812,7 +803,7 @@ class TRPriceScraper:
                     link = self._extract_merchant_link(parent_a.parent or parent_a, merchant)
             if not link:
                 continue
-            offers.append({"merchant": merchant.title(), "price": price_val, "url": link})
+            offers.append({"merchant": merchant, "price": price_val, "url": link})
         return offers
 
     def get_google_shopping_price(self, product_name, expected_specs=None):
