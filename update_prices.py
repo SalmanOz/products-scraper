@@ -1,71 +1,31 @@
 
 import logging
 import asyncio
-import mysql.connector
-import os
-import time
 import json
+import math
+from datetime import datetime, timezone
 from dotenv import load_dotenv
+from urllib.parse import urlparse
 from tr_price_scraper import TRPriceScraper
 from indexnow import submit_urls
+from offer_ingestion_client import OfferIngestionClient
 from price_sanity import filter_price_outliers
 
 load_dotenv()
 
+MIN_FULL_RUN_PRODUCT_COVERAGE = 0.50
+INGESTION_PRODUCT_BATCH_SIZE = 10
+MAX_OFFER_PRICE = 5_000_000
+
 class PriceUpdater:
-    def __init__(self):
-        self.db = None
-        self.cursor = None
-        self.ensure_connection()
-        self.price_scraper = TRPriceScraper()
-
-    def ensure_connection(self, max_retries=5):
-        try:
-            if self.db and self.db.is_connected():
-                self.db.ping(reconnect=True, attempts=3, delay=2)
-                self.cursor = self.db.cursor(dictionary=True, buffered=True)
-                return
-        except Exception:
-            pass
-
-        logging.info("  🔄 Connecting/Reconnecting to MySQL database...")
-        try:
-            if self.db:
-                self.db.close()
-        except Exception:
-            pass
-
-        for attempt in range(1, max_retries + 1):
-            try:
-                self.db = mysql.connector.connect(
-                    host=os.getenv("DB_HOST", "localhost"),
-                    user=os.getenv("DB_USER"),
-                    password=os.getenv("DB_PASSWORD"),
-                    database=os.getenv("DB_NAME"),
-                    port=int(os.getenv("DB_PORT", 3306)),
-                    buffered=True,
-                    connection_timeout=30
-                )
-                self.cursor = self.db.cursor(dictionary=True, buffered=True)
-                logging.info(f"  ✅ DB connected (attempt {attempt}/{max_retries})")
-                return
-            except Exception as e:
-                logging.warning(f"  ⚠️ DB connection attempt {attempt}/{max_retries} failed: {e}")
-                if attempt < max_retries:
-                    wait = 10 * attempt
-                    logging.info(f"  ⏳ Retrying in {wait}s...")
-                    time.sleep(wait)
-                else:
-                    logging.error(f"  ❌ All {max_retries} DB connection attempts failed.")
-                    raise
+    def __init__(self, ingestion_client=None, price_scraper=None):
+        self.ingestion_client = (
+            ingestion_client or OfferIngestionClient.from_env()
+        )
+        self.price_scraper = price_scraper or TRPriceScraper()
 
     def get_all_products(self):
-        self.ensure_connection()
-        self.cursor.execute(
-            "SELECT id, name, slug, base_price, attributes "
-            "FROM products WHERE status = 'published'"
-        )
-        return self.cursor.fetchall()
+        return self.ingestion_client.get_published_products()
 
     @staticmethod
     def get_expected_specs(attributes):
@@ -81,13 +41,23 @@ class PriceUpdater:
             'storage_gb': attributes.get('storage_gb'),
         }
 
-    def update_product_offers(self, product_id, offers, current_base_price):
+    @staticmethod
+    def utc_timestamp():
+        return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+    def prepare_product_offers(
+        self,
+        product,
+        offers,
+        observed_at,
+        checked_at,
+    ):
         if not offers:
-            return
+            return []
 
         # Wrong-listing guard: a fuzzy-matched accessory/wrong variant surfaces
-        # as a price far below the rest of the market and would poison both the
-        # stored offers and the min() that becomes products.base_price
+        # as a price far below the rest of the market and would poison the
+        # current offer set.
         clean = filter_price_outliers(offers)
         if len(clean) < len(offers):
             dropped = [o for o in offers if o not in clean]
@@ -95,77 +65,145 @@ class PriceUpdater:
                 logging.warning(f"  🚫 Outlier offer dropped: {d['merchant']} {d['price']} TL ({d['url'][:80]})")
             offers = clean
 
-        # Deadlock protection with retry
-        for i in range(3):
+        records = []
+        for offer in offers:
             try:
-                self.ensure_connection()
-                # Delete old offers
-                self.cursor.execute("DELETE FROM product_offers WHERE product_id = %s", (product_id,))
-                
-                # Insert new offers
-                for o in offers:
-                    self.cursor.execute("""
-                        INSERT INTO product_offers (product_id, merchant_name, price, affiliate_url, is_official)
-                        VALUES (%s, %s, %s, %s, %s)
-                    """, (product_id, o['merchant'], o['price'], o['url'], 0))
-                
-                # Update base_price in products table to the minimum offer price
-                min_price = min([o['price'] for o in offers])
-                self.cursor.execute("UPDATE products SET base_price = %s WHERE id = %s", (min_price, product_id))
-                
-                # If the lowest price has changed, log it to the price history table
-                curr_price = float(current_base_price) if current_base_price is not None else 0.0
-                new_price = float(min_price)
-                if abs(curr_price - new_price) > 0.01:
-                    logging.info(f"  📈 Price change detected! Old: {curr_price} TL, New: {new_price} TL. Logging to history.")
-                    self.cursor.execute("""
-                        INSERT INTO product_prices (product_id, price)
-                        VALUES (%s, %s)
-                    """, (product_id, min_price))
-                
-                self.db.commit()
-                logging.info(f"  ✅ Updated {len(offers)} offers. Min Price: {min_price} TL")
-                break
-            except mysql.connector.errors.InternalError as e:
-                if e.errno == 1213: # Deadlock
-                    logging.warning(f"  ⚠️ Deadlock, retrying ({i+1}/3)...")
-                    time.sleep(2)
-                    continue
-                raise e
-            except Exception as e:
-                logging.error(f"  ❌ Error updating DB: {str(e)}")
-                try:
-                    self.db.rollback()
-                except Exception:
-                    pass
-                break
+                seller = str(offer["merchant"]).strip()
+                price = float(offer["price"])
+                source_url = str(offer["url"]).strip()
+            except (KeyError, TypeError, ValueError) as error:
+                raise RuntimeError(
+                    f"Invalid extracted offer for {product['slug']}: {offer}"
+                ) from error
+            if (
+                not seller
+                or len(seller) > 100
+                or not math.isfinite(price)
+                or price <= 0
+                or price > MAX_OFFER_PRICE
+                or not source_url
+                or len(source_url) > 1000
+                or urlparse(source_url).scheme not in {"http", "https"}
+                or not urlparse(source_url).netloc
+            ):
+                raise RuntimeError(
+                    f"Invalid extracted offer for {product['slug']}: {offer}"
+                )
 
-    async def run_update(self, product_id=None):
-        self.ensure_connection()
-        if product_id:
-            self.cursor.execute(
-                "SELECT id, name, slug, base_price, attributes "
-                "FROM products WHERE id = %s",
-                (product_id,),
+            records.append(
+                {
+                    "product_id": int(product["id"]),
+                    "product_slug": product["slug"],
+                    "seller": seller,
+                    "price": price,
+                    "currency": "TRY",
+                    # A successfully parsed listing is not proof of stock.
+                    "availability": "unknown",
+                    "source_url": source_url,
+                    "affiliate_url": source_url,
+                    "observed_at": observed_at,
+                    "checked_at": checked_at,
+                    "is_official": False,
+                }
             )
-            products = self.cursor.fetchall()
-        else:
-            products = self.get_all_products()
-            
+        return records
+
+    @staticmethod
+    def empty_ingestion_result():
+        return {
+            "accepted": 0,
+            "stale_ignored": 0,
+            "changed_paths": [],
+            "committed": True,
+        }
+
+    @staticmethod
+    def merge_ingestion_result(aggregate, result):
+        if result.get("committed") is not True:
+            raise RuntimeError(
+                "Offer ingestion response did not confirm a commit"
+            )
+        aggregate["accepted"] += int(result.get("accepted", 0))
+        aggregate["stale_ignored"] += int(
+            result.get("stale_ignored", 0)
+        )
+        aggregate["changed_paths"].extend(
+            path
+            for path in result.get("changed_paths", [])
+            if isinstance(path, str) and path.startswith("/")
+        )
+
+    def flush_offers(self, pending_offers, aggregate):
+        if not pending_offers:
+            return
+        result = self.ingestion_client.ingest_offers(
+            list(pending_offers)
+        )
+        self.merge_ingestion_result(aggregate, result)
+        logging.info(
+            "  ✅ HTTPS ingestion committed: %s accepted, %s stale",
+            result["accepted"],
+            result["stale_ignored"],
+        )
+        pending_offers.clear()
+
+    async def run_update(self, product_id=None, phase2_backfill=False):
+        if product_id is not None and phase2_backfill:
+            raise RuntimeError(
+                "Phase 2 backfill must validate the full published catalog"
+            )
+        products = self.get_all_products()
+        if product_id is not None:
+            try:
+                target_id = int(product_id)
+            except (TypeError, ValueError) as error:
+                raise RuntimeError("Product id must be a positive integer") from error
+            if target_id <= 0:
+                raise RuntimeError("Product id must be a positive integer")
+            products = [
+                product
+                for product in products
+                if int(product["id"]) == target_id
+            ]
+            if not products:
+                raise RuntimeError(
+                    f"Published product {target_id} was not found in the catalog"
+                )
+
         logging.info(f"🚀 Starting price update for {len(products)} products...")
 
-        updated_paths = []
-        for p in products:
+        pending_offers = []
+        aggregate_result = self.empty_ingestion_result()
+        failures = []
+        products_with_offers = 0
+        merchant_counts = {}
+        for processed_count, p in enumerate(products, start=1):
             name = p['name']
             expected_specs = self.get_expected_specs(p.get('attributes'))
 
             logging.info(f"\n🔍 Updating prices for: {name}")
             try:
                 offers = await self.price_scraper.get_best_prices(name, expected_specs)
-                self.ensure_connection()
                 if offers:
-                    self.update_product_offers(p['id'], offers, p['base_price'])
-                    updated_paths.append(f"/product/{p['slug']}")
+                    observed_at = self.utc_timestamp()
+                    checked_at = self.utc_timestamp()
+                    product_offers = self.prepare_product_offers(
+                        p,
+                        offers,
+                        observed_at,
+                        checked_at,
+                    )
+                    pending_offers.extend(product_offers)
+                    if product_offers:
+                        products_with_offers += 1
+                    merchant_counts[p["slug"]] = len({
+                        record["seller"].strip().casefold()
+                        for record in product_offers
+                    })
+                    logging.info(
+                        "  ✅ Prepared %s matched listing(s) for ingestion",
+                        len(product_offers),
+                    )
                 else:
                     # A scrape miss is not proof that every retailer is out of
                     # stock. Preserve the last known-good offers/price so a
@@ -176,25 +214,84 @@ class PriceUpdater:
                     )
             except Exception as e:
                 logging.error(f"  ❌ Error fetching prices for {name}: {str(e)}")
+                failures.append(f"{p['slug']}: {e}")
+
+            if processed_count % INGESTION_PRODUCT_BATCH_SIZE == 0:
+                self.flush_offers(pending_offers, aggregate_result)
 
             # Small delay to avoid aggressive scraping
             await asyncio.sleep(1)
 
-        # Ping IndexNow with every product page whose offers changed, plus the
-        # listing surfaces that reflect those prices. Best-effort — never fails
-        # the run.
-        if updated_paths:
-            submit_urls(updated_paths + ["/", "/products"])
+        self.flush_offers(pending_offers, aggregate_result)
+        aggregate_result["changed_paths"] = list(
+            dict.fromkeys(aggregate_result["changed_paths"])
+        )
+        changed_paths = aggregate_result["changed_paths"]
+        coverage = (
+            products_with_offers / len(products)
+            if products
+            else 0
+        )
+        logging.info(
+            "  📊 Product offer coverage: %s/%s (%.1f%%)",
+            products_with_offers,
+            len(products),
+            coverage * 100,
+        )
+
+        if changed_paths:
+            submit_urls(changed_paths + ["/", "/products"])
 
         logging.info("\n🏁 Price update completed!")
-        try:
-            self.cursor.close()
-            self.db.close()
-        except Exception:
-            pass
+        run_issues = []
+        if (
+            product_id is None
+            and products
+            and coverage < MIN_FULL_RUN_PRODUCT_COVERAGE
+        ):
+            run_issues.append(
+                "full-catalog offer coverage "
+                f"{coverage:.1%} is below the required "
+                f"{MIN_FULL_RUN_PRODUCT_COVERAGE:.0%}"
+            )
+        if phase2_backfill:
+            insufficient_products = [
+                product["slug"]
+                for product in products
+                if merchant_counts.get(product["slug"], 0) < 2
+            ]
+            if insufficient_products:
+                run_issues.append(
+                    "Phase 2 backfill requires at least two distinct "
+                    "merchants for every published product; missing: "
+                    + ", ".join(insufficient_products)
+                )
+        if failures:
+            run_issues.append(
+                f"{len(failures)} product scrape(s) failed: "
+                + "; ".join(failures)
+            )
+        if run_issues:
+            raise RuntimeError(
+                " | ".join(run_issues)
+            )
+        return aggregate_result
 
 if __name__ == "__main__":
-    import sys
-    target_id = sys.argv[1] if len(sys.argv) > 1 else None
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("product_id", nargs="?")
+    parser.add_argument(
+        "--phase2-backfill",
+        action="store_true",
+        help="Require two distinct merchants for every published product",
+    )
+    arguments = parser.parse_args()
     updater = PriceUpdater()
-    asyncio.run(updater.run_update(target_id))
+    asyncio.run(
+        updater.run_update(
+            arguments.product_id,
+            phase2_backfill=arguments.phase2_backfill,
+        )
+    )

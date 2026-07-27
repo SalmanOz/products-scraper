@@ -4,132 +4,34 @@ logger = logging.getLogger(__name__)
 
 import os
 import re
+import sys
 import time
 import json
-import asyncio
-import mysql.connector
-import random
 import requests
-import nest_asyncio
-import boto3
-from botocore.client import Config
 from dotenv import load_dotenv
-from spec_mapper import map_specs_to_turkish
-from tr_price_scraper import TRPriceScraper
-from gsmarena_scraper import GSMArenaScraper
+from source_ingestion import (
+    ExistingProductNotFoundError,
+    IngestionConfigurationError,
+    SourceIngestionClient,
+    SourceIngestionError,
+    build_provenance_records,
+    utc_observation_time,
+)
 from bs4 import BeautifulSoup
-from PIL import Image
-from io import BytesIO
 import html as html_lib
 
 load_dotenv(os.path.join(os.path.dirname(__file__), '.env'))
-nest_asyncio.apply()
 
 class KimovilScraper:
-    def __init__(self):
-        self.db = None
-        self.cursor = None
-        self.ensure_connection()
-        self.update_prices = False # Default to False: follow the new decoupled architecture
+    def __init__(self, ingestion_client=None):
+        self.ingestion_client = ingestion_client
         self.base_url = os.getenv("KIMOVIL_BASE_URL", "https://www.kimovil.com/en/")
         self.flaresolverr_url = "http://localhost:8191/v1"
-        self.r2_enabled = bool(os.getenv("R2_ACCESS_KEY_ID")) and bool(os.getenv("R2_ACCOUNT_ID"))
-        if self.r2_enabled:
-            logging.info("☁️ R2 enabled.")
-            self.s3 = boto3.client('s3', endpoint_url=f"https://{os.getenv('R2_ACCOUNT_ID')}.r2.cloudflarestorage.com", aws_access_key_id=os.getenv("R2_ACCESS_KEY_ID"), aws_secret_access_key=os.getenv("R2_SECRET_ACCESS_KEY"), config=Config(signature_version='s3v4'), region_name='auto')
-            self.bucket_name = os.getenv("R2_BUCKET_NAME")
-            pub_dom = os.getenv("R2_PUBLIC_DOMAIN", "").rstrip('/')
-            if pub_dom and not pub_dom.startswith(('http://', 'https://')):
-                pub_dom = 'https://' + pub_dom
-            self.public_domain = pub_dom
 
-    def ensure_connection(self, max_retries=5):
-        try:
-            if self.db and self.db.is_connected():
-                self.db.ping(reconnect=True, attempts=3, delay=2)
-                self.cursor = self.db.cursor(dictionary=True, buffered=True)
-                return
-        except Exception:
-            pass
-
-        logging.info("  🔄 Connecting/Reconnecting to MySQL database...")
-        try:
-            if self.db:
-                self.db.close()
-        except Exception:
-            pass
-
-        for attempt in range(1, max_retries + 1):
-            try:
-                self.db = mysql.connector.connect(
-                    host=os.getenv("DB_HOST"),
-                    user=os.getenv("DB_USER"),
-                    password=os.getenv("DB_PASSWORD"),
-                    database=os.getenv("DB_NAME"),
-                    port=int(os.getenv("DB_PORT", 3306)),
-                    buffered=True,
-                    connection_timeout=30
-                )
-                self.cursor = self.db.cursor(dictionary=True, buffered=True)
-                logging.info(f"  ✅ DB connected (attempt {attempt}/{max_retries})")
-                return
-            except Exception as e:
-                logging.warning(f"  ⚠️ DB connection attempt {attempt}/{max_retries} failed: {e}")
-                if attempt < max_retries:
-                    wait = 10 * attempt
-                    logging.info(f"  ⏳ Retrying in {wait}s...")
-                    time.sleep(wait)
-                else:
-                    logging.error(f"  ❌ All {max_retries} DB connection attempts failed.")
-                    raise
-
-    def upload_image_to_r2(self, source_url, destination_path):
-        if not self.r2_enabled: 
-            logging.warning("⚠️ R2 is not enabled, skipping image upload.")
-            return source_url
-        try:
-            headers = {'User-Agent': 'Mozilla/5.0'}
-            img_res = requests.get(source_url, headers=headers, timeout=15)
-            if img_res.status_code != 200: 
-                logging.error(f"❌ Failed to download source image {source_url}, status code: {img_res.status_code}")
-                return source_url
-            img = Image.open(BytesIO(img_res.content))
-            if img.mode in ("RGBA", "P"): img = img.convert("RGBA")
-            else: img = img.convert("RGB")
-            buffer = BytesIO()
-            img.save(buffer, format="WEBP", quality=80, optimize=True)
-            buffer.seek(0)
-            webp_path = os.path.splitext(destination_path)[0] + ".webp"
-            self.s3.put_object(Bucket=self.bucket_name, Key=webp_path, Body=buffer.getvalue(), ContentType='image/webp')
-            final_url = f"{self.public_domain}/{webp_path}"
-            logging.info(f"☁️ Successfully uploaded image to R2: {final_url}")
-            return final_url
-        except Exception as e: 
-            logging.error(f"❌ R2 Upload Exception for {source_url} to {destination_path}: {str(e)}")
-            return source_url
-
-    def execute_with_retry(self, query, params=None, retries=3):
-        self.ensure_connection()
-        for i in range(retries):
-            try:
-                self.cursor.execute(query, params)
-                self.db.commit()
-                return True
-            except mysql.connector.errors.InternalError as e:
-                if e.errno in [1213, 1205]: # Deadlock or Lock Wait Timeout
-                    logging.warning(f"⚠️ DB Lock detected ({e.errno}), retrying ({i+1}/{retries})...")
-                    time.sleep(2)
-                    self.ensure_connection()
-                    continue
-                raise e
-            except Exception as e:
-                logging.error(f"❌ DB Error: {str(e)}")
-                try:
-                    self.db.rollback()
-                except Exception:
-                    pass
-                return False
-        return False
+    def get_ingestion_client(self):
+        if self.ingestion_client is None:
+            self.ingestion_client = SourceIngestionClient.from_env()
+        return self.ingestion_client
 
     def get_via_flaresolverr(self, url):
         logging.info(f"🚀 FlareSolverr: {url}")
@@ -179,21 +81,73 @@ class KimovilScraper:
         except:
             return 0
 
-    def extract_decimal(self, text):
-        """Like extract_number but keeps the decimal point — for values such as
-        screen size where "6.67" must not collapse to 667."""
-        if not text: return 0.0
-        t = str(text).replace('\t', '').replace('\n', '').strip()
-        t = re.sub(r'\(.*?\)', '', t).strip()
-        m = re.search(r'\d+(?:[\.,]\d+)?', t)
-        if not m: return 0.0
-        try:
-            return float(m.group(0).replace(',', '.'))
-        except:
-            return 0.0
+    @staticmethod
+    def is_product_name_match(expected, observed):
+        """Fail closed when a source page appears to describe another variant."""
 
-    def scrape_product_details(self, url, category_id=1):
+        def tokens(value):
+            normalized = str(value).lower().replace("+", " plus ")
+            return re.findall(r"[a-z0-9]+", normalized)
+
+        expected_tokens = tokens(expected)
+        observed_tokens = tokens(observed)
+        if not expected_tokens or not observed_tokens:
+            return False
+
+        brands = {
+            "apple",
+            "google",
+            "honor",
+            "huawei",
+            "infinix",
+            "motorola",
+            "nothing",
+            "oneplus",
+            "oppo",
+            "poco",
+            "realme",
+            "redmi",
+            "samsung",
+            "tecno",
+            "vivo",
+            "xiaomi",
+        }
+        expected_brands = set(expected_tokens) & brands
+        observed_brands = set(observed_tokens) & brands
+        if expected_brands and not (
+            expected_brands & observed_brands
+        ):
+            return False
+
+        generic = {"phone", "smartphone", "galaxy"}
+        meaningful_expected = [
+            token
+            for token in expected_tokens
+            if token not in brands and token not in generic
+        ]
+        meaningful_observed = [
+            token
+            for token in observed_tokens
+            if token not in brands and token not in generic
+        ]
+        # Joining handles harmless spacing differences such as iPhone16e vs
+        # iPhone 16e while still rejecting extra model/variant qualifiers.
+        return (
+            bool(meaningful_expected) and
+            "".join(meaningful_expected) == "".join(meaningful_observed)
+        )
+
+    def scrape_product_details(
+        self,
+        url,
+        category_id=1,
+        product_slug=None,
+        expected_name=None,
+    ):
         try:
+            # Kept for backward-compatible callers. Product category and all
+            # publication decisions are owned by the website.
+            _ = category_id
             html = self.get_via_flaresolverr(url)
             if not html:
                 logging.error(f"❌ Error: FlareSolverr returned no HTML for {url}")
@@ -218,8 +172,17 @@ class KimovilScraper:
             if "Compare smartphones" in full_name or "Unknown Device" == full_name or "Page not found" in full_name or not (device_ki or device_compare):
                 logging.warning(f"⚠️ Skipping: {full_name} (Invalid or general comparison page)")
                 return False
+            if expected_name and not self.is_product_name_match(
+                expected_name,
+                full_name,
+            ):
+                logging.error(
+                    "❌ Source identity mismatch: expected '%s', observed '%s'",
+                    expected_name,
+                    full_name,
+                )
+                return False
 
-            brand_name = device_compare.get('brand_name') or (full_name.split(' ')[0] if ' ' in full_name else full_name)
             logging.info(f"📦 Processing: {full_name}")
 
             raw_specs = {}; all_key_values = {}
@@ -241,12 +204,13 @@ class KimovilScraper:
                             all_key_values[key] = val
 
             partials = device_ki.get('partials', {})
-            ki_score = device_ki.get('ki', 0)
-            def randomize_score(score):
-                if not score or not isinstance(score, (int, float)): return score
-                return max(0.1, min(10.0, round(float(score) + random.uniform(-0.2, 0.2), 1)))
-            if partials: partials = {k: randomize_score(v) for k, v in partials.items()}
-            ki_score = randomize_score(ki_score)
+            # Preserve the observed benchmark values exactly. The scoring API
+            # owns TeknoSkor calculation; this scraper must not perturb inputs.
+            partials = {
+                key: float(value)
+                for key, value in partials.items()
+                if isinstance(value, (int, float))
+            }
 
             def get_spec(s, k, f=None):
                 for sect, specs in raw_specs.items():
@@ -256,22 +220,29 @@ class KimovilScraper:
                             if f and f.lower() in sk.lower(): return sv
                 return all_key_values.get(k, all_key_values.get(f, '---'))
 
-            ram_v = get_spec('Hardware', 'RAM'); storage_v = get_spec('Hardware', 'Capacity', 'Storage')
-            cpu_v = get_spec('Hardware', 'Processor', 'Model'); screen_v = get_spec('Screen', 'Diagonal', 'Size')
-            battery_v = get_spec('Battery', 'Capacity'); antutu_v = get_spec('Hardware', 'Score')
+            battery_v = get_spec('Battery', 'Capacity')
+            antutu_v = next(
+                (
+                    value
+                    for key, value in all_key_values.items()
+                    if (
+                        'antutu' in str(key).lower()
+                        or 'antutu' in str(value).lower()
+                    )
+                ),
+                '---',
+            )
             nm_v = self.extract_number(get_spec('Hardware', 'Nanometers', 'nm'))
 
             attributes = {
-                **map_specs_to_turkish(raw_specs),
-                "quick_specs": {"ram": ram_v, "storage": storage_v, "cpu": cpu_v, "screen": screen_v, "battery": battery_v, "camera_main": all_key_values.get('Main', '---')},
-                "ram_gb": int(self.extract_number(ram_v)), "storage_gb": int(self.extract_number(storage_v)),
-                "battery_mah": int(self.extract_number(battery_v)), "screen_size_inch": self.extract_decimal(screen_v),
-                "kiscore": float(ki_score), "antutu_score": int(self.extract_number(antutu_v)),
+                "antutu_score": int(self.extract_number(antutu_v)),
                 "camera_score": partials.get('camera', 0), "performance_score": partials.get('hardware', 0),
                 "battery_score": partials.get('battery', 0), "screen_score": partials.get('design', 0), "partials": partials
             }
 
             def calc_gaming(antutu, bat, nm):
+                if antutu <= 0 or bat <= 0:
+                    return []
                 games = {"PUBG Mobile": {"i": "🔫", "w": 1.0, "m": 120}, "Genshin Impact": {"i": "✨", "w": 2.2, "m": 60}, "CoD: Warzone": {"i": "🎖️", "w": 1.8, "m": 120}, "EA FC Mobile": {"i": "⚽", "w": 1.2, "m": 120}, "Mobile Legends": {"i": "⚔️", "w": 0.8, "m": 120}, "Roblox": {"i": "🧱", "w": 0.7, "m": 60}}
                 res = []; nm = nm if nm > 0 else 6
                 for name, c in games.items():
@@ -279,179 +250,51 @@ class KimovilScraper:
                     play_time = round(bat / (c["w"]*800*(1+(nm-4)*0.1)), 1)
                     res.append({"game": name, "icon": c["i"], "fps": fps, "max_fps": c["m"], "hours": play_time, "tier": "Ultra" if fps >= c["m"]*0.9 else "Yüksek" if fps >= c["m"]*0.7 else "Orta"})
                 return res
-            attributes["gaming_performance"] = calc_gaming(attributes["antutu_score"], attributes["battery_mah"], nm_v)
-
-            def gen_faq(name, attr, parts):
-                # Only generate FAQ claims backed by real data — never fall back to
-                # invented defaults (a missing refresh rate is NOT 60Hz)
-                pool = []
-                antutu = attr.get("antutu_score", 0); bat = attr.get("battery_mah", 0); cam = parts.get("camera", 0)
-                hz = attr.get("screen_refresh_rate"); ch = attr.get("charging_speed_w")
-                if antutu > 0:
-                    antutu_tr = f"{antutu:,}".replace(",", ".")  # Turkish thousands separator
-                    pool.append({"q": random.choice([f"{name} oyun performansı nasıl?", f"{name} oyunlarda kasar mı?"]), "a": random.choice([f"{name}, {antutu_tr} AnTuTu skoruyla " + ("tüm oyunları en yüksek ayarlarda akıcı çalıştırır." if antutu > 1200000 else "orta-yüksek ayarlarda dengeli deneyim sunar." if antutu > 700000 else "temel oyunlar için uygundur.")])})
-                if bat > 0:
-                    pool.append({"q": random.choice([f"{name} bataryası ne kadar gider?", f"{name} şarjı çabuk biter mi?"]), "a": random.choice([f"{bat} mAh kapasitesiyle " + ("normal kullanımda 1.5-2 gün pil ömrü sunar." if bat >= 5000 else "günlük standart kullanımı karşılar.")])})
-                if cam > 0:
-                    # Answer must not open with a yes/no marker ("Evet, ...") — the
-                    # question is randomly one of a yes/no phrasing ("... iyi mi?")
-                    # or an open "nasıl?" phrasing, and "Evet, ..." only makes
-                    # grammatical sense as a reply to the former. Every other FAQ
-                    # answer in this function is phrased descriptively with no
-                    # yes/no marker; match that style here too so it works for
-                    # either question.
-                    pool.append({"q": random.choice([f"{name} kamerası gece çekimi için iyi mi?", f"{name} fotoğraf kalitesi nasıl?"]), "a": ("Düşük ışıkta profesyonel sonuçlar verir." if cam >= 8.5 else "Gün ışığında başarılı olsa da gece çekimlerinde kumlanma yapabilir.")})
-                if hz:
-                    pool.append({"q": random.choice([f"{name} ekranı kaç Hz?", f"{name} ekran akıcılığı nasıl?"]), "a": [f"{hz}Hz yenileme hızıyla " + ("ipeksi bir akıcılık sunar." if hz >= 120 else "standart bir akıcılık sunar.")][0]})
-                if ch:
-                    pool.append({"q": random.choice([f"{name} hızlı şarj oluyor mu?", f"{name} kaç Watt destekliyor?"]), "a": [f"{ch}W desteğiyle " + ("ultra hızlı şarj imkanı sağlar." if ch >= 67 else "makul sürelerde dolum sağlar.")][0]})
-                random.shuffle(pool)
-                return pool[:5]
-            attributes["faq"] = gen_faq(full_name, attributes, partials)
-
-            # --- Image Handling: Kimovil Gallery Only ---
-            def to_hi(u):
-                if not u: return u
-                if u.startswith('//'): u = 'https:' + u
-                # Kimovil high-res images usually end with _big.jpg or _large.jpg
-                u = re.sub(r'_(x_search|x_small|detail|medium|small|thumb|default)\.', '_big.', u)
-                return u
-            
-            raw_urls = []
-            
-            # 1. Get Kimovil Main Image from metadata
-            main_i = device_compare.get('image')
-            forbidden = ['all-colors', 'colors', 'group', 'combo', 'rendering', 'variants', 'social']
-            
-            if main_i and not any(k in main_i.lower() for k in forbidden): 
-                raw_urls.append(to_hi(main_i))
-            
-            # 2. Get Kimovil Gallery Images
-            # We look for all possible gallery images
-            gallery_selectors = [
-                '.item-gallery img', 
-                '.kigallery img', 
-                '.device-main-image img',
-                '#device-images img',
-                '.image-gallery-container img'
-            ]
-            for selector in gallery_selectors:
-                for i_t in soup.select(selector):
-                    s = i_t.get('data-src') or i_t.get('src') or i_t.get('data-lazy-src')
-                    if s and '/en/' not in s: # Avoid links that are not images
-                        f_i = to_hi(s)
-                        if f_i not in raw_urls and not any(k in f_i.lower() for k in forbidden): 
-                            raw_urls.append(f_i)
-            
-            # De-duplicate and filter
-            processed_urls = []
-            for u in raw_urls:
-                u_lower = u.lower()
-                # Must be an image and not a generic icon/spinner
-                if any(ext in u_lower for ext in ['.jpg', '.jpeg', '.png', '.webp']) and \
-                   not any(x in u_lower for x in ['spinner', 'loading', 'icon', 'logo', 'avatar', 'pixel']):
-                    processed_urls.append(u)
-            
-            raw_urls = processed_urls
-            # Prioritize 'big' or 'large' images
-            raw_urls.sort(key=lambda x: 1 if ('_big.' in x.lower() or '_large.' in x.lower()) else 2)
-            
-            # Finalize images - deduplicate and limit
-            seen = set()
-            raw_urls = [u for u in raw_urls if not (u in seen or seen.add(u))][:10]
-            
-            logging.info(f"🖼️ Found {len(raw_urls)} unique images for {full_name}")
-
-            images = []
-            slug = device_compare.get('slug') or re.sub(r'[^a-z0-9]+', '-', full_name.lower()).strip('-')
-            for idx, i_u in enumerate(raw_urls):
-                if self.r2_enabled: 
-                    # Use slug in filename for better SEO/R2 organization
-                    filename = f"{slug}-{idx}.jpg"
-                    images.append(self.upload_image_to_r2(i_u, f"products/{slug}/{filename}"))
-                else: 
-                    images.append(i_u)
-            if not images and main_i: images = [to_hi(main_i)]
-            
-            if partials:
-                v_s = [v for v in partials.values() if isinstance(v, (int, float)) and v > 0]
-                if v_s: teknoskor = int(round((sum(v_s)/len(v_s))*10))
-                else: teknoskor = int(round(ki_score*10))
-            else: teknoskor = int(round(ki_score*10))
-
-            # Generate AI Verdict using Gemini Pro if API key is configured
-            gemini_api_key = os.getenv("GEMINI_API_KEY")
-            if gemini_api_key:
-                try:
-                    logging.info(f"✨ Generating AI Verdict for new product: {full_name}")
-                    specs = {
-                        "antutu_score": attributes.get("antutu_score"),
-                        "ram_gb": attributes.get("ram_gb"),
-                        "storage_gb": attributes.get("storage_gb"),
-                        "battery_mah": attributes.get("battery_mah"),
-                        "screen_size_inch": attributes.get("screen_size_inch"),
-                        "screen_refresh_rate": attributes.get("screen_refresh_rate"),
-                        "charging_speed_w": attributes.get("charging_speed_w"),
-                        "camera_score": attributes.get("camera_score"),
-                        "gaming_performance": attributes.get("gaming_performance"),
-                        "Technical sheet": attributes.get("Technical sheet")
-                    }
-                    specs = {k: v for k, v in specs.items() if v is not None}
-                    product_data = {
-                        "name": full_name,
-                        "brand": brand_name,
-                        "score": teknoskor,
-                        "specs": specs
-                    }
-                    from bulk_generate_verdicts import generate_ai_analysis, clean_hallucinations
-                    analysis = generate_ai_analysis(product_data, gemini_api_key)
-                    analysis = clean_hallucinations(analysis, attributes)
-                    attributes['ai_analysis'] = analysis
-                    logging.info(f"✅ Generated AI Verdict successfully.")
-                except Exception as ex:
-                    logging.error(f"⚠️ Failed to generate AI Verdict for {full_name} during scrape: {ex}")
-
-            # Database operations with retry
-            self.execute_with_retry("SELECT id FROM brands WHERE name LIKE %s LIMIT 1", (f"%{brand_name}%",))
-            br = self.cursor.fetchone(); b_id = br['id'] if br else 0
-            if b_id == 0:
-                self.execute_with_retry("INSERT INTO brands (name, slug) VALUES (%s, %s)", (brand_name, brand_name.lower()))
-                b_id = self.cursor.lastrowid
-            
-            self.execute_with_retry("""
-                INSERT INTO products (name, slug, brand_id, category_id, base_price, images, attributes, teknoskor_score, status)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE attributes=VALUES(attributes), images=VALUES(images), teknoskor_score=VALUES(teknoskor_score), status='published', updated_at=CURRENT_TIMESTAMP
-            """, (full_name, slug, b_id, category_id, 0, json.dumps(images), json.dumps(attributes), teknoskor, 'published'))
-            
-            # --- Price separation: prices are now handled by update_prices.py ---
-
-            logging.info(f"✅ Success: {full_name}")
+            gaming_performance = calc_gaming(
+                attributes["antutu_score"],
+                self.extract_number(battery_v),
+                nm_v,
+            )
+            if gaming_performance:
+                attributes["gaming_performance"] = gaming_performance
+            target_slug = (
+                product_slug
+                or device_compare.get('slug')
+                or re.sub(
+                    r'[^a-z0-9]+',
+                    '-',
+                    full_name.lower(),
+                ).strip('-')
+            )
+            records = build_provenance_records(
+                product_slug=target_slug,
+                source_url=url,
+                attributes=attributes,
+                observed_at=utc_observation_time(),
+            )
+            result = self.get_ingestion_client().submit_sources(records)
+            logging.info(
+                "✅ Source ingestion committed for %s: %s accepted, "
+                "%s stale ignored",
+                full_name,
+                result["accepted"],
+                result["stale_ignored"],
+            )
             return True
-        except Exception as e: logging.error(f"❌ Error: {str(e)}"); return False
-
-    def get_product_id_by_slug(self, slug):
-        try:
-            self.ensure_connection()
-            # 1. Try exact slug match
-            self.cursor.execute("SELECT id FROM products WHERE slug = %s", (slug,))
-            r = self.cursor.fetchone()
-            if r: return r['id']
-            
-            # 2. Try suffix-agnostic match (stripping/appending -4g or -5g)
-            base_slug = re.sub(r'-(?:4g|5g)$', '', slug)
-            if base_slug != slug:
-                self.cursor.execute("SELECT id FROM products WHERE slug = %s", (base_slug,))
-                r = self.cursor.fetchone()
-                if r: return r['id']
-            else:
-                self.cursor.execute("SELECT id FROM products WHERE slug IN (%s, %s)", (f"{slug}-4g", f"{slug}-5g"))
-                r = self.cursor.fetchone()
-                if r: return r['id']
-                
-            return None
-        except: 
-            return None
+        except ExistingProductNotFoundError as error:
+            logging.error(
+                "❌ Existing-product-only ingestion refused '%s': %s. "
+                "Create/review the product in TeknoSkor first.",
+                product_slug or url,
+                error,
+            )
+            return False
+        except (SourceIngestionError, ValueError) as error:
+            logging.error(f"❌ Source ingestion error: {error}")
+            return False
+        except Exception as error:
+            logging.exception(f"❌ Scrape error: {error}")
+            return False
 
     def clean_phone_model_name(self, name):
         # 1. Split on the first occurrence of storage or RAM indicator, and discard everything after it.
@@ -528,54 +371,90 @@ class KimovilScraper:
             logging.error(f"❌ Error parsing Kimovil autocomplete API: {e}")
             return None
 
+    def scrape_existing_products(self):
+        """Refresh provenance only for products approved in TeknoSkor.
+
+        Product creation and publication are intentionally outside the scraper.
+        The authenticated catalog is the complete allowlist for this run.
+        """
+
+        products = self.get_ingestion_client().fetch_catalog(page_size=500)
+        if not products:
+            raise SourceIngestionError(
+                "Authenticated ingestion catalog returned no products",
+            )
+
+        succeeded = 0
+        failed = []
+        logging.info(
+            "🚀 Starting existing-product-only provenance sync for %s products",
+            len(products),
+        )
+        for index, product in enumerate(products, start=1):
+            logging.info(
+                "📱 [%s/%s] %s",
+                index,
+                len(products),
+                product.name,
+            )
+            guessed_url = (
+                "https://www.kimovil.com/en/where-to-buy-"
+                f"{product.slug}"
+            )
+            success = self.scrape_product_details(
+                guessed_url,
+                product_slug=product.slug,
+                expected_name=product.name,
+            )
+            if not success:
+                matched_url = self.search_product_on_kimovil(product.name)
+                if matched_url and matched_url != guessed_url:
+                    success = self.scrape_product_details(
+                        matched_url,
+                        product_slug=product.slug,
+                        expected_name=product.name,
+                    )
+            if success:
+                succeeded += 1
+            else:
+                failed.append(product.slug)
+            if index < len(products):
+                time.sleep(1)
+
+        summary = {
+            "catalog_products": len(products),
+            "succeeded": succeeded,
+            "failed": failed,
+            "existing_product_only": True,
+        }
+        logging.info(
+            "🏁 Provenance sync finished: %s succeeded, %s failed. "
+            "No products were created or published.",
+            succeeded,
+            len(failed),
+        )
+        if failed:
+            logging.error("Failed product slugs: %s", ", ".join(failed))
+        return summary
+
     def scrape_latest_smartphones(self):
-        new_added = 0
-        max_new_products = 10
-        
-        logging.info(f"🚀 Starting daily sync to find and insert exactly {max_new_products} popular products in Turkey...")
-        
-        # Fetch latest releases directly from Kimovil
-        k_page = 1
-        while new_added < max_new_products and k_page <= 5:
-            k_url = f"{self.base_url}compare-smartphones"
-            if k_page > 1:
-                k_url = f"{self.base_url}compare-smartphones/page/{k_page}"
-                
-            logging.info(f"📄 Fetching Kimovil latest releases page {k_page}: {k_url}")
-            html = self.get_via_flaresolverr(k_url)
-            if not html:
-                break
-            soup = BeautifulSoup(html, 'html.parser')
-            urls = []
-            for a in soup.find_all('a', href=re.compile(r'where-to-buy')):
-                u = a.get('href')
-                if u: urls.append(u if u.startswith('http') else f"https://www.kimovil.com{u}")
-            urls = list(dict.fromkeys(urls))
+        """Backward-compatible alias; discovery/publication is no longer allowed."""
 
-            if not urls:
-                break
-
-            for u in urls:
-                if new_added >= max_new_products:
-                    break
-                raw_slug = u.split('/')[-1]
-                slug = raw_slug.replace('where-to-buy-', '')
-                if self.get_product_id_by_slug(slug):
-                    continue
-
-                logging.info(f"✨ Scraping new latest release: {slug}")
-                success = self.scrape_product_details(u)
-                if success:
-                    new_added += 1
-                    logging.info(f"📈 Added latest product ({new_added}/{max_new_products}): {slug}")
-                    time.sleep(5)
-            k_page += 1
-                
-        logging.info(f"✅ Finished daily sync. Added {new_added} new popular/latest products to the database.")
+        logging.warning(
+            "New-product auto-publication is disabled; syncing the authenticated "
+            "existing-product catalog instead.",
+        )
+        return self.scrape_existing_products()
 
 if __name__ == "__main__":
     try:
         scraper = KimovilScraper()
-        scraper.scrape_latest_smartphones()
-        if scraper.db.is_connected(): scraper.cursor.close(); scraper.db.close(); logging.info("💤 DB closed.")
-    except Exception as e: logging.error(f"❌ FATAL: {str(e)}")
+        run_summary = scraper.scrape_existing_products()
+        if run_summary["failed"]:
+            sys.exit(1)
+    except (IngestionConfigurationError, SourceIngestionError) as error:
+        logging.error(f"❌ FATAL: {error}")
+        sys.exit(1)
+    except Exception as error:
+        logging.exception(f"❌ FATAL: {error}")
+        sys.exit(1)

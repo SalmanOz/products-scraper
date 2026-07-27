@@ -6,6 +6,7 @@ from bs4 import BeautifulSoup
 from urllib.parse import quote, quote_plus, urlparse
 import time
 import asyncio
+import unicodedata
 from functools import partial
 
 class TRPriceScraper:
@@ -23,9 +24,150 @@ class TRPriceScraper:
         'd&r', 'boyner', 'a101', 'migros', 'carrefoursa', 'gittigidiyor', 'çiçeksepeti', 'ciceksepeti',
     ]
 
+    # Brand-only names are accepted only in these explicit official forms.
+    # Treating "apple" or "samsung" as a substring would also trust unrelated
+    # marketplace sellers such as "Apple Sepeti" or "Samsung Cep Dünyası".
+    OFFICIAL_BRAND_MERCHANT_NAMES = {
+        'apple',
+        'apple online store',
+        'apple resmi mağazası',
+        'apple store',
+        'apple türkiye',
+        'mi store',
+        'mi store türkiye',
+        'samsung',
+        'samsung resmi mağazası',
+        'samsung shop',
+        'samsung store',
+        'samsung türkiye',
+        'xiaomi',
+        'xiaomi resmi mağazası',
+        'xiaomi store',
+        'xiaomi türkiye',
+    }
+    BRAND_ONLY_MERCHANT_ALIASES = {'apple', 'samsung', 'xiaomi', 'mi store'}
+    CANONICAL_MERCHANT_NAMES = {
+        'hepsiburada': 'Hepsiburada',
+        'trendyol': 'Trendyol',
+        'amazon': 'Amazon TR',
+        'amazon tr': 'Amazon TR',
+        'n11': 'n11',
+        'pttavm': 'PttAVM',
+        'ptt avm': 'PttAVM',
+        'mediamarkt': 'MediaMarkt',
+        'media markt': 'MediaMarkt',
+        'teknosa': 'Teknosa',
+        'vatan': 'Vatan Bilgisayar',
+        'vatan bilgisayar': 'Vatan Bilgisayar',
+        'pasaj': 'Pasaj',
+        'turkcell pasaj': 'Pasaj',
+        'turkcell': 'Turkcell',
+        'pazarama': 'Pazarama',
+        'gurgencler': 'Gürgençler',
+        'idefix': 'idefix',
+        'vodafone': 'Vodafone',
+        'turk telekom': 'Türk Telekom',
+        'apple': 'Apple Store',
+        'apple online store': 'Apple Store',
+        'apple store': 'Apple Store',
+        'apple turkiye': 'Apple Store',
+        'samsung': 'Samsung',
+        'samsung shop': 'Samsung',
+        'samsung store': 'Samsung',
+        'samsung turkiye': 'Samsung',
+        'xiaomi': 'Xiaomi',
+        'xiaomi store': 'Xiaomi',
+        'xiaomi turkiye': 'Xiaomi',
+        'mi store': 'Mi Store',
+        'mi store turkiye': 'Mi Store',
+        'd r': 'D&R',
+        'boyner': 'Boyner',
+        'a101': 'A101',
+        'migros': 'Migros',
+        'carrefoursa': 'CarrefourSA',
+        'ciceksepeti': 'ÇiçekSepeti',
+    }
+
+    PHONE_BRAND_ALIASES = {
+        'apple': {'apple', 'iphone'},
+        'google': {'google', 'pixel'},
+        'honor': {'honor'},
+        'huawei': {'huawei'},
+        'infinix': {'infinix'},
+        'motorola': {'motorola'},
+        'nothing': {'nothing'},
+        'oneplus': {'oneplus'},
+        'oppo': {'oppo'},
+        'poco': {'poco'},
+        'realme': {'realme'},
+        'redmi': {'redmi'},
+        'samsung': {'samsung', 'galaxy'},
+        'tecno': {'tecno'},
+        'vivo': {'vivo'},
+        'xiaomi': {'xiaomi'},
+    }
+
+    @staticmethod
+    def _normalize_words(value):
+        folded = str(value or '').casefold().translate(
+            str.maketrans({'ı': 'i'})
+        )
+        normalized = unicodedata.normalize('NFKD', folded)
+        normalized = ''.join(
+            char for char in normalized if not unicodedata.combining(char)
+        )
+        return ' '.join(re.findall(r'[a-z0-9]+', normalized))
+
+    @classmethod
+    def _trusted_merchant_alias_in_text(
+        cls,
+        value,
+        include_official_brands=True,
+    ):
+        normalized = cls._normalize_words(value)
+        if not normalized:
+            return None
+
+        official_names = {
+            cls._normalize_words(name)
+            for name in cls.OFFICIAL_BRAND_MERCHANT_NAMES
+        }
+        if include_official_brands and normalized in official_names:
+            return normalized
+
+        padded = f' {normalized} '
+        aliases = sorted(
+            {
+                cls._normalize_words(alias)
+                for alias in cls.TRUSTED_MERCHANTS
+                if alias not in cls.BRAND_ONLY_MERCHANT_ALIASES
+            },
+            key=len,
+            reverse=True,
+        )
+        return next(
+            (alias for alias in aliases if f' {alias} ' in padded),
+            None,
+        )
+
+    @classmethod
+    def _canonical_merchant_name(cls, merchant):
+        normalized = cls._normalize_words(merchant)
+        suffixes = (
+            ' resmi magazasi',
+            ' magazasi',
+            ' official store',
+            ' com tr',
+            ' com',
+        )
+        for suffix in suffixes:
+            if normalized.endswith(suffix):
+                normalized = normalized[:-len(suffix)].strip()
+                break
+        return cls.CANONICAL_MERCHANT_NAMES.get(normalized)
+
     def is_trusted_merchant(self, merchant):
-        m = (merchant or '').lower()
-        return any(t in m for t in self.TRUSTED_MERCHANTS)
+        return self._canonical_merchant_name(merchant) is not None
 
     def __init__(self):
         self.flaresolverr_url = "http://localhost:8191/v1"
@@ -271,15 +413,70 @@ class TRPriceScraper:
 
     def is_strict_match(self, product_name, item_title, expected_specs=None):
         # Standardize + to plus for suffix variation check (e.g. Pro+ vs Pro)
-        name = product_name.lower().replace('+', 'plus')
-        title = item_title.lower().replace('+', 'plus')
+        def normalize_product_text(value):
+            value = str(value).replace('+', ' plus ')
+            value = re.sub(r'\b([45])\s*g\b', r'\1g', value, flags=re.I)
+            return self._normalize_words(value)
+
+        name = normalize_product_text(product_name)
+        title = normalize_product_text(item_title)
         
         # 1. Alphanumeric word extraction
-        name_words = re.findall(r'\w+', name)
+        name_words = name.split()
+        title_words = title.split()
+
+        def detected_brands(words):
+            word_set = set(words)
+            return {
+                brand
+                for brand, aliases in self.PHONE_BRAND_ALIASES.items()
+                if word_set & aliases
+            }
+
+        expected_brands = detected_brands(name_words)
+        observed_brands = detected_brands(title_words)
+        if expected_brands:
+            if 'redmi' in expected_brands:
+                required_brand = 'redmi'
+                allowed_brands = {'redmi', 'xiaomi'}
+            elif 'poco' in expected_brands:
+                required_brand = 'poco'
+                allowed_brands = {'poco', 'xiaomi'}
+            else:
+                required_brand = next(
+                    brand
+                    for brand in self.PHONE_BRAND_ALIASES
+                    if brand in expected_brands
+                )
+                allowed_brands = {required_brand}
+            if (
+                required_brand not in observed_brands
+                or observed_brands - allowed_brands
+            ):
+                return False
+
+        def radio_variants(words):
+            variants = set(words) & {'4g', '5g'}
+            if 'lte' in words:
+                variants.add('4g')
+            return variants
+
+        expected_radio = radio_variants(name_words)
+        observed_radio = radio_variants(title_words)
+        if (
+            expected_radio
+            and observed_radio
+            and observed_radio != expected_radio
+        ):
+            return False
         
         # Brands & common words to exclude from the main match requirement
-        brands = ['apple', 'samsung', 'xiaomi', 'huawei', 'oppo', 'vivo', 'realme', 'poco', 'google', 'oneplus', 'honor']
-        common = ['the', 'and', 'cep', 'telefonu', 'akıllı', 'phone', 'smartphone', '4g', '5g', 'gb', 'ram', 'nfc', 'tb', 'rom', 'galaxy']
+        brands = {
+            alias
+            for aliases in self.PHONE_BRAND_ALIASES.values()
+            for alias in aliases
+        }
+        common = ['the', 'and', 'cep', 'telefonu', 'akilli', 'phone', 'smartphone', '4g', '5g', 'gb', 'ram', 'nfc', 'tb', 'rom', 'galaxy']
         
         important_words = [w for w in name_words if len(w) > 1 and w not in common and w not in brands]
         
@@ -297,7 +494,14 @@ class TRPriceScraper:
             "traş", "köpüğü", "parfüm", "bakım", "kozmetik", "oyuncak", "lego", "puzzle", "kutu", 
             "boş", "aksesuar", "yedek parça", "pil", "batarya", "ekran", "parça", "uyumlu", "for", "için"
         ]
-        if any(k in title for k in bad_keywords) and not any(k in name for k in bad_keywords):
+        normalized_bad_keywords = [
+            self._normalize_words(keyword)
+            for keyword in bad_keywords
+        ]
+        if (
+            any(keyword in title for keyword in normalized_bad_keywords)
+            and not any(keyword in name for keyword in normalized_bad_keywords)
+        ):
             return False
 
         # 2.5. Category safety net: require SOME phone-brand marker or phone-category
@@ -310,8 +514,8 @@ class TRPriceScraper:
         # Deliberately checks for ANY known brand in the title, not only the
         # searched brand, because this helper is also used by maintenance scripts
         # that can supply a shortened product name.
-        phone_category_words = ['telefon', 'akıllı telefon', 'akilli telefon', 'smartphone', 'cep telefonu', 'gsm']
-        if not any(b in title for b in brands) and not any(c in title for c in phone_category_words):
+        phone_category_words = ['telefon', 'akilli telefon', 'smartphone', 'cep telefonu', 'gsm']
+        if not observed_brands and not any(c in title for c in phone_category_words):
             return False
 
         # 3. Handle Pro/Max/Ultra variations strictly
@@ -592,9 +796,10 @@ class TRPriceScraper:
                 continue
             # Anchor on retailer names only — phone brand names ('samsung', 'apple')
             # appear in every product title and would mislabel unknown sellers
-            phone_brands = {'apple', 'samsung', 'xiaomi', 'mi store'}
-            retailers = [t for t in self.TRUSTED_MERCHANTS if t not in phone_brands]
-            merchant = next((t for t in retailers if t in text.lower()), None)
+            merchant = self._trusted_merchant_alias_in_text(
+                text,
+                include_official_brands=False,
+            )
             if not merchant:
                 continue
             price_val = self.clean_price(price_m.group(0))
@@ -911,20 +1116,9 @@ class TRPriceScraper:
                 logging.warning(f"  ⚠️ {site_name} direct scrape failed: {exc}")
             return None
 
-    @staticmethod
-    def _standardize_merchant_name(m_name):
-        m = m_name.lower()
-        if 'hepsiburada' in m: return 'Hepsiburada'
-        if 'trendyol' in m: return 'Trendyol'
-        if 'amazon' in m: return 'Amazon TR'
-        if 'n11' in m: return 'n11'
-        if 'ptt' in m: return 'PttAVM'
-        if 'pasaj' in m: return 'Pasaj'
-        if 'pazarama' in m: return 'Pazarama'
-        if 'vatan' in m: return 'Vatan Bilgisayar'
-        if 'mediamarkt' in m: return 'MediaMarkt'
-        if 'teknosa' in m: return 'Teknosa'
-        return m_name
+    @classmethod
+    def _standardize_merchant_name(cls, m_name):
+        return cls._canonical_merchant_name(m_name) or m_name
 
     async def get_best_prices(self, product_name, expected_specs=None):
         results = []

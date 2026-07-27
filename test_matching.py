@@ -32,11 +32,20 @@ MERCHANT_CASES = [
 TRUST_CASES = [
     # (merchant_name, expected_trusted) — gray-import/dropship sellers must be rejected
     ('Hepsiburada', True),
+    ('HEPSIBURADA Mağazası', True),
     ('Trendyol.com', True),
+    ('Amazon.com.tr', True),
     ('Pazarama', True),
+    ('Samsung', True),
+    ('Apple Store', True),
     ('Wireless Source', False),
     ('CepMarketim Outlet', False),
     ('AliExpress Reseller', False),
+    ('NotAmazonFake', False),
+    ('Amazon Sahte', False),
+    ('TrendyolSahte', False),
+    ('Samsung Cep Dünyası', False),
+    ('Apple Sepeti', False),
 ]
 
 CASES = [
@@ -55,6 +64,18 @@ CASES = [
      'legit Galaxy A16'),
     ('Samsung Galaxy A16 4G', 'Samsung Galaxy A16 4G Smartphone', True,
      'legit, uses generic smartphone word instead of Turkish'),
+    ('Samsung Galaxy A16 4G', 'Samsung Galaxy A16 5G 128GB Akıllı Telefon', False,
+     'explicit 4G product must reject the 5G variant'),
+    ('Samsung Galaxy A16 5G', 'Samsung Galaxy A16 4G LTE 128GB Akıllı Telefon', False,
+     'explicit 5G product must reject the 4G/LTE variant'),
+    ('Samsung Galaxy A16 4G', 'Samsung Galaxy A16 128GB Akıllı Telefon', True,
+     'an omitted radio qualifier is not treated as contradictory evidence'),
+    ('Samsung Galaxy A16 4G', 'Xiaomi A16 4G 128GB Akıllı Telefon', False,
+     'same model token from another phone brand must not match'),
+    ('Samsung Galaxy S24', 'Samsung Galaxy S24 5G Akıllı Telefon', True,
+     'a model with no explicit radio qualifier may match its 5G-only listing'),
+    ('Apple iPhone 16', 'iPhone 16 128GB Cep Telefonu', True,
+     'iPhone is an accepted Apple brand marker'),
     # update_prices.py strips brand prefixes before searching ("Xiaomi 15T" -> "15T"),
     # so is_strict_match() must reject/accept correctly even with no brand in `name`.
     ('15T', 'Maui Jim MJ0439S-003-15T-58 Polarize Erkek Güneş Gözlüğü', False,
@@ -147,6 +168,25 @@ def test_is_trusted_merchant():
     assert not failures, '\n' + '\n'.join(failures)
 
 
+def test_generic_card_merchant_detection_is_boundary_safe():
+    scraper = TRPriceScraper.__new__(TRPriceScraper)
+    assert (
+        scraper._trusted_merchant_alias_in_text(
+            'Samsung Galaxy A16 Hepsiburada 12.999 TL',
+            include_official_brands=False,
+        )
+        == 'hepsiburada'
+    )
+    assert scraper._trusted_merchant_alias_in_text(
+        'Samsung Galaxy A16 NotAmazonFake 12.999 TL',
+        include_official_brands=False,
+    ) is None
+    assert scraper._trusted_merchant_alias_in_text(
+        'Apple iPhone 16 Samsung Cep Dünyası 49.999 TL',
+        include_official_brands=False,
+    ) is None
+
+
 def test_gsmarena_is_title_match():
     failures = []
     for name, title, expected, desc in GSMARENA_CASES:
@@ -165,5 +205,7 @@ if __name__ == '__main__':
     print(f'✅ All {len(MERCHANT_CASES)} _standardize_merchant_name cases passed')
     test_is_trusted_merchant()
     print(f'✅ All {len(TRUST_CASES)} is_trusted_merchant cases passed')
+    test_generic_card_merchant_detection_is_boundary_safe()
+    print('✅ Generic shopping-card merchant detection is boundary-safe')
     test_gsmarena_is_title_match()
     print(f'✅ All {len(GSMARENA_CASES)} GSMArenaScraper.is_title_match cases passed')
