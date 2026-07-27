@@ -34,6 +34,17 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      - name: Validate manual mode
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          RUN_TECHNICAL_DATA: ${{ github.event.inputs.run_technical_data }}
+          RUN_PHASE2_BACKFILL: ${{ github.event.inputs.run_phase2_backfill }}
+        run: |
+          if [[ "${RUN_TECHNICAL_DATA}" == "true" && "${RUN_PHASE2_BACKFILL}" == "true" ]]; then
+            echo "Choose either technical ingestion or Phase 2 backfill, not both." >&2
+            exit 1
+          fi
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
