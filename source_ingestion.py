@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 import os
@@ -454,6 +455,10 @@ class SourceIngestionClient:
             counts["usableHistoryRows"],
             counts["outlierRows"],
             ",".join(body["reasonCodes"]) or "none",
+        )
+        logger.info(
+            "Price index readiness report: %s",
+            json.dumps(body, ensure_ascii=False, sort_keys=True),
         )
         return body
 
