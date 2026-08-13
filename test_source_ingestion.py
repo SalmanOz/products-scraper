@@ -316,6 +316,48 @@ class ProductIdentityTests(unittest.TestCase):
             )
         )
 
+    def test_deferred_mode_stages_records_without_per_product_submission(self):
+        class RejectUnexpectedCall:
+            def submit_sources(self, _records):
+                raise AssertionError("per-product ingestion must not be called")
+
+        scraper = KimovilScraper(ingestion_client=RejectUnexpectedCall())
+        scraper.get_via_flaresolverr = lambda _url: """
+            <html><head>
+              <meta name='deviceki'
+                    content='{"name":"Phone One","partials":{"camera":8.1,"hardware":8.4,"battery":8.0,"design":7.9}}'>
+              <meta name='devicecompare'
+                    content='{"name":"Phone One","slug":"phone-one"}'>
+            </head><body>
+              <section class='container-sheet-hardware'>
+                <h2>Hardware of Phone One</h2>
+                <table class='k-dltable'>
+                  <tr><th class='label'>Score</th>
+                      <td class='value'>900.000 • Antutu v10</td></tr>
+                </table>
+              </section>
+            </body></html>
+        """
+        staged = []
+
+        succeeded = scraper.scrape_product_details(
+            "https://www.kimovil.com/en/where-to-buy-phone-one",
+            product_slug="phone-one",
+            expected_name="Phone One",
+            existing_attributes={
+                "Performance & Hardware": {"Model": "Chip One"},
+                "ram_gb": 8,
+            },
+            record_sink=staged,
+        )
+
+        self.assertTrue(succeeded)
+        self.assertGreater(len(staged), 0)
+        self.assertTrue(all(
+            record["product_slug"] == "phone-one"
+            for record in staged
+        ))
+
     def test_run_fails_closed_when_committed_sources_leave_product_pending(self):
         class ReadinessClient:
             def __init__(self):

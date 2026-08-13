@@ -145,6 +145,7 @@ class KimovilScraper:
         product_slug=None,
         expected_name=None,
         existing_attributes=None,
+        record_sink=None,
     ):
         try:
             # Kept for backward-compatible callers. Product category and all
@@ -278,14 +279,22 @@ class KimovilScraper:
                 attributes=attributes,
                 observed_at=utc_observation_time(),
             )
-            result = self.get_ingestion_client().submit_sources(records)
-            logging.info(
-                "✅ Source ingestion committed for %s: %s accepted, "
-                "%s stale ignored",
-                full_name,
-                result["accepted"],
-                result["stale_ignored"],
-            )
+            if record_sink is not None:
+                record_sink.extend(records)
+                logging.info(
+                    "✅ Staged %s provenance records for %s",
+                    len(records),
+                    full_name,
+                )
+            else:
+                result = self.get_ingestion_client().submit_sources(records)
+                logging.info(
+                    "✅ Source ingestion committed for %s: %s accepted, "
+                    "%s stale ignored",
+                    full_name,
+                    result["accepted"],
+                    result["stale_ignored"],
+                )
             return True
         except ExistingProductNotFoundError as error:
             logging.error(
@@ -392,6 +401,7 @@ class KimovilScraper:
 
         succeeded = 0
         failed = []
+        staged_records = []
         logging.info(
             "🚀 Starting existing-product-only provenance sync for %s products",
             len(products),
@@ -412,6 +422,7 @@ class KimovilScraper:
                 product_slug=product.slug,
                 expected_name=product.name,
                 existing_attributes=product.attributes,
+                record_sink=staged_records,
             )
             if not success:
                 matched_url = self.search_product_on_kimovil(product.name)
@@ -421,6 +432,7 @@ class KimovilScraper:
                         product_slug=product.slug,
                         expected_name=product.name,
                         existing_attributes=product.attributes,
+                        record_sink=staged_records,
                     )
             if success:
                 succeeded += 1
@@ -428,6 +440,19 @@ class KimovilScraper:
                 failed.append(product.slug)
             if index < len(products):
                 time.sleep(1)
+
+        if staged_records:
+            ingestion_result = self.get_ingestion_client().submit_sources(
+                staged_records,
+                batch_size=500,
+            )
+            logging.info(
+                "✅ Bulk provenance ingestion committed: %s accepted, "
+                "%s stale ignored, %s affected products",
+                ingestion_result["accepted"],
+                ingestion_result["stale_ignored"],
+                ingestion_result["affected_products"],
+            )
 
         summary = {
             "catalog_products": len(products),
