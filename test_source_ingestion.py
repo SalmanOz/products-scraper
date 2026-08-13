@@ -585,6 +585,32 @@ class SourceIngestionClientTests(unittest.TestCase):
             f"Bearer {SECRET}",
         )
 
+    def test_readiness_audit_parses_the_strict_inventory_contract(self):
+        client, session = self.make_client(
+            [
+                FakeResponse(
+                    200,
+                    {
+                        "controlled_pairs": 395,
+                        "controlled_decisions": 395,
+                        "strict_controlled_indexable_pairs": 395,
+                        "strict_excluded_controlled_pairs": 0,
+                        "controlled_products": 78,
+                        "strict_eligible_controlled_products": 78,
+                        "strict_ineligible_controlled_products": 0,
+                    },
+                )
+            ]
+        )
+
+        result = client.fetch_readiness()
+
+        self.assertEqual(result["strict_controlled_indexable_pairs"], 395)
+        self.assertEqual(
+            session.calls[0][1],
+            "https://teknoskor.example/api/ingestion/readiness",
+        )
+
     def test_from_env_requires_both_values(self):
         with patch.dict(os.environ, {}, clear=True):
             with self.assertRaisesRegex(

@@ -323,6 +323,10 @@ class SourceIngestionClient:
     def schema_url(self) -> str:
         return f"{self.base_url}/api/ingestion/schema"
 
+    @property
+    def readiness_url(self) -> str:
+        return f"{self.base_url}/api/ingestion/readiness"
+
     def ensure_schema(self) -> dict[str, Any]:
         """Apply and verify the fixed ingestion schema prerequisite."""
 
@@ -342,6 +346,42 @@ class SourceIngestionClient:
         logger.info(
             "✅ Ingestion schema preflight ready (migrated=%s)",
             body.get("migrated") is True,
+        )
+        return body
+
+    def fetch_readiness(self) -> dict[str, Any]:
+        response = self._request_with_retry(
+            "GET",
+            self.readiness_url,
+            authenticated=True,
+        )
+        body = self._json_body(response)
+        required_integer_fields = {
+            "controlled_pairs",
+            "controlled_decisions",
+            "strict_controlled_indexable_pairs",
+            "strict_excluded_controlled_pairs",
+            "controlled_products",
+            "strict_eligible_controlled_products",
+            "strict_ineligible_controlled_products",
+        }
+        if any(
+            not isinstance(body.get(field), int)
+            for field in required_integer_fields
+        ):
+            raise SourceIngestionError(
+                "Malformed comparison readiness response",
+                status_code=response.status_code,
+                response_body=body,
+            )
+        logger.info(
+            "✅ Comparison readiness: %s/%s strict controlled pairs; "
+            "%s excluded; %s/%s controlled products eligible",
+            body["strict_controlled_indexable_pairs"],
+            body["controlled_pairs"],
+            body["strict_excluded_controlled_pairs"],
+            body["strict_eligible_controlled_products"],
+            body["controlled_products"],
         )
         return body
 

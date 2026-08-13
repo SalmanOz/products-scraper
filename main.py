@@ -579,7 +579,11 @@ class KimovilScraper:
 
 if __name__ == "__main__":
     try:
-        known_arguments = {"--pending-only", "--schema-only"}
+        known_arguments = {
+            "--pending-only",
+            "--schema-only",
+            "--readiness-only",
+        }
         limit_arguments = [
             argument
             for argument in sys.argv[1:]
@@ -616,8 +620,32 @@ if __name__ == "__main__":
             raise IngestionConfigurationError(
                 "--pending-only and --schema-only cannot be combined",
             )
+        if (
+            "--readiness-only" in sys.argv[1:]
+            and (
+                "--pending-only" in sys.argv[1:]
+                or "--schema-only" in sys.argv[1:]
+                or max_products is not None
+            )
+        ):
+            raise IngestionConfigurationError(
+                "--readiness-only cannot be combined with sync options",
+            )
         scraper = KimovilScraper()
-        if "--schema-only" in sys.argv[1:]:
+        if "--readiness-only" in sys.argv[1:]:
+            readiness = scraper.get_ingestion_client().fetch_readiness()
+            if (
+                readiness["strict_excluded_controlled_pairs"] != 0
+                or readiness["strict_ineligible_controlled_products"] != 0
+                or readiness["strict_controlled_indexable_pairs"]
+                != readiness["controlled_pairs"]
+            ):
+                raise SourceIngestionError(
+                    "Comparison readiness gate failed",
+                    response_body=readiness,
+                )
+            run_summary = {"failed": []}
+        elif "--schema-only" in sys.argv[1:]:
             scraper.get_ingestion_client().ensure_schema()
             run_summary = {"failed": []}
         else:

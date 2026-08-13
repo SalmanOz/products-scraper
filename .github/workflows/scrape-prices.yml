@@ -26,6 +26,11 @@ on:
         required: false
         type: string
         default: '0'
+      comparison_readiness_only:
+        description: 'Audit the strict comparison readiness contract only'
+        required: false
+        type: boolean
+        default: false
       run_phase2_backfill:
         description: 'Run the one-time Phase 2 offer backfill'
         required: false
@@ -56,6 +61,7 @@ jobs:
           TECHNICAL_PENDING_ONLY: ${{ github.event.inputs.technical_pending_only }}
           TECHNICAL_SCHEMA_ONLY: ${{ github.event.inputs.technical_schema_only }}
           TECHNICAL_PRODUCT_LIMIT: ${{ github.event.inputs.technical_product_limit }}
+          COMPARISON_READINESS_ONLY: ${{ github.event.inputs.comparison_readiness_only }}
           RUN_PHASE2_BACKFILL: ${{ github.event.inputs.run_phase2_backfill }}
         run: |
           if [[ "${RUN_TECHNICAL_DATA}" == "true" && "${RUN_PHASE2_BACKFILL}" == "true" ]]; then
@@ -76,6 +82,18 @@ jobs:
           fi
           if [[ ! "${TECHNICAL_PRODUCT_LIMIT}" =~ ^[0-9]+$ ]]; then
             echo "technical_product_limit must be a non-negative integer." >&2
+            exit 1
+          fi
+          if [[ "${COMPARISON_READINESS_ONLY}" == "true" && "${RUN_TECHNICAL_DATA}" != "true" ]]; then
+            echo "comparison_readiness_only requires run_technical_data." >&2
+            exit 1
+          fi
+          if [[ "${COMPARISON_READINESS_ONLY}" == "true" && ( "${TECHNICAL_PENDING_ONLY}" == "true" || "${TECHNICAL_SCHEMA_ONLY}" == "true" ) ]]; then
+            echo "comparison_readiness_only cannot be combined with technical sync modes." >&2
+            exit 1
+          fi
+          if [[ "${COMPARISON_READINESS_ONLY}" == "true" && "${TECHNICAL_PRODUCT_LIMIT}" != "0" ]]; then
+            echo "comparison_readiness_only cannot be combined with technical_product_limit." >&2
             exit 1
           fi
 
@@ -135,12 +153,15 @@ jobs:
           TECHNICAL_PENDING_ONLY: ${{ github.event.inputs.technical_pending_only }}
           TECHNICAL_SCHEMA_ONLY: ${{ github.event.inputs.technical_schema_only }}
           TECHNICAL_PRODUCT_LIMIT: ${{ github.event.inputs.technical_product_limit }}
+          COMPARISON_READINESS_ONLY: ${{ github.event.inputs.comparison_readiness_only }}
         run: |
           set -euo pipefail
           : "${TEKNOSKOR_INGESTION_URL:?TEKNOSKOR_INGESTION_URL is required}"
           : "${SCRAPER_INGESTION_SECRET:?SCRAPER_INGESTION_SECRET is required}"
           args=()
-          if [[ "${TECHNICAL_SCHEMA_ONLY}" == "true" ]]; then
+          if [[ "${COMPARISON_READINESS_ONLY}" == "true" ]]; then
+            args+=(--readiness-only)
+          elif [[ "${TECHNICAL_SCHEMA_ONLY}" == "true" ]]; then
             args+=(--schema-only)
           elif [[ "${TECHNICAL_PENDING_ONLY}" == "true" ]]; then
             args+=(--pending-only)
