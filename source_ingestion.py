@@ -327,6 +327,10 @@ class SourceIngestionClient:
     def readiness_url(self) -> str:
         return f"{self.base_url}/api/ingestion/readiness"
 
+    @property
+    def price_index_readiness_url(self) -> str:
+        return f"{self.base_url}/api/ingestion/price-index-readiness"
+
     def ensure_schema(self) -> dict[str, Any]:
         """Apply and verify the fixed ingestion schema prerequisite."""
 
@@ -397,6 +401,59 @@ class SourceIngestionClient:
             strict_gates["verified_products"],
             strict_gates["comparison_approvals"],
             strict_gates["substantive_comparison_reasons"],
+        )
+        return body
+
+    def fetch_price_index_readiness(self) -> dict[str, Any]:
+        response = self._request_with_retry(
+            "GET",
+            self.price_index_readiness_url,
+            authenticated=True,
+        )
+        body = self._json_body(response)
+        counts = body.get("counts")
+        gates = body.get("gates")
+        required_counts = {
+            "comparableProducts",
+            "currentProducts",
+            "historyProducts",
+            "observationDays",
+            "outlierRows",
+            "usableHistoryRows",
+        }
+        required_gates = {
+            "comparableBasket",
+            "currentCatalog",
+            "historyDepth",
+            "observationPeriod",
+            "outliersBounded",
+        }
+        if (
+            not isinstance(body.get("ready"), bool)
+            or not isinstance(counts, dict)
+            or any(not isinstance(counts.get(field), int) for field in required_counts)
+            or not isinstance(gates, dict)
+            or any(not isinstance(gates.get(field), bool) for field in required_gates)
+            or not isinstance(body.get("reasonCodes"), list)
+            or not isinstance(body.get("monthlyCoverage"), list)
+        ):
+            raise SourceIngestionError(
+                "Malformed price index readiness response",
+                status_code=response.status_code,
+                response_body=body,
+            )
+        logger.info(
+            "%s Price index readiness: current=%s; history=%s; "
+            "comparable=%s; observation_days=%s; usable_rows=%s; "
+            "outliers=%s; reasons=%s",
+            "✅" if body["ready"] else "⚠️",
+            counts["currentProducts"],
+            counts["historyProducts"],
+            counts["comparableProducts"],
+            counts["observationDays"],
+            counts["usableHistoryRows"],
+            counts["outlierRows"],
+            ",".join(body["reasonCodes"]) or "none",
         )
         return body
 

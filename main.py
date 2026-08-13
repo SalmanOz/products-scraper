@@ -581,6 +581,7 @@ if __name__ == "__main__":
     try:
         known_arguments = {
             "--pending-only",
+            "--price-index-audit-only",
             "--schema-only",
             "--readiness-only",
         }
@@ -631,8 +632,23 @@ if __name__ == "__main__":
             raise IngestionConfigurationError(
                 "--readiness-only cannot be combined with sync options",
             )
+        if (
+            "--price-index-audit-only" in sys.argv[1:]
+            and (
+                "--pending-only" in sys.argv[1:]
+                or "--schema-only" in sys.argv[1:]
+                or "--readiness-only" in sys.argv[1:]
+                or max_products is not None
+            )
+        ):
+            raise IngestionConfigurationError(
+                "--price-index-audit-only cannot be combined with sync options",
+            )
         scraper = KimovilScraper()
-        if "--readiness-only" in sys.argv[1:]:
+        if "--price-index-audit-only" in sys.argv[1:]:
+            scraper.get_ingestion_client().fetch_price_index_readiness()
+            run_summary = {"failed": []}
+        elif "--readiness-only" in sys.argv[1:]:
             readiness = scraper.get_ingestion_client().fetch_readiness()
             if (
                 readiness["strict_excluded_controlled_pairs"] != 0

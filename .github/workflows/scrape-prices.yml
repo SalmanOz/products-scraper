@@ -31,6 +31,11 @@ on:
         required: false
         type: boolean
         default: false
+      price_index_audit_only:
+        description: 'Report price-index data readiness without publishing it'
+        required: false
+        type: boolean
+        default: false
       run_phase2_backfill:
         description: 'Run the one-time Phase 2 offer backfill'
         required: false
@@ -62,6 +67,7 @@ jobs:
           TECHNICAL_SCHEMA_ONLY: ${{ github.event.inputs.technical_schema_only }}
           TECHNICAL_PRODUCT_LIMIT: ${{ github.event.inputs.technical_product_limit }}
           COMPARISON_READINESS_ONLY: ${{ github.event.inputs.comparison_readiness_only }}
+          PRICE_INDEX_AUDIT_ONLY: ${{ github.event.inputs.price_index_audit_only }}
           RUN_PHASE2_BACKFILL: ${{ github.event.inputs.run_phase2_backfill }}
         run: |
           if [[ "${RUN_TECHNICAL_DATA}" == "true" && "${RUN_PHASE2_BACKFILL}" == "true" ]]; then
@@ -94,6 +100,18 @@ jobs:
           fi
           if [[ "${COMPARISON_READINESS_ONLY}" == "true" && "${TECHNICAL_PRODUCT_LIMIT}" != "0" ]]; then
             echo "comparison_readiness_only cannot be combined with technical_product_limit." >&2
+            exit 1
+          fi
+          if [[ "${PRICE_INDEX_AUDIT_ONLY}" == "true" && "${RUN_TECHNICAL_DATA}" != "true" ]]; then
+            echo "price_index_audit_only requires run_technical_data." >&2
+            exit 1
+          fi
+          if [[ "${PRICE_INDEX_AUDIT_ONLY}" == "true" && ( "${TECHNICAL_PENDING_ONLY}" == "true" || "${TECHNICAL_SCHEMA_ONLY}" == "true" || "${COMPARISON_READINESS_ONLY}" == "true" ) ]]; then
+            echo "price_index_audit_only cannot be combined with other technical modes." >&2
+            exit 1
+          fi
+          if [[ "${PRICE_INDEX_AUDIT_ONLY}" == "true" && "${TECHNICAL_PRODUCT_LIMIT}" != "0" ]]; then
+            echo "price_index_audit_only cannot be combined with technical_product_limit." >&2
             exit 1
           fi
 
@@ -154,12 +172,15 @@ jobs:
           TECHNICAL_SCHEMA_ONLY: ${{ github.event.inputs.technical_schema_only }}
           TECHNICAL_PRODUCT_LIMIT: ${{ github.event.inputs.technical_product_limit }}
           COMPARISON_READINESS_ONLY: ${{ github.event.inputs.comparison_readiness_only }}
+          PRICE_INDEX_AUDIT_ONLY: ${{ github.event.inputs.price_index_audit_only }}
         run: |
           set -euo pipefail
           : "${TEKNOSKOR_INGESTION_URL:?TEKNOSKOR_INGESTION_URL is required}"
           : "${SCRAPER_INGESTION_SECRET:?SCRAPER_INGESTION_SECRET is required}"
           args=()
-          if [[ "${COMPARISON_READINESS_ONLY}" == "true" ]]; then
+          if [[ "${PRICE_INDEX_AUDIT_ONLY}" == "true" ]]; then
+            args+=(--price-index-audit-only)
+          elif [[ "${COMPARISON_READINESS_ONLY}" == "true" ]]; then
             args+=(--readiness-only)
           elif [[ "${TECHNICAL_SCHEMA_ONLY}" == "true" ]]; then
             args+=(--schema-only)

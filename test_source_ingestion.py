@@ -616,6 +616,43 @@ class SourceIngestionClientTests(unittest.TestCase):
             "https://teknoskor.example/api/ingestion/readiness",
         )
 
+    def test_price_index_audit_parses_a_not_ready_report_without_failing(self):
+        client, session = self.make_client(
+            [
+                FakeResponse(
+                    200,
+                    {
+                        "ready": False,
+                        "counts": {
+                            "comparableProducts": 0,
+                            "currentProducts": 67,
+                            "historyProducts": 0,
+                            "observationDays": 2,
+                            "outlierRows": 0,
+                            "usableHistoryRows": 88,
+                        },
+                        "gates": {
+                            "comparableBasket": False,
+                            "currentCatalog": True,
+                            "historyDepth": False,
+                            "observationPeriod": False,
+                            "outliersBounded": True,
+                        },
+                        "monthlyCoverage": [],
+                        "reasonCodes": ["gate_comparable_basket_failed"],
+                    },
+                )
+            ]
+        )
+
+        result = client.fetch_price_index_readiness()
+
+        self.assertFalse(result["ready"])
+        self.assertEqual(
+            session.calls[0][1],
+            "https://teknoskor.example/api/ingestion/price-index-readiness",
+        )
+
     def test_from_env_requires_both_values(self):
         with patch.dict(os.environ, {}, clear=True):
             with self.assertRaisesRegex(
