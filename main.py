@@ -28,21 +28,61 @@ class KimovilScraper:
         self.ingestion_client = ingestion_client
         self.base_url = os.getenv("KIMOVIL_BASE_URL", "https://www.kimovil.com/en/")
         self.flaresolverr_url = "http://localhost:8191/v1"
+        self.flaresolverr_session_id = "teknoskor-kimovil"
+        self.flaresolverr_session_ready = None
 
     def get_ingestion_client(self):
         if self.ingestion_client is None:
             self.ingestion_client = SourceIngestionClient.from_env()
         return self.ingestion_client
 
+    def ensure_flaresolverr_session(self):
+        if self.flaresolverr_session_ready is not None:
+            return self.flaresolverr_session_ready
+        try:
+            response = requests.post(
+                self.flaresolverr_url,
+                json={
+                    "cmd": "sessions.create",
+                    "session": self.flaresolverr_session_id,
+                },
+                timeout=30,
+            )
+            response.raise_for_status()
+            body = response.json()
+            self.flaresolverr_session_ready = body.get("status") == "ok"
+        except (requests.RequestException, ValueError) as error:
+            logging.warning(
+                "⚠️ FlareSolverr session could not be created: %s",
+                error,
+            )
+            self.flaresolverr_session_ready = False
+        if not self.flaresolverr_session_ready:
+            logging.warning(
+                "⚠️ Continuing with stateless FlareSolverr requests",
+            )
+        return self.flaresolverr_session_ready
+
     def get_via_flaresolverr(self, url):
         logging.info(f"🚀 FlareSolverr: {url}")
         try:
             payload = {"cmd": "request.get", "url": url, "maxTimeout": 120000}
+            if self.ensure_flaresolverr_session():
+                payload["session"] = self.flaresolverr_session_id
             response = requests.post(self.flaresolverr_url, json=payload, timeout=150)
+            response.raise_for_status()
             res_data = response.json()
-            if res_data.get('status') == 'ok': return res_data['solution']['response']
+            if res_data.get('status') == 'ok':
+                return res_data['solution']['response']
+            logging.error(
+                "❌ FlareSolverr rejected %s: %s",
+                url,
+                res_data.get("message") or res_data.get("status") or "unknown",
+            )
             return None
-        except: return None
+        except (requests.RequestException, ValueError, KeyError) as error:
+            logging.error("❌ FlareSolverr request failed for %s: %s", url, error)
+            return None
 
     def extract_number(self, text):
         if not text: return 0

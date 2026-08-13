@@ -1,6 +1,6 @@
 import os
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import requests
 
@@ -169,6 +169,48 @@ class ProvenanceRecordTests(unittest.TestCase):
 
 
 class ProductIdentityTests(unittest.TestCase):
+    def test_flaresolverr_reuses_a_named_browser_session(self):
+        scraper = KimovilScraper()
+        session_response = Mock()
+        session_response.raise_for_status.return_value = None
+        session_response.json.return_value = {"status": "ok"}
+        page_response = Mock()
+        page_response.raise_for_status.return_value = None
+        page_response.json.return_value = {
+            "status": "ok",
+            "solution": {"response": "<html>phone</html>"},
+        }
+
+        with patch(
+            "main.requests.post",
+            side_effect=[session_response, page_response, page_response],
+        ) as post:
+            self.assertEqual(
+                scraper.get_via_flaresolverr("https://source.example/one"),
+                "<html>phone</html>",
+            )
+            self.assertEqual(
+                scraper.get_via_flaresolverr("https://source.example/two"),
+                "<html>phone</html>",
+            )
+
+        self.assertEqual(post.call_count, 3)
+        self.assertEqual(
+            post.call_args_list[0].kwargs["json"],
+            {
+                "cmd": "sessions.create",
+                "session": "teknoskor-kimovil",
+            },
+        )
+        self.assertEqual(
+            post.call_args_list[1].kwargs["json"]["session"],
+            "teknoskor-kimovil",
+        )
+        self.assertEqual(
+            post.call_args_list[2].kwargs["json"]["session"],
+            "teknoskor-kimovil",
+        )
+
     def test_exact_model_and_variant_match(self):
         self.assertTrue(
             KimovilScraper.is_product_name_match(
