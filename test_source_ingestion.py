@@ -598,6 +598,11 @@ class SourceIngestionClientTests(unittest.TestCase):
                         "controlled_products": 78,
                         "strict_eligible_controlled_products": 78,
                         "strict_ineligible_controlled_products": 0,
+                        "strict_gates": {
+                            "verified_products": True,
+                            "comparison_approvals": True,
+                            "substantive_comparison_reasons": True,
+                        },
                     },
                 )
             ]

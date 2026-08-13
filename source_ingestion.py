@@ -365,9 +365,17 @@ class SourceIngestionClient:
             "strict_eligible_controlled_products",
             "strict_ineligible_controlled_products",
         }
+        strict_gates = body.get("strict_gates")
         if any(
             not isinstance(body.get(field), int)
             for field in required_integer_fields
+        ) or not isinstance(strict_gates, dict) or any(
+            not isinstance(strict_gates.get(field), bool)
+            for field in {
+                "verified_products",
+                "comparison_approvals",
+                "substantive_comparison_reasons",
+            }
         ):
             raise SourceIngestionError(
                 "Malformed comparison readiness response",
@@ -382,6 +390,13 @@ class SourceIngestionClient:
             body["strict_excluded_controlled_pairs"],
             body["strict_eligible_controlled_products"],
             body["controlled_products"],
+        )
+        logger.info(
+            "✅ Strict SEO gates: verified_products=%s; "
+            "comparison_approvals=%s; substantive_reasons=%s",
+            strict_gates["verified_products"],
+            strict_gates["comparison_approvals"],
+            strict_gates["substantive_comparison_reasons"],
         )
         return body
 

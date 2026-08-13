@@ -639,6 +639,7 @@ if __name__ == "__main__":
                 or readiness["strict_ineligible_controlled_products"] != 0
                 or readiness["strict_controlled_indexable_pairs"]
                 != readiness["controlled_pairs"]
+                or not all(readiness["strict_gates"].values())
             ):
                 raise SourceIngestionError(
                     "Comparison readiness gate failed",
