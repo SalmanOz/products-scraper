@@ -386,18 +386,37 @@ class KimovilScraper:
             logging.error(f"❌ Error parsing Kimovil autocomplete API: {e}")
             return None
 
-    def scrape_existing_products(self):
+    def scrape_existing_products(self, *, pending_only=False):
         """Refresh provenance only for products approved in TeknoSkor.
 
         Product creation and publication are intentionally outside the scraper.
         The authenticated catalog is the complete allowlist for this run.
         """
 
-        products = self.get_ingestion_client().fetch_catalog(page_size=500)
-        if not products:
+        catalog_products = self.get_ingestion_client().fetch_catalog(
+            page_size=500,
+        )
+        if not catalog_products:
             raise SourceIngestionError(
                 "Authenticated ingestion catalog returned no products",
             )
+
+        if pending_only and any(
+            product.data_quality_status is None
+            for product in catalog_products
+        ):
+            raise SourceIngestionError(
+                "Pending-only sync requires the catalog verification state",
+            )
+        products = [
+            product
+            for product in catalog_products
+            if (
+                not pending_only
+                or product.data_quality_status != "verified"
+                or not product.spec_verified_at
+            )
+        ]
 
         succeeded = 0
         failed = []
@@ -455,7 +474,11 @@ class KimovilScraper:
             )
 
         summary = {
-            "catalog_products": len(products),
+            "catalog_products": len(catalog_products),
+            "attempted_products": len(products),
+            "skipped_verified_products": (
+                len(catalog_products) - len(products)
+            ),
             "succeeded": succeeded,
             "failed": failed,
             "existing_product_only": True,
@@ -523,8 +546,17 @@ class KimovilScraper:
 
 if __name__ == "__main__":
     try:
+        unknown_arguments = set(sys.argv[1:]) - {"--pending-only"}
+        if unknown_arguments:
+            raise IngestionConfigurationError(
+                "Unknown argument(s): " + ", ".join(
+                    sorted(unknown_arguments),
+                ),
+            )
         scraper = KimovilScraper()
-        run_summary = scraper.scrape_existing_products()
+        run_summary = scraper.scrape_existing_products(
+            pending_only="--pending-only" in sys.argv[1:],
+        )
         if run_summary["failed"]:
             sys.exit(1)
     except (IngestionConfigurationError, SourceIngestionError) as error:

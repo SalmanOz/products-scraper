@@ -11,6 +11,11 @@ on:
         required: false
         type: boolean
         default: false
+      technical_pending_only:
+        description: 'Skip products whose technical data is already verified'
+        required: false
+        type: boolean
+        default: false
       run_phase2_backfill:
         description: 'Run the one-time Phase 2 offer backfill'
         required: false
@@ -38,10 +43,15 @@ jobs:
         if: ${{ github.event_name == 'workflow_dispatch' }}
         env:
           RUN_TECHNICAL_DATA: ${{ github.event.inputs.run_technical_data }}
+          TECHNICAL_PENDING_ONLY: ${{ github.event.inputs.technical_pending_only }}
           RUN_PHASE2_BACKFILL: ${{ github.event.inputs.run_phase2_backfill }}
         run: |
           if [[ "${RUN_TECHNICAL_DATA}" == "true" && "${RUN_PHASE2_BACKFILL}" == "true" ]]; then
             echo "Choose either technical ingestion or Phase 2 backfill, not both." >&2
+            exit 1
+          fi
+          if [[ "${TECHNICAL_PENDING_ONLY}" == "true" && "${RUN_TECHNICAL_DATA}" != "true" ]]; then
+            echo "technical_pending_only requires run_technical_data." >&2
             exit 1
           fi
 
@@ -98,11 +108,16 @@ jobs:
         env:
           TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
           SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+          TECHNICAL_PENDING_ONLY: ${{ github.event.inputs.technical_pending_only }}
         run: |
           set -euo pipefail
           : "${TEKNOSKOR_INGESTION_URL:?TEKNOSKOR_INGESTION_URL is required}"
           : "${SCRAPER_INGESTION_SECRET:?SCRAPER_INGESTION_SECRET is required}"
-          python main.py
+          args=()
+          if [[ "${TECHNICAL_PENDING_ONLY}" == "true" ]]; then
+            args+=(--pending-only)
+          fi
+          python main.py "${args[@]}"
 
       - name: Run Price Update Scraper (TR Merchants)
         if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_technical_data != 'true') }}

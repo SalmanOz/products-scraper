@@ -389,6 +389,56 @@ class ProductIdentityTests(unittest.TestCase):
         self.assertEqual(summary["verified_products"], 0)
         self.assertEqual(summary["failed"], ["phone-one"])
 
+    def test_pending_only_sync_skips_already_verified_products(self):
+        class ReadinessClient:
+            def __init__(self):
+                self.fetches = 0
+
+            def fetch_catalog(self, page_size=100):
+                _ = page_size
+                self.fetches += 1
+                pending_status = (
+                    "pending" if self.fetches == 1 else "verified"
+                )
+                pending_verified_at = (
+                    None if self.fetches == 1 else "2026-08-13T07:00:00Z"
+                )
+                return [
+                    CatalogProduct(
+                        1,
+                        "Ready Phone",
+                        "ready-phone",
+                        {},
+                        "verified",
+                        (),
+                        "2026-08-13T06:00:00Z",
+                    ),
+                    CatalogProduct(
+                        2,
+                        "Pending Phone",
+                        "pending-phone",
+                        {},
+                        pending_status,
+                        (),
+                        pending_verified_at,
+                    ),
+                ]
+
+        scraper = KimovilScraper(ingestion_client=ReadinessClient())
+        scraped = []
+        scraper.scrape_product_details = lambda *args, **kwargs: (
+            scraped.append(kwargs["product_slug"]) or True
+        )
+
+        summary = scraper.scrape_existing_products(pending_only=True)
+
+        self.assertEqual(scraped, ["pending-phone"])
+        self.assertEqual(summary["catalog_products"], 2)
+        self.assertEqual(summary["attempted_products"], 1)
+        self.assertEqual(summary["skipped_verified_products"], 1)
+        self.assertEqual(summary["verified_products"], 2)
+        self.assertEqual(summary["failed"], [])
+
 
 class SourceIngestionClientTests(unittest.TestCase):
     def make_client(self, responses, **kwargs):
