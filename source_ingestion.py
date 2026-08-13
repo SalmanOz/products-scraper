@@ -319,6 +319,32 @@ class SourceIngestionClient:
     def catalog_url(self) -> str:
         return f"{self.base_url}/api/ingestion/catalog"
 
+    @property
+    def schema_url(self) -> str:
+        return f"{self.base_url}/api/ingestion/schema"
+
+    def ensure_schema(self) -> dict[str, Any]:
+        """Apply and verify the fixed ingestion schema prerequisite."""
+
+        response = self._request_with_retry(
+            "POST",
+            self.schema_url,
+            json={"action": "ensure_spec_database_origin"},
+            authenticated=True,
+        )
+        body = self._json_body(response)
+        if body.get("ready") is not True:
+            raise SourceIngestionError(
+                "Ingestion schema preflight did not report ready",
+                status_code=response.status_code,
+                response_body=body,
+            )
+        logger.info(
+            "✅ Ingestion schema preflight ready (migrated=%s)",
+            body.get("migrated") is True,
+        )
+        return body
+
     def fetch_catalog(self, page_size: int = 100) -> list[CatalogProduct]:
         """Fetch all ingestion-eligible products without opening a DB connection."""
 

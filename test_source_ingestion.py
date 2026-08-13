@@ -405,6 +405,9 @@ class ProductIdentityTests(unittest.TestCase):
             def __init__(self):
                 self.fetches = 0
 
+            def ensure_schema(self):
+                return {"ready": True, "migrated": False}
+
             def fetch_catalog(self, page_size=100):
                 _ = page_size
                 self.fetches += 1
@@ -435,6 +438,9 @@ class ProductIdentityTests(unittest.TestCase):
         class ReadinessClient:
             def __init__(self):
                 self.fetches = 0
+
+            def ensure_schema(self):
+                return {"ready": True, "migrated": False}
 
             def fetch_catalog(self, page_size=100):
                 _ = page_size
@@ -500,6 +506,38 @@ class SourceIngestionClientTests(unittest.TestCase):
         with self.assertRaises(IngestionConfigurationError):
             SourceIngestionClient("https://teknoskor.example", "short")
         SourceIngestionClient("http://localhost:3000", SECRET)
+
+    def test_schema_preflight_is_authenticated_and_fail_closed(self):
+        client, session = self.make_client(
+            [
+                FakeResponse(
+                    200,
+                    {
+                        "ready": True,
+                        "required_origin": "spec_database",
+                        "column_present": True,
+                        "migrated": True,
+                    },
+                )
+            ]
+        )
+
+        result = client.ensure_schema()
+
+        self.assertTrue(result["ready"])
+        self.assertEqual(session.calls[0][0], "POST")
+        self.assertEqual(
+            session.calls[0][1],
+            "https://teknoskor.example/api/ingestion/schema",
+        )
+        self.assertEqual(
+            session.calls[0][2]["json"],
+            {"action": "ensure_spec_database_origin"},
+        )
+        self.assertEqual(
+            session.calls[0][2]["headers"]["Authorization"],
+            f"Bearer {SECRET}",
+        )
 
     def test_from_env_requires_both_values(self):
         with patch.dict(os.environ, {}, clear=True):

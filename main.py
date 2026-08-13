@@ -433,7 +433,9 @@ class KimovilScraper:
         The authenticated catalog is the complete allowlist for this run.
         """
 
-        catalog_products = self.get_ingestion_client().fetch_catalog(
+        ingestion_client = self.get_ingestion_client()
+        ingestion_client.ensure_schema()
+        catalog_products = ingestion_client.fetch_catalog(
             page_size=500,
         )
         if not catalog_products:
@@ -501,7 +503,7 @@ class KimovilScraper:
                 time.sleep(1)
 
         if staged_records:
-            ingestion_result = self.get_ingestion_client().submit_sources(
+            ingestion_result = ingestion_client.submit_sources(
                 staged_records,
                 batch_size=500,
             )
@@ -523,7 +525,7 @@ class KimovilScraper:
             "failed": failed,
             "existing_product_only": True,
         }
-        refreshed_products = self.get_ingestion_client().fetch_catalog(
+        refreshed_products = ingestion_client.fetch_catalog(
             page_size=500,
         )
         readiness_available = all(
