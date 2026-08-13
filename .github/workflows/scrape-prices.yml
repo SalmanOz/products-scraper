@@ -16,6 +16,11 @@ on:
         required: false
         type: boolean
         default: false
+      technical_schema_only:
+        description: 'Apply and verify only the ingestion schema preflight'
+        required: false
+        type: boolean
+        default: false
       run_phase2_backfill:
         description: 'Run the one-time Phase 2 offer backfill'
         required: false
@@ -44,6 +49,7 @@ jobs:
         env:
           RUN_TECHNICAL_DATA: ${{ github.event.inputs.run_technical_data }}
           TECHNICAL_PENDING_ONLY: ${{ github.event.inputs.technical_pending_only }}
+          TECHNICAL_SCHEMA_ONLY: ${{ github.event.inputs.technical_schema_only }}
           RUN_PHASE2_BACKFILL: ${{ github.event.inputs.run_phase2_backfill }}
         run: |
           if [[ "${RUN_TECHNICAL_DATA}" == "true" && "${RUN_PHASE2_BACKFILL}" == "true" ]]; then
@@ -52,6 +58,14 @@ jobs:
           fi
           if [[ "${TECHNICAL_PENDING_ONLY}" == "true" && "${RUN_TECHNICAL_DATA}" != "true" ]]; then
             echo "technical_pending_only requires run_technical_data." >&2
+            exit 1
+          fi
+          if [[ "${TECHNICAL_SCHEMA_ONLY}" == "true" && "${RUN_TECHNICAL_DATA}" != "true" ]]; then
+            echo "technical_schema_only requires run_technical_data." >&2
+            exit 1
+          fi
+          if [[ "${TECHNICAL_SCHEMA_ONLY}" == "true" && "${TECHNICAL_PENDING_ONLY}" == "true" ]]; then
+            echo "Choose either schema-only or pending-only technical mode." >&2
             exit 1
           fi
 
@@ -109,12 +123,15 @@ jobs:
           TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
           SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
           TECHNICAL_PENDING_ONLY: ${{ github.event.inputs.technical_pending_only }}
+          TECHNICAL_SCHEMA_ONLY: ${{ github.event.inputs.technical_schema_only }}
         run: |
           set -euo pipefail
           : "${TEKNOSKOR_INGESTION_URL:?TEKNOSKOR_INGESTION_URL is required}"
           : "${SCRAPER_INGESTION_SECRET:?SCRAPER_INGESTION_SECRET is required}"
           args=()
-          if [[ "${TECHNICAL_PENDING_ONLY}" == "true" ]]; then
+          if [[ "${TECHNICAL_SCHEMA_ONLY}" == "true" ]]; then
+            args+=(--schema-only)
+          elif [[ "${TECHNICAL_PENDING_ONLY}" == "true" ]]; then
             args+=(--pending-only)
           fi
           python main.py "${args[@]}"

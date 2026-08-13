@@ -588,17 +588,29 @@ class KimovilScraper:
 
 if __name__ == "__main__":
     try:
-        unknown_arguments = set(sys.argv[1:]) - {"--pending-only"}
+        known_arguments = {"--pending-only", "--schema-only"}
+        unknown_arguments = set(sys.argv[1:]) - known_arguments
         if unknown_arguments:
             raise IngestionConfigurationError(
                 "Unknown argument(s): " + ", ".join(
                     sorted(unknown_arguments),
                 ),
             )
+        if (
+            "--pending-only" in sys.argv[1:]
+            and "--schema-only" in sys.argv[1:]
+        ):
+            raise IngestionConfigurationError(
+                "--pending-only and --schema-only cannot be combined",
+            )
         scraper = KimovilScraper()
-        run_summary = scraper.scrape_existing_products(
-            pending_only="--pending-only" in sys.argv[1:],
-        )
+        if "--schema-only" in sys.argv[1:]:
+            scraper.get_ingestion_client().ensure_schema()
+            run_summary = {"failed": []}
+        else:
+            run_summary = scraper.scrape_existing_products(
+                pending_only="--pending-only" in sys.argv[1:],
+            )
         if run_summary["failed"]:
             sys.exit(1)
     except (IngestionConfigurationError, SourceIngestionError) as error:
