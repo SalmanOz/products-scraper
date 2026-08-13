@@ -211,6 +211,20 @@ class ProductIdentityTests(unittest.TestCase):
             "teknoskor-kimovil",
         )
 
+    def test_autocomplete_skips_wrong_variant_before_exact_model(self):
+        scraper = KimovilScraper()
+        scraper.get_via_flaresolverr = lambda _url: """
+            {"results":[
+                {"full_name":"Honor 200 Smart","url":"honor-200-smart"},
+                {"full_name":"Honor 200","url":"honor-200-5g"}
+            ]}
+        """
+
+        self.assertEqual(
+            scraper.search_product_on_kimovil("Honor 200"),
+            "https://www.kimovil.com/en/where-to-buy-honor-200-5g",
+        )
+
     def test_exact_model_and_variant_match(self):
         self.assertTrue(
             KimovilScraper.is_product_name_match(

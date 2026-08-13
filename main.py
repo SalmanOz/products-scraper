@@ -385,35 +385,15 @@ class KimovilScraper:
             if not results:
                 return None
 
-            # Extract important words from query for validation
-            query_lower = query.lower().replace('+', 'plus')
-            brands = ['apple', 'samsung', 'xiaomi', 'huawei', 'oppo', 'vivo', 'realme', 'poco', 'google', 'oneplus', 'honor', 'redmi']
-            common = ['4g', '5g', 'gb', 'ram', 'nfc', 'tb', 'phone', 'smartphone', 'galaxy']
-            query_words = re.findall(r'\w+', query_lower)
-            important_words = [w for w in query_words if len(w) > 1 and w not in common and w not in brands]
-            
-            # Variation words that must match both directions
-            variations = ['pro', 'max', 'plus', 'ultra', 'lite', 'fe', 'mini', 'se', 'note']
-            query_variations = set(w for w in query_words if w in variations)
-
             for result in results:
                 # Skip rumor/unannounced phones
                 if result.get('is_rumor'):
                     continue
-                result_name = (result.get('full_name') or result.get('alias') or '').lower().replace('+', 'plus')
+                result_name = result.get('full_name') or result.get('alias') or ''
                 result_slug = result.get('url')
                 if not result_slug or not result_name:
                     continue
-
-                # Check all important query words exist in result name
-                all_found = all(re.search(rf'\b{re.escape(w)}\b', result_name) for w in important_words)
-                if not all_found:
-                    continue
-
-                # Check variation words match both directions
-                result_words = re.findall(r'\w+', result_name)
-                result_variations = set(w for w in result_words if w in variations)
-                if query_variations != result_variations:
+                if not self.is_product_name_match(query, result_name):
                     continue
                     
                 logging.info(f"  ✅ Kimovil match: '{result.get('full_name')}' for query '{query}'")
