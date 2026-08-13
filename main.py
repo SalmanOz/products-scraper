@@ -15,6 +15,7 @@ from source_ingestion import (
     SourceIngestionClient,
     SourceIngestionError,
     build_provenance_records,
+    select_observed_physical_attributes,
     utc_observation_time,
 )
 from bs4 import BeautifulSoup
@@ -143,6 +144,7 @@ class KimovilScraper:
         category_id=1,
         product_slug=None,
         expected_name=None,
+        existing_attributes=None,
     ):
         try:
             # Kept for backward-compatible callers. Product category and all
@@ -239,6 +241,10 @@ class KimovilScraper:
                 "camera_score": partials.get('camera', 0), "performance_score": partials.get('hardware', 0),
                 "battery_score": partials.get('battery', 0), "screen_score": partials.get('design', 0), "partials": partials
             }
+            attributes.update(select_observed_physical_attributes(
+                existing_attributes or {},
+                raw_specs,
+            ))
 
             def calc_gaming(antutu, bat, nm):
                 if antutu <= 0 or bat <= 0:
@@ -405,6 +411,7 @@ class KimovilScraper:
                 guessed_url,
                 product_slug=product.slug,
                 expected_name=product.name,
+                existing_attributes=product.attributes,
             )
             if not success:
                 matched_url = self.search_product_on_kimovil(product.name)
@@ -413,6 +420,7 @@ class KimovilScraper:
                         matched_url,
                         product_slug=product.slug,
                         expected_name=product.name,
+                        existing_attributes=product.attributes,
                     )
             if success:
                 succeeded += 1

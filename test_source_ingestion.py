@@ -11,6 +11,7 @@ from source_ingestion import (
     SourceIngestionClient,
     SourceIngestionError,
     build_provenance_records,
+    select_observed_physical_attributes,
 )
 
 
@@ -40,7 +41,7 @@ class FakeSession:
 
 
 class ProvenanceRecordTests(unittest.TestCase):
-    def test_only_honest_benchmarks_and_estimates_are_submitted(self):
+    def test_physical_specs_use_an_explicit_spec_database_origin(self):
         records = build_provenance_records(
             product_slug="phone-one",
             source_url="https://www.kimovil.com/en/phone-one",
@@ -58,20 +59,36 @@ class ProvenanceRecordTests(unittest.TestCase):
         self.assertEqual(
             [record["attribute_key"] for record in records],
             [
+                "Technical sheet",
                 "antutu_score",
+                "battery_mah",
                 "camera_score",
                 "gaming_performance",
                 "partials",
             ],
         )
-        self.assertNotIn(
-            "battery_mah",
-            {record["attribute_key"] for record in records},
-        )
+        physical = {
+            record["attribute_key"]: record
+            for record in records
+            if record["attribute_key"] in {
+                "Technical sheet",
+                "battery_mah",
+            }
+        }
+        self.assertTrue(all(
+            record["value_origin"] == "spec_database"
+            and record["confidence"] == "medium"
+            and record["is_estimate"] is False
+            for record in physical.values()
+        ))
         benchmarks = [
             record
             for record in records
-            if record["attribute_key"] != "gaming_performance"
+            if record["attribute_key"] in {
+                "antutu_score",
+                "camera_score",
+                "partials",
+            }
         ]
         self.assertTrue(
             all(
@@ -81,7 +98,10 @@ class ProvenanceRecordTests(unittest.TestCase):
                 for record in benchmarks
             )
         )
-        gaming = records[2]
+        gaming = next(
+            record for record in records
+            if record["attribute_key"] == "gaming_performance"
+        )
         self.assertEqual(gaming["value_origin"], "derived")
         self.assertTrue(gaming["is_estimate"])
         self.assertEqual(
@@ -89,9 +109,8 @@ class ProvenanceRecordTests(unittest.TestCase):
             "https://teknoskor.com/about#metodoloji",
         )
 
-    def test_missing_and_zero_benchmarks_never_overwrite_values(self):
-        with self.assertRaisesRegex(ValueError, "no public values"):
-            build_provenance_records(
+    def test_missing_and_zero_benchmarks_do_not_create_benchmark_records(self):
+        records = build_provenance_records(
                 product_slug="phone-one",
                 source_url="https://www.kimovil.com/en/phone-one",
                 observed_at="2026-07-27T10:00:00Z",
@@ -105,6 +124,31 @@ class ProvenanceRecordTests(unittest.TestCase):
                     "battery_mah": 5000,
                 },
             )
+        self.assertEqual(
+            [record["attribute_key"] for record in records],
+            ["battery_mah"],
+        )
+        self.assertEqual(records[0]["value_origin"], "spec_database")
+
+    def test_physical_groups_require_matching_current_source_sections(self):
+        selected = select_observed_physical_attributes(
+            {
+                "Performance & Hardware": {"Model": "Chip One"},
+                "Batarya": {"Capacity": "5000 mAh"},
+                "ram_gb": 8,
+                "battery_mah": 5000,
+                "quick_specs": {"ram": "8 GB"},
+            },
+            {"Hardware": {"Model": "Chip One"}},
+        )
+        self.assertEqual(
+            selected,
+            {
+                "Performance & Hardware": {"Model": "Chip One"},
+                "quick_specs": {"ram": "8 GB"},
+                "ram_gb": 8,
+            },
+        )
 
     def test_partial_scores_drop_only_missing_children(self):
         records = build_provenance_records(
@@ -217,6 +261,12 @@ class ProductIdentityTests(unittest.TestCase):
             "https://www.kimovil.com/en/where-to-buy-phone-one",
             product_slug="phone-one",
             expected_name="Phone One",
+            existing_attributes={
+                "Performance & Hardware": {"Model": "Chip One"},
+                "Batarya": {"Capacity": "5000 mAh"},
+                "battery_mah": 5000,
+                "quick_specs": {"battery": "5000 mAh"},
+            },
         )
 
         self.assertTrue(succeeded)
@@ -224,12 +274,16 @@ class ProductIdentityTests(unittest.TestCase):
         self.assertEqual(
             keys,
             {
+                "Batarya",
+                "Performance & Hardware",
                 "antutu_score",
+                "battery_mah",
                 "battery_score",
                 "camera_score",
                 "gaming_performance",
                 "partials",
                 "performance_score",
+                "quick_specs",
                 "screen_score",
             },
         )

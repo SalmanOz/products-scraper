@@ -27,6 +27,37 @@ BENCHMARK_ATTRIBUTE_KEYS = {
     "screen_score",
 }
 ESTIMATED_ATTRIBUTE_KEYS = {"gaming_performance"}
+PHYSICAL_SPEC_GROUPS = {
+    "Technical sheet",
+    "Design & Materials",
+    "Performance & Hardware",
+    "Camera",
+    "Connectivity",
+    "Batarya",
+    "Software",
+    "quick_specs",
+}
+PHYSICAL_SCALAR_KEYS = {
+    "battery_mah",
+    "ram_gb",
+    "screen_size_inch",
+    "storage_gb",
+}
+PHYSICAL_GROUP_SOURCE_ALIASES = {
+    "Technical sheet": {"technical sheet"},
+    "Design & Materials": {"design", "design & materials"},
+    "Performance & Hardware": {"hardware", "performance & hardware"},
+    "Camera": {"camera"},
+    "Connectivity": {"connectivity"},
+    "Batarya": {"battery", "batarya"},
+    "Software": {"software"},
+}
+PHYSICAL_SCALAR_SOURCE_GROUPS = {
+    "battery_mah": "Batarya",
+    "ram_gb": "Performance & Hardware",
+    "screen_size_inch": "Design & Materials",
+    "storage_gb": "Performance & Hardware",
+}
 DERIVATION_METHODOLOGY_URL = (
     "https://teknoskor.com/about#metodoloji"
 )
@@ -97,6 +128,45 @@ def _contains_public_value(value: Any) -> bool:
     return True
 
 
+def select_observed_physical_attributes(
+    catalog_attributes: dict[str, Any],
+    observed_sections: Iterable[str],
+) -> dict[str, Any]:
+    """Select existing physical claims only when the matched source exposes them.
+
+    Values come from the authenticated TeknoSkor catalog so localized labels do
+    not get overwritten by raw English source text. Presence on the current,
+    identity-checked source page is still required for every covered group.
+    """
+
+    observed = {
+        str(section).strip().casefold()
+        for section in observed_sections
+        if str(section).strip()
+    }
+    covered_groups = {
+        group
+        for group, aliases in PHYSICAL_GROUP_SOURCE_ALIASES.items()
+        if observed & aliases
+    }
+    selected: dict[str, Any] = {}
+    for group in sorted(covered_groups):
+        value = catalog_attributes.get(group)
+        if _contains_public_value(value):
+            selected[group] = value
+
+    if covered_groups:
+        quick_specs = catalog_attributes.get("quick_specs")
+        if _contains_public_value(quick_specs):
+            selected["quick_specs"] = quick_specs
+
+    for scalar, source_group in PHYSICAL_SCALAR_SOURCE_GROUPS.items():
+        value = catalog_attributes.get(scalar)
+        if source_group in covered_groups and _contains_public_value(value):
+            selected[scalar] = value
+    return selected
+
+
 def build_provenance_records(
     *,
     product_slug: str,
@@ -106,10 +176,9 @@ def build_provenance_records(
 ) -> list[dict[str, Any]]:
     """Build honest, deterministic records for each public top-level claim.
 
-    Kimovil is not a manufacturer or retailer. Its physical specifications
-    therefore cannot satisfy the ingestion contract's origin enum and are not
-    submitted. Only benchmark values reported by the benchmark aggregator and
-    deterministic gaming estimates derived from those values are included.
+    Kimovil is not a manufacturer or retailer. Physical specifications are
+    therefore submitted explicitly as ``spec_database`` with medium confidence.
+    Benchmark values and deterministic estimates retain their own origins.
     """
 
     if not product_slug:
@@ -124,6 +193,8 @@ def build_provenance_records(
         if (
             attribute_key not in BENCHMARK_ATTRIBUTE_KEYS
             and attribute_key not in ESTIMATED_ATTRIBUTE_KEYS
+            and attribute_key not in PHYSICAL_SPEC_GROUPS
+            and attribute_key not in PHYSICAL_SCALAR_KEYS
         ):
             continue
         value = attributes[attribute_key]
@@ -150,7 +221,17 @@ def build_provenance_records(
             continue
         is_estimate = attribute_key in ESTIMATED_ATTRIBUTE_KEYS
         is_benchmark = attribute_key in BENCHMARK_ATTRIBUTE_KEYS
-        value_origin = "benchmark_source" if is_benchmark else "derived"
+        is_physical = (
+            attribute_key in PHYSICAL_SPEC_GROUPS
+            or attribute_key in PHYSICAL_SCALAR_KEYS
+        )
+        value_origin = (
+            "benchmark_source"
+            if is_benchmark
+            else "spec_database"
+            if is_physical
+            else "derived"
+        )
         record_source_url = (
             DERIVATION_METHODOLOGY_URL
             if is_estimate
