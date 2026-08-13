@@ -501,6 +501,38 @@ class ProductIdentityTests(unittest.TestCase):
         self.assertEqual(summary["verified_products"], 2)
         self.assertEqual(summary["failed"], [])
 
+    def test_diagnostic_limit_scrapes_only_the_requested_catalog_prefix(self):
+        class ReadinessClient:
+            def ensure_schema(self):
+                return {"ready": True, "migrated": False}
+
+            def fetch_catalog(self, page_size=100):
+                _ = page_size
+                return [
+                    CatalogProduct(
+                        index,
+                        f"Phone {index}",
+                        f"phone-{index}",
+                        {},
+                        "pending",
+                        (),
+                        None,
+                    )
+                    for index in range(1, 4)
+                ]
+
+        scraper = KimovilScraper(ingestion_client=ReadinessClient())
+        scraped = []
+        scraper.scrape_product_details = lambda *args, **kwargs: (
+            scraped.append(kwargs["product_slug"]) or True
+        )
+
+        summary = scraper.scrape_existing_products(max_products=1)
+
+        self.assertEqual(scraped, ["phone-1"])
+        self.assertEqual(summary["catalog_products"], 3)
+        self.assertEqual(summary["attempted_products"], 1)
+
 
 class SourceIngestionClientTests(unittest.TestCase):
     def make_client(self, responses, **kwargs):

@@ -21,6 +21,11 @@ on:
         required: false
         type: boolean
         default: false
+      technical_product_limit:
+        description: 'Diagnostic maximum products; 0 means the full catalog'
+        required: false
+        type: string
+        default: '0'
       run_phase2_backfill:
         description: 'Run the one-time Phase 2 offer backfill'
         required: false
@@ -50,6 +55,7 @@ jobs:
           RUN_TECHNICAL_DATA: ${{ github.event.inputs.run_technical_data }}
           TECHNICAL_PENDING_ONLY: ${{ github.event.inputs.technical_pending_only }}
           TECHNICAL_SCHEMA_ONLY: ${{ github.event.inputs.technical_schema_only }}
+          TECHNICAL_PRODUCT_LIMIT: ${{ github.event.inputs.technical_product_limit }}
           RUN_PHASE2_BACKFILL: ${{ github.event.inputs.run_phase2_backfill }}
         run: |
           if [[ "${RUN_TECHNICAL_DATA}" == "true" && "${RUN_PHASE2_BACKFILL}" == "true" ]]; then
@@ -66,6 +72,10 @@ jobs:
           fi
           if [[ "${TECHNICAL_SCHEMA_ONLY}" == "true" && "${TECHNICAL_PENDING_ONLY}" == "true" ]]; then
             echo "Choose either schema-only or pending-only technical mode." >&2
+            exit 1
+          fi
+          if [[ ! "${TECHNICAL_PRODUCT_LIMIT}" =~ ^[0-9]+$ ]]; then
+            echo "technical_product_limit must be a non-negative integer." >&2
             exit 1
           fi
 
@@ -124,6 +134,7 @@ jobs:
           SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
           TECHNICAL_PENDING_ONLY: ${{ github.event.inputs.technical_pending_only }}
           TECHNICAL_SCHEMA_ONLY: ${{ github.event.inputs.technical_schema_only }}
+          TECHNICAL_PRODUCT_LIMIT: ${{ github.event.inputs.technical_product_limit }}
         run: |
           set -euo pipefail
           : "${TEKNOSKOR_INGESTION_URL:?TEKNOSKOR_INGESTION_URL is required}"
@@ -133,6 +144,9 @@ jobs:
             args+=(--schema-only)
           elif [[ "${TECHNICAL_PENDING_ONLY}" == "true" ]]; then
             args+=(--pending-only)
+          fi
+          if [[ "${TECHNICAL_PRODUCT_LIMIT}" != "0" ]]; then
+            args+=("--limit=${TECHNICAL_PRODUCT_LIMIT}")
           fi
           python main.py "${args[@]}"
 

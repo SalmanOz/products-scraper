@@ -406,7 +406,12 @@ class KimovilScraper:
             logging.error(f"❌ Error parsing Kimovil autocomplete API: {e}")
             return None
 
-    def scrape_existing_products(self, *, pending_only=False):
+    def scrape_existing_products(
+        self,
+        *,
+        pending_only=False,
+        max_products=None,
+    ):
         """Refresh provenance only for products approved in TeknoSkor.
 
         Product creation and publication are intentionally outside the scraper.
@@ -439,6 +444,12 @@ class KimovilScraper:
                 or not product.spec_verified_at
             )
         ]
+        if max_products is not None:
+            if max_products < 1:
+                raise IngestionConfigurationError(
+                    "max_products must be a positive integer",
+                )
+            products = products[:max_products]
 
         succeeded = 0
         failed = []
@@ -569,13 +580,35 @@ class KimovilScraper:
 if __name__ == "__main__":
     try:
         known_arguments = {"--pending-only", "--schema-only"}
-        unknown_arguments = set(sys.argv[1:]) - known_arguments
+        limit_arguments = [
+            argument
+            for argument in sys.argv[1:]
+            if argument.startswith("--limit=")
+        ]
+        unknown_arguments = {
+            argument
+            for argument in sys.argv[1:]
+            if argument not in known_arguments
+            and not argument.startswith("--limit=")
+        }
         if unknown_arguments:
             raise IngestionConfigurationError(
                 "Unknown argument(s): " + ", ".join(
                     sorted(unknown_arguments),
                 ),
             )
+        if len(limit_arguments) > 1:
+            raise IngestionConfigurationError(
+                "--limit may be provided only once",
+            )
+        max_products = None
+        if limit_arguments:
+            limit_value = limit_arguments[0].split("=", 1)[1]
+            if not re.fullmatch(r"[1-9]\d*", limit_value):
+                raise IngestionConfigurationError(
+                    "--limit must be a positive integer",
+                )
+            max_products = int(limit_value)
         if (
             "--pending-only" in sys.argv[1:]
             and "--schema-only" in sys.argv[1:]
@@ -590,6 +623,7 @@ if __name__ == "__main__":
         else:
             run_summary = scraper.scrape_existing_products(
                 pending_only="--pending-only" in sys.argv[1:],
+                max_products=max_products,
             )
         if run_summary["failed"]:
             sys.exit(1)
