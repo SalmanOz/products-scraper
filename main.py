@@ -614,7 +614,18 @@ if __name__ == "__main__":
         if run_summary["failed"]:
             sys.exit(1)
     except (IngestionConfigurationError, SourceIngestionError) as error:
-        logging.error(f"❌ FATAL: {error}")
+        if isinstance(error, SourceIngestionError):
+            logging.error(
+                "❌ FATAL: %s; response=%s",
+                error,
+                json.dumps(
+                    error.response_body,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+            )
+        else:
+            logging.error("❌ FATAL: %s", error)
         sys.exit(1)
     except Exception as error:
         logging.exception(f"❌ FATAL: {error}")

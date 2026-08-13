@@ -570,7 +570,8 @@ class SourceIngestionClient:
                 else SourceIngestionError
             )
             raise error_class(
-                f"Source ingestion failed: {error_message}",
+                "Source ingestion failed with HTTP "
+                f"{response.status_code}: {error_message}",
                 status_code=response.status_code,
                 response_body=body,
             )
