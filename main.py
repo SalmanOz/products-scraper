@@ -435,6 +435,48 @@ class KimovilScraper:
             "failed": failed,
             "existing_product_only": True,
         }
+        refreshed_products = self.get_ingestion_client().fetch_catalog(
+            page_size=500,
+        )
+        readiness_available = all(
+            product.data_quality_status is not None
+            for product in refreshed_products
+        )
+        unverified = [
+            product
+            for product in refreshed_products
+            if (
+                product.data_quality_status != "verified"
+                or not product.spec_verified_at
+            )
+        ] if readiness_available else []
+        if readiness_available:
+            summary["verified_products"] = (
+                len(refreshed_products) - len(unverified)
+            )
+            summary["unverified"] = [
+                product.slug for product in unverified
+            ]
+            for product in unverified:
+                issue_keys = sorted({
+                    str(issue.get("key") or issue.get("code") or "unknown")
+                    for issue in product.data_quality_issues
+                })
+                logging.error(
+                    "❌ Verification gate: %s remains %s; issues=%s",
+                    product.slug,
+                    product.data_quality_status,
+                    ",".join(issue_keys) or "unknown",
+                )
+            failed = sorted(set(failed) | {
+                product.slug for product in unverified
+            })
+            summary["failed"] = failed
+        else:
+            logging.warning(
+                "Authenticated catalog does not expose verification state; "
+                "deploy the matching TeknoSkor manifest contract.",
+            )
         logging.info(
             "🏁 Provenance sync finished: %s succeeded, %s failed. "
             "No products were created or published.",

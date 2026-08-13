@@ -92,6 +92,9 @@ class CatalogProduct:
     name: str
     slug: str
     attributes: dict[str, Any]
+    data_quality_status: str | None = None
+    data_quality_issues: tuple[dict[str, Any], ...] = ()
+    spec_verified_at: str | None = None
 
 
 def utc_observation_time() -> str:
@@ -384,6 +387,17 @@ class SourceIngestionClient:
                         name,
                         slug,
                         attributes,
+                        str(raw.get("data_quality_status") or "pending")
+                        if "data_quality_status" in raw
+                        else None,
+                        tuple(
+                            issue
+                            for issue in raw.get("data_quality_issues", [])
+                            if isinstance(issue, dict)
+                        ),
+                        str(raw["spec_verified_at"])
+                        if raw.get("spec_verified_at")
+                        else None,
                     ),
                 )
 

@@ -6,6 +6,7 @@ import requests
 
 from main import KimovilScraper
 from source_ingestion import (
+    CatalogProduct,
     ExistingProductNotFoundError,
     IngestionConfigurationError,
     SourceIngestionClient,
@@ -315,6 +316,37 @@ class ProductIdentityTests(unittest.TestCase):
             )
         )
 
+    def test_run_fails_closed_when_committed_sources_leave_product_pending(self):
+        class ReadinessClient:
+            def __init__(self):
+                self.fetches = 0
+
+            def fetch_catalog(self, page_size=100):
+                _ = page_size
+                self.fetches += 1
+                status = None if self.fetches == 1 else "pending"
+                return [
+                    CatalogProduct(
+                        1,
+                        "Phone One",
+                        "phone-one",
+                        {"battery_mah": 5000},
+                        status,
+                        ({
+                            "key": "screen_size_inch",
+                            "code": "missing_value",
+                        },) if status else (),
+                        None,
+                    ),
+                ]
+
+        scraper = KimovilScraper(ingestion_client=ReadinessClient())
+        scraper.scrape_product_details = lambda *args, **kwargs: True
+        summary = scraper.scrape_existing_products()
+
+        self.assertEqual(summary["verified_products"], 0)
+        self.assertEqual(summary["failed"], ["phone-one"])
+
 
 class SourceIngestionClientTests(unittest.TestCase):
     def make_client(self, responses, **kwargs):
@@ -369,6 +401,9 @@ class SourceIngestionClientTests(unittest.TestCase):
                                 "name": "Phone A",
                                 "slug": "phone-a",
                                 "attributes": {},
+                                "data_quality_status": "verified",
+                                "data_quality_issues": [],
+                                "spec_verified_at": "2026-08-13T06:00:00Z",
                             }
                         ],
                         "hasMore": False,
@@ -383,6 +418,12 @@ class SourceIngestionClientTests(unittest.TestCase):
             [product.slug for product in products],
             ["phone-a", "phone-b"],
         )
+        self.assertEqual(products[0].data_quality_status, "verified")
+        self.assertEqual(
+            products[0].spec_verified_at,
+            "2026-08-13T06:00:00Z",
+        )
+        self.assertIsNone(products[1].data_quality_status)
         self.assertEqual(
             session.calls[0][2]["headers"]["Authorization"],
             f"Bearer {SECRET}",
