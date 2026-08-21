@@ -175,6 +175,41 @@ class ProductIdentityTests(unittest.TestCase):
         self.assertEqual(scraper.extract_capacity_gb("1 TB UFS 4.1"), 1024)
         self.assertEqual(scraper.extract_capacity_gb("512 GB UFS 4.1"), 512)
 
+    def test_pending_product_refreshes_a_previously_misparsed_capacity(self):
+        scraper = KimovilScraper()
+        scraper.get_via_flaresolverr = lambda _url: """
+            <html><head>
+              <meta name='deviceki'
+                    content='{"name":"vivo X300 Ultra","partials":{}}'>
+              <meta name='devicecompare'
+                    content='{"name":"vivo X300 Ultra"}'>
+            </head><body>
+              <section class='container-sheet-hardware'>
+                <h2>Performance &amp; Hardware of vivo X300 Ultra</h2>
+                <table class='k-dltable'>
+                  <tr><th class='label'>Capacity</th>
+                      <td class='value'>1 TB</td></tr>
+                </table>
+              </section>
+            </body></html>
+        """
+        staged = []
+
+        self.assertTrue(scraper.scrape_product_details(
+            "https://source.example/vivo-x300-ultra",
+            product_slug="vivo-x300-ultra",
+            expected_name="vivo X300 Ultra",
+            existing_attributes={"storage_gb": 1},
+            seed_physical_attributes=True,
+            record_sink=staged,
+        ))
+        storage = next(
+            record
+            for record in staged
+            if record["attribute_key"] == "storage_gb"
+        )
+        self.assertEqual(storage["value"], 1024)
+
     def test_catalog_aliases_keep_source_identity_checks_exact(self):
         self.assertEqual(
             SOURCE_PRODUCT_OVERRIDES["samsung-galaxy-a36-5g"],

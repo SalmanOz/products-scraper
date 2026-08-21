@@ -237,6 +237,7 @@ class KimovilScraper:
         expected_name=None,
         existing_attributes=None,
         existing_images=None,
+        seed_physical_attributes=False,
         record_sink=None,
         image_sink=None,
     ):
@@ -344,7 +345,7 @@ class KimovilScraper:
             # seed the physical specification groups directly from the current,
             # identity-checked source page. Existing products retain their
             # localized values and only receive refreshed provenance.
-            if not existing_attributes:
+            if seed_physical_attributes or not existing_attributes:
                 section_names = {
                     "technical": "Technical sheet",
                     "design": "Design & Materials",
@@ -623,6 +624,10 @@ class KimovilScraper:
                 expected_name=expected_source_name,
                 existing_attributes=product.attributes,
                 existing_images=product.images,
+                seed_physical_attributes=(
+                    product.data_quality_status != "verified"
+                    or not product.spec_verified_at
+                ),
                 record_sink=staged_records,
                 image_sink=staged_images,
             )
@@ -637,6 +642,10 @@ class KimovilScraper:
                         expected_name=expected_source_name,
                         existing_attributes=product.attributes,
                         existing_images=product.images,
+                        seed_physical_attributes=(
+                            product.data_quality_status != "verified"
+                            or not product.spec_verified_at
+                        ),
                         record_sink=staged_records,
                         image_sink=staged_images,
                     )
