@@ -41,6 +41,14 @@ on:
         required: false
         type: boolean
         default: false
+      catalog_expansion_batch:
+        description: 'Run one reviewed catalog expansion batch'
+        required: false
+        type: choice
+        options:
+          - none
+          - tr-2026-08-popular-new-v1
+        default: none
 
 permissions:
   contents: read
@@ -69,6 +77,7 @@ jobs:
           COMPARISON_READINESS_ONLY: ${{ github.event.inputs.comparison_readiness_only }}
           PRICE_INDEX_AUDIT_ONLY: ${{ github.event.inputs.price_index_audit_only }}
           RUN_PHASE2_BACKFILL: ${{ github.event.inputs.run_phase2_backfill }}
+          CATALOG_EXPANSION_BATCH: ${{ github.event.inputs.catalog_expansion_batch }}
         run: |
           if [[ "${RUN_TECHNICAL_DATA}" == "true" && "${RUN_PHASE2_BACKFILL}" == "true" ]]; then
             echo "Choose either technical ingestion or Phase 2 backfill, not both." >&2
@@ -112,6 +121,18 @@ jobs:
           fi
           if [[ "${PRICE_INDEX_AUDIT_ONLY}" == "true" && "${TECHNICAL_PRODUCT_LIMIT}" != "0" ]]; then
             echo "price_index_audit_only cannot be combined with technical_product_limit." >&2
+            exit 1
+          fi
+          if [[ "${CATALOG_EXPANSION_BATCH}" != "none" && "${RUN_TECHNICAL_DATA}" != "true" ]]; then
+            echo "catalog_expansion_batch requires run_technical_data." >&2
+            exit 1
+          fi
+          if [[ "${CATALOG_EXPANSION_BATCH}" != "none" && "${TECHNICAL_PENDING_ONLY}" != "true" ]]; then
+            echo "catalog_expansion_batch requires technical_pending_only." >&2
+            exit 1
+          fi
+          if [[ "${CATALOG_EXPANSION_BATCH}" != "none" && ( "${TECHNICAL_SCHEMA_ONLY}" == "true" || "${COMPARISON_READINESS_ONLY}" == "true" || "${PRICE_INDEX_AUDIT_ONLY}" == "true" || "${RUN_PHASE2_BACKFILL}" == "true" || "${TECHNICAL_PRODUCT_LIMIT}" != "0" ) ]]; then
+            echo "catalog_expansion_batch cannot be combined with diagnostic or backfill modes." >&2
             exit 1
           fi
 
@@ -161,8 +182,23 @@ jobs:
           python test_offer_ingestion_client.py
           python test_price_update_resilience.py
           python test_source_ingestion.py
+          python test_catalog_expansion.py
+          python test_product_images.py
 
-      - name: Run Technical Data Scraper (Kimovil)
+      - name: Create Reviewed Catalog Expansion Rows
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.catalog_expansion_batch != 'none' }}
+        env:
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+          CATALOG_EXPANSION_BATCH: ${{ github.event.inputs.catalog_expansion_batch }}
+        run: |
+          set -euo pipefail
+          : "${TEKNOSKOR_INGESTION_URL:?TEKNOSKOR_INGESTION_URL is required}"
+          : "${SCRAPER_INGESTION_SECRET:?SCRAPER_INGESTION_SECRET is required}"
+          : "${CATALOG_EXPANSION_BATCH:?CATALOG_EXPANSION_BATCH is required}"
+          python catalog_expansion.py --batch "${CATALOG_EXPANSION_BATCH}"
+
+      - name: Run Technical Data Scraper
         # Manual-only until the existing-product source backfill is reviewed.
         if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.run_technical_data == 'true' }}
         env:
@@ -173,6 +209,12 @@ jobs:
           TECHNICAL_PRODUCT_LIMIT: ${{ github.event.inputs.technical_product_limit }}
           COMPARISON_READINESS_ONLY: ${{ github.event.inputs.comparison_readiness_only }}
           PRICE_INDEX_AUDIT_ONLY: ${{ github.event.inputs.price_index_audit_only }}
+          CATALOG_EXPANSION_BATCH: ${{ github.event.inputs.catalog_expansion_batch }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+          R2_PUBLIC_DOMAIN: ${{ secrets.R2_PUBLIC_DOMAIN }}
         run: |
           set -euo pipefail
           : "${TEKNOSKOR_INGESTION_URL:?TEKNOSKOR_INGESTION_URL is required}"
@@ -187,10 +229,24 @@ jobs:
           elif [[ "${TECHNICAL_PENDING_ONLY}" == "true" ]]; then
             args+=(--pending-only)
           fi
+          if [[ "${CATALOG_EXPANSION_BATCH}" != "none" ]]; then
+            args+=(--require-images)
+          fi
           if [[ "${TECHNICAL_PRODUCT_LIMIT}" != "0" ]]; then
             args+=("--limit=${TECHNICAL_PRODUCT_LIMIT}")
           fi
           python main.py "${args[@]}"
+
+      - name: Discover Prices for Expanded Catalog
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.catalog_expansion_batch != 'none' }}
+        env:
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+        run: |
+          set -euo pipefail
+          : "${TEKNOSKOR_INGESTION_URL:?TEKNOSKOR_INGESTION_URL is required}"
+          : "${SCRAPER_INGESTION_SECRET:?SCRAPER_INGESTION_SECRET is required}"
+          python update_prices.py
 
       - name: Run Price Update Scraper (TR Merchants)
         if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_technical_data != 'true') }}

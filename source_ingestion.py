@@ -96,6 +96,7 @@ class CatalogProduct:
     data_quality_status: str | None = None
     data_quality_issues: tuple[dict[str, Any], ...] = ()
     spec_verified_at: str | None = None
+    images: tuple[str, ...] = ()
 
 
 def utc_observation_time() -> str:
@@ -317,6 +318,10 @@ class SourceIngestionClient:
         return f"{self.base_url}/api/ingestion/sources"
 
     @property
+    def images_url(self) -> str:
+        return f"{self.base_url}/api/ingestion/images"
+
+    @property
     def catalog_url(self) -> str:
         return f"{self.base_url}/api/ingestion/catalog"
 
@@ -493,6 +498,7 @@ class SourceIngestionClient:
                     name = str(raw["name"]).strip()
                     slug = str(raw["slug"]).strip()
                     attributes = raw["attributes"]
+                    images = raw.get("images", [])
                 except (KeyError, TypeError, ValueError) as error:
                     raise SourceIngestionError(
                         f"Malformed catalog product at page {page}, "
@@ -508,6 +514,8 @@ class SourceIngestionClient:
                         slug,
                     )
                     or not isinstance(attributes, dict)
+                    or not isinstance(images, list)
+                    or any(not isinstance(image, str) for image in images)
                 ):
                     raise SourceIngestionError(
                         f"Malformed catalog product at page {page}, "
@@ -526,21 +534,26 @@ class SourceIngestionClient:
                 seen_slugs.add(slug)
                 products.append(
                     CatalogProduct(
-                        product_id,
-                        name,
-                        slug,
-                        attributes,
-                        str(raw.get("data_quality_status") or "pending")
-                        if "data_quality_status" in raw
-                        else None,
-                        tuple(
+                        id=product_id,
+                        name=name,
+                        slug=slug,
+                        attributes=attributes,
+                        data_quality_status=(
+                            str(raw.get("data_quality_status") or "pending")
+                            if "data_quality_status" in raw
+                            else None
+                        ),
+                        data_quality_issues=tuple(
                             issue
                             for issue in raw.get("data_quality_issues", [])
                             if isinstance(issue, dict)
                         ),
-                        str(raw["spec_verified_at"])
-                        if raw.get("spec_verified_at")
-                        else None,
+                        spec_verified_at=(
+                            str(raw["spec_verified_at"])
+                            if raw.get("spec_verified_at")
+                            else None
+                        ),
+                        images=tuple(images),
                     ),
                 )
 
@@ -617,6 +630,34 @@ class SourceIngestionClient:
 
         aggregate["changed_paths"] = sorted(affected_paths)
         return aggregate
+
+    def submit_images(self, records: Iterable[dict[str, Any]]) -> dict[str, Any]:
+        image_records = list(records)
+        if not image_records:
+            raise ValueError("at least one image record is required")
+        response = self._request_with_retry(
+            "POST",
+            self.images_url,
+            json={"images": image_records},
+            authenticated=True,
+        )
+        body = self._json_body(response)
+        if body.get("committed") is not True:
+            raise SourceIngestionError(
+                "Image API did not confirm a committed transaction",
+                status_code=response.status_code,
+                response_body=body,
+            )
+        acknowledged = int(body.get("accepted") or 0) + int(
+            body.get("unchanged") or 0
+        )
+        if acknowledged != len(image_records):
+            raise SourceIngestionError(
+                "Image API acknowledgement count does not match the submitted batch",
+                status_code=response.status_code,
+                response_body=body,
+            )
+        return body
 
     def _request_with_retry(
         self,

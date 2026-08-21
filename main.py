@@ -20,12 +20,23 @@ from source_ingestion import (
 )
 from bs4 import BeautifulSoup
 import html as html_lib
+from product_images import R2ProductImageStore, extract_source_image_urls
 
 load_dotenv(os.path.join(os.path.dirname(__file__), '.env'))
 
 class KimovilScraper:
-    def __init__(self, ingestion_client=None):
+    def __init__(
+        self,
+        ingestion_client=None,
+        *,
+        require_images=False,
+        image_store=None,
+    ):
         self.ingestion_client = ingestion_client
+        self.require_images = require_images
+        self.image_store = image_store or R2ProductImageStore(
+            required=require_images,
+        )
         self.base_url = os.getenv("KIMOVIL_BASE_URL", "https://www.kimovil.com/en/")
         self.flaresolverr_url = "http://localhost:8191/v1"
         self.flaresolverr_session_id = "teknoskor-kimovil"
@@ -123,6 +134,18 @@ class KimovilScraper:
             return 0
 
     @staticmethod
+    def extract_decimal_number(text):
+        if not text:
+            return 0
+        match = re.search(r"\d+(?:[.,]\d+)?", str(text))
+        if not match:
+            return 0
+        try:
+            return float(match.group(0).replace(",", "."))
+        except ValueError:
+            return 0
+
+    @staticmethod
     def is_product_name_match(expected, observed):
         """Fail closed when a source page appears to describe another variant."""
 
@@ -185,7 +208,9 @@ class KimovilScraper:
         product_slug=None,
         expected_name=None,
         existing_attributes=None,
+        existing_images=None,
         record_sink=None,
+        image_sink=None,
     ):
         try:
             # Kept for backward-compatible callers. Product category and all
@@ -287,6 +312,63 @@ class KimovilScraper:
                 raw_specs,
             ))
 
+            # A reviewed catalog-expansion row starts empty. In that one case,
+            # seed the physical specification groups directly from the current,
+            # identity-checked source page. Existing products retain their
+            # localized values and only receive refreshed provenance.
+            if not existing_attributes:
+                section_names = {
+                    "technical": "Technical sheet",
+                    "design": "Design & Materials",
+                    "hardware": "Performance & Hardware",
+                    "camera": "Camera",
+                    "connect": "Connectivity",
+                    "battery": "Batarya",
+                    "software": "Software",
+                }
+                for section_title, specs in raw_specs.items():
+                    lowered_title = section_title.casefold()
+                    canonical = next(
+                        (
+                            name
+                            for marker, name in section_names.items()
+                            if marker in lowered_title
+                        ),
+                        None,
+                    )
+                    if canonical and specs:
+                        attributes[canonical] = specs
+
+                scalar_values = {
+                    "battery_mah": self.extract_number(battery_v),
+                    "ram_gb": self.extract_number(
+                        get_spec("Hardware", "Memory RAM", "RAM")
+                    ),
+                    "storage_gb": self.extract_number(
+                        get_spec("Hardware", "Capacity", "Storage")
+                    ),
+                    "screen_size_inch": self.extract_decimal_number(
+                        get_spec("Design", "Diagonal", "Screen size")
+                    ),
+                }
+                attributes.update({
+                    key: value
+                    for key, value in scalar_values.items()
+                    if value > 0
+                })
+                quick_specs = {
+                    "cpu": get_spec("Hardware", "Model", "Processor"),
+                    "ram": get_spec("Hardware", "Memory RAM", "RAM"),
+                    "screen": get_spec("Design", "Diagonal", "Screen size"),
+                    "battery": battery_v,
+                    "storage": get_spec("Hardware", "Capacity", "Storage"),
+                }
+                attributes["quick_specs"] = {
+                    key: value
+                    for key, value in quick_specs.items()
+                    if value and value != "---"
+                }
+
             def calc_gaming(antutu, bat, nm):
                 if antutu <= 0 or bat <= 0:
                     return []
@@ -319,6 +401,35 @@ class KimovilScraper:
                 attributes=attributes,
                 observed_at=utc_observation_time(),
             )
+            if not existing_images:
+                source_images = extract_source_image_urls(soup, device_compare)
+                uploaded_images = []
+                if self.image_store.enabled:
+                    for index, source_image in enumerate(source_images[:5]):
+                        try:
+                            uploaded_images.append(
+                                self.image_store.upload(
+                                    source_image,
+                                    target_slug,
+                                    index,
+                                )
+                            )
+                        except Exception as error:
+                            logging.warning(
+                                "⚠️ Image %s failed for %s: %s",
+                                index,
+                                target_slug,
+                                error,
+                            )
+                if self.require_images and not uploaded_images:
+                    raise SourceIngestionError(
+                        f"No first-party CDN image could be stored for {target_slug}",
+                    )
+                if uploaded_images and image_sink is not None:
+                    image_sink.append({
+                        "product_slug": target_slug,
+                        "urls": uploaded_images,
+                    })
             if record_sink is not None:
                 record_sink.extend(records)
                 logging.info(
@@ -454,6 +565,7 @@ class KimovilScraper:
         succeeded = 0
         failed = []
         staged_records = []
+        staged_images = []
         logging.info(
             "🚀 Starting existing-product-only provenance sync for %s products",
             len(products),
@@ -474,7 +586,9 @@ class KimovilScraper:
                 product_slug=product.slug,
                 expected_name=product.name,
                 existing_attributes=product.attributes,
+                existing_images=product.images,
                 record_sink=staged_records,
+                image_sink=staged_images,
             )
             if not success:
                 matched_url = self.search_product_on_kimovil(product.name)
@@ -484,7 +598,9 @@ class KimovilScraper:
                         product_slug=product.slug,
                         expected_name=product.name,
                         existing_attributes=product.attributes,
+                        existing_images=product.images,
                         record_sink=staged_records,
+                        image_sink=staged_images,
                     )
             if success:
                 succeeded += 1
@@ -504,6 +620,13 @@ class KimovilScraper:
                 ingestion_result["accepted"],
                 ingestion_result["stale_ignored"],
                 ingestion_result["affected_products"],
+            )
+        if staged_images:
+            image_result = ingestion_client.submit_images(staged_images)
+            logging.info(
+                "✅ Image ingestion committed: %s accepted, %s unchanged",
+                image_result["accepted"],
+                image_result["unchanged"],
             )
 
         summary = {
@@ -531,6 +654,11 @@ class KimovilScraper:
                 or not product.spec_verified_at
             )
         ] if readiness_available else []
+        missing_images = [
+            product
+            for product in refreshed_products
+            if self.require_images and not product.images
+        ]
         if readiness_available:
             summary["verified_products"] = (
                 len(refreshed_products) - len(unverified)
@@ -551,6 +679,8 @@ class KimovilScraper:
                 )
             failed = sorted(set(failed) | {
                 product.slug for product in unverified
+            } | {
+                product.slug for product in missing_images
             })
             summary["failed"] = failed
         else:
@@ -584,6 +714,7 @@ if __name__ == "__main__":
             "--price-index-audit-only",
             "--schema-only",
             "--readiness-only",
+            "--require-images",
         }
         limit_arguments = [
             argument
@@ -626,6 +757,7 @@ if __name__ == "__main__":
             and (
                 "--pending-only" in sys.argv[1:]
                 or "--schema-only" in sys.argv[1:]
+                or "--require-images" in sys.argv[1:]
                 or max_products is not None
             )
         ):
@@ -638,13 +770,16 @@ if __name__ == "__main__":
                 "--pending-only" in sys.argv[1:]
                 or "--schema-only" in sys.argv[1:]
                 or "--readiness-only" in sys.argv[1:]
+                or "--require-images" in sys.argv[1:]
                 or max_products is not None
             )
         ):
             raise IngestionConfigurationError(
                 "--price-index-audit-only cannot be combined with sync options",
             )
-        scraper = KimovilScraper()
+        scraper = KimovilScraper(
+            require_images="--require-images" in sys.argv[1:],
+        )
         if "--price-index-audit-only" in sys.argv[1:]:
             scraper.get_ingestion_client().fetch_price_index_readiness()
             run_summary = {"failed": []}
