@@ -4,7 +4,7 @@ from unittest.mock import Mock, patch
 
 import requests
 
-from main import KimovilScraper
+from main import KimovilScraper, SOURCE_PRODUCT_OVERRIDES
 from source_ingestion import (
     CatalogProduct,
     ExistingProductNotFoundError,
@@ -169,6 +169,28 @@ class ProvenanceRecordTests(unittest.TestCase):
 
 
 class ProductIdentityTests(unittest.TestCase):
+    def test_storage_capacity_converts_terabytes_to_gigabytes(self):
+        scraper = KimovilScraper()
+
+        self.assertEqual(scraper.extract_capacity_gb("1 TB UFS 4.1"), 1024)
+        self.assertEqual(scraper.extract_capacity_gb("512 GB UFS 4.1"), 512)
+
+    def test_catalog_aliases_keep_source_identity_checks_exact(self):
+        self.assertEqual(
+            SOURCE_PRODUCT_OVERRIDES["samsung-galaxy-a36-5g"],
+            {
+                "expected_name": "Samsung Galaxy A36",
+                "url": (
+                    "https://www.kimovil.com/en/"
+                    "where-to-buy-samsung-galaxy-a36"
+                ),
+            },
+        )
+        self.assertEqual(
+            SOURCE_PRODUCT_OVERRIDES["oppo-reno15-pro-5g"]["expected_name"],
+            "Oppo Reno15 Pro",
+        )
+
     def test_flaresolverr_reuses_a_named_browser_session(self):
         scraper = KimovilScraper()
         session_response = Mock()

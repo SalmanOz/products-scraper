@@ -24,6 +24,19 @@ from product_images import R2ProductImageStore, extract_source_image_urls
 
 load_dotenv(os.path.join(os.path.dirname(__file__), '.env'))
 
+
+SOURCE_PRODUCT_OVERRIDES = {
+    "oppo-reno15-pro-5g": {
+        "expected_name": "Oppo Reno15 Pro",
+        "url": "https://www.kimovil.com/en/where-to-buy-oppo-reno15-pro",
+    },
+    "samsung-galaxy-a36-5g": {
+        "expected_name": "Samsung Galaxy A36",
+        "url": "https://www.kimovil.com/en/where-to-buy-samsung-galaxy-a36",
+    },
+}
+
+
 class KimovilScraper:
     def __init__(
         self,
@@ -144,6 +157,21 @@ class KimovilScraper:
             return float(match.group(0).replace(",", "."))
         except ValueError:
             return 0
+
+    def extract_capacity_gb(self, text):
+        if not text:
+            return 0
+        match = re.search(
+            r"(\d+(?:[.,]\d+)?)\s*(TB|GB)\b",
+            str(text),
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            return self.extract_number(text)
+        value = float(match.group(1).replace(",", "."))
+        if match.group(2).casefold() == "tb":
+            value *= 1024
+        return int(round(value))
 
     @staticmethod
     def is_product_name_match(expected, observed):
@@ -344,7 +372,7 @@ class KimovilScraper:
                     "ram_gb": self.extract_number(
                         get_spec("Hardware", "Memory RAM", "RAM")
                     ),
-                    "storage_gb": self.extract_number(
+                    "storage_gb": self.extract_capacity_gb(
                         get_spec("Hardware", "Capacity", "Storage")
                     ),
                     "screen_size_inch": self.extract_decimal_number(
@@ -577,26 +605,36 @@ class KimovilScraper:
                 len(products),
                 product.name,
             )
-            guessed_url = (
-                "https://www.kimovil.com/en/where-to-buy-"
-                f"{product.slug}"
+            source_override = SOURCE_PRODUCT_OVERRIDES.get(product.slug, {})
+            expected_source_name = source_override.get(
+                "expected_name",
+                product.name,
+            )
+            guessed_url = source_override.get(
+                "url",
+                (
+                    "https://www.kimovil.com/en/where-to-buy-"
+                    f"{product.slug}"
+                ),
             )
             success = self.scrape_product_details(
                 guessed_url,
                 product_slug=product.slug,
-                expected_name=product.name,
+                expected_name=expected_source_name,
                 existing_attributes=product.attributes,
                 existing_images=product.images,
                 record_sink=staged_records,
                 image_sink=staged_images,
             )
             if not success:
-                matched_url = self.search_product_on_kimovil(product.name)
+                matched_url = self.search_product_on_kimovil(
+                    expected_source_name,
+                )
                 if matched_url and matched_url != guessed_url:
                     success = self.scrape_product_details(
                         matched_url,
                         product_slug=product.slug,
-                        expected_name=product.name,
+                        expected_name=expected_source_name,
                         existing_attributes=product.attributes,
                         existing_images=product.images,
                         record_sink=staged_records,
