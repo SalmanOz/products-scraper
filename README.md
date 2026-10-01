@@ -33,6 +33,21 @@ fiyatı bulunamayan model için fiyat uydurmayın.
 Yeni dosyaları göndermeden önce `python test_catalog_expansion.py` çalıştırın.
 Günlük zamanlama fiyatları günceller; kendiliğinden model yayımlamaz.
 
+## Teknik özellik alanlarını onarma
+
+Scraper işlemci/RAM/depolama tiplerini ve arka/ön kamera alanlarını ayrı tutar.
+Belirsiz saat hızlarını (`XX GHz`) ve çakışan, bağlamı bilinmeyen alanları aktarmaz.
+Eski düzleştirilmiş kayıtlar için önce `python repair_spec_mapping.py --batch
+<batch_id>` ile değişiklik raporunu inceleyin; bu komut yazma yapmaz. `--apply`
+yalnızca bu gruptaki mevcut modellerin donanım ve kamera gruplarını değiştirir.
+Fiyat, görsel, diğer teknik gruplar ve ürün kimliği korunur. Kaynak/model eşleşmesi
+ve gerekli alanlar doğrulanmazsa hiçbir onarım gönderilmez.
+
+Actions üzerinden uygulamak için `run_technical_data=true`,
+`repair_spec_batch=<batch_id>`, diğer seçenekler varsayılan olmalıdır.
+İşlem öncesi/sonrası değerler 30 gün saklanan `spec-mapping-repair` çıktısındadır.
+Bu işlem yeni ürün eklemez; günlük fiyat taramasının davranışını değiştirmez.
+
 ## 🔗 Hızlı Bağlantılar
 
 * **Ana Sayfa:** [Teknoskor.com](https://teknoskor.com)

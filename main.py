@@ -21,6 +21,7 @@ from source_ingestion import (
 from bs4 import BeautifulSoup
 import html as html_lib
 from product_images import R2ProductImageStore, extract_source_image_urls
+from spec_sections import extract_spec_sections, find_section_spec
 
 load_dotenv(os.path.join(os.path.dirname(__file__), '.env'))
 
@@ -282,23 +283,7 @@ class KimovilScraper:
 
             logging.info(f"📦 Processing: {full_name}")
 
-            raw_specs = {}; all_key_values = {}
-            for section in soup.find_all('section', class_=re.compile(r'container-sheet-')):
-                header = section.find(['h2', 'h3', 'h4'])
-                if not header: continue
-                title = header.get_text().strip()
-                if " of " in title: title = title.split(' of ')[0].strip()
-                raw_specs[title] = {}
-                for table in section.find_all('table', class_='k-dltable'):
-                    for tr in table.find_all('tr'):
-                        th = tr.find(['th', 'td'], class_='label') or tr.find('th')
-                        td_all = tr.find_all('td')
-                        td = tr.find(['td'], class_='value') or (td_all[-1] if td_all else None)
-                        if th and td:
-                            key = th.get_text().strip()
-                            val = td.get_text().replace('\n', ' ').replace('See more details', '').strip()
-                            raw_specs[title][key] = val
-                            all_key_values[key] = val
+            raw_specs = extract_spec_sections(soup)
 
             partials = device_ki.get('partials', {})
             # Preserve the observed benchmark values exactly. The scoring API
@@ -310,18 +295,14 @@ class KimovilScraper:
             }
 
             def get_spec(s, k, f=None):
-                for sect, specs in raw_specs.items():
-                    if s.lower() in sect.lower():
-                        for sk, sv in specs.items():
-                            if k.lower() in sk.lower(): return sv
-                            if f and f.lower() in sk.lower(): return sv
-                return all_key_values.get(k, all_key_values.get(f, '---'))
+                return find_section_spec(raw_specs, s, k, f)
 
             battery_v = get_spec('Battery', 'Capacity')
             antutu_v = next(
                 (
                     value
-                    for key, value in all_key_values.items()
+                    for specs in raw_specs.values()
+                    for key, value in specs.items()
                     if (
                         'antutu' in str(key).lower()
                         or 'antutu' in str(value).lower()
@@ -329,7 +310,7 @@ class KimovilScraper:
                 ),
                 '---',
             )
-            nm_v = self.extract_number(get_spec('Hardware', 'Nanometers', 'nm'))
+            nm_v = self.extract_number(get_spec('Hardware', 'Nanometer', 'Nanometers'))
 
             attributes = {
                 "antutu_score": int(self.extract_number(antutu_v)),

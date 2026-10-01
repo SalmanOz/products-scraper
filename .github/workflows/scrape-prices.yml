@@ -46,6 +46,11 @@ on:
         required: false
         type: string
         default: none
+      repair_spec_batch:
+        description: 'Repair hardware/camera mappings only for a reviewed batch; none skips repair'
+        required: false
+        type: string
+        default: none
 
 permissions:
   contents: read
@@ -75,7 +80,12 @@ jobs:
           PRICE_INDEX_AUDIT_ONLY: ${{ github.event.inputs.price_index_audit_only }}
           RUN_PHASE2_BACKFILL: ${{ github.event.inputs.run_phase2_backfill }}
           CATALOG_EXPANSION_BATCH: ${{ github.event.inputs.catalog_expansion_batch }}
+          REPAIR_SPEC_BATCH: ${{ github.event.inputs.repair_spec_batch }}
         run: |
+          if [[ "${REPAIR_SPEC_BATCH}" != "none" && ( "${RUN_TECHNICAL_DATA}" != "true" || "${TECHNICAL_PENDING_ONLY}" == "true" || "${TECHNICAL_SCHEMA_ONLY}" == "true" || "${COMPARISON_READINESS_ONLY}" == "true" || "${PRICE_INDEX_AUDIT_ONLY}" == "true" || "${RUN_PHASE2_BACKFILL}" == "true" || "${TECHNICAL_PRODUCT_LIMIT}" != "0" || "${CATALOG_EXPANSION_BATCH}" != "none" ) ]]; then
+            echo "Spec repair requires technical mode without other sync or diagnostic options." >&2
+            exit 1
+          fi
           if [[ "${RUN_TECHNICAL_DATA}" == "true" && "${RUN_PHASE2_BACKFILL}" == "true" ]]; then
             echo "Choose either technical ingestion or Phase 2 backfill, not both." >&2
             exit 1
@@ -181,6 +191,8 @@ jobs:
           python test_source_ingestion.py
           python test_catalog_expansion.py
           python test_product_images.py
+          python test_spec_sections.py
+          python test_spec_mapping_repair.py
 
       - name: Create Reviewed Catalog Expansion Rows
         if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.catalog_expansion_batch != 'none' }}
@@ -207,6 +219,7 @@ jobs:
           COMPARISON_READINESS_ONLY: ${{ github.event.inputs.comparison_readiness_only }}
           PRICE_INDEX_AUDIT_ONLY: ${{ github.event.inputs.price_index_audit_only }}
           CATALOG_EXPANSION_BATCH: ${{ github.event.inputs.catalog_expansion_batch }}
+          REPAIR_SPEC_BATCH: ${{ github.event.inputs.repair_spec_batch }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
@@ -216,6 +229,10 @@ jobs:
           set -euo pipefail
           : "${TEKNOSKOR_INGESTION_URL:?TEKNOSKOR_INGESTION_URL is required}"
           : "${SCRAPER_INGESTION_SECRET:?SCRAPER_INGESTION_SECRET is required}"
+          if [[ "${REPAIR_SPEC_BATCH}" != "none" ]]; then
+            python repair_spec_mapping.py --batch "${REPAIR_SPEC_BATCH}" --apply --report spec-mapping-repair.json
+            exit 0
+          fi
           args=()
           if [[ "${PRICE_INDEX_AUDIT_ONLY}" == "true" ]]; then
             args+=(--price-index-audit-only)
@@ -233,6 +250,15 @@ jobs:
             args+=("--limit=${TECHNICAL_PRODUCT_LIMIT}")
           fi
           python main.py "${args[@]}"
+
+      - name: Save spec mapping repair backup and result
+        if: ${{ always() && github.event_name == 'workflow_dispatch' && github.event.inputs.repair_spec_batch != 'none' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: spec-mapping-repair-${{ github.run_id }}
+          path: spec-mapping-repair.json
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Discover Prices for Expanded Catalog
         if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.catalog_expansion_batch != 'none' }}
