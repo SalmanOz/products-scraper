@@ -1,0 +1,47 @@
+{
+  "batch_id": "tr-2026-10-new-v1",
+  "products": [
+    {
+      "name": "Samsung Galaxy Z Fold8",
+      "slug": "samsung-galaxy-z-fold8",
+      "brandSlug": "samsung",
+      "evidenceUrl": "https://www.samsung.com/tr/smartphones/galaxy-z-fold8/",
+      "segment": "new_release"
+    },
+    {
+      "name": "Samsung Galaxy Z Fold8 Ultra",
+      "slug": "samsung-galaxy-z-fold8-ultra",
+      "brandSlug": "samsung",
+      "evidenceUrl": "https://news.samsung.com/tr/samsung-galaxy-z-fold8-ultra-fold8-flip8-watch-ultra2-ve-watch9u-satisa-sundu",
+      "segment": "new_release"
+    },
+    {
+      "name": "Samsung Galaxy Z Flip8",
+      "slug": "samsung-galaxy-z-flip8",
+      "brandSlug": "samsung",
+      "evidenceUrl": "https://www.samsung.com/tr/smartphones/galaxy-z-flip8/",
+      "segment": "new_release"
+    },
+    {
+      "name": "Xiaomi 17T",
+      "slug": "xiaomi-17t",
+      "brandSlug": "xiaomi",
+      "evidenceUrl": "https://www.mi.com/tr/product/xiaomi-17t/specs/",
+      "segment": "new_release"
+    },
+    {
+      "name": "Apple iPhone 18 Pro",
+      "slug": "apple-iphone-18-pro",
+      "brandSlug": "apple",
+      "evidenceUrl": "https://www.apple.com/tr/iphone-18-pro/",
+      "segment": "new_release"
+    },
+    {
+      "name": "Apple iPhone 18 Pro Max",
+      "slug": "apple-iphone-18-pro-max",
+      "brandSlug": "apple",
+      "evidenceUrl": "https://www.apple.com/tr/iphone-18-pro/",
+      "segment": "new_release"
+    }
+  ]
+}

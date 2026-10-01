@@ -42,12 +42,9 @@ on:
         type: boolean
         default: false
       catalog_expansion_batch:
-        description: 'Run one reviewed catalog expansion batch'
+        description: 'Reviewed batch ID from catalog_batches/*.json; none skips creation'
         required: false
-        type: choice
-        options:
-          - none
-          - tr-2026-08-popular-new-v1
+        type: string
         default: none
 
 permissions:

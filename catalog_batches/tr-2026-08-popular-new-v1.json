@@ -1,0 +1,110 @@
+{
+  "batch_id": "tr-2026-08-popular-new-v1",
+  "products": [
+    {
+      "name": "Samsung Galaxy A36 5G",
+      "slug": "samsung-galaxy-a36-5g",
+      "brandSlug": "samsung",
+      "evidenceUrl": "https://www.samsung.com/tr/smartphones/galaxy-a/galaxy-a36-5g-awesome-black-256gb-sm-a366bzkgtur/",
+      "segment": "popular_missing"
+    },
+    {
+      "name": "Samsung Galaxy A37 5G",
+      "slug": "samsung-galaxy-a37-5g",
+      "brandSlug": "samsung",
+      "evidenceUrl": "https://www.samsung.com/tr/smartphones/galaxy-a/galaxy-a37-5g/buy/",
+      "segment": "new_release"
+    },
+    {
+      "name": "Samsung Galaxy A27 5G",
+      "slug": "samsung-galaxy-a27-5g",
+      "brandSlug": "samsung",
+      "evidenceUrl": "https://news.samsung.com/tr/samsung-galaxy-a27-5g-daha-buyuk-ekran-daha-akilli-ozellikler-ve-akici-performans",
+      "segment": "new_release"
+    },
+    {
+      "name": "Samsung Galaxy S26+",
+      "slug": "samsung-galaxy-s26-plus",
+      "brandSlug": "samsung",
+      "evidenceUrl": "https://www.samsung.com/tr/smartphones/galaxy-s26/",
+      "segment": "new_release"
+    },
+    {
+      "name": "Samsung Galaxy Z Flip7",
+      "slug": "samsung-galaxy-z-flip7",
+      "brandSlug": "samsung",
+      "evidenceUrl": "https://www.samsung.com/tr/smartphones/galaxy-z-flip7/",
+      "segment": "new_release"
+    },
+    {
+      "name": "Samsung Galaxy Z Fold7",
+      "slug": "samsung-galaxy-z-fold7",
+      "brandSlug": "samsung",
+      "evidenceUrl": "https://www.samsung.com/tr/smartphones/galaxy-z-fold7/",
+      "segment": "new_release"
+    },
+    {
+      "name": "Xiaomi Redmi A5",
+      "slug": "xiaomi-redmi-a5",
+      "brandSlug": "xiaomi",
+      "evidenceUrl": "https://www.mi.com/global/product/redmi-a5/specs/",
+      "segment": "popular_missing"
+    },
+    {
+      "name": "Xiaomi 17",
+      "slug": "xiaomi-17",
+      "brandSlug": "xiaomi",
+      "evidenceUrl": "https://www.mi.com/tr/product/xiaomi-17/",
+      "segment": "new_release"
+    },
+    {
+      "name": "POCO F7 Ultra",
+      "slug": "poco-f7-ultra",
+      "brandSlug": "poco",
+      "evidenceUrl": "https://www.mi.com/tr/product/poco-f7-ultra/",
+      "segment": "popular_missing"
+    },
+    {
+      "name": "vivo X300",
+      "slug": "vivo-x300",
+      "brandSlug": "vivo",
+      "evidenceUrl": "https://www.vivo.com/tr/products/x300",
+      "segment": "new_release"
+    },
+    {
+      "name": "vivo X300 Pro",
+      "slug": "vivo-x300-pro",
+      "brandSlug": "vivo",
+      "evidenceUrl": "https://www.vivo.com/tr/products/x300-pro",
+      "segment": "new_release"
+    },
+    {
+      "name": "vivo X300 Ultra",
+      "slug": "vivo-x300-ultra",
+      "brandSlug": "vivo",
+      "evidenceUrl": "https://www.vivo.com/tr/products/x300-ultra",
+      "segment": "new_release"
+    },
+    {
+      "name": "OPPO Reno15 Pro 5G",
+      "slug": "oppo-reno15-pro-5g",
+      "brandSlug": "oppo",
+      "evidenceUrl": "https://www.oppo.com/tr/smartphones/series-reno/reno15-pro/",
+      "segment": "new_release"
+    },
+    {
+      "name": "OPPO Find X9 Pro",
+      "slug": "oppo-find-x9-pro",
+      "brandSlug": "oppo",
+      "evidenceUrl": "https://www.oppo.com/tr/smartphones/series-find-x/find-x9-pro/",
+      "segment": "new_release"
+    },
+    {
+      "name": "OPPO Find N6",
+      "slug": "oppo-find-n6",
+      "brandSlug": "oppo",
+      "evidenceUrl": "https://www.oppo.com/tr/smartphones/series-find-n/find-n6/",
+      "segment": "new_release"
+    }
+  ]
+}
