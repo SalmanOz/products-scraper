@@ -100,7 +100,7 @@ class PriceUpdater:
                     # A successfully parsed listing is not proof of stock.
                     "availability": "unknown",
                     "source_url": source_url,
-                    "affiliate_url": source_url,
+                    # Commission links belong to the site owner, not price observations.
                     "observed_at": observed_at,
                     "checked_at": checked_at,
                     "is_official": False,

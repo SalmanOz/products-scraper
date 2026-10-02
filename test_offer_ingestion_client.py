@@ -384,7 +384,6 @@ def test_price_updater_builds_the_complete_offer_contract():
                 "currency": "TRY",
                 "availability": "unknown",
                 "source_url": "https://www.teknosa.com/example-phone-p-123",
-                "affiliate_url": "https://www.teknosa.com/example-phone-p-123",
                 "observed_at": "2026-07-27T10:00:00Z",
                 "checked_at": "2026-07-27T10:00:01Z",
                 "is_official": False,
