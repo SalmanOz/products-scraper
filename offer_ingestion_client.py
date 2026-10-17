@@ -251,6 +251,8 @@ class OfferIngestionClient:
             return {
                 "accepted": 0,
                 "stale_ignored": 0,
+                "variant_rejected": 0,
+                "variant_rejections": [],
                 "changed_paths": [],
                 "committed": True,
             }
@@ -258,6 +260,8 @@ class OfferIngestionClient:
         totals = {
             "accepted": 0,
             "stale_ignored": 0,
+            "variant_rejected": 0,
+            "variant_rejections": [],
             "changed_paths": [],
             "committed": True,
         }
@@ -279,15 +283,52 @@ class OfferIngestionClient:
                     "Offer ingestion response did not confirm a commit"
                 )
 
-            accepted = int(body.get("accepted", 0))
-            stale_ignored = int(body.get("stale_ignored", 0))
-            if accepted + stale_ignored != len(batch):
+            try:
+                accepted = int(body.get("accepted", 0))
+                stale_ignored = int(body.get("stale_ignored", 0))
+                variant_rejected = int(body.get("variant_rejected", 0))
+            except (TypeError, ValueError) as error:
+                raise IngestionClientError(
+                    "Offer ingestion response has invalid counters"
+                ) from error
+            if (
+                min(accepted, stale_ignored, variant_rejected) < 0
+                or accepted + stale_ignored + variant_rejected != len(batch)
+            ):
                 raise IngestionClientError(
                     "Offer ingestion response count does not match submitted batch"
                 )
+            rejections = body.get("variant_rejections", [])
+            if not isinstance(rejections, list) or len(rejections) != variant_rejected:
+                raise IngestionClientError(
+                    "Offer ingestion variant rejection details do not match count"
+                )
+            seen_indices = set()
+            for rejection in rejections:
+                index = rejection.get("index") if isinstance(rejection, dict) else None
+                if (
+                    not isinstance(index, int) or isinstance(index, bool)
+                    or index < 0 or index >= len(batch) or index in seen_indices
+                    or not isinstance(rejection.get("product_slug"), str)
+                    or not rejection["product_slug"].strip()
+                    or not isinstance(rejection.get("issues"), list)
+                    or not rejection["issues"]
+                    or any(not isinstance(issue, str) or not issue.strip()
+                           for issue in rejection["issues"])
+                ):
+                    raise IngestionClientError(
+                        "Offer ingestion returned malformed variant rejection details"
+                    )
+                seen_indices.add(index)
+                # Endpoint indices are local to each HTTP batch. Report indices
+                # relative to the complete offer list supplied to this call.
+                totals["variant_rejections"].append({
+                    **rejection, "index": start + index,
+                })
 
             totals["accepted"] += accepted
             totals["stale_ignored"] += stale_ignored
+            totals["variant_rejected"] += variant_rejected
             changed_paths = body.get("changed_paths")
             if isinstance(changed_paths, list):
                 totals["changed_paths"].extend(

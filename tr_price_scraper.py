@@ -649,11 +649,20 @@ class TRPriceScraper:
                             if m_url and m_price:
                                 clean_url = self.clean_merchant_url(m_url)
                                 logging.info(f"    🔗 Found URL: {clean_url[:50]}... from {m_seller}")
-                                results.append({
+                                offer = {
                                     "merchant": m_seller.split('/')[0].strip(),
                                     "price": float(m_price),
                                     "url": clean_url
-                                })
+                                }
+                                item_offered = off.get('itemOffered')
+                                source_title = (
+                                    item_offered.get('name')
+                                    if isinstance(item_offered, dict)
+                                    else None
+                                ) or off.get('name')
+                                if isinstance(source_title, str) and source_title.strip():
+                                    offer['source_title'] = source_title.strip()
+                                results.append(offer)
                     
                     # Recursively look in variants
                     variants = obj.get('hasVariant', [])
@@ -684,11 +693,17 @@ class TRPriceScraper:
                 if price > 5000:
                     link = a.get('href', '')
                     if not link.startswith('http'): link = "https://www.akakce.com" + link
-                    results.append({
+                    offer = {
                         "merchant": merchant_name, 
                         "price": price, 
                         "url": self.clean_merchant_url(link)
-                    })
+                    }
+                    title_el = container.select_one(
+                        '.pn_v8, .product-name, [itemprop="itemOffered"] [itemprop="name"]'
+                    )
+                    if title_el and title_el.get_text(' ', strip=True):
+                        offer['source_title'] = title_el.get_text(' ', strip=True)
+                    results.append(offer)
         
         # Trust filter: Akakçe aggregates the same gray-import/dropship sellers Google
         # Shopping does (see TRUSTED_MERCHANTS), but unlike get_google_shopping_price
@@ -803,7 +818,12 @@ class TRPriceScraper:
                     link = self._extract_merchant_link(parent_a.parent or parent_a, merchant)
             if not link:
                 continue
-            offers.append({"merchant": merchant, "price": price_val, "url": link})
+            offers.append({
+                "merchant": merchant,
+                "price": price_val,
+                "url": link,
+                "source_title": text,
+            })
         return offers
 
     def get_google_shopping_price(self, product_name, expected_specs=None):
@@ -869,7 +889,7 @@ class TRPriceScraper:
                 title_el = wrapper.select_one('.gkQHve, h3, .tAxDx, [role="heading"], .EI11Pd')
                 title = title_el.get_text().strip() if title_el else ""
                 
-                if title and not self.is_strict_match(product_name, title, expected_specs):
+                if not title or not self.is_strict_match(product_name, title, expected_specs):
                     continue
                 
                 # Price
@@ -899,7 +919,8 @@ class TRPriceScraper:
                 results.append({
                     "merchant": merchant,
                     "price": price_val,
-                    "url": link
+                    "url": link,
+                    "source_title": title,
                 })
             except Exception:
                 continue
@@ -1072,6 +1093,7 @@ class TRPriceScraper:
                     "merchant": site_name,
                     "price": price,
                     "url": self.clean_merchant_url(link),
+                    "source_title": title,
                 })
 
         if offers:

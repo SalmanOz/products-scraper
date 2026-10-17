@@ -530,6 +530,159 @@ def test_invalid_offer_is_rejected_before_batch_submission():
     assert ingestion_client.submissions == []
 
 
+def test_observed_title_is_forwarded_and_blank_titles_are_not_synthesized():
+    updater = PriceUpdater(RecordingIngestionClient(), OneOfferScraper())
+    product = {"id": 42, "name": "Expected catalog phone", "slug": "example-phone"}
+    offer = {"merchant": "Teknosa", "price": 21999,
+             "url": "https://www.teknosa.com/phone"}
+    observed = "SAMSUNG Galaxy A16 8GB / 256GB - Türkiye Garantili"
+    for value in [observed, "", "  ", None, 123]:
+        record = updater.prepare_product_offers(
+            product, [{**offer, "source_title": value}],
+            "2026-07-27T10:00:00Z", "2026-07-27T10:00:01Z",
+        )[0]
+        if value == observed:
+            assert record["source_title"] == observed
+        else:
+            assert "source_title" not in record
+        assert record["observed_at"] == "2026-07-27T10:00:00Z"
+        assert record["checked_at"] == "2026-07-27T10:00:01Z"
+        assert "affiliate_url" not in record
+
+    payload = {**sample_offer(0), "source_title": observed}
+    session = FakeSession([FakeResponse(200, {
+        "accepted": 1, "stale_ignored": 0, "committed": True,
+    })])
+    client = OfferIngestionClient("https://teknoskor.com", TEST_SECRET, session=session)
+    result = client.ingest_offers([payload])
+    assert session.calls[0][2]["json"]["offers"][0]["source_title"] == observed
+    assert result["variant_rejected"] == 0
+    assert result["variant_rejections"] == []
+
+
+def test_source_title_limit_matches_endpoint_without_truncation():
+    updater = PriceUpdater(RecordingIngestionClient(), OneOfferScraper())
+    product = {"id": 42, "slug": "example-phone"}
+    offer = {"merchant": "Teknosa", "price": 21999,
+             "url": "https://www.teknosa.com/phone"}
+    for title in ["a" * 1000, "📱" * 500]:
+        records = updater.prepare_product_offers(product, [{**offer, "source_title": title}], "t1", "t2")
+        assert records[0]["source_title"] == title
+    for title in ["a" * 1001, "📱" * 501]:
+        try:
+            updater.prepare_product_offers(product, [{**offer, "source_title": title}], "t1", "t2")
+        except RuntimeError as error:
+            assert "exceeds 1000 characters" in str(error)
+        else:
+            raise AssertionError("Overlong source title was silently forwarded or truncated")
+
+
+def test_mixed_variant_rejections_aggregate_across_http_chunks():
+    session = FakeSession([
+        FakeResponse(200, {"accepted": 1, "stale_ignored": 0, "variant_rejected": 1,
+            "variant_rejections": [{"index": 1, "product_slug": "phone-2",
+                "issues": ["storage_mismatch"], "expected": {"storage_gb": 128},
+                "observed": {"storage_gb": 256}}],
+            "changed_paths": ["/product/phone-1"], "committed": True}),
+        FakeResponse(200, {"accepted": 0, "stale_ignored": 1, "variant_rejected": 1,
+            "variant_rejections": [{"index": 0, "product_slug": "phone-3",
+                "issues": ["ram_mismatch"]}], "changed_paths": [], "committed": True}),
+        FakeResponse(200, {"accepted": 1, "stale_ignored": 0,
+            "changed_paths": ["/product/phone-1", "/product/phone-5"], "committed": True}),
+    ])
+    client = OfferIngestionClient("https://teknoskor.com", TEST_SECRET, session=session)
+    with patch("offer_ingestion_client.MAX_INGESTION_BATCH_SIZE", 2):
+        result = client.ingest_offers([sample_offer(i) for i in range(5)])
+    assert (result["accepted"], result["stale_ignored"], result["variant_rejected"]) == (2, 1, 2)
+    assert [item["index"] for item in result["variant_rejections"]] == [1, 2]
+    assert result["variant_rejections"][0]["expected"] == {"storage_gb": 128}
+    assert result["variant_rejections"][0]["observed"] == {"storage_gb": 256}
+    assert result["changed_paths"] == ["/product/phone-1", "/product/phone-5"]
+
+
+def test_bad_variant_acknowledgements_fail_without_retrying_committed_rows():
+    rejection = {"index": 0, "product_slug": "phone-1", "issues": ["storage_mismatch"]}
+    cases = [
+        {"accepted": 1, "variant_rejected": 1, "variant_rejections": [rejection]},
+        {"accepted": 0, "variant_rejected": 1, "variant_rejections": []},
+        {"accepted": 0, "variant_rejected": 1,
+         "variant_rejections": [{**rejection, "index": 1}]},
+        {"accepted": 2, "variant_rejected": -1, "variant_rejections": []},
+    ]
+    for body in cases:
+        session = FakeSession([FakeResponse(200, {**body, "stale_ignored": 0, "committed": True})])
+        client = OfferIngestionClient("https://teknoskor.com", TEST_SECRET, session=session)
+        try:
+            client.ingest_offers([sample_offer(0)])
+        except IngestionClientError:
+            pass
+        else:
+            raise AssertionError("Malformed variant acknowledgement passed")
+        assert len(session.calls) == 1
+
+
+def test_all_conflicting_rows_are_a_successfully_acknowledged_rejection_batch():
+    session = FakeSession([FakeResponse(200, {
+        "accepted": 0, "stale_ignored": 0, "variant_rejected": 1,
+        "variant_rejections": [{"index": 0, "product_slug": "phone-1",
+                                "issues": ["storage_mismatch"]}],
+        "changed_paths": [], "committed": True, "scores_recalculated": None,
+    })])
+    client = OfferIngestionClient("https://teknoskor.com", TEST_SECRET, session=session)
+    result = client.ingest_offers([sample_offer(0)])
+    assert result["accepted"] == 0
+    assert result["variant_rejected"] == 1
+    assert result["changed_paths"] == []
+    assert len(session.calls) == 1
+
+
+def test_updater_rejection_indices_track_the_full_submitted_offer_sequence():
+    aggregate = PriceUpdater.empty_ingestion_result()
+    PriceUpdater.merge_ingestion_result(aggregate, {
+        "accepted": 2, "stale_ignored": 1, "committed": True,
+    })
+    result = {"accepted": 1, "stale_ignored": 0, "variant_rejected": 1,
+              "variant_rejections": [{"index": 1, "product_slug": "phone-5",
+                                      "issues": ["storage_mismatch"]}],
+              "committed": True}
+    PriceUpdater.merge_ingestion_result(aggregate, result)
+    assert aggregate["accepted"] == 3
+    assert aggregate["variant_rejected"] == 1
+    assert aggregate["variant_rejections"][0]["index"] == 4
+    assert result["variant_rejections"][0]["index"] == 1
+
+
+def test_variant_rejection_marks_run_failure_after_retaining_good_updates():
+    client = RecordingIngestionClient()
+    def ingest_offers(offers):
+        client.submissions.append(offers)
+        return {"accepted": 1, "stale_ignored": 0, "variant_rejected": 1,
+                "variant_rejections": [{"index": 1, "product_slug": "example-phone",
+                                        "issues": ["storage_mismatch"]}],
+                "changed_paths": ["/product/example-phone"], "committed": True}
+    client.ingest_offers = ingest_offers
+    class TwoOfferScraper:
+        async def get_best_prices(self, product_name, expected_specs=None):
+            return [{"merchant": merchant, "price": 21999,
+                     "url": f"https://www.{merchant.lower()}.com/phone"}
+                    for merchant in ["Teknosa", "Trendyol"]]
+    updater = PriceUpdater(client, TwoOfferScraper())
+    with (patch("update_prices.asyncio.sleep", new=no_delay),
+          patch("update_prices.submit_urls") as submit_urls,
+          patch("update_prices.logging.error") as log_error):
+        try:
+            asyncio.run(updater.run_update())
+        except RuntimeError as error:
+            assert "1 offer(s) rejected for identity/variant conflicts" in str(error)
+            assert "valid committed updates retained" in str(error)
+        else:
+            raise AssertionError("Variant rejection did not mark the run as an issue")
+    assert len(client.submissions) == 1
+    assert len(client.submissions[0]) == 2
+    submit_urls.assert_called_once_with(["/product/example-phone", "/", "/products"])
+    assert log_error.call_args.args[1:] == ("example-phone", 1, "storage_mismatch")
+
+
 if __name__ == "__main__":
     test_catalog_is_read_without_mysql()
     test_ingestion_batches_at_500_and_sends_bearer_token()
@@ -544,4 +697,11 @@ if __name__ == "__main__":
     test_long_run_commits_bounded_product_batches()
     test_phase2_backfill_commits_rows_but_requires_two_merchants()
     test_invalid_offer_is_rejected_before_batch_submission()
+    test_observed_title_is_forwarded_and_blank_titles_are_not_synthesized()
+    test_source_title_limit_matches_endpoint_without_truncation()
+    test_mixed_variant_rejections_aggregate_across_http_chunks()
+    test_bad_variant_acknowledgements_fail_without_retrying_committed_rows()
+    test_all_conflicting_rows_are_a_successfully_acknowledged_rejection_batch()
+    test_updater_rejection_indices_track_the_full_submitted_offer_sequence()
+    test_variant_rejection_marks_run_failure_after_retaining_good_updates()
     print("✅ HTTPS offer ingestion contract tests passed")

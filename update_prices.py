@@ -90,22 +90,31 @@ class PriceUpdater:
                     f"Invalid extracted offer for {product['slug']}: {offer}"
                 )
 
-            records.append(
-                {
-                    "product_id": int(product["id"]),
-                    "product_slug": product["slug"],
-                    "seller": seller,
-                    "price": price,
-                    "currency": "TRY",
-                    # A successfully parsed listing is not proof of stock.
-                    "availability": "unknown",
-                    "source_url": source_url,
-                    # Commission links belong to the site owner, not price observations.
-                    "observed_at": observed_at,
-                    "checked_at": checked_at,
-                    "is_official": False,
-                }
-            )
+            record = {
+                "product_id": int(product["id"]),
+                "product_slug": product["slug"],
+                "seller": seller,
+                "price": price,
+                "currency": "TRY",
+                # A successfully parsed listing is not proof of stock.
+                "availability": "unknown",
+                "source_url": source_url,
+                # Commission links belong to the site owner, not price observations.
+                "observed_at": observed_at,
+                "checked_at": checked_at,
+                "is_official": False,
+            }
+            source_title = offer.get("source_title")
+            if isinstance(source_title, str) and source_title.strip():
+                source_title = source_title.strip()
+                # Match the endpoint's JavaScript string-length limit without
+                # truncating away contradictory model/variant evidence.
+                if len(source_title.encode("utf-16-le", errors="surrogatepass")) > 2000:
+                    raise RuntimeError(
+                        f"Observed source title exceeds 1000 characters for {product['slug']}"
+                    )
+                record["source_title"] = source_title
+            records.append(record)
         return records
 
     @staticmethod
@@ -113,6 +122,8 @@ class PriceUpdater:
         return {
             "accepted": 0,
             "stale_ignored": 0,
+            "variant_rejected": 0,
+            "variant_rejections": [],
             "changed_paths": [],
             "committed": True,
         }
@@ -123,9 +134,18 @@ class PriceUpdater:
             raise RuntimeError(
                 "Offer ingestion response did not confirm a commit"
             )
+        submitted_offset = (
+            aggregate["accepted"] + aggregate["stale_ignored"]
+            + aggregate["variant_rejected"]
+        )
         aggregate["accepted"] += int(result.get("accepted", 0))
         aggregate["stale_ignored"] += int(
             result.get("stale_ignored", 0)
+        )
+        aggregate["variant_rejected"] += int(result.get("variant_rejected", 0))
+        aggregate["variant_rejections"].extend(
+            {**rejection, "index": submitted_offset + rejection["index"]}
+            for rejection in result.get("variant_rejections", [])
         )
         aggregate["changed_paths"].extend(
             path
@@ -141,10 +161,18 @@ class PriceUpdater:
         )
         self.merge_ingestion_result(aggregate, result)
         logging.info(
-            "  ✅ HTTPS ingestion committed: %s accepted, %s stale",
+            "  ✅ HTTPS ingestion committed: %s accepted, %s stale, %s variant rejected",
             result["accepted"],
             result["stale_ignored"],
+            result.get("variant_rejected", 0),
         )
+        for rejection in result.get("variant_rejections", []):
+            logging.error(
+                "  🚫 Variant rejection for %s (offer index %s within this flush): %s",
+                rejection["product_slug"],
+                rejection["index"],
+                ", ".join(rejection["issues"]),
+            )
         pending_offers.clear()
 
     async def run_update(self, product_id=None, phase2_backfill=False):
@@ -244,6 +272,11 @@ class PriceUpdater:
 
         logging.info("\n🏁 Price update completed!")
         run_issues = []
+        if aggregate_result["variant_rejected"]:
+            run_issues.append(
+                f"{aggregate_result['variant_rejected']} offer(s) rejected for "
+                "identity/variant conflicts; valid committed updates retained"
+            )
         if (
             product_id is None
             and products
