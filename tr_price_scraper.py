@@ -367,10 +367,91 @@ class TRPriceScraper:
 
     @staticmethod
     def _spec_int(value):
-        if value is None:
+        if value is None or isinstance(value, bool):
             return None
-        match = re.search(r'\d+', str(value))
-        return int(match.group(0)) if match else None
+        match = re.fullmatch(r'\s*(\d+(?:[.,]\d{1,2})?)\s*(GB|TB)?\s*', str(value), re.I)
+        if not match:
+            return None
+        number = float(match.group(1).replace(',', '.')) * (1024 if (match.group(2) or '').lower() == 'tb' else 1)
+        return int(number) if number > 0 and number.is_integer() else None
+
+    @classmethod
+    def _identity_words(cls, value):
+        value = str(value or '').replace('+', ' plus ')
+        value = re.sub(r'\b([45])\s*g\b', r'\1g', value, flags=re.I)
+        value = re.sub(r'\b([a-z]*\d+)(fe|se|pro|plus|ultra|mini|max|lite|edge|e)\b', r'\1 \2', value, flags=re.I)
+        return cls._normalize_words(value).split()
+
+    @classmethod
+    def _radio_generation(cls, value):
+        tokens = cls._identity_words(value)
+        return '5g' if '5g' in tokens else '4g' if '4g' in tokens or 'lte' in tokens else None
+
+    @staticmethod
+    def _has_numeric_model_conflict(product_words, observed_words):
+        for index, token in enumerate(product_words):
+            model = re.fullmatch(r'([a-z]*)(\d+)([a-z]*)', token)
+            if not model:
+                continue
+            prefix, number, suffix = model.groups()
+            if prefix or suffix:
+                for candidate in observed_words:
+                    other = re.fullmatch(r'([a-z]*)(\d+)([a-z]*)', candidate)
+                    if other and other.group(1) == prefix and other.group(3) == suffix and other.group(2) != number:
+                        return True
+            elif index > 0:
+                for other_index in range(len(observed_words) - 1):
+                    if observed_words[other_index] == product_words[index - 1] and observed_words[other_index + 1].isdigit() and observed_words[other_index + 1] != number:
+                        return True
+        return False
+
+    @classmethod
+    def _unambiguous_listing_capacities(cls, item_title):
+        """Physical RAM/storage evidence, not the first of several choices."""
+        title = unicodedata.normalize('NFKC', item_title).lower()
+        ram, storage = set(), set()
+        ambiguous = bool(re.search(r'\b(?:virtual|sanal|extended)\s*ram\b|\bram\s*(?:virtual|sanal|extended)\b', title))
+        amount = r'\d+(?:[.,]\d{1,2})?'
+        capacity = rf'{amount}\s*(?:gb|tb)'
+        groups = re.compile(rf'(?<![\w.,])({amount}\s*(?:gb|tb)?(?:\s*[/+]\s*{amount}\s*(?:gb|tb)?)+)(?!\w)', re.I)
+        def mask_group(match):
+            nonlocal ambiguous
+            group = match.group(0)
+            units = re.findall(r'gb|tb', group, re.I)
+            if not units:
+                return group
+            pieces = re.split(r'[/+]', group)
+            values = [cls._spec_int(part if re.search(r'(?:gb|tb)\s*$', part, re.I) else part + units[-1]) for part in pieces]
+            before = title[max(0, match.start() - 24):match.start()]
+            after = title[match.end():match.end() + 24]
+            label = r'(?:ram|rom|depolama|haf[ıi]za)'
+            # A directly attached label can make a group ambiguous (RAM
+            # 6/8GB). A separate repeated declaration such as 12/128GB 12GB
+            # RAM is corroboration, not a label belonging to that pair.
+            before_label = bool(re.search(rf'\b{label}\s*:?\s*$', before)) and not bool(
+                re.search(rf'{capacity}\s*{label}\s*$', before, re.I))
+            after_label = bool(re.search(rf'^\s*{label}\b', after))
+            labelled = before_label or after_label
+            if '+' not in group and len(values) == 2 and all(value is not None for value in values) and 0 < values[0] <= 24 and values[1] >= 64 and values[1] >= values[0] * 4 and not labelled:
+                ram.add(values[0]); storage.add(values[1])
+            else:
+                ambiguous = True
+            return ' ' * len(group)
+        remaining = groups.sub(mask_group, title)
+        if re.search(r'(?:gb|tb)\s*(?:ram)?\s*\+\s*' + amount, title, re.I):
+            ambiguous = True
+        for match in re.finditer(rf'(?:({capacity})\s*ram\b|\bram\s*:?\s*({capacity}))', remaining, re.I):
+            ram.add(cls._spec_int(match.group(1) or match.group(2)))
+        for match in re.finditer(rf'(?:({capacity})\s*(?:rom|depolama|haf[ıi]za)\b|\b(?:rom|depolama|haf[ıi]za)\s*:?\s*({capacity}))', remaining, re.I):
+            storage.add(cls._spec_int(match.group(1) or match.group(2)))
+        for match in re.finditer(rf'(?<![\w.,])({capacity})(?!\w)', remaining, re.I):
+            value = cls._spec_int(match.group(1))
+            if value is not None and value >= 128:
+                storage.add(value)
+        ram.discard(None); storage.discard(None)
+        return (next(iter(ram)) if len(ram) == 1 else None,
+                next(iter(storage)) if len(storage) == 1 else None,
+                ambiguous or len(ram) > 1 or len(storage) > 1)
 
     @staticmethod
     def _extract_listing_capacities(item_title):
@@ -408,9 +489,7 @@ class TRPriceScraper:
     def is_strict_match(self, product_name, item_title, expected_specs=None):
         # Standardize + to plus for suffix variation check (e.g. Pro+ vs Pro)
         def normalize_product_text(value):
-            value = str(value).replace('+', ' plus ')
-            value = re.sub(r'\b([45])\s*g\b', r'\1g', value, flags=re.I)
-            return self._normalize_words(value)
+            return ' '.join(self._identity_words(value))
 
         name = normalize_product_text(product_name)
         title = normalize_product_text(item_title)
@@ -450,12 +529,14 @@ class TRPriceScraper:
                 return False
 
         def radio_variants(words):
-            variants = set(words) & {'4g', '5g'}
-            if 'lte' in words:
-                variants.add('4g')
-            return variants
+            return {'5g'} if '5g' in words else {'4g'} if '4g' in words or 'lte' in words else set()
 
         expected_radio = radio_variants(name_words)
+        profile_radio = (expected_specs or {}).get('network_generation')
+        if profile_radio in {'4g', '5g'}:
+            if expected_radio and expected_radio != {profile_radio}:
+                return False
+            expected_radio = {profile_radio}
         observed_radio = radio_variants(title_words)
         if (
             expected_radio
@@ -478,6 +559,8 @@ class TRPriceScraper:
         for w in important_words:
             if not re.search(rf'\b{re.escape(w)}\b', title):
                 return False
+        if self._has_numeric_model_conflict(name_words, title_words):
+            return False
             
         # 2. Avoid accessories, refurbished, and non-phone items
         bad_keywords = [
@@ -493,8 +576,8 @@ class TRPriceScraper:
             for keyword in bad_keywords
         ]
         if (
-            any(keyword in title for keyword in normalized_bad_keywords)
-            and not any(keyword in name for keyword in normalized_bad_keywords)
+            any(re.search(rf'\b{re.escape(keyword)}\b', title) for keyword in normalized_bad_keywords)
+            and not any(re.search(rf'\b{re.escape(keyword)}\b', name) for keyword in normalized_bad_keywords)
         ):
             return False
 
@@ -513,13 +596,9 @@ class TRPriceScraper:
             return False
 
         # 3. Handle Pro/Max/Ultra variations strictly
-        variations = ["pro", "max", "plus", "ultra", "lite", "fe", "mini", "se"]
+        variations = ["pro", "max", "plus", "ultra", "lite", "fe", "mini", "se", "e", "edge"]
         for var in variations:
-            if var in title and var not in name:
-                if var == 'max' and 'max' not in name: return False
-                if var == 'pro' and 'pro' not in name: return False
-                if var not in name: return False
-            if var in name and var not in title:
+            if (var in title_words) != (var in name_words):
                 return False
 
         # 4. A product row represents a concrete RAM/storage variant. When a
@@ -534,6 +613,77 @@ class TRPriceScraper:
         if expected_storage and listing_storage and expected_storage != listing_storage:
             return False
 
+        return True
+
+    def has_observed_offer_evidence(self, product_name, offer, expected_specs=None):
+        """Do not let an unobserved/other-SKU bargain win the merchant collapse.
+
+        The API remains the authoritative identity boundary. This source-side
+        guard only uses the actual listing title and explicit URL conflicts;
+        an aggregate model heading or a URL is never invented as a title.
+        """
+        title = offer.get('source_title')
+        if not isinstance(title, str) or not title.strip():
+            return False
+        if not self.is_strict_match(product_name, title, expected_specs):
+            return False
+        expected_specs = expected_specs or {}
+        expected_ram = self._spec_int(expected_specs.get('ram_gb'))
+        expected_storage = self._spec_int(expected_specs.get('storage_gb'))
+        if not expected_storage:
+            return False
+        ram, storage, ambiguous = self._unambiguous_listing_capacities(title)
+        if ambiguous or storage != expected_storage:
+            return False
+        # iPhone retail variants are identified by exact model + storage;
+        # omitted RAM is not made up, and explicit RAM conflicts still fail.
+        is_iphone = 'iphone' in self._normalize_words(product_name).split()
+        # The iPhone exception is mere RAM omission, never virtual/ambiguous RAM.
+        small_unlabelled = any(int(value) <= 64 for value in re.findall(r'\b(\d+)\s*gb\b', title, re.I)) and ram is None
+        if not is_iphone and (not expected_ram or ram != expected_ram):
+            return False
+        if is_iphone and ((ram is not None and expected_ram and ram != expected_ram) or
+                          (ram is None and (re.search(r'\bram(?:\b|\d)', title, re.I) or small_unlabelled))):
+            return False
+        radio = expected_specs.get('network_generation') or self._radio_generation(product_name)
+        observed_radio = self._radio_generation(title)
+        # These catalog families have both radio variants. Missing radio in
+        # the sale title cannot select the 5G profile merely from its CPU.
+        if re.search(r'\bredmi note (?:11|12|13|14)\b|\bgalaxy a(?:14|15|16|17)\b', self._normalize_words(product_name)):
+            if radio not in {'4g', '5g'} or observed_radio != radio:
+                return False
+        try:
+            from urllib.parse import unquote, urlparse
+            parsed_url = urlparse(str(offer.get('url', '')))
+            if parsed_url.scheme not in {'http', 'https'} or not parsed_url.netloc:
+                return False
+            url_text = re.sub(r'[-_/]+', ' ', unquote(parsed_url.path))
+        except (TypeError, ValueError):
+            return False
+        url_ram, url_storage = self._extract_listing_capacities(url_text)
+        if expected_ram and url_ram and url_ram != expected_ram:
+            return False
+        if expected_storage and url_storage and url_storage != expected_storage:
+            return False
+        url_radio = self._radio_generation(url_text)
+        if radio and url_radio and radio != url_radio:
+            return False
+        if observed_radio and url_radio and observed_radio != url_radio:
+            return False
+        product_words = self._identity_words(product_name)
+        url_words = self._identity_words(url_text)
+        expected_brands = {brand for brand, aliases in self.PHONE_BRAND_ALIASES.items() if set(product_words) & aliases}
+        url_brands = {brand for brand, aliases in self.PHONE_BRAND_ALIASES.items() if set(url_words) & aliases}
+        allowed_brands = expected_brands | ({'xiaomi'} if expected_brands & {'redmi', 'poco'} else set())
+        if expected_brands and url_brands - allowed_brands:
+            return False
+        if re.search(r'\b(?:kilif|case|protector|yenilenmis|refurbished|ikinci el|2 el|outlet|teshir|yedek parca)\b', ' '.join(url_words)):
+            return False
+        qualifiers = {'pro', 'max', 'plus', 'ultra', 'lite', 'fe', 'mini', 'se', 'e', 'edge'}
+        if (set(url_words) & qualifiers) - (set(product_words) & qualifiers):
+            return False
+        if self._has_numeric_model_conflict(product_words, url_words):
+            return False
         return True
 
     @staticmethod
@@ -625,6 +775,13 @@ class TRPriceScraper:
             detail_html = self.get_via_flaresolverr(product_url)
             if not detail_html: return None
             detail_soup = BeautifulSoup(detail_html, 'html.parser')
+
+        detail_title = detail_soup.find('h1')
+        if not detail_title or not self.is_strict_match(
+            product_name, detail_title.get_text(' ', strip=True), expected_specs
+        ):
+            logging.warning('Akakçe detail identity did not match the requested model')
+            return None
             
         results = []
         
@@ -662,12 +819,22 @@ class TRPriceScraper:
                                 ) or off.get('name')
                                 if isinstance(source_title, str) and source_title.strip():
                                     offer['source_title'] = source_title.strip()
+                                    if not self.is_strict_match(product_name, source_title, expected_specs):
+                                        continue
                                 results.append(offer)
                     
                     # Recursively look in variants
                     variants = obj.get('hasVariant', [])
                     if not isinstance(variants, list): variants = [variants]
-                    for var in variants: extract_offers(var)
+                    for var in variants:
+                        if not isinstance(var, dict):
+                            continue
+                        variant_name = var.get('name')
+                        if isinstance(variant_name, str) and variant_name.strip() and not self.is_strict_match(
+                            product_name, variant_name, expected_specs
+                        ):
+                            continue
+                        extract_offers(var)
 
                 extract_offers(data)
             except Exception as e: 
@@ -721,6 +888,8 @@ class TRPriceScraper:
             final_agg = []
             seen = set()
             for r in results:
+                if expected_specs is not None and not self.has_observed_offer_evidence(product_name, r, expected_specs):
+                    continue
                 # Keep only strict matches for safety
                 key = f"{r['merchant']}-{r['price']}"
                 if key not in seen:
@@ -930,6 +1099,8 @@ class TRPriceScraper:
         # a strict product-title match + a TL price + a *trusted merchant* name.
         # (The old fallback that scraped any bare price from body text was removed —
         # it produced fake offers with no title or merchant validation.)
+        if expected_specs is not None:
+            results = [r for r in results if self.has_observed_offer_evidence(product_name, r, expected_specs)]
         if not results:
             results = self._parse_shopping_cards_generic(soup, product_name, expected_specs)
             if results:
@@ -938,6 +1109,8 @@ class TRPriceScraper:
         if results:
             seen = {}
             for r in results:
+                if expected_specs is not None and not self.has_observed_offer_evidence(product_name, r, expected_specs):
+                    continue
                 key = r['merchant']
                 if key not in seen or r['price'] < seen[key]['price']:
                     seen[key] = r
@@ -962,8 +1135,11 @@ class TRPriceScraper:
         direct_html = self.get_via_flaresolverr(direct_url, max_retries=1)
         if direct_html:
             soup = BeautifulSoup(direct_html, 'html.parser')
-            # Verify it's a real product page (has price links)
-            if soup.select('a.git'):
+            # Price links alone do not identify the requested phone.
+            heading = soup.find('h1')
+            if soup.select('a.git') and heading and self.is_strict_match(
+                product_name, heading.get_text(' ', strip=True), expected_specs
+            ):
                 logging.info(f"  ✅ Direct URL worked for Epey!")
                 detail_soup = soup
             else:
@@ -1006,6 +1182,11 @@ class TRPriceScraper:
                 if not detail_html: return None
                 detail_soup = BeautifulSoup(detail_html, 'html.parser')
             
+        heading = detail_soup.find('h1')
+        if not heading or not self.is_strict_match(
+            product_name, heading.get_text(' ', strip=True), expected_specs
+        ):
+            return None
         results = []
         git_links = detail_soup.select('a.git')
         
@@ -1089,12 +1270,14 @@ class TRPriceScraper:
                 and link
                 and self.is_strict_match(product_name, title, expected_specs)
             ):
-                offers.append({
+                observed_offer = {
                     "merchant": site_name,
                     "price": price,
                     "url": self.clean_merchant_url(link),
                     "source_title": title,
-                })
+                }
+                if expected_specs is None or self.has_observed_offer_evidence(product_name, observed_offer, expected_specs):
+                    offers.append(observed_offer)
 
         if offers:
             return min(offers, key=lambda offer: offer['price'])
@@ -1142,7 +1325,8 @@ class TRPriceScraper:
         TARGET_MERCHANT_COUNT = 4
 
         def merchant_count():
-            return len({self._standardize_merchant_name(r['merchant']) for r in results})
+            return len({self._standardize_merchant_name(r['merchant']) for r in results
+                        if self.has_observed_offer_evidence(product_name, r, expected_specs)})
 
         # 1. Try Google Shopping (no Cloudflare, most reliable from CI)
         gs_results = self.get_google_shopping_price(product_name, expected_specs)
@@ -1207,6 +1391,9 @@ class TRPriceScraper:
         # De-duplicate: ONLY ONE LOWEST PRICE PER MERCHANT
         merchant_best = {}
         for r in results:
+            if not self.has_observed_offer_evidence(product_name, r, expected_specs):
+                logging.info('Skipping non-commercial/unmatched listing evidence for %s: %s', product_name, r.get('merchant'))
+                continue
             m_name = self._standardize_merchant_name(r['merchant'])
             r['merchant'] = m_name
             if m_name not in merchant_best or r['price'] < merchant_best[m_name]['price']:

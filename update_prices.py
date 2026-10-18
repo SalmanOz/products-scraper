@@ -36,10 +36,27 @@ class PriceUpdater:
                 return {}
         if not isinstance(attributes, dict):
             return {}
-        return {
+        expected = {
             'ram_gb': attributes.get('ram_gb'),
             'storage_gb': attributes.get('storage_gb'),
         }
+        connectivity = attributes.get('Connectivity')
+        if isinstance(connectivity, dict):
+            fifth_generation = connectivity.get('5G')
+            import re
+            values = fifth_generation if isinstance(fifth_generation, list) else [fifth_generation]
+            for value in values:
+                if value is True or (isinstance(value, str) and (
+                    value.strip().casefold() in {'yes', 'true', 'var', 'supported', 'destekleniyor'} or
+                    re.search(r'(?:^|[\s,;:/({])n\d{1,3}(?=$|[\s,;)/}])', value, re.I)
+                )):
+                    expected['network_generation'] = '5g'
+                    break
+                if value is False or (isinstance(value, str) and value.strip().casefold() in {
+                    'no', 'false', 'yok', 'hayır', 'hayir', 'not supported', 'desteklenmiyor',
+                }):
+                    expected['network_generation'] = '4g'
+        return expected
 
     @staticmethod
     def utc_timestamp():

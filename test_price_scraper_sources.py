@@ -1,5 +1,6 @@
 """Offline regression tests for direct retailer markup and search URLs."""
 
+import asyncio
 import json
 from unittest.mock import patch
 
@@ -11,21 +12,21 @@ from tr_price_scraper import TRPriceScraper
 SOURCE_FIXTURES = {
     'Trendyol': """
         <div class="product-card">
-          <span class="product-name">Samsung Galaxy A16 4 GB 128 GB Cep Telefonu</span>
+          <span class="product-name">Samsung Galaxy A16 4G 4 GB RAM 128 GB Cep Telefonu</span>
           <span class="sale-price">9.899 TL</span>
           <a href="/samsung-galaxy-a16-p-1">Ürün</a>
         </div>
     """,
     'n11': """
         <a class="product-item" href="/urun/samsung-galaxy-a16-1">
-          <h2 class="product-item-title">Samsung Galaxy A16 4 GB 128 GB</h2>
+          <h2 class="product-item-title">Samsung Galaxy A16 4G 4 GB RAM 128 GB</h2>
           <h3 class="price-currency">10.419,90 TL</h3>
         </a>
     """,
     'PttAVM': """
         <article class="article__abc">
           <a class="card__abc" href="/samsung-galaxy-a16-p-1">
-            <h2 class="name__abc">Samsung Galaxy A16 128 GB 4 GB Ram Siyah</h2>
+            <h2 class="name__abc">Samsung Galaxy A16 4G 128 GB 4 GB Ram Siyah</h2>
             <div class="price__abc"><span>11.249</span><span> TL</span></div>
           </a>
         </article>
@@ -33,13 +34,13 @@ SOURCE_FIXTURES = {
     'MediaMarkt': """
         <article data-test="mms-product-card">
           <a href="/tr/product/_samsung-galaxy-a16.html">Ürün</a>
-          <h2 data-test="product-title">SAMSUNG Galaxy A16 4 GB 128 GB Akıllı Telefon</h2>
+          <h2 data-test="product-title">SAMSUNG Galaxy A16 4G 4 GB RAM 128 GB Akıllı Telefon</h2>
           <div data-test="mms-price"><span>₺11.749,–</span></div>
         </article>
     """,
     'Pasaj': """
         <a class="m-p-pc-new" href="/pasaj/samsung-galaxy-a16">
-          <h3 class="m-p-pc-new__title">Samsung Galaxy A16 4 GB 128 GB</h3>
+          <h3 class="m-p-pc-new__title">Samsung Galaxy A16 4G 4 GB RAM 128 GB</h3>
           <div class="m-p-pc-new__price">11.749 TL</div>
         </a>
     """,
@@ -88,7 +89,7 @@ def test_search_urls():
 
 def test_wrong_capacity_offer_is_rejected():
     scraper = TRPriceScraper()
-    html = SOURCE_FIXTURES['n11'].replace('4 GB 128 GB', '8 GB 256 GB')
+    html = SOURCE_FIXTURES['n11'].replace('4 GB RAM 128 GB', '8 GB RAM 256 GB')
     offer = scraper.parse_site_offer(
         'n11',
         scraper.site_configs['n11'],
@@ -105,7 +106,7 @@ def test_direct_retailer_forwards_observed_title_not_search_name():
         'n11', scraper.site_configs['n11'], SOURCE_FIXTURES['n11'],
         'Samsung Galaxy A16 4G', {'ram_gb': 4, 'storage_gb': 128},
     )
-    assert offer['source_title'] == 'Samsung Galaxy A16 4 GB 128 GB'
+    assert offer['source_title'] == 'Samsung Galaxy A16 4G 4 GB RAM 128 GB'
 
 
 def test_generic_shopping_forwards_compact_observed_card_text():
@@ -173,7 +174,7 @@ def test_akakce_forwards_only_offer_specific_titles():
 
 def test_akakce_html_forwards_actual_row_title():
     scraper = TRPriceScraper()
-    html = '''<h1>Parent aggregate model</h1><div>
+    html = '''<h1>Samsung Galaxy A16 4G</h1><div>
         <span>12.999 TL</span><span class="product-name">Samsung Galaxy A16 128GB Siyah</span>
         <a rel="nofollow" href="https://www.teknosa.com/phone"><img alt="Teknosa"></a>
     </div>'''
@@ -196,6 +197,178 @@ def test_epey_parent_title_is_not_forwarded_as_merchant_title():
     assert 'source_title' not in offers[0]
 
 
+def test_observed_evidence_fails_closed_and_preserves_radio_fallback():
+    scraper = TRPriceScraper()
+    specs = {'ram_gb': 4, 'storage_gb': 128}
+    def candidate(title, path='phone'):
+        return {'merchant': 'Teknosa', 'price': 12999, 'source_title': title,
+                'url': f'https://www.teknosa.com/{path}'}
+    assert scraper.has_observed_offer_evidence('Samsung Galaxy A16 4G',
+        candidate('Samsung Galaxy A16 4G 4GB RAM 128GB'), specs)
+    for title in [None, '', 'Samsung Galaxy A16 4GB RAM 128GB',
+                  'Samsung Galaxy A16 5G 4GB RAM 128GB',
+                  'Samsung Galaxy A16 4G 128GB',
+                  'Samsung Galaxy A16 4G 4GB RAM 128/256GB',
+                  'Samsung Galaxy A16 4G 4GB RAM 128GB veya 256GB',
+                  'Samsung Galaxy A16 4G 4GB RAM + 4GB virtual RAM 128GB',
+                  'Samsung Galaxy A16 4G 4GB+4GB RAM 128GB',
+                  'Samsung Galaxy A16 4G 4/8GB RAM 128GB',
+                  'Samsung Galaxy A16 4G 4GB RAM 128GB Yenilenmiş']:
+        assert not scraper.has_observed_offer_evidence('Samsung Galaxy A16 4G', candidate(title), specs), title
+    for path in ['samsung-galaxy-a16-256-gb', 'samsung-galaxy-a16-5g-128gb',
+                 'samsung-galaxy-a17-128gb', 'samsung-galaxy-a16-pro-128gb',
+                 'xiaomi-a16-128gb', 'samsung-galaxy-a16-kilif']:
+        assert not scraper.has_observed_offer_evidence('Samsung Galaxy A16 4G',
+            candidate('Samsung Galaxy A16 4G 4GB RAM 128GB', path), specs), path
+    assert not scraper.has_observed_offer_evidence('Samsung Galaxy A16 4G',
+        candidate('Samsung Galaxy A16 4G 4GB RAM 128GB'), {})
+
+
+def test_nested_network_profile_and_iphone_ram_exception():
+    from update_prices import PriceUpdater
+    scraper = TRPriceScraper()
+    attrs = {'ram_gb': 8, 'storage_gb': 128, 'Connectivity': {'5G': 'n1 (2100), n78 (3500)'}}
+    specs = PriceUpdater.get_expected_specs(json.dumps(attrs))
+    assert specs['network_generation'] == '5g'
+    for value in [True, 'Yes', ['n1 (2100)', 'n78 (3500)']]:
+        assert PriceUpdater.get_expected_specs({'Connectivity': {'5G': value}})['network_generation'] == '5g'
+    for value in [False, 'Hayır', 'not supported']:
+        assert PriceUpdater.get_expected_specs({'Connectivity': {'5G': value}})['network_generation'] == '4g'
+    assert 'network_generation' not in PriceUpdater.get_expected_specs({'Connectivity': {'5G': '5G'}})
+    listing = {'merchant': 'Teknosa', 'price': 12999, 'url': 'https://www.teknosa.com/phone'}
+    assert scraper.has_observed_offer_evidence('Xiaomi Redmi Note 13 Pro',
+        {**listing, 'source_title': 'Xiaomi Redmi Note 13 Pro 5G 8/128GB'}, specs)
+    assert not scraper.has_observed_offer_evidence('Xiaomi Redmi Note 13 Pro',
+        {**listing, 'source_title': 'Xiaomi Redmi Note 13 Pro 4G 8/128GB'}, specs)
+    assert not scraper.has_observed_offer_evidence('Xiaomi Redmi Note 13 Pro',
+        {**listing, 'source_title': 'Xiaomi Redmi Note 13 Pro 8/128GB'}, specs)
+    apple = {'ram_gb': 8, 'storage_gb': 128}
+    assert scraper.has_observed_offer_evidence('Apple iPhone 16 Pro',
+        {**listing, 'source_title': 'Apple iPhone 16 Pro 128GB'}, apple)
+    for title in ['Apple iPhone 16 Pro 12GB RAM 128GB', 'Apple iPhone 16 Pro 8+8GB RAM 128GB',
+                  'Apple iPhone 16 Pro 8GB virtual RAM 128GB', 'Apple iPhone 16 Pro 12GB 128GB',
+                  'Apple iPhone 16 Pro 128/256GB', 'Apple iPhone 16 Pro Max 128GB']:
+        assert not scraper.has_observed_offer_evidence('Apple iPhone 16 Pro', {**listing, 'source_title': title}, apple), title
+
+
+def test_direct_source_invalid_cheaper_destination_cannot_shadow_correct_offer():
+    scraper = TRPriceScraper()
+    correct = SOURCE_FIXTURES['n11']
+    wrong = correct.replace('10.419,90', '6.000').replace('/urun/samsung-galaxy-a16-1', '/urun/samsung-galaxy-a16-256-gb')
+    result = scraper.parse_site_offer('n11', scraper.site_configs['n11'], wrong + correct,
+        'Samsung Galaxy A16 4G', {'ram_gb': 4, 'storage_gb': 128})
+    assert result['price'] == 10419.90
+    assert result['url'].endswith('/urun/samsung-galaxy-a16-1')
+
+
+def test_akakce_wrong_variant_headings_and_offer_titles_fail_closed():
+    scraper = TRPriceScraper()
+    base = {'offers': {'offers': []}, 'hasVariant': [
+        {'name': 'Samsung Galaxy A17 4G', 'offers': {'offers': [
+            {'url': 'https://www.teknosa.com/wrong', 'price': 6000,
+             'seller': {'name': 'Teknosa'}, 'name': 'Samsung Galaxy A16 4G 4/128GB'}]}},
+        {'name': 'Samsung Galaxy A16 4G', 'offers': {'offers': [
+            {'url': 'https://www.teknosa.com/also-wrong', 'price': 6500,
+             'seller': {'name': 'Teknosa'}, 'name': 'Samsung Galaxy A17 4G 4/128GB'},
+            {'url': 'https://www.teknosa.com/correct', 'price': 12999,
+             'seller': {'name': 'Teknosa'}, 'name': 'Samsung Galaxy A16 4G 4/128GB'}]}},
+    ]}
+    html = '<h1>Samsung Galaxy A16 4G</h1><script type="application/ld+json">' + json.dumps(base) + '</script>'
+    with patch.object(scraper, 'get_via_flaresolverr', return_value={'response': html, 'url': 'https://www.akakce.com/phone.html'}):
+        rows = scraper.get_akakce_price('Samsung Galaxy A16 4G', {'ram_gb': 4, 'storage_gb': 128})
+    assert [row['url'] for row in rows] == ['https://www.teknosa.com/correct']
+    with patch.object(scraper, 'get_via_flaresolverr', return_value={'response': html.replace('Samsung Galaxy A16 4G</h1>', 'Samsung Galaxy A17 4G</h1>'), 'url': 'https://www.akakce.com/phone.html'}):
+        assert scraper.get_akakce_price('Samsung Galaxy A16 4G') is None
+
+
+def test_epey_wrong_direct_model_and_unobserved_offers_never_become_commercial():
+    scraper = TRPriceScraper()
+    html = '''<h1>Samsung Galaxy A17 4G</h1><a class="git" data-link="https://www.teknosa.com/phone" title="Teknosa"><span class="urun_fiyat">12.999 TL</span></a>'''
+    with patch.object(scraper, 'get_via_flaresolverr', side_effect=[html, None]):
+        assert scraper.get_epey_price('Samsung Galaxy A16 4G') is None
+    assert not scraper.has_observed_offer_evidence('Samsung Galaxy A16 4G',
+        {'merchant': 'Teknosa', 'price': 12999, 'url': 'https://www.teknosa.com/phone'},
+        {'ram_gb': 4, 'storage_gb': 128})
+
+
+def test_invalid_google_bargain_is_filtered_before_merchant_collapse():
+    scraper = TRPriceScraper()
+    def card(title, price, url):
+        return f'''<g-inner-card><h3>{title}</h3><span class="lmQWe">{price} TL</span><span class="WJMUdc">Teknosa</span><a href="{url}">Mağazaya git</a></g-inner-card>'''
+    html = card('Samsung Galaxy A16 4G 4/128GB', '6.000', 'https://www.teknosa.com/samsung-galaxy-a16-256gb') + card('Samsung Galaxy A16 4G 4/128GB', '12.999', 'https://www.teknosa.com/correct')
+    class Response:
+        def json(self):
+            return {'status': 'ok', 'solution': {'response': html, 'url': 'https://www.google.com/search?udm=28'}}
+    with patch('tr_price_scraper.requests.post', return_value=Response()):
+        rows = scraper.get_google_shopping_price('Samsung Galaxy A16 4G', {'ram_gb': 4, 'storage_gb': 128})
+    assert len(rows) == 1 and rows[0]['price'] == 12999
+
+
+def test_akakce_equal_price_invalid_destination_cannot_win_dedupe():
+    scraper = TRPriceScraper()
+    title = 'Samsung Galaxy A16 4G 4/128GB'
+    data = {'offers': {'offers': [
+        {'url': 'https://www.teknosa.com/samsung-galaxy-a16-256gb', 'price': 12999,
+         'seller': {'name': 'Teknosa'}, 'name': title},
+        {'url': 'https://www.teknosa.com/correct', 'price': 12999,
+         'seller': {'name': 'Teknosa'}, 'name': title},
+    ]}}
+    html = '<h1>Samsung Galaxy A16 4G</h1><script type="application/ld+json">' + json.dumps(data) + '</script>'
+    with patch.object(scraper, 'get_via_flaresolverr', return_value={'response': html, 'url': 'https://www.akakce.com/phone.html'}):
+        rows = scraper.get_akakce_price('Samsung Galaxy A16 4G', {'ram_gb': 4, 'storage_gb': 128})
+    assert [row['url'] for row in rows] == ['https://www.teknosa.com/correct']
+
+
+def test_invalid_merchant_count_does_not_suppress_fallback_or_correct_same_seller():
+    scraper = TRPriceScraper()
+    specs = {'ram_gb': 4, 'storage_gb': 128}
+    bad = [{'merchant': merchant, 'price': 6000, 'url': 'https://shop.example/phone'}
+           for merchant in ['Teknosa', 'n11', 'Trendyol', 'MediaMarkt']]
+    correct = {'merchant': 'Teknosa', 'price': 12999, 'url': 'https://www.teknosa.com/correct',
+               'source_title': 'Samsung Galaxy A16 4G 4/128GB'}
+    async def no_offer(*args, **kwargs):
+        return None
+    with patch.object(scraper, 'get_google_shopping_price', return_value=bad), \
+         patch.object(scraper, 'get_epey_price', return_value=None) as epey, \
+         patch.object(scraper, 'get_akakce_price', return_value=[correct]) as akakce, \
+         patch.object(scraper, 'scrape_site_async', new=no_offer):
+        rows = asyncio.run(scraper.get_best_prices('Samsung Galaxy A16 4G', specs))
+    epey.assert_called_once(); akakce.assert_called_once()
+    assert rows == [correct]
+
+
+def test_multiple_phone_models_are_not_verified_by_one_matching_model_token():
+    scraper = TRPriceScraper()
+    specs = {'ram_gb': 12, 'storage_gb': 128}
+    for title in ['Samsung Galaxy S25 / S24 12GB RAM 128GB',
+                  'Samsung Galaxy S25 veya S24 12GB RAM 128GB',
+                  'Samsung Galaxy S25 S26 12/128GB']:
+        listing = {'source_title': title, 'url': 'https://shop.example/phone'}
+        assert not scraper.is_strict_match('Samsung Galaxy S25', title, specs), title
+        assert not scraper.has_observed_offer_evidence('Samsung Galaxy S25', listing, specs), title
+    assert not scraper.is_strict_match('Xiaomi Redmi Note 13 Pro',
+        'Xiaomi Redmi Note 13 Pro veya Note 14 Pro 5G 8/128GB', {'ram_gb': 8, 'storage_gb': 128})
+
+
+def test_repeated_matching_capacity_labels_do_not_make_a_conventional_pair_ambiguous():
+    scraper = TRPriceScraper()
+    specs = {'ram_gb': 12, 'storage_gb': 128}
+    for title in ['Samsung Galaxy S25 12/128GB 12GB RAM',
+                  'Samsung Galaxy S25 12GB RAM 12/128GB',
+                  'Samsung Galaxy S25 12/128GB RAM 12GB',
+                  'Samsung Galaxy S25 12/128GB 128GB ROM 12GB RAM']:
+        listing = {'source_title': title, 'url': 'https://shop.example/phone'}
+        # A RAM label immediately after a pair (third case) still describes an
+        # ambiguous group; do not broaden that existing conservative rule.
+        expected = '12/128GB RAM 12GB' not in title
+        assert scraper.has_observed_offer_evidence('Samsung Galaxy S25', listing, specs) is expected, title
+    for title in ['Samsung Galaxy S25 12/128GB 8GB RAM',
+                  'Samsung Galaxy S25 12/128GB 256GB ROM',
+                  'Samsung Galaxy S25 RAM 6/12GB 128GB']:
+        assert not scraper.has_observed_offer_evidence('Samsung Galaxy S25',
+            {'source_title': title, 'url': 'https://shop.example/phone'}, specs), title
+
+
 if __name__ == '__main__':
     test_current_source_markup()
     print(f'✅ All {len(SOURCE_FIXTURES)} retailer markup fixtures passed')
@@ -209,4 +382,14 @@ if __name__ == '__main__':
     test_akakce_forwards_only_offer_specific_titles()
     test_akakce_html_forwards_actual_row_title()
     test_epey_parent_title_is_not_forwarded_as_merchant_title()
+    test_observed_evidence_fails_closed_and_preserves_radio_fallback()
+    test_nested_network_profile_and_iphone_ram_exception()
+    test_direct_source_invalid_cheaper_destination_cannot_shadow_correct_offer()
+    test_akakce_wrong_variant_headings_and_offer_titles_fail_closed()
+    test_epey_wrong_direct_model_and_unobserved_offers_never_become_commercial()
+    test_invalid_google_bargain_is_filtered_before_merchant_collapse()
+    test_akakce_equal_price_invalid_destination_cannot_win_dedupe()
+    test_invalid_merchant_count_does_not_suppress_fallback_or_correct_same_seller()
+    test_multiple_phone_models_are_not_verified_by_one_matching_model_token()
+    test_repeated_matching_capacity_labels_do_not_make_a_conventional_pair_ambiguous()
     print('✅ Observed source title forwarding and aggregator provenance passed')
