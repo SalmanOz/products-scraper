@@ -330,6 +330,10 @@ class PriceUpdater:
 if __name__ == "__main__":
     import argparse
 
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+    )
     parser = argparse.ArgumentParser()
     parser.add_argument("product_id", nargs="?")
     parser.add_argument(

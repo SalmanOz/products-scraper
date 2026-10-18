@@ -56,7 +56,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: teknoskor-daily-data-sync
+  group: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.price_index_audit_only == 'true' || github.event.inputs.comparison_readiness_only == 'true') && 'teknoskor-readonly-data-audit' || 'teknoskor-daily-data-sync' }}
   cancel-in-progress: false
 
 jobs:
@@ -288,7 +288,7 @@ jobs:
           fi
 
       - name: Audit Price Index Data Readiness
-        if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_technical_data != 'true') }}
+        if: ${{ always() && !cancelled() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_technical_data != 'true')) }}
         env:
           TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
           SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
