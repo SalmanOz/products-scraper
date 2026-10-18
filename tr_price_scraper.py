@@ -405,6 +405,20 @@ class TRPriceScraper:
                         return True
         return False
 
+    @staticmethod
+    def _has_explicit_galaxy_model_choice(product_words, observed_text):
+        if not {'samsung', 'galaxy'} & set(product_words):
+            return False
+        models = {token for token in product_words if re.fullmatch(r'[samfz]\d{1,3}', token)}
+        if not models:
+            return False
+        # Only adjacent, explicitly alternative Galaxy codes are a conflict;
+        # arbitrary SKU/CPU names elsewhere are not guessed to be phones.
+        text = ''.join(char for char in unicodedata.normalize('NFKD', str(observed_text or ''))
+                       if not unicodedata.combining(char)).lower()
+        choices = re.finditer(r'\b([samfz]\d{1,3})\s*(?:/|\bveya\b|\bor\b|\bya\s+da\b)\s*(?:(?:samsung\s+)?galaxy\s+)?([samfz]\d{1,3})\b', text)
+        return any(a != b and (a in models or b in models) for a, b in (match.groups() for match in choices))
+
     @classmethod
     def _unambiguous_listing_capacities(cls, item_title):
         """Physical RAM/storage evidence, not the first of several choices."""
@@ -559,7 +573,8 @@ class TRPriceScraper:
         for w in important_words:
             if not re.search(rf'\b{re.escape(w)}\b', title):
                 return False
-        if self._has_numeric_model_conflict(name_words, title_words):
+        if (self._has_numeric_model_conflict(name_words, title_words) or
+                self._has_explicit_galaxy_model_choice(name_words, item_title)):
             return False
             
         # 2. Avoid accessories, refurbished, and non-phone items
@@ -682,7 +697,8 @@ class TRPriceScraper:
         qualifiers = {'pro', 'max', 'plus', 'ultra', 'lite', 'fe', 'mini', 'se', 'e', 'edge'}
         if (set(url_words) & qualifiers) - (set(product_words) & qualifiers):
             return False
-        if self._has_numeric_model_conflict(product_words, url_words):
+        if (self._has_numeric_model_conflict(product_words, url_words) or
+                self._has_explicit_galaxy_model_choice(product_words, url_text)):
             return False
         return True
 

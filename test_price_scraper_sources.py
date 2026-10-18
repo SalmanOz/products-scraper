@@ -369,6 +369,29 @@ def test_repeated_matching_capacity_labels_do_not_make_a_conventional_pair_ambig
             {'source_title': title, 'url': 'https://shop.example/phone'}, specs), title
 
 
+def test_explicit_cross_family_galaxy_choices_do_not_establish_one_phone():
+    scraper = TRPriceScraper()
+    specs = {'ram_gb': 12, 'storage_gb': 128}
+    for choice in ['S25 / A17', 'A17 / S25', 'S25 veya A17',
+                   'S25 ya da Galaxy A17', 'S25 or Samsung Galaxy A17']:
+        title = f'Samsung Galaxy {choice} 12GB RAM 128GB'
+        assert not scraper.is_strict_match('Samsung Galaxy S25', title, specs), title
+        assert not scraper.has_observed_offer_evidence('Samsung Galaxy S25',
+            {'source_title': title, 'url': 'https://shop.example/phone'}, specs), title
+
+
+def test_cpu_descriptions_and_unrelated_sku_tokens_are_not_phone_choices():
+    scraper = TRPriceScraper()
+    assert scraper.has_observed_offer_evidence('Apple iPhone 15',
+        {'source_title': 'Apple iPhone 15 128GB A16 Bionic İşlemci', 'url': 'https://shop.example/phone'},
+        {'ram_gb': 8, 'storage_gb': 128})
+    for description in ['SKU A17', 'Snapdragon 8 Elite']:
+        title = f'Samsung Galaxy S25 12GB RAM 128GB {description}'
+        assert scraper.has_observed_offer_evidence('Samsung Galaxy S25',
+            {'source_title': title, 'url': 'https://shop.example/phone'},
+            {'ram_gb': 12, 'storage_gb': 128}), title
+
+
 if __name__ == '__main__':
     test_current_source_markup()
     print(f'✅ All {len(SOURCE_FIXTURES)} retailer markup fixtures passed')
@@ -392,4 +415,6 @@ if __name__ == '__main__':
     test_invalid_merchant_count_does_not_suppress_fallback_or_correct_same_seller()
     test_multiple_phone_models_are_not_verified_by_one_matching_model_token()
     test_repeated_matching_capacity_labels_do_not_make_a_conventional_pair_ambiguous()
+    test_explicit_cross_family_galaxy_choices_do_not_establish_one_phone()
+    test_cpu_descriptions_and_unrelated_sku_tokens_are_not_phone_choices()
     print('✅ Observed source title forwarding and aggregator provenance passed')
