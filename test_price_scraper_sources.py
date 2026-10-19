@@ -392,6 +392,15 @@ def test_cpu_descriptions_and_unrelated_sku_tokens_are_not_phone_choices():
             {'ram_gb': 12, 'storage_gb': 128}), title
 
 
+def test_redmi_note_15_pro_requires_observed_radio_for_separate_4g_and_5g_variants():
+    scraper = TRPriceScraper()
+    specs = {'ram_gb': 8, 'storage_gb': 256, 'network_generation': '5g'}
+    for radio, expected in [('5G ', True), ('', False), ('4G ', False)]:
+        title = f'Xiaomi Redmi Note 15 Pro {radio}8/256GB'
+        assert scraper.has_observed_offer_evidence('Xiaomi Redmi Note 15 Pro',
+            {'source_title': title, 'url': 'https://shop.example/phone'}, specs) is expected, title
+
+
 if __name__ == '__main__':
     test_current_source_markup()
     print(f'✅ All {len(SOURCE_FIXTURES)} retailer markup fixtures passed')
@@ -417,4 +426,5 @@ if __name__ == '__main__':
     test_repeated_matching_capacity_labels_do_not_make_a_conventional_pair_ambiguous()
     test_explicit_cross_family_galaxy_choices_do_not_establish_one_phone()
     test_cpu_descriptions_and_unrelated_sku_tokens_are_not_phone_choices()
+    test_redmi_note_15_pro_requires_observed_radio_for_separate_4g_and_5g_variants()
     print('✅ Observed source title forwarding and aggregator provenance passed')
