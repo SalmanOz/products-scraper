@@ -1,0 +1,69 @@
+name: Reviewed Classification Repair
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Audit is GET-only. Apply changes only reviewed class letters.'
+        type: choice
+        options: [audit, apply]
+        default: audit
+      batch:
+        description: 'Reviewed classification_batches ID; none for audit'
+        type: string
+        default: none
+
+permissions:
+  contents: read
+concurrency:
+  group: teknoskor-daily-data-sync
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python -m unittest -q test_classification_repair test_spec_sections
+      - name: Audit or apply reviewed classifications
+        env:
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+          REPAIR_MODE: ${{ inputs.mode }}
+          REVIEWED_BATCH: ${{ inputs.batch }}
+        run: |
+          set -euo pipefail
+          args=(--batch "$REVIEWED_BATCH")
+          if [[ "$REPAIR_MODE" == "apply" ]]; then args+=(--apply); fi
+          python repair_classifications.py "${args[@]}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: classification-repair-${{ github.run_id }}
+          path: classification-repair-report.json
+          retention-days: 30
+      - name: Decision summary
+        if: always()
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          p=Path('classification-repair-report.json')
+          if p.is_file():
+              r=json.loads(p.read_text())
+              lines=['## Classification repair',f"Mode: {r['mode']}; changed products: {r['changed_products']}; changed fields: {r['changed_fields']}"]
+              for p in r['candidates']:
+                  lines.append(f"- {p['slug']} ({p['name']})")
+                  for f in p['fields']:
+                      lines.append(f"  - {f['group']} / {f['key']}: {f['value']} — {', '.join(f['source_urls']) or 'no verified source URL'}")
+              for p in r['results']:
+                  lines.append(f"- Result {p['slug']}: {p['status']} {p.get('reason','')}")
+              with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as out:
+                  out.write('\n'.join(lines)+'\n')
+          PY
