@@ -25,8 +25,9 @@ def expand_reviewed_observations(batch, manifest):
     products = []
     required = {'slug', 'name', 'source_url', 'observed_at', 'observed_model',
                 'observed_ram_gb', 'observed_storage_gb', 'selected_classes'}
+    optional = {'observed_model_code'}
     for observation in batch['observations']:
-        if not isinstance(observation, dict) or set(observation) != required:
+        if not isinstance(observation, dict) or not required <= set(observation) or set(observation) - required - optional:
             raise ValueError('invalid_reviewed_observation')
         selected = observation['selected_classes']
         if not isinstance(selected, dict) or not 1 <= len(selected) <= 3 or set(selected) - {'Repairability', 'Drop resistance', 'Efficiency'}:
@@ -41,7 +42,7 @@ def expand_reviewed_observations(batch, manifest):
             if observation['source_url'] not in field['source_urls']:
                 raise ValueError('reviewed_source_not_in_manifest')
             readings.append({'group': group, 'key': key, 'expected_value': field['value'], 'value': value,
-                             **{k: observation[k] for k in required - {'slug', 'name', 'selected_classes'}}})
+                             **{k: observation[k] for k in (required | optional) - {'slug', 'name', 'selected_classes'} if k in observation}})
         products.append({'slug': observation['slug'], 'name': observation['name'], 'readings': readings})
     return {'reviewed_on': batch['reviewed_on'], 'products': products}
 

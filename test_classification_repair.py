@@ -56,6 +56,8 @@ class ClassificationRepairTests(unittest.TestCase):
         self.assertEqual(reading['expected_value'],original)
         self.assertEqual(reading['value'],'Class C')
         self.assertEqual(reading['observed_at'],observation['observed_at'])
+        observation['observed_model_code']='2602DPT53G'
+        self.assertEqual(expand_reviewed_observations(batch,manifest)['products'][0]['readings'][0]['observed_model_code'],'2602DPT53G')
         observation['source_url']='https://www.kimovil.com/en/where-to-buy-different-phone'
         with self.assertRaisesRegex(ValueError,'reviewed_source_not_in_manifest'):
             expand_reviewed_observations(batch,manifest)
