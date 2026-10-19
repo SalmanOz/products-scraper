@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock
 from source_ingestion import CatalogProduct
-from repair_classifications import run
+from repair_classifications import run, expand_reviewed_observations
 
 
 class ClassificationRepairTests(unittest.TestCase):
@@ -43,3 +43,29 @@ class ClassificationRepairTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 run(client,apply=True,report_path=Path(directory)/'report.json')
         self.assertEqual(client._request_with_retry.call_count,1)
+
+    def test_observations_preserve_exact_old_whitespace_and_observed_class(self):
+        original='Class \t\t A B C D E'
+        manifest={'products':[{'slug':'xiaomi-17t','fields':[{'group':'Design & Materials','key':'Repairability',
+            'value':original,'source_urls':['https://www.kimovil.com/en/where-to-buy-xiaomi-17t']}]}]}
+        observation={'slug':'xiaomi-17t','name':'Xiaomi 17T','source_url':'https://www.kimovil.com/en/where-to-buy-xiaomi-17t',
+            'observed_at':'2026-10-19T15:27:59.602Z','observed_model':'Xiaomi 17T','observed_ram_gb':12,
+            'observed_storage_gb':256,'selected_classes':{'Repairability':'Class C'}}
+        batch={'reviewed_on':'2026-10-19','observations':[observation]}
+        reading=expand_reviewed_observations(batch,manifest)['products'][0]['readings'][0]
+        self.assertEqual(reading['expected_value'],original)
+        self.assertEqual(reading['value'],'Class C')
+        self.assertEqual(reading['observed_at'],observation['observed_at'])
+        observation['source_url']='https://www.kimovil.com/en/where-to-buy-different-phone'
+        with self.assertRaisesRegex(ValueError,'reviewed_source_not_in_manifest'):
+            expand_reviewed_observations(batch,manifest)
+
+    def test_observations_never_infer_a_missing_letter_or_overwrite_repaired_fields(self):
+        observation={'slug':'xiaomi-17t','name':'Xiaomi 17T','source_url':'https://www.kimovil.com/en/where-to-buy-xiaomi-17t',
+            'observed_at':'2026-10-19T15:27:59.602Z','observed_model':'Xiaomi 17T','observed_ram_gb':12,
+            'observed_storage_gb':256,'selected_classes':{}}
+        batch={'reviewed_on':'2026-10-19','observations':[observation]}
+        with self.assertRaisesRegex(ValueError,'invalid_selected_classes'):
+            expand_reviewed_observations(batch,{'products':[]})
+        observation['selected_classes']={'Repairability':'Class C'}
+        self.assertEqual(expand_reviewed_observations(batch,{'products':[]})['products'][0]['readings'],[])

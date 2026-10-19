@@ -11,6 +11,41 @@ import re
 from source_ingestion import SourceIngestionClient
 
 
+def expand_reviewed_observations(batch, manifest):
+    """Bind explicitly observed letters to the fresh manifest's exact old values.
+
+    No class is derived from the flattened old scale or a drop counter. The
+    server still checks model, memory, source URL, age and whole-group CAS.
+    """
+    if not isinstance(batch, dict) or 'observations' not in batch:
+        return batch
+    if set(batch) != {'reviewed_on', 'observations'} or not isinstance(batch['observations'], list) or len(batch['observations']) > 100:
+        raise ValueError('invalid_reviewed_observations')
+    candidates = {p['slug']: p for p in manifest['products']}
+    products = []
+    required = {'slug', 'name', 'source_url', 'observed_at', 'observed_model',
+                'observed_ram_gb', 'observed_storage_gb', 'selected_classes'}
+    for observation in batch['observations']:
+        if not isinstance(observation, dict) or set(observation) != required:
+            raise ValueError('invalid_reviewed_observation')
+        selected = observation['selected_classes']
+        if not isinstance(selected, dict) or not 1 <= len(selected) <= 3 or set(selected) - {'Repairability', 'Drop resistance', 'Efficiency'}:
+            raise ValueError('invalid_selected_classes')
+        readings = []
+        current = candidates.get(observation['slug'])
+        for key, value in selected.items():
+            group = 'Batarya' if key == 'Efficiency' else 'Design & Materials'
+            field = next((f for f in (current or {}).get('fields', []) if f['group'] == group and f['key'] == key), None)
+            if field is None:
+                continue  # Already repaired/missing: never overwrite a selected value.
+            if observation['source_url'] not in field['source_urls']:
+                raise ValueError('reviewed_source_not_in_manifest')
+            readings.append({'group': group, 'key': key, 'expected_value': field['value'], 'value': value,
+                             **{k: observation[k] for k in required - {'slug', 'name', 'selected_classes'}}})
+        products.append({'slug': observation['slug'], 'name': observation['name'], 'readings': readings})
+    return {'reviewed_on': batch['reviewed_on'], 'products': products}
+
+
 def run(client, *, apply=False, batch=None, report_path=Path('classification-repair-report.json')):
     endpoint=client.base_url + '/api/ingestion/classification-repair'
     manifest=client._json_body(client._request_with_retry('GET',endpoint,authenticated=True))
@@ -22,6 +57,7 @@ def run(client, *, apply=False, batch=None, report_path=Path('classification-rep
     save()
     if not apply:
         return report
+    batch=expand_reviewed_observations(batch,manifest)
     if not isinstance(batch,dict) or set(batch)!={'reviewed_on','products'} or not isinstance(batch['products'],list) or len(batch['products'])>100:
         raise ValueError('reviewed_classification_batch_required')
     candidates={p['slug']:p for p in manifest['products']}
@@ -36,6 +72,8 @@ def run(client, *, apply=False, batch=None, report_path=Path('classification-rep
         if not current or current['name']!=reviewed['name']:
             result['reason']='no_matching_pending_product';save();continue
         readings=reviewed['readings']
+        if readings==[]:
+            result['reason']='no_remaining_reviewed_fields';save();continue
         if not isinstance(readings,list) or not 1<=len(readings)<=3:
             raise ValueError('invalid_readings')
         groups={r['group'] for r in readings}
