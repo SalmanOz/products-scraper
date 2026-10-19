@@ -7,6 +7,7 @@ import re
 import sys
 import time
 import json
+import math
 import requests
 from dotenv import load_dotenv
 from source_ingestion import (
@@ -292,6 +293,8 @@ class KimovilScraper:
                 key: float(value)
                 for key, value in partials.items()
                 if isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and math.isfinite(value) and 0 < value <= 10
             }
 
             def get_spec(s, k, f=None):

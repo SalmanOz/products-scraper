@@ -40,6 +40,32 @@ SOURCE_HTML = """
 
 
 class SpecSectionTests(unittest.TestCase):
+    def test_classification_extracts_the_observed_bold_letter_not_the_entire_scale(self):
+        html = '''<section class="container-sheet-design"><h2>Design &amp; Materials of Phone One</h2>
+        <table class="k-dltable">
+        <tr><th>Repairability</th><td>Class <span>A </span><span>B </span><b>C </b><span>D </span><span>E </span></td></tr>
+        <tr><th>Drop resistance</th><td>Class <span>A </span><b>B </b><span>C </span><span>D </span><span>E </span><b class="dot">•</b> 180 drops without defects</td></tr>
+        <tr><th>Materials</th><td>Plastic, Aluminium alloy</td></tr></table></section>
+        <section class="container-sheet-battery"><h2>Battery of Phone One</h2><table class="k-dltable"><tr><th>Efficiency</th><td><div class="eftag"><span class="value">A</span><span class="range"><span>G</span><span>A</span></span></div></td></tr></table></section>'''
+        specs=extract_spec_sections(BeautifulSoup(html,'html.parser'))
+        self.assertEqual(specs['Design & Materials']['Repairability'],'Class C')
+        self.assertEqual(specs['Design & Materials']['Drop resistance'],'Class B • 180 drops without defects')
+        self.assertEqual(specs['Battery']['Efficiency'],'Class A')
+
+    def test_missing_or_conflicting_selection_never_guesses_a_class_from_drop_counts(self):
+        for markup in ['<span>A B C D E</span>','<b>A</b><b>B</b><span>C D E</span>']:
+            html='<section class="container-sheet-design"><h2>Design &amp; Materials of Phone One</h2><table class="k-dltable"><tr><th>Drop resistance</th><td>Class '+markup+' • 180 drops without defects</td></tr><tr><th>Repairability</th><td>Class '+markup+'</td></tr></table></section>'
+            specs=extract_spec_sections(BeautifulSoup(html,'html.parser'))['Design & Materials']
+            self.assertEqual(specs['Drop resistance'],'180 drops without defects')
+            self.assertNotIn('Repairability',specs)
+
+    def test_explicit_release_date_is_normalized_without_inventing_a_day(self):
+        for raw, expected in [('February 2026, 7 months ago', 'February 2026'),
+                              ('2026-02-28', '2026-02-28'), ('Coming soon', None)]:
+            html = '<section class="container-sheet-general"><h2>Technical sheet of Phone One</h2><dl class="k-dl"><dt>Release date</dt><dd>' + raw + '</dd></dl></section>'
+            specs = extract_spec_sections(BeautifulSoup(html, 'html.parser'))
+            self.assertEqual(specs['Technical sheet'].get('Release date'), expected)
+
     def scrape(self, html=SOURCE_HTML):
         scraper = KimovilScraper()
         scraper.get_via_flaresolverr = lambda _url: html

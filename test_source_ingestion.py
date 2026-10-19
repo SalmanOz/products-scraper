@@ -169,6 +169,18 @@ class ProvenanceRecordTests(unittest.TestCase):
 
 
 class ProductIdentityTests(unittest.TestCase):
+    def test_category_scores_are_observed_finite_ten_point_values_not_totals_or_raw_benchmarks(self):
+        scraper = KimovilScraper()
+        scraper.get_via_flaresolverr = lambda _url: """<meta name='deviceki' content='{"name":"Phone One","ki":9.9,"partials":{"hardware":true,"camera":NaN,"battery":8.2,"design":82,"connectivity":-1}}'>"""
+        records = []
+        self.assertTrue(scraper.scrape_product_details('https://www.kimovil.com/en/where-to-buy-phone-one',
+            product_slug='phone-one', expected_name='Phone One', record_sink=records))
+        values = {r['attribute_key']:r['value'] for r in records}
+        self.assertEqual(values['partials'], {'battery':8.2})
+        self.assertEqual(values['battery_score'],8.2)
+        for field in ['performance_score','camera_score','screen_score']:
+            self.assertNotIn(field,values)
+
     def test_storage_capacity_converts_terabytes_to_gigabytes(self):
         scraper = KimovilScraper()
 

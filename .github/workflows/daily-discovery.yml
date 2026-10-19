@@ -33,7 +33,7 @@ jobs:
       - name: Install existing dependencies
         run: pip install -r requirements.txt
       - name: Test discovery and exact-offer safety
-        run: python -m unittest -q test_daily_discovery test_manufacturer_specs test_retailer_offer_refresh test_price_refresh_orchestration
+        run: python -m unittest -q test_daily_discovery test_manufacturer_specs test_retailer_offer_refresh test_price_refresh_orchestration test_spec_sections test_source_ingestion
       - name: Restore public candidate rotation state
         uses: actions/cache/restore@v4
         with:

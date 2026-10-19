@@ -1,6 +1,7 @@
 """Read source tables without flattening different components onto one key."""
 
 import re
+from release_dates import normalize_release_date
 
 
 def _text(node):
@@ -16,6 +17,35 @@ def _value(node):
     if re.search(r"(?:x{2,}|\?+)\s*[gm]hz", value, re.IGNORECASE):
         return ""
     return value
+
+
+def _classification_value(node, label):
+    """Read the selected letter, never the displayed A–E/A–G scale.
+
+    Observed Kimovil markup: <span>A</span><b>B</b><span>C</span>;
+    energy uses .eftag > .value and a separate .range (G..A).
+    """
+    label = label.casefold()
+    if label not in {'repairability', 'drop resistance', 'efficiency'}:
+        return None
+    if label == 'efficiency':
+        selected = [n.get_text(strip=True) for n in node.select('.eftag > .value')]
+        valid = [v for v in selected if re.fullmatch('[A-G]', v)]
+    else:
+        selected = [n.get_text(strip=True) for n in node.select('b, strong')]
+        valid = [v for v in selected if re.fullmatch('[A-E]', v)]
+    # Multiple selected letters are conflicting, even if one looks plausible.
+    if len(valid) == 1:
+        result = 'Class ' + valid[0]
+    elif re.fullmatch(r'Class\s+' + ('[A-G]' if label == 'efficiency' else '[A-E]'), _text(node)):
+        result = _text(node)
+    else:
+        result = ''
+    if label == 'drop resistance':
+        count = re.search(r'\b(\d+)\s+drops without defects\b', _text(node))
+        if count:
+            result += (' • ' if result else '') + count[0]
+    return result
 
 
 def extract_spec_sections(soup):
@@ -68,6 +98,13 @@ def extract_spec_sections(soup):
                 if label is None or value_node is None:
                     continue
                 key, value = _text(label), _value(value_node)
+                classification = _classification_value(value_node, key)
+                if classification is not None:
+                    value = classification
+                if key.casefold() == 'release date' and 'technical' in title.casefold():
+                    # Normalize the explicitly labelled source fact before
+                    # provenance is built; never use article metadata dates.
+                    value = normalize_release_date(value) or ''
                 if not key or not value:
                     continue
                 if is_camera:

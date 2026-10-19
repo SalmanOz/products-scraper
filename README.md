@@ -76,7 +76,12 @@ görünür. `.discovery-state` önbelleğinde yalnızca herkese açık model kim
 son deneme tarihleri vardır, secret yoktur. Cache kaybolursa güvenlik kapısı ve
 sunucu günlük limiti yine korunur.
 
-Teknik veri yedeği olarak vivo'nun **Türkiye parametre sayfaları** desteklenir.
+Teknik veri yedeği olarak vivo'nun **Türkiye parametre sayfaları**, Apple ve OPPO
+Türkiye teknik tabloları desteklenir. Xiaomi/Redmi/POCO için komşu etiket/değer
+blokları ve tam model Product yapılandırılmış verisi; Samsung için tam model
+Product yapılandırılmış verisi okunabilir. Samsung'un ilk HTML'inde boş gelen
+dinamik tablo desteklenmiş sayılmaz; `manufacturer_structured_specs_unavailable`
+ile açıkça raporlanır. Xiaomi'nin 403 yanıtı aşılmaz, kaynak o işte tekrar denenmez.
 Yalnızca üreticinin ürün sayfasında gerçekten verdiği, aynı modele ait teknik
 özellik bağlantısı izlenir; global varyanta veya tahmini bir URL'ye geçilmez.
 Canonical bulunmayan sayfalarda tam model başlığı ve modele özel parametre
@@ -94,13 +99,50 @@ Görsel bulunamaması artık toplanmış teknik kayıtların kaybolmasına neden
 Raporun `collected_sources`, `missing_fields`, `official_image_candidates` ve
 `conflicting_fields` alanları hangi bilgilerin tamamlandığını gösterir. Kısmi
 veriler yalnızca job artifact'ında tutulur; bunlar yayımlanmış ürün değildir.
-Puan ve çıkış tarihi üretici teknik tablosundan tahmin edilmez; mevcut yayın
-eşiği korunur. Bu üretici teknik özellik adaptörü şu an vivo içindir, diğer
-üreticiler için henüz uygulanmamıştır.
+Apple ortak Pro/Pro Max tablolarında sadece tam modele ait sütun veya açıkça
+ortak işaretlenmiş hücre kullanılır. İsimsiz iki sütun sırayla eşlenmez. Apple'ın
+belirtmediği RAM ve mAh tahmin edilmez; OPPO'nun Kamera ve Video bölümlerindeki
+aynı isimli satırlar ayrı korunur. OPPO Türkiye kataloğu günlük keşfe dahildir.
 
-Test: `python -m unittest -q test_daily_discovery test_manufacturer_specs test_retailer_offer_refresh test_price_refresh_orchestration`.
+Puan ve çıkış tarihi teknik özelliklerden tahmin edilmez; mevcut yayın eşiği
+korunur. Açık `releaseDate` veya kimliği doğrulanmış Kimovil teknik tablosundaki
+`Release date` alanı kullanılabilir; `datePublished`, `dateModified`, sayfa altlığı
+ve haber tarihi çıkış tarihi değildir. `February 2026, 7 months ago` ifadesi
+`February 2026` olur; kesin gün uydurulmaz. Kimovil kategori girdileri yalnızca
+sonlu, 0'dan büyük ve en fazla 10 olan değerlerdir; fiyat bağımlı toplam Ki puanı, kullanıcı oyu, AnTuTu ham
+sonucu veya DXOMARK puanı bu girdilerin yerine dönüştürülmez.
+
+### 19 Ekim 2026 eksik veri incelemesi (yayın girdisi değildir)
+
+Normal HTTPS ile OPPO Reno15 5G Türkiye kaynağından 10 fiziksel kayıt (12/256 GB,
+6500 mAh, 6,59 inç ve altı teknik grup), iPhone 18 Pro'dan 7 kayıt doğrulandı.
+Bu kontrol R2/ürün/teklif veritabanına yazmadı. Puanlar ve eksik zorunlu alanlar
+tamamlanmadığından bu kayıtlar yayına uygun bir yeni ürün sayılmaz.
+
+Kimovil'in herkese açık sayfaları ayrıca araştırma tarayıcısında incelendi:
+
+| Model | Kaynaktaki açık çıkış ayı (Türkiye satış tarihi değil) | Otomatik puan aktarımını durduran durum |
+| --- | --- | --- |
+| [vivo V70](https://www.kimovil.com/en/where-to-buy-vivo-v70) | Şubat 2026 | Varsayılan Global 8/256 GB, resmi TR 12/256 GB ile aynı SKU değil. |
+| [vivo Y05](https://www.kimovil.com/en/where-to-buy-vivo-y05) | Şubat 2026 | International 4/64 GB, resmi TR 4/128 GB ile aynı SKU değil. |
+| [vivo V70 FE](https://www.kimovil.com/en/where-to-buy-vivo-v70-fe) | Mart 2026 | Kaynak Global 8/256 GB; TR sayfasındaki çoklu bellek seçeneklerinden keyfî seçim yapılamaz. |
+
+Bu araştırma notları otomasyon tarafından içeri alınmaz ve gözlem tarihleri
+yenilenmiş gibi gösterilmez. Araştırma tarayıcısının okuyabildiği bir sayfanın
+Actions'ın normal HTTP istemcisinden de erişilebilir olduğu varsayılmaz.
+Normal istemcinin Kimovil 403 yanıtı sürerse kategori puanları eksik kalır ve
+ürün, kullanıcı kararı gereği, doğrulanmış puan bulunana kadar bekletilir.
+
+Test: `python -m unittest -q test_daily_discovery test_manufacturer_specs test_retailer_offer_refresh test_price_refresh_orchestration test_spec_sections test_source_ingestion`.
 
 ## Teknik özellik alanlarını onarma
+
+Sınıflandırma okumasında A–E ölçeğinin tamamı değil, kaynağın `<b>`/`<strong>`
+ile işaretlediği tek harf korunur. Enerji verimliliğinde `.eftag > .value`
+okunur; A–G aralık etiketleri sonuca katılmaz. Seçim yoksa veya çelişkiliyse
+sınıf tahmin edilmez; varsa açık düşme sayısı ayrı korunur. Bu parser düzeltmesi
+eski veritabanı kayıtlarını kendiliğinden onarmaz. Web gösterimi, seçimi kaybolmuş
+eski `Class A B C D E` / `AGA` kayıtlarını doğrulanmış sınıf gibi göstermez.
 
 Scraper işlemci/RAM/depolama tiplerini ve arka/ön kamera alanlarını ayrı tutar.
 Belirsiz saat hızlarını (`XX GHz`) ve çakışan, bağlamı bilinmeyen alanları aktarmaz.

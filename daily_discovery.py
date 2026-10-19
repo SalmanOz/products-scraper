@@ -24,7 +24,8 @@ from tr_price_scraper import TRPriceScraper
 from retailer_offer_refresh import RetailerOfferRefresher, _safe_url
 from update_prices import PriceUpdater
 from product_images import R2ProductImageStore
-from manufacturer_specs import vivo_spec_links, parse_vivo_specifications, fill_missing_records, missing_critical_facts, vivo_product_images
+from manufacturer_specs import (vivo_spec_links, manufacturer_spec_links, parse_manufacturer_specifications,
+    official_model_names, fill_missing_records, missing_critical_facts, vivo_product_images)
 
 CONTRACT = 'catalog-discovery-v1'
 MAX_ATTEMPTS = 8
@@ -35,6 +36,7 @@ LISTINGS = {
     'samsung': 'https://www.samsung.com/tr/smartphones/',
     'xiaomi': 'https://www.mi.com/tr/mobile/',
     'vivo': 'https://www.vivo.com/tr/products',
+    'oppo': 'https://www.oppo.com/tr/smartphones/',
 }
 USER_AGENT = 'TeknoSkorCatalogDiscovery/1.0 (+https://teknoskor.com/about)'
 
@@ -86,17 +88,18 @@ def safe_product_url(brand, raw):
         hosts = {'apple': ('apple.com', 'www.apple.com'),
                  'samsung': ('samsung.com', 'www.samsung.com'),
                  'xiaomi': ('mi.com', 'www.mi.com'), 'poco': ('mi.com', 'www.mi.com'),
-                 'vivo': ('vivo.com', 'www.vivo.com')}
+                 'vivo': ('vivo.com', 'www.vivo.com'), 'oppo': ('oppo.com', 'www.oppo.com')}
         if (url.scheme != 'https' or url.hostname not in hosts.get(brand, ()) or
                 url.port is not None or url.username is not None or url.password is not None or
                 url.query or url.fragment or re.search(r'[\x00-\x20\\]', raw)):
             return False
         patterns = {
             'apple': r'/tr/iphone-[a-z0-9-]+/(?:specs/)?',
-            'samsung': r'/tr/smartphones/galaxy-[a-z0-9-]+/(?:[a-z0-9-]+/)?',
+            'samsung': r'/tr/smartphones/galaxy-[a-z0-9-]+/(?:[a-z0-9-]+/)?(?:specs/)?',
             'xiaomi': r'/tr/product/(?:xiaomi|redmi|poco)-[a-z0-9-]+/(?:specs/)?',
             'poco': r'/tr/product/poco-[a-z0-9-]+/(?:specs/)?',
             'vivo': r'/tr/products/[a-z0-9-]+(?:/param)?/?',
+            'oppo': r'/tr/smartphones/series-[a-z0-9-]+/[a-z0-9-]+/(?:specs/)?',
         }
         return bool(re.fullmatch(patterns[brand], url.path))
     except (ValueError, TypeError, KeyError):
@@ -149,6 +152,8 @@ def candidate_name(brand, text):
         text = f'Xiaomi {text}' if text.lower().startswith('redmi ') else text
     elif brand == 'vivo' and re.fullmatch(r'(?:vivo )?[VXY][0-9][A-Za-z0-9+ -]*', text, re.I):
         text = text if text.lower().startswith('vivo ') else f'vivo {text}'
+    elif brand == 'oppo' and re.fullmatch(r'OPPO (?:Reno|Find|A|F|K)[A-Za-z0-9+ -]+', text, re.I):
+        pass
     else:
         return None
     if not re.search(r'\d', text) and text not in ('Apple iPhone Air', 'Apple iPhone Duo'):
@@ -180,7 +185,7 @@ def discover_candidates(brand, html, listing_url):
 
 def product_names(html, page_url=None):
     soup = BeautifulSoup(html, 'html.parser')
-    names = [tag.get_text(' ', strip=True) for tag in soup.select('h1')]
+    names = official_model_names(soup)
     canonical = soup.find('link', rel='canonical')
     title_proof = bool(page_url and vivo_spec_links(html, page_url))
     if page_url and canonical and canonical.get('href'):
@@ -222,7 +227,7 @@ def product_names(html, page_url=None):
 
 def model_key(name):
     words = slugify(name).split('-')
-    return ''.join(word for word in words if word not in {'apple', 'samsung', 'xiaomi', 'vivo', 'poco', 'galaxy'})
+    return ''.join(word for word in words if word not in {'apple', 'samsung', 'xiaomi', 'vivo', 'poco', 'galaxy', 'oppo'})
 
 
 def may_duplicate(first, second):
@@ -342,15 +347,17 @@ def run_discovery(*, client, reader, specs, price_scraper, refresher, publish=Fa
             result['spec_database_status'] = 'parsed' if parsed_specs else 'unavailable'
             conflicts = []
             official_images = []
-            for official_url in vivo_spec_links(overview_html, candidate['evidenceUrl'])[:1]:
+            for official_url in manufacturer_spec_links(overview_html, candidate):
                 try:
-                    official_html = reader.read(official_url)
-                    official = parse_vivo_specifications(official_html, official_url, candidate, utc_now())
+                    official_html = overview_html if official_url == candidate['evidenceUrl'] else reader.read(official_url)
+                    official = parse_manufacturer_specifications(official_html, official_url, candidate, utc_now())
                     records, conflicts = fill_missing_records(records, official)
-                    official_images = vivo_product_images(official_html)
+                    official_images = vivo_product_images(official_html) if candidate['brandSlug'] == 'vivo' else []
                     result['manufacturer_spec_url'] = official_url
                 except (ValueError, requests.RequestException) as error:
                     result['manufacturer_spec_error'] = type(error).__name__
+                    if isinstance(error, ValueError) and re.fullmatch(r'manufacturer_[a-z_]+', str(error)):
+                        result['manufacturer_spec_reason'] = str(error)
             # Retain useful partial facts in the job artifact, not public pages.
             result['collected_sources'] = records
             result['official_image_candidates'] = official_images
