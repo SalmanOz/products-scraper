@@ -145,9 +145,22 @@ def discover_candidates(brand, html, listing_url):
     return list(found.values())[:100]
 
 
-def product_names(html):
+def product_names(html, page_url=None):
     soup = BeautifulSoup(html, 'html.parser')
     names = [tag.get_text(' ', strip=True) for tag in soup.select('h1')]
+    canonical = soup.find('link', rel='canonical')
+    if page_url and canonical and canonical.get('href'):
+        actual = urlparse(urljoin(page_url, canonical['href']))
+        expected = urlparse(page_url)
+        path = lambda url: re.sub(r'/(?:buy|specs|param)/?$', '', url.path).rstrip('/')
+        if (actual.scheme == 'https' and actual.hostname == expected.hostname and
+                not actual.username and not actual.password and not actual.port and not actual.query and
+                path(actual) == path(expected)):
+            titles = [soup.title.get_text(' ', strip=True)] if soup.title else []
+            og = soup.find('meta', attrs={'property': 'og:title'})
+            if og and og.get('content'):
+                titles.append(og['content'])
+            names += [re.split(r'\s+[–—-]\s+|\s*\|\s*', title)[0].strip() for title in titles]
 
     def visit(value, depth=0):
         if depth > 12:
@@ -279,7 +292,7 @@ def run_discovery(*, client, reader, specs, price_scraper, refresher, publish=Fa
         result = {'slug': slug, 'name': candidate['name'], 'evidence_url': candidate['evidenceUrl']}
         report['candidates'].append(result)
         try:
-            names = product_names(reader.read(candidate['evidenceUrl']))
+            names = product_names(reader.read(candidate['evidenceUrl']), candidate['evidenceUrl'])
             if not any(model_key(name) == model_key(candidate['name']) for name in names):
                 result.update(status='held', reasons=['manufacturer_identity_not_confirmed']); continue
             records, images = [], []

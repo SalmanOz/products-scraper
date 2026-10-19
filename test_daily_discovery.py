@@ -66,6 +66,12 @@ class DiscoveryTests(unittest.TestCase):
             '@type': 'Product', 'name': 'Galaxy A57', 'isRelatedTo': {'@type': 'Product', 'name': 'Galaxy A56'}}) + '</script>'
         self.assertEqual(discovery.product_names(html), ['Telefonlar', 'Galaxy A57'])
 
+    def test_vivo_product_title_requires_matching_product_canonical(self):
+        html = '<title>vivo V70 - 50MP ZEISS Camera, AI Stage Mode | vivo Türkiye</title><link rel="canonical" href="https://www.vivo.com/tr/products/v70">'
+        self.assertIn('vivo V70', discovery.product_names(html, 'https://www.vivo.com/tr/products/v70'))
+        self.assertNotIn('vivo V70', discovery.product_names(html, 'https://www.vivo.com/tr/products/v70-fe'))
+        self.assertNotIn('vivo V70', discovery.product_names(html.replace('rel="canonical"', 'rel="alternate"'), 'https://www.vivo.com/tr/products/v70'))
+
     def fixture(self, phones=(56,)):
         client = Mock(base_url='https://teknoskor.com')
         client.fetch_catalog.return_value = []
