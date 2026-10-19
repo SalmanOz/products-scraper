@@ -423,6 +423,7 @@ class TRPriceScraper:
     def _unambiguous_listing_capacities(cls, item_title):
         """Physical RAM/storage evidence, not the first of several choices."""
         title = unicodedata.normalize('NFKC', item_title).lower()
+        title = re.sub(r'(gb|tb)(?=\d)', r'\1 ', title)
         ram, storage = set(), set()
         ambiguous = bool(re.search(r'\b(?:virtual|sanal|extended)\s*ram\b|\bram\s*(?:virtual|sanal|extended)\b', title))
         amount = r'\d+(?:[.,]\d{1,2})?'
@@ -470,7 +471,7 @@ class TRPriceScraper:
     @staticmethod
     def _extract_listing_capacities(item_title):
         """Return explicit RAM/storage values from a merchant title when present."""
-        title = item_title.lower()
+        title = re.sub(r'(gb|tb)(?=\d)', r'\1 ', item_title.lower())
 
         pair = re.search(
             r'\b(\d{1,2})\s*(?:gb)?\s*/\s*(\d{2,4})\s*(gb|tb)\b',
@@ -807,14 +808,27 @@ class TRPriceScraper:
                 data = json.loads(script.get_text())
                 
                 def extract_offers(obj):
+                    if isinstance(obj, list):
+                        for node in obj:
+                            extract_offers(node)
+                        return
                     if not isinstance(obj, dict): return
                     
                     offers_data = obj.get('offers')
                     if isinstance(offers_data, dict):
-                        nested_offers = offers_data.get('offers', [])
-                        if not isinstance(nested_offers, list): nested_offers = [nested_offers]
+                        # Schema may use AggregateOffer.offers, a direct Offer,
+                        # or an array of Offers. Only each actual Offer's name
+                        # is evidence; Product/aggregate names are not inherited.
+                        nested_offers = offers_data.get('offers', offers_data)
+                    elif isinstance(offers_data, list):
+                        nested_offers = offers_data
+                    else:
+                        nested_offers = []
+                    if not isinstance(nested_offers, list):
+                        nested_offers = [nested_offers]
                         
-                        for off in nested_offers:
+                    for off in nested_offers:
+                        if isinstance(off, dict):
                             m_url = off.get('url', '')
                             m_price = off.get('price')
                             m_seller = off.get('seller', {}).get('name', 'Mağaza')
@@ -838,6 +852,9 @@ class TRPriceScraper:
                                     if not self.is_strict_match(product_name, source_title, expected_specs):
                                         continue
                                 results.append(offer)
+                    graph = obj.get('@graph')
+                    if isinstance(graph, (list, dict)):
+                        extract_offers(graph)
                     
                     # Recursively look in variants
                     variants = obj.get('hasVariant', [])
@@ -857,6 +874,12 @@ class TRPriceScraper:
                 logging.error(f"    ⚠️ JSON-LD Parse Error: {str(e)}")
                 continue
 
+        # A titleless JSON-LD row is discovery, not a commercial observation.
+        # Do not let it suppress real offer-specific DOM titles below.
+        if expected_specs is not None:
+            results = [offer for offer in results if self.has_observed_offer_evidence(
+                product_name, offer, expected_specs
+            )]
         # Fallback to HTML parsing if JSON-LD extraction failed or yielded nothing
         if not results:
             for a in detail_soup.select('a[rel="nofollow"]'):
@@ -1245,18 +1268,11 @@ class TRPriceScraper:
         results = [r for r in results if self.is_trusted_merchant(r['merchant'])]
 
         if results:
-            # Sort by price FIRST so "keep first occurrence per merchant" below
-            # actually keeps the lowest price per merchant, not just whichever
-            # listing happened to appear first in DOM order.
+            # These are bounded discovery destinations, not commercial offers.
+            # A cheap wrong SKU must not hide the same merchant's correct SKU
+            # before the retailer PDP has supplied its own observed evidence.
             results.sort(key=lambda x: x['price'])
-            final_agg = []
-            seen = set()
-            for r in results:
-                key = f"{r['merchant']}"
-                if key not in seen:
-                    seen.add(key)
-                    final_agg.append(r)
-            return final_agg
+            return results[:12]
 
         return None
 
@@ -1276,6 +1292,14 @@ class TRPriceScraper:
                 continue
 
             title = title_el.get_text(' ', strip=True)
+            if site_name == 'Trendyol':
+                brand_el = item.select_one('.prdct-desc-cntnr-ttl')
+                name_el = item.select_one('.prdct-desc-cntnr-name')
+                if brand_el and name_el and brand_el is not name_el:
+                    # Both fragments are observed in this same retailer card;
+                    # never supply the brand/model from the catalog query.
+                    title = ' '.join(element.get_text(' ', strip=True)
+                                     for element in (brand_el, name_el)).strip()
             price = self.clean_price(price_el.get_text(' ', strip=True))
             link = link_el.get('href', '')
             if link and not link.startswith('http'):
@@ -1334,15 +1358,26 @@ class TRPriceScraper:
 
     async def get_best_prices(self, product_name, expected_specs=None):
         results = []
+        retailer_observations = []
         # /about claims broad coverage (Hepsiburada, Trendyol, Amazon TR, n11 and more).
         # Stopping at the first source that returns anything left products with only
         # 1-2 offers whenever Google Shopping alone was thin — keep pulling from
         # additional aggregators until we hit a reasonable number of distinct merchants.
         TARGET_MERCHANT_COUNT = 4
 
+        def observed_listings():
+            by_listing = {}
+            # A direct PDP observation overrides a search-card copy of the
+            # same destination, including an observed out-of-stock state.
+            for row in [*results, *retailer_observations]:
+                if self.has_observed_offer_evidence(product_name, row, expected_specs):
+                    merchant = self._standardize_merchant_name(row['merchant'])
+                    by_listing[(merchant, row['url'])] = {**row, 'merchant': merchant}
+            return list(by_listing.values())
+
         def merchant_count():
-            return len({self._standardize_merchant_name(r['merchant']) for r in results
-                        if self.has_observed_offer_evidence(product_name, r, expected_specs)})
+            return len({row['merchant'] for row in observed_listings()
+                        if row.get('availability') != 'out_of_stock'})
 
         # 1. Try Google Shopping (no Cloudflare, most reliable from CI)
         gs_results = self.get_google_shopping_price(product_name, expected_specs)
@@ -1355,8 +1390,25 @@ class TRPriceScraper:
             logging.info(f"  🔄 {merchant_count()} merchant(s) so far, trying Epey for more coverage...")
             epey_results = self.get_epey_price(product_name, expected_specs)
             if epey_results:
-                results.extend(epey_results)
-                logging.info(f"  ✨ Found {len(epey_results)} offers on Epey")
+                logging.info(f"  🔎 Epey discovered {len(epey_results)} retailer destinations")
+                try:
+                    refresher = getattr(self, 'retailer_offer_refresher', None)
+                    if refresher is None:
+                        # Late import avoids the PDP module's matcher import
+                        # cycle. Reuse the instance/cache/breaker for this run.
+                        from retailer_offer_refresh import RetailerOfferRefresher
+                        refresher = self.retailer_offer_refresher = RetailerOfferRefresher()
+                    refreshed = await asyncio.to_thread(
+                        refresher.refresh_existing_offer_targets,
+                        product_name,
+                        [{'merchant_name': row['merchant'], 'source_url': row['url']}
+                         for row in epey_results[:12]],
+                        expected_specs,
+                    )
+                    retailer_observations.extend(refreshed)
+                except Exception as error:
+                    logging.warning('  ⚠️ Epey PDP evidence unavailable (%s); trying other sources',
+                                    type(error).__name__)
 
         # 3. Try Akakçe to add more merchants if coverage is still thin
         if merchant_count() < TARGET_MERCHANT_COUNT:
@@ -1406,13 +1458,14 @@ class TRPriceScraper:
 
         # De-duplicate: ONLY ONE LOWEST PRICE PER MERCHANT
         merchant_best = {}
-        for r in results:
-            if not self.has_observed_offer_evidence(product_name, r, expected_specs):
-                logging.info('Skipping non-commercial/unmatched listing evidence for %s: %s', product_name, r.get('merchant'))
-                continue
-            m_name = self._standardize_merchant_name(r['merchant'])
-            r['merchant'] = m_name
-            if m_name not in merchant_best or r['price'] < merchant_best[m_name]['price']:
+        for r in observed_listings():
+            m_name = r['merchant']
+            prior = merchant_best.get(m_name)
+            available = r.get('availability') != 'out_of_stock'
+            prior_available = prior and prior.get('availability') != 'out_of_stock'
+            if prior is None or (available and not prior_available) or (
+                available and prior_available and r['price'] < prior['price']
+            ):
                 merchant_best[m_name] = r
 
         unique_results = list(merchant_best.values())
@@ -1420,11 +1473,12 @@ class TRPriceScraper:
         # Outlier guard: an offer far below the median is almost always a wrong
         # variant (different storage, refurbished, gray import). Since base_price
         # is set to the MINIMUM offer, one bad listing corrupts the product price.
-        if len(unique_results) >= 3:
-            prices = sorted(r['price'] for r in unique_results)
+        purchasable = [r for r in unique_results if r.get('availability') != 'out_of_stock']
+        if len(purchasable) >= 3:
+            prices = sorted(r['price'] for r in purchasable)
             median = prices[len(prices) // 2]
-            filtered = [r for r in unique_results if r['price'] >= median * 0.6]
-            dropped = [r for r in unique_results if r['price'] < median * 0.6]
+            filtered = [r for r in unique_results if r.get('availability') == 'out_of_stock' or r['price'] >= median * 0.6]
+            dropped = [r for r in purchasable if r['price'] < median * 0.6]
             for d in dropped:
                 logging.warning(f"  📉 Dropping outlier offer: {d['merchant']} {d['price']} TL (median {median} TL)")
             unique_results = filtered

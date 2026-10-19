@@ -414,7 +414,144 @@ def test_explicit_screen_parts_cannot_become_redmi_note_13_pro_phone_offers():
         {'source_title': None, 'url': 'https://shop.example/redmi-note-13-pro-citali-orjinal-dokunmatik-ekran'}, specs)
 
 
+def test_trendyol_split_brand_and_model_use_only_same_card_literal_title_fragments():
+    scraper = TRPriceScraper()
+    html = '''<div class="product-card"><a href="/samsung-galaxy-s25-12gb-128gb-p-1">
+        <span class="prdct-desc-cntnr-ttl">Samsung</span>
+        <span class="prdct-desc-cntnr-name">Galaxy S25 12 GB RAM 128 GB Siyah</span>
+        </a><span class="sale-price">29.999 TL</span></div>'''
+    specs = {'ram_gb': 12, 'storage_gb': 128}
+    offer = scraper.parse_site_offer('Trendyol', scraper.site_configs['Trendyol'], html,
+                                    'Samsung Galaxy S25', specs)
+    assert offer['source_title'] == 'Samsung Galaxy S25 12 GB RAM 128 GB Siyah'
+    assert scraper.parse_site_offer('Trendyol', scraper.site_configs['Trendyol'],
+                                   html.replace('>Samsung</span>', '>Apple</span>'),
+                                   'Samsung Galaxy S25', specs) is None
+
+
+def test_akakce_titleless_json_does_not_suppress_observed_dom_offer_title():
+    scraper = TRPriceScraper()
+    data = {'name': 'Aggregate heading is not listing evidence', 'offers': {'offers': [
+        {'url': 'https://www.teknosa.com/samsung-galaxy-s25-12gb-128gb', 'price': 29999,
+         'seller': {'name': 'Teknosa'}},
+    ]}}
+    html = '<h1>Samsung Galaxy S25</h1><script type="application/ld+json">' + json.dumps(data) + '''</script>
+        <div><span>29.999 TL</span>
+          <span class="product-name">Samsung Galaxy S25 12GB RAM 128GB Siyah</span>
+          <a rel="nofollow" href="https://www.teknosa.com/samsung-galaxy-s25-12gb-128gb"><img alt="Teknosa"></a>
+        </div>'''
+    with patch.object(scraper, 'get_via_flaresolverr', return_value={
+        'response': html, 'url': 'https://www.akakce.com/phone.html',
+    }):
+        offers = scraper.get_akakce_price('Samsung Galaxy S25', {'ram_gb': 12, 'storage_gb': 128})
+    assert len(offers) == 1
+    assert offers[0]['source_title'] == 'Samsung Galaxy S25 12GB RAM 128GB Siyah'
+
+
+def test_akakce_direct_offer_and_graph_shapes_use_offer_name_never_parent_product_name():
+    scraper = TRPriceScraper()
+    listing = {'@type': 'Offer', 'url': 'https://www.teknosa.com/samsung-galaxy-s25-12gb-128gb',
+               'price': 29999, 'seller': {'name': 'Teknosa'},
+               'name': 'Samsung Galaxy S25 12GB RAM 128GB Siyah'}
+    parent = {'@type': 'Product', 'name': 'Never copy this parent heading', 'offers': listing}
+    for data in [parent, {'@graph': [parent]}, [parent], {**parent, 'offers': [listing]}]:
+        html = '<h1>Samsung Galaxy S25</h1><script type="application/ld+json">' + json.dumps(data) + '</script>'
+        with patch.object(scraper, 'get_via_flaresolverr', return_value={
+            'response': html, 'url': 'https://www.akakce.com/phone.html',
+        }):
+            offers = scraper.get_akakce_price('Samsung Galaxy S25', {'ram_gb': 12, 'storage_gb': 128})
+        assert len(offers) == 1
+        assert offers[0]['source_title'] == listing['name']
+    no_title = {key: value for key, value in listing.items() if key != 'name'}
+    data = {'name': listing['name'], 'offers': no_title}
+    html = '<h1>Samsung Galaxy S25</h1><script type="application/ld+json">' + json.dumps(data) + '</script>'
+    with patch.object(scraper, 'get_via_flaresolverr', return_value={
+        'response': html, 'url': 'https://www.akakce.com/phone.html',
+    }):
+        assert not scraper.get_akakce_price('Samsung Galaxy S25', {'ram_gb': 12, 'storage_gb': 128})
+
+
+def test_epey_keeps_same_merchant_destinations_until_actual_pdp_match():
+    scraper = TRPriceScraper()
+    specs = {'ram_gb': 12, 'storage_gb': 128}
+    wrong = 'https://www.teknosa.com/samsung-galaxy-s25-12gb-256gb'
+    correct = 'https://www.teknosa.com/samsung-galaxy-s25-12gb-128gb'
+    html = f'''<h1>Samsung Galaxy S25</h1>
+        <a class="git" data-link="{wrong}" title="Teknosa mağazasına git"><span class="urun_fiyat">15.999 TL</span></a>
+        <a class="git" data-link="{correct}" title="Teknosa mağazasına git"><span class="urun_fiyat">29.999 TL</span></a>'''
+    with patch.object(scraper, 'get_via_flaresolverr', return_value=html):
+        raw = scraper.get_epey_price('Samsung Galaxy S25', specs)
+    assert [offer['url'] for offer in raw] == [wrong, correct]
+    assert all('source_title' not in offer for offer in raw)
+
+    class Refresher:
+        def __init__(self):
+            self.calls = []
+        def refresh_existing_offer_targets(self, name, targets, expected):
+            self.calls.append((name, targets, expected))
+            return [{**offer, 'source_title': 'Samsung Galaxy S25 12GB RAM ' +
+                     ('256GB' if offer['url'] == wrong else '128GB'),
+                     'currency': 'TRY', 'availability': 'in_stock'} for offer in raw]
+    refresher = scraper.retailer_offer_refresher = Refresher()
+    with patch.object(scraper, 'get_google_shopping_price', return_value=None), \
+         patch.object(scraper, 'get_epey_price', return_value=raw), \
+         patch.object(scraper, 'get_akakce_price', return_value=None), \
+         patch.object(scraper, 'scrape_site_async', return_value=None):
+        result = asyncio.run(scraper.get_best_prices('Samsung Galaxy S25', specs))
+    assert len(result) == 1 and result[0]['url'] == correct
+    assert [target['source_url'] for target in refresher.calls[0][1]] == [wrong, correct]
+    assert refresher.calls[0][2] == specs
+    assert scraper.retailer_offer_refresher is refresher
+
+
+def test_epey_parent_heading_or_old_aggregate_price_never_becomes_pdp_evidence():
+    scraper = TRPriceScraper()
+    raw = [{'merchant': 'Teknosa', 'url': 'https://www.teknosa.com/phone', 'price': 12000}]
+    class NoEvidence:
+        def refresh_existing_offer_targets(self, name, targets, expected):
+            return []
+    scraper.retailer_offer_refresher = NoEvidence()
+    with patch.object(scraper, 'get_google_shopping_price', return_value=None), \
+         patch.object(scraper, 'get_epey_price', return_value=raw), \
+         patch.object(scraper, 'get_akakce_price', return_value=None), \
+         patch.object(scraper, 'scrape_site_async', return_value=None):
+        assert not asyncio.run(scraper.get_best_prices('Samsung Galaxy S25', {'ram_gb': 12, 'storage_gb': 128}))
+
+
+def test_epey_pdp_stock_overrides_same_url_search_and_preserves_other_available_listing():
+    scraper = TRPriceScraper()
+    title = 'Samsung Galaxy S25 12GB RAM 128GB'
+    source = {'merchant': 'Teknosa', 'price': 10000, 'source_title': title,
+              'url': 'https://www.teknosa.com/phone-one'}
+    other = {**source, 'price': 30000, 'url': 'https://www.teknosa.com/phone-two'}
+    class StockEvidence:
+        def refresh_existing_offer_targets(self, name, targets, expected):
+            return [{**source, 'availability': 'out_of_stock'}]
+    scraper.retailer_offer_refresher = StockEvidence()
+    with patch.object(scraper, 'get_google_shopping_price', return_value=[source, other]), \
+         patch.object(scraper, 'get_epey_price', return_value=[source]), \
+         patch.object(scraper, 'get_akakce_price', return_value=None), \
+         patch.object(scraper, 'scrape_site_async', return_value=None):
+        result = asyncio.run(scraper.get_best_prices('Samsung Galaxy S25', {'ram_gb': 12, 'storage_gb': 128}))
+    assert len(result) == 1 and result[0]['url'] == other['url']
+
+
+def test_compact_unit_labelled_storage_and_ram_are_real_capacity_evidence():
+    scraper = TRPriceScraper()
+    for title in ['Samsung Galaxy S25 512GB12GB RAM', 'Samsung Galaxy S25 512GB12GBRAM']:
+        assert scraper.has_observed_offer_evidence('Samsung Galaxy S25',
+            {'source_title': title, 'url': 'https://shop.example/samsung-galaxy-s25-512gb12gb-ram'},
+            {'ram_gb': 12, 'storage_gb': 512})
+        assert not scraper.has_observed_offer_evidence('Samsung Galaxy S25',
+            {'source_title': title, 'url': 'https://shop.example/phone'},
+            {'ram_gb': 12, 'storage_gb': 256})
+    assert not scraper.has_observed_offer_evidence('Samsung Galaxy S25',
+        {'source_title': 'Samsung Galaxy S25 512GB12+12GB RAM', 'url': 'https://shop.example/phone'},
+        {'ram_gb': 12, 'storage_gb': 512})
+
+
 if __name__ == '__main__':
+    test_compact_unit_labelled_storage_and_ram_are_real_capacity_evidence()
     test_current_source_markup()
     print(f'✅ All {len(SOURCE_FIXTURES)} retailer markup fixtures passed')
     test_search_urls()
@@ -441,4 +578,10 @@ if __name__ == '__main__':
     test_cpu_descriptions_and_unrelated_sku_tokens_are_not_phone_choices()
     test_redmi_note_15_pro_requires_observed_radio_for_separate_4g_and_5g_variants()
     test_explicit_screen_parts_cannot_become_redmi_note_13_pro_phone_offers()
+    test_trendyol_split_brand_and_model_use_only_same_card_literal_title_fragments()
+    test_akakce_titleless_json_does_not_suppress_observed_dom_offer_title()
+    test_akakce_direct_offer_and_graph_shapes_use_offer_name_never_parent_product_name()
+    test_epey_keeps_same_merchant_destinations_until_actual_pdp_match()
+    test_epey_parent_heading_or_old_aggregate_price_never_becomes_pdp_evidence()
+    test_epey_pdp_stock_overrides_same_url_search_and_preserves_other_available_listing()
     print('✅ Observed source title forwarding and aggregator provenance passed')

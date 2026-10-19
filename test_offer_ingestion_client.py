@@ -108,6 +108,8 @@ def test_catalog_is_read_without_mysql():
                             "name": "Example Phone",
                             "slug": "example-phone",
                             "attributes": {"ram_gb": 8},
+                            "offer_targets": [{"merchant_name": "n11", "source_url": "https://www.n11.com/urun/phone",
+                                               "checked_at": "2026-01-01T00:00:00Z", "price": 1, "source_title": "Do not reuse"}],
                         }
                     ],
                     "hasMore": True,
@@ -150,6 +152,10 @@ def test_catalog_is_read_without_mysql():
         call[1] == "https://teknoskor.com/api/ingestion/catalog"
         for call in session.calls
     )
+    assert all(call[2]['params']['include_offer_targets'] == '1' for call in session.calls)
+    assert products[1]['offer_targets'] == []
+    assert products[0]['offer_targets'] == [{"merchant_name": "n11", "source_url": "https://www.n11.com/urun/phone",
+                                             "checked_at": "2026-01-01T00:00:00Z"}]
 
 
 def test_ingestion_batches_at_500_and_sends_bearer_token():
@@ -683,7 +689,28 @@ def test_variant_rejection_marks_run_failure_after_retaining_good_updates():
     assert log_error.call_args.args[1:] == ("example-phone", 1, "storage_mismatch")
 
 
+def test_refreshed_stock_and_actual_fetch_time_are_not_rewritten_as_new_unknown_evidence():
+    updater = PriceUpdater(RecordingIngestionClient(), OneOfferScraper())
+    product = {'id': 42, 'slug': 'example-phone'}
+    offer = {'merchant': 'idefix', 'price': 21999, 'url': 'https://www.idefix.com/phone',
+             'source_title': 'Samsung Galaxy S25 12GB RAM 256GB', 'currency': 'TRY',
+             'availability': 'out_of_stock', 'observed_at': '2026-10-18T09:00:00Z'}
+    record = updater.prepare_product_offers(product, [offer], 'new-observation', 'new-check')[0]
+    assert record['availability'] == 'out_of_stock'
+    assert record['observed_at'] == record['checked_at'] == '2026-10-18T09:00:00Z'
+    assert record['source_title'] == offer['source_title']
+    for override in [{'currency': 'USD'}, {'observed_at': 'not-a-date'},
+                     {'observed_at': '2026-10-18T09:00:00'}]:
+        try:
+            updater.prepare_product_offers(product, [{**offer, **override}], 'new', 'new')
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError(f'Invalid refreshed evidence accepted: {override}')
+
+
 if __name__ == "__main__":
+    test_refreshed_stock_and_actual_fetch_time_are_not_rewritten_as_new_unknown_evidence()
     test_catalog_is_read_without_mysql()
     test_ingestion_batches_at_500_and_sends_bearer_token()
     test_committed_503_retries_until_scores_are_recalculated()

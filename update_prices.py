@@ -10,6 +10,7 @@ from tr_price_scraper import TRPriceScraper
 from indexnow import submit_urls
 from offer_ingestion_client import OfferIngestionClient
 from price_sanity import filter_price_outliers
+from retailer_offer_refresh import RetailerOfferRefresher
 
 load_dotenv()
 
@@ -18,11 +19,15 @@ INGESTION_PRODUCT_BATCH_SIZE = 10
 MAX_OFFER_PRICE = 5_000_000
 
 class PriceUpdater:
-    def __init__(self, ingestion_client=None, price_scraper=None):
+    def __init__(self, ingestion_client=None, price_scraper=None, offer_refresher=None):
         self.ingestion_client = (
             ingestion_client or OfferIngestionClient.from_env()
         )
         self.price_scraper = price_scraper or TRPriceScraper()
+        self.offer_matcher = TRPriceScraper()
+        self.offer_refresher = offer_refresher or RetailerOfferRefresher()
+        if isinstance(self.price_scraper, TRPriceScraper):
+            self.price_scraper.retailer_offer_refresher = self.offer_refresher
 
     def get_all_products(self):
         return self.ingestion_client.get_published_products()
@@ -75,12 +80,13 @@ class PriceUpdater:
         # Wrong-listing guard: a fuzzy-matched accessory/wrong variant surfaces
         # as a price far below the rest of the market and would poison the
         # current offer set.
-        clean = filter_price_outliers(offers)
-        if len(clean) < len(offers):
-            dropped = [o for o in offers if o not in clean]
+        purchasable = [o for o in offers if o.get('availability') != 'out_of_stock']
+        clean = filter_price_outliers(purchasable)
+        if len(clean) < len(purchasable):
+            dropped = [o for o in purchasable if o not in clean]
             for d in dropped:
                 logging.warning(f"  🚫 Outlier offer dropped: {d['merchant']} {d['price']} TL ({d['url'][:80]})")
-            offers = clean
+            offers = [o for o in offers if o.get('availability') == 'out_of_stock' or o in clean]
 
         records = []
         for offer in offers:
@@ -102,6 +108,7 @@ class PriceUpdater:
                 or len(source_url) > 1000
                 or urlparse(source_url).scheme not in {"http", "https"}
                 or not urlparse(source_url).netloc
+                or offer.get('currency', 'TRY') != 'TRY'
             ):
                 raise RuntimeError(
                     f"Invalid extracted offer for {product['slug']}: {offer}"
@@ -114,7 +121,11 @@ class PriceUpdater:
                 "price": price,
                 "currency": "TRY",
                 # A successfully parsed listing is not proof of stock.
-                "availability": "unknown",
+                "availability": (
+                    offer.get("availability") if offer.get("availability") in {
+                        "in_stock", "out_of_stock", "preorder", "limited", "unknown",
+                    } else "unknown"
+                ),
                 "source_url": source_url,
                 # Commission links belong to the site owner, not price observations.
                 "observed_at": observed_at,
@@ -122,6 +133,18 @@ class PriceUpdater:
                 "is_official": False,
             }
             source_title = offer.get("source_title")
+            source_observed_at = offer.get('observed_at')
+            if source_observed_at is not None:
+                try:
+                    actual_observation = datetime.fromisoformat(source_observed_at.replace('Z', '+00:00'))
+                    if actual_observation.tzinfo is None:
+                        raise ValueError('Missing observation timezone')
+                except (AttributeError, TypeError, ValueError) as error:
+                    raise RuntimeError(f"Invalid source observation timestamp for {product['slug']}") from error
+                # An exact-URL cache hit retains its actual fetch time instead
+                # of becoming a fresh observation again at each product.
+                record['observed_at'] = actual_observation.astimezone(timezone.utc).isoformat().replace('+00:00', 'Z')
+                record['checked_at'] = record['observed_at']
             if isinstance(source_title, str) and source_title.strip():
                 source_title = source_title.strip()
                 # Match the endpoint's JavaScript string-length limit without
@@ -228,7 +251,45 @@ class PriceUpdater:
 
             logging.info(f"\n🔍 Updating prices for: {name}")
             try:
-                offers = await self.price_scraper.get_best_prices(name, expected_specs)
+                refreshed = []
+                if p.get('offer_targets'):
+                    try:
+                        refreshed = await asyncio.to_thread(
+                            self.offer_refresher.refresh_existing_offer_targets,
+                            name, p['offer_targets'], expected_specs,
+                        )
+                    except Exception as error:
+                        # An unavailable old destination must not suppress
+                        # ordinary discovery for the product.
+                        logging.warning('  ⚠️ Retailer refresh unavailable (%s); trying discovery',
+                                        type(error).__name__)
+                    logging.info('  🔎 Existing retailer destinations: %s observed offer(s)', len(refreshed))
+                # Reuse successful discovery work. A stored URL alone never
+                # counts; every refreshed offer must pass the current matcher.
+                refreshed = [offer for offer in refreshed if
+                    self.offer_matcher.has_observed_offer_evidence(name, offer, expected_specs)]
+                refreshed_sellers = {str(offer.get('merchant', '')).strip().casefold()
+                                     for offer in refreshed if offer.get('availability') != 'out_of_stock'}
+                discovered = []
+                if len(refreshed_sellers) < 4:
+                    discovered = await self.price_scraper.get_best_prices(name, expected_specs)
+                by_listing = {}
+                # Direct retailer observations override a search-card copy of
+                # the same URL, including a newly observed out-of-stock state.
+                for offer in [*discovered, *refreshed]:
+                    merchant = TRPriceScraper._standardize_merchant_name(str(offer.get('merchant', '')))
+                    by_listing[(merchant.casefold(), offer.get('url'))] = {**offer, 'merchant': merchant}
+                by_seller = {}
+                for offer in by_listing.values():
+                    merchant = offer['merchant'].casefold()
+                    prior = by_seller.get(merchant)
+                    is_available = offer.get('availability') != 'out_of_stock'
+                    prior_available = prior and prior.get('availability') != 'out_of_stock'
+                    if prior is None or (is_available and not prior_available) or (
+                        is_available and prior_available and float(offer['price']) < float(prior['price'])
+                    ):
+                        by_seller[merchant] = offer
+                offers = list(by_seller.values())
                 if offers:
                     observed_at = self.utc_timestamp()
                     checked_at = self.utc_timestamp()
@@ -239,11 +300,12 @@ class PriceUpdater:
                         checked_at,
                     )
                     pending_offers.extend(product_offers)
-                    if product_offers:
+                    if any(record['availability'] != 'out_of_stock' for record in product_offers):
                         products_with_offers += 1
                     merchant_counts[p["slug"]] = len({
                         record["seller"].strip().casefold()
                         for record in product_offers
+                        if record['availability'] != 'out_of_stock'
                     })
                     logging.info(
                         "  ✅ Prepared %s matched listing(s) for ingestion",
