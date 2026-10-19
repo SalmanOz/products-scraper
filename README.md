@@ -76,7 +76,29 @@ görünür. `.discovery-state` önbelleğinde yalnızca herkese açık model kim
 son deneme tarihleri vardır, secret yoktur. Cache kaybolursa güvenlik kapısı ve
 sunucu günlük limiti yine korunur.
 
-Test: `python -m unittest -q test_daily_discovery test_retailer_offer_refresh test_price_refresh_orchestration`.
+Teknik veri yedeği olarak vivo'nun **Türkiye parametre sayfaları** desteklenir.
+Yalnızca üreticinin ürün sayfasında gerçekten verdiği, aynı modele ait teknik
+özellik bağlantısı izlenir; global varyanta veya tahmini bir URL'ye geçilmez.
+Canonical bulunmayan sayfalarda tam model başlığı ve modele özel parametre
+bağlantısı birlikte kimlik kanıtıdır. Çelişkili canonical bu yolu da kapatır.
+
+Üreticiden alınan fiziksel bilgiler `manufacturer` kaynak türüyle kaydedilir;
+Kimovil kaynağı gibi etiketlenmez. Eksik üst düzey alanlar tamamlanır, var olan
+kaynak grubunun üzerine sessizce yazılmaz. RAM/depolama/pil/ekran çelişkisi
+otomatik yayını durdurur. Genişletilmiş RAM fiziksel RAM'e eklenmez; birden fazla
+SKU varsa keyfî olarak ilk kapasite seçilmez. Ürün renk görselleri de resmi
+parametre sayfasından bulunabilir; özellikleri hâlâ eksik adaylar için R2'ye
+gereksiz yedek görsel yüklenmez.
+
+Görsel bulunamaması artık toplanmış teknik kayıtların kaybolmasına neden olmaz.
+Raporun `collected_sources`, `missing_fields`, `official_image_candidates` ve
+`conflicting_fields` alanları hangi bilgilerin tamamlandığını gösterir. Kısmi
+veriler yalnızca job artifact'ında tutulur; bunlar yayımlanmış ürün değildir.
+Puan ve çıkış tarihi üretici teknik tablosundan tahmin edilmez; mevcut yayın
+eşiği korunur. Bu üretici teknik özellik adaptörü şu an vivo içindir, diğer
+üreticiler için henüz uygulanmamıştır.
+
+Test: `python -m unittest -q test_daily_discovery test_manufacturer_specs test_retailer_offer_refresh test_price_refresh_orchestration`.
 
 ## Teknik özellik alanlarını onarma
 

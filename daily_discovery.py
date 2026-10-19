@@ -24,6 +24,7 @@ from tr_price_scraper import TRPriceScraper
 from retailer_offer_refresh import RetailerOfferRefresher, _safe_url
 from update_prices import PriceUpdater
 from product_images import R2ProductImageStore
+from manufacturer_specs import vivo_spec_links, parse_vivo_specifications, fill_missing_records, missing_critical_facts, vivo_product_images
 
 CONTRACT = 'catalog-discovery-v1'
 MAX_ATTEMPTS = 8
@@ -181,6 +182,7 @@ def product_names(html, page_url=None):
     soup = BeautifulSoup(html, 'html.parser')
     names = [tag.get_text(' ', strip=True) for tag in soup.select('h1')]
     canonical = soup.find('link', rel='canonical')
+    title_proof = bool(page_url and vivo_spec_links(html, page_url))
     if page_url and canonical and canonical.get('href'):
         actual = urlparse(urljoin(page_url, canonical['href']))
         expected = urlparse(page_url)
@@ -188,11 +190,15 @@ def product_names(html, page_url=None):
         if (actual.scheme == 'https' and actual.hostname == expected.hostname and
                 not actual.username and not actual.password and not actual.port and not actual.query and
                 path(actual) == path(expected)):
-            titles = [soup.title.get_text(' ', strip=True)] if soup.title else []
-            og = soup.find('meta', attrs={'property': 'og:title'})
-            if og and og.get('content'):
-                titles.append(og['content'])
-            names += [re.split(r'\s+[–—-]\s+|\s*\|\s*', title)[0].strip() for title in titles]
+            title_proof = True
+        else:
+            title_proof = False
+    if title_proof:
+        titles = [soup.title.get_text(' ', strip=True)] if soup.title else []
+        og = soup.find('meta', attrs={'property': 'og:title'})
+        if og and og.get('content'):
+            titles.append(og['content'])
+        names += [re.split(r'\s+[–—-]\s+|\s*\|\s*', title)[0].strip() for title in titles]
 
     def visit(value, depth=0):
         if depth > 12:
@@ -246,7 +252,7 @@ class PublicSpecificationScraper(KimovilScraper):
 class DiscoveryImageStore(R2ProductImageStore):
     def upload(self, source_url, product_slug, index):
         parsed = urlparse(source_url)
-        if (parsed.scheme != 'https' or parsed.hostname != 'cdn-files.kimovil.com' or
+        if (parsed.scheme != 'https' or parsed.hostname not in {'cdn-files.kimovil.com', 'de-gdpr-exstatic-vivofs.vivo.com'} or
                 parsed.port or parsed.username or parsed.password):
             raise ValueError('Unapproved public product image source')
         return super().upload(source_url, product_slug, index)
@@ -324,15 +330,46 @@ def run_discovery(*, client, reader, specs, price_scraper, refresher, publish=Fa
         result = {'slug': slug, 'name': candidate['name'], 'evidence_url': candidate['evidenceUrl']}
         report['candidates'].append(result)
         try:
-            names = product_names(reader.read(candidate['evidenceUrl']), candidate['evidenceUrl'])
+            overview_html = reader.read(candidate['evidenceUrl'])
+            names = product_names(overview_html, candidate['evidenceUrl'])
             if not any(model_key(name) == model_key(candidate['name']) for name in names):
-                result.update(status='held', reasons=['manufacturer_identity_not_confirmed']); continue
+                result.update(status='held', reasons=['manufacturer_identity_not_confirmed'], observed_names=names[:8]); continue
             records, images = [], []
             source_url = specs.search_product_on_kimovil(candidate['name'])
-            if not source_url or not specs.scrape_product_details(source_url, product_slug=slug,
+            parsed_specs = source_url and specs.scrape_product_details(source_url, product_slug=slug,
                     expected_name=candidate['name'], seed_physical_attributes=True,
-                    existing_attributes={}, existing_images=[], record_sink=records, image_sink=images):
-                result.update(status='held', reasons=['specifications_or_images_unavailable']); continue
+                    existing_attributes={}, existing_images=[], record_sink=records, image_sink=images)
+            result['spec_database_status'] = 'parsed' if parsed_specs else 'unavailable'
+            conflicts = []
+            official_images = []
+            for official_url in vivo_spec_links(overview_html, candidate['evidenceUrl'])[:1]:
+                try:
+                    official_html = reader.read(official_url)
+                    official = parse_vivo_specifications(official_html, official_url, candidate, utc_now())
+                    records, conflicts = fill_missing_records(records, official)
+                    official_images = vivo_product_images(official_html)
+                    result['manufacturer_spec_url'] = official_url
+                except (ValueError, requests.RequestException) as error:
+                    result['manufacturer_spec_error'] = type(error).__name__
+            # Retain useful partial facts in the job artifact, not public pages.
+            result['collected_sources'] = records
+            result['official_image_candidates'] = official_images
+            result['missing_fields'] = missing_critical_facts(records)
+            if conflicts:
+                result.update(status='held', reasons=['manufacturer_spec_conflict'], conflicting_fields=conflicts); continue
+            if result['missing_fields']:
+                result.update(status='held', reasons=['missing_verified_specifications']); continue
+            if not images and official_images:
+                uploaded = []
+                for index, image_url in enumerate(official_images):
+                    try:
+                        uploaded.append(specs.image_store.upload(image_url, slug, index))
+                    except Exception as error:
+                        result['image_error'] = type(error).__name__
+                if uploaded:
+                    images.append({'product_slug': slug, 'urls': uploaded})
+            if not images:
+                result.update(status='held', reasons=['first_party_product_image_unavailable']); continue
             attributes = staged_attributes(records)
             offers = direct_offers(candidate, attributes, price_scraper, refresher)
             if not offers:
@@ -359,6 +396,8 @@ def run_discovery(*, client, reader, specs, price_scraper, refresher, publish=Fa
                     report['created'] += 1
             else:
                 result.update(status='held', reasons=body.get('issues', [f'server_http_{error.status_code}']))
+                if body.get('missing_fields'):
+                    result['missing_fields'] = body['missing_fields']
         except Exception as error:
             result.update(status='held', reasons=[type(error).__name__])
         finally:
@@ -390,7 +429,7 @@ def main():
     try:
         client = SourceIngestionClient.from_env()
         reader = PublicReader()
-        specs = PublicSpecificationScraper(reader, ingestion_client=client, require_images=True,
+        specs = PublicSpecificationScraper(reader, ingestion_client=client, require_images=False,
             image_store=DiscoveryImageStore(required=True))
         state_path = Path(args.state)
         previous = load_previous_state(state_path)

@@ -98,6 +98,29 @@ class DiscoveryTests(unittest.TestCase):
         self.assertNotIn('vivo V70', discovery.product_names(html, 'https://www.vivo.com/tr/products/v70-fe'))
         self.assertNotIn('vivo V70', discovery.product_names(html.replace('rel="canonical"', 'rel="alternate"'), 'https://www.vivo.com/tr/products/v70'))
 
+    def test_vivo_without_canonical_requires_its_exact_official_parameter_link(self):
+        html = '<title>vivo V70 FE - 7000mAh Pil | vivo Türkiye</title><a href="http://www.vivo.com/tr/products/param/v70-fe">Parametre</a>'
+        self.assertIn('vivo V70 FE', discovery.product_names(html, 'https://www.vivo.com/tr/products/v70-fe'))
+        self.assertNotIn('vivo V70 FE', discovery.product_names(html, 'https://www.vivo.com/tr/products/v70'))
+        wrong = html + '<link rel="canonical" href="https://www.vivo.com/tr/products/other">'
+        self.assertNotIn('vivo V70 FE', discovery.product_names(wrong, 'https://www.vivo.com/tr/products/v70-fe'))
+
+    def test_official_specs_survive_unavailable_spec_database_without_creating_fake_scores(self):
+        from test_manufacturer_specs import official_html
+        fixture = self.fixture()
+        fixture[2].search_product_on_kimovil.return_value = None
+        listing_url = discovery.LISTINGS['vivo']
+        overview = '<title>vivo V70 | vivo Türkiye</title><a href="http://www.vivo.com/tr/products/param/v70">Parametre</a>'
+        fixture[1].read.side_effect = lambda url: ('<a href="/tr/products/v70">V70</a>' if url == listing_url
+            else official_html() if '/param/' in url else overview)
+        with patch.object(discovery, 'LISTINGS', {'vivo': listing_url}):
+            report = self.run_fixture(fixture, publish=True)
+        result = report['candidates'][0]
+        self.assertEqual(result['status'], 'held')
+        self.assertGreater(len(result['collected_sources']), 8)
+        self.assertIn('performance_score', result['missing_fields'])
+        self.assertFalse(any(method == 'POST' for method, payload in fixture[3]))
+
     def fixture(self, phones=(56,)):
         client = Mock(base_url='https://teknoskor.com')
         client.fetch_catalog.return_value = []
@@ -119,7 +142,10 @@ class DiscoveryTests(unittest.TestCase):
         specs.search_product_on_kimovil.return_value = 'https://www.kimovil.com/en/where-to-buy-samsung-galaxy-a56'
 
         def scrape(url, **kwargs):
-            kwargs['record_sink'].append({'attribute_key': 'ram_gb', 'value': 8})
+            values = {'ram_gb': 8, 'storage_gb': 256, 'battery_mah': 5000, 'screen_size_inch': 6.7,
+                'Technical sheet': {'Release date': 'March 2025'}, 'partials': {'hardware': 8, 'camera': 8, 'battery': 8, 'design': 8},
+                **{group: {'observed': 'fact'} for group in ['Performance & Hardware', 'Camera', 'Connectivity', 'Software', 'Design & Materials', 'Batarya']}}
+            kwargs['record_sink'].extend({'attribute_key': name, 'value': value} for name, value in values.items())
             kwargs['image_sink'].append({'urls': ['https://cdn.teknoskor.com/products/model/image.webp']})
             return True
         specs.scrape_product_details.side_effect = scrape
@@ -138,6 +164,19 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(report['candidates'][0]['status'], 'ready_not_published')
         self.assertEqual([payload['mode'] for method, payload in fixture[3] if method == 'POST'], ['validate'])
         self.assertEqual(report['created'], 0)
+
+    def test_missing_image_does_not_discard_valid_technical_facts(self):
+        fixture = self.fixture()
+        original = fixture[2].scrape_product_details.side_effect
+        def without_image(url, **kwargs):
+            result = original(url, **kwargs)
+            kwargs['image_sink'].clear()
+            return result
+        fixture[2].scrape_product_details.side_effect = without_image
+        report = self.run_fixture(fixture, publish=True)
+        self.assertEqual(report['candidates'][0]['reasons'], ['first_party_product_image_unavailable'])
+        self.assertGreater(len(report['candidates'][0]['collected_sources']), 8)
+        self.assertFalse(any(method == 'POST' for method, payload in fixture[3]))
 
     def test_daily_cap_has_no_minimum_or_forced_publication(self):
         fixture = self.fixture((56, 57, 58))

@@ -33,7 +33,7 @@ jobs:
       - name: Install existing dependencies
         run: pip install -r requirements.txt
       - name: Test discovery and exact-offer safety
-        run: python -m unittest -q test_daily_discovery test_retailer_offer_refresh test_price_refresh_orchestration
+        run: python -m unittest -q test_daily_discovery test_manufacturer_specs test_retailer_offer_refresh test_price_refresh_orchestration
       - name: Restore public candidate rotation state
         uses: actions/cache/restore@v4
         with:
@@ -83,6 +83,10 @@ jobs:
                   lines.append(f"- Source {source['brand']}: {source['status']}")
               for candidate in report.get('candidates', []):
                   lines.append(f"- {candidate['slug']}: {candidate['status']} — {', '.join(candidate.get('reasons', []))}")
+                  if candidate.get('collected_sources'):
+                      lines.append(f"  - Collected sourced facts/groups: {len(candidate['collected_sources'])}")
+                  if candidate.get('missing_fields'):
+                      lines.append(f"  - Missing: {', '.join(candidate['missing_fields'])}")
               if report.get('fatal'):
                   lines.append(f"Failure: {report['fatal']}")
               with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output:
