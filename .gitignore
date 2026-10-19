@@ -5,3 +5,5 @@ debug_*.html
 *_raw.txt
 *.png
 .DS_Store
+.discovery-state/
+daily-discovery-report.json

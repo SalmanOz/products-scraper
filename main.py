@@ -248,7 +248,7 @@ class KimovilScraper:
             _ = category_id
             html = self.get_via_flaresolverr(url)
             if not html:
-                logging.error(f"❌ Error: FlareSolverr returned no HTML for {url}")
+                logging.error(f"❌ Error: Source request returned no HTML for {url}")
                 return False
             if "Just a moment" in html:
                 logging.error(f"❌ Error: Cloudflare blocked the request (Turnstile/Just a moment) for {url}")

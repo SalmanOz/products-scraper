@@ -31,7 +31,52 @@ sonunda oluşturulan/doğrulanan modelleri ve canlı ürün sayfalarını kontro
 fiyatı bulunamayan model için fiyat uydurmayın.
 
 Yeni dosyaları göndermeden önce `python test_catalog_expansion.py` çalıştırın.
-Günlük zamanlama fiyatları günceller; kendiliğinden model yayımlamaz.
+Bu eski akışın günlük zamanlaması yalnızca fiyatları günceller. Yeni model keşfi
+aşağıdaki bağımsız kalite kapısından geçer; elle incelenen grup akışını kullanmaz.
+
+## Günlük keşif ve güvenli otomatik yayın
+
+`Daily Phone Discovery & Quality Gate` her gün yaklaşık **07:00 Türkiye saatiyle**
+çalışır. GitHub zamanlamaları gecikebilir. Fiyat işleriyle aynı yazma kilidini
+kullanır. İlk sürüm Apple, Samsung, Xiaomi/Redmi/POCO ve vivo'nun Türkiye ürün
+listelerini tarar; diğer markalar henüz otomatik kapsamda değildir. Kaynak 403,
+429, doğrulama ekranı veya değişen HTML döndürürse güvenlik engeli aşılmaz; durum
+raporlanır. Bu iş FlareSolverr kullanmaz.
+
+Yeni model adayları mevcut adlar/URL'ler ile karşılaştırılır. RAM/depolama
+varyantları yeni model sayılmaz; açıkça farklı 4G/5G modelleri ayrı kalabilir.
+Her çalışmada en fazla sekiz aday incelenir, önceki deneme tarihine göre sırayla
+yeniden değerlendirilir. Bir günde en fazla iki model yayımlanabilir; bu üst sınır
+Türkiye takvim gününe göre sunucuda da uygulanır. **Asgari ekleme kotası yoktur.**
+
+Otomatik yayın için tekil üretici Türkiye ürün kimliği, kaynak/hash kapsamı tam
+teknik veriler (kamera, işlemci, bağlantı, yazılım, ekran, pil dahil), geçmiş çıkış
+tarihi, gerçek CDN ürün görseli ve son altı saatte doğrudan okunmuş stoklu TRY
+teklifi gerekir. Fiyatın model, fiziksel RAM/depolama ve ağ nesli kanıtları
+eşleşmelidir. iPhone için mevcut model+depolama RAM istisnası korunur. Arama
+kartı/karşılaştırma sitesi fiyatı tek başına yetmez; mağazanın kendi Product/Offer
+kaydı tekrar okunur. İthalatçı/yenilenmiş ibaresi veya çelişkili fiyatlar otomatik
+yayını durdurur. Bu kontrol garanti bölgesinin tam hukuki doğrulaması değildir.
+
+Sunucu kalite kapısını bağımsız uygular. Ürün, kaynaklar, teklifler ve ilk fiyat
+geçmişi **tek transaction** içinde kaydedilir; yarım ürün sayfası yayımlanmaz.
+Mevcut ürünler değiştirilmez. Kaynak eksikliği sahte özellik veya fiyatla
+doldurulmaz; tüm kombinasyonlardan karşılaştırma sayfası üretilmez.
+
+Elle denemek için Actions → bu workflow → `publish=false` seçin. Bu mod ürün/teklif
+veritabanına yazmaz; gerçek görsel kontrolü için aday görselleri mevcut R2 alanına
+yüklenebilir. `publish=true` kaliteyi geçen adayları yayımlar. Zamanlanmış günlük
+işte yayın açıktır. Aynı ingestion ve R2 secret'ları kullanılır; yeni erişim anahtarı
+veya ücretli servis gerekmez. Canlı API `catalog-discovery-v1` hazır değilse iş
+kapalı şekilde başarısız olur, eski toplu ekleme yoluna dönmez.
+
+Her iş `daily-discovery-report.json` artifact'ında 30 gün boyunca adayları,
+bekleme nedenlerini ve oluşturulan modelleri saklar; iş özetinde de kararlar
+görünür. `.discovery-state` önbelleğinde yalnızca herkese açık model kimlikleri ve
+son deneme tarihleri vardır, secret yoktur. Cache kaybolursa güvenlik kapısı ve
+sunucu günlük limiti yine korunur.
+
+Test: `python -m unittest -q test_daily_discovery test_retailer_offer_refresh test_price_refresh_orchestration`.
 
 ## Teknik özellik alanlarını onarma
 

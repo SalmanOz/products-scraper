@@ -1,0 +1,90 @@
+name: Daily Phone Discovery & Quality Gate
+
+on:
+  schedule:
+    # 07:00 Europe/Istanbul. GitHub may delay scheduled jobs.
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish only candidates accepted by the server quality gate (max 2/day)'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+# Serialize all catalog/price writers, including the existing daily sync.
+concurrency:
+  group: teknoskor-daily-data-sync
+  cancel-in-progress: false
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install existing dependencies
+        run: pip install -r requirements.txt
+      - name: Test discovery and exact-offer safety
+        run: python -m unittest -q test_daily_discovery test_retailer_offer_refresh test_price_refresh_orchestration
+      - name: Restore public candidate rotation state
+        uses: actions/cache/restore@v4
+        with:
+          path: .discovery-state
+          key: discovery-state-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: discovery-state-v1-
+      - name: Discover, validate, optionally publish
+        env:
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+          R2_PUBLIC_DOMAIN: ${{ secrets.R2_PUBLIC_DOMAIN }}
+          PUBLISH: ${{ github.event_name == 'schedule' || inputs.publish }}
+        run: |
+          set -euo pipefail
+          args=()
+          if [[ "$PUBLISH" == "true" ]]; then args+=(--publish); fi
+          python daily_discovery.py "${args[@]}"
+      - name: Save candidate rotation state
+        if: ${{ always() && !cancelled() }}
+        uses: actions/cache/save@v4
+        with:
+          path: .discovery-state
+          key: discovery-state-v1-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Save discovery decisions
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-discovery-${{ github.run_id }}
+          path: daily-discovery-report.json
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Write public decision summary
+        if: always()
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          path = Path('daily-discovery-report.json')
+          if path.is_file():
+              report = json.loads(path.read_text())
+              lines = ['## Daily discovery', f"Created: {report.get('created', 0)} (limit 2/day; no quota)"]
+              for source in report.get('sources', []):
+                  lines.append(f"- Source {source['brand']}: {source['status']}")
+              for candidate in report.get('candidates', []):
+                  lines.append(f"- {candidate['slug']}: {candidate['status']} — {', '.join(candidate.get('reasons', []))}")
+              if report.get('fatal'):
+                  lines.append(f"Failure: {report['fatal']}")
+              with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output:
+                  output.write('\n'.join(lines) + '\n')
+          PY
