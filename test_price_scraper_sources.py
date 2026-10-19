@@ -401,6 +401,19 @@ def test_redmi_note_15_pro_requires_observed_radio_for_separate_4g_and_5g_varian
             {'source_title': title, 'url': 'https://shop.example/phone'}, specs) is expected, title
 
 
+def test_explicit_screen_parts_cannot_become_redmi_note_13_pro_phone_offers():
+    scraper = TRPriceScraper()
+    specs = {'ram_gb': 8, 'storage_gb': 128, 'network_generation': '5g'}
+    for part in ['Çıtalı Orjinal Dokunmatik Ekran', 'Orijinal Dokunmatik Ekran']:
+        title = f'Xiaomi Redmi Note 13 Pro 5G 8/128GB {part}'
+        assert not scraper.is_strict_match('Xiaomi Redmi Note 13 Pro', title, specs), part
+        assert not scraper.has_observed_offer_evidence('Xiaomi Redmi Note 13 Pro',
+            {'source_title': title, 'url': 'https://shop.example/redmi-note-13-pro-citali-orjinal-dokunmatik-ekran'}, specs)
+    # Legacy missing titles already fail closed at the source-side guard.
+    assert not scraper.has_observed_offer_evidence('Xiaomi Redmi Note 13 Pro',
+        {'source_title': None, 'url': 'https://shop.example/redmi-note-13-pro-citali-orjinal-dokunmatik-ekran'}, specs)
+
+
 if __name__ == '__main__':
     test_current_source_markup()
     print(f'✅ All {len(SOURCE_FIXTURES)} retailer markup fixtures passed')
@@ -427,4 +440,5 @@ if __name__ == '__main__':
     test_explicit_cross_family_galaxy_choices_do_not_establish_one_phone()
     test_cpu_descriptions_and_unrelated_sku_tokens_are_not_phone_choices()
     test_redmi_note_15_pro_requires_observed_radio_for_separate_4g_and_5g_variants()
+    test_explicit_screen_parts_cannot_become_redmi_note_13_pro_phone_offers()
     print('✅ Observed source title forwarding and aggregator provenance passed')
