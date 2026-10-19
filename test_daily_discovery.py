@@ -1,4 +1,6 @@
 import json
+from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
@@ -11,6 +13,30 @@ def listing(*names):
 
 
 class DiscoveryTests(unittest.TestCase):
+    def test_corrupt_or_missing_rotation_cache_is_not_a_publication_or_discovery_gate(self):
+        with tempfile.TemporaryDirectory(prefix='teknoskor-discovery-test-') as directory:
+            path = Path(directory) / 'state.json'
+            self.assertEqual(discovery.load_previous_state(path), {})
+            path.write_text('{interrupted')
+            self.assertEqual(discovery.load_previous_state(path), {})
+            path.write_text(json.dumps({'attempted': []}))
+            self.assertEqual(discovery.load_previous_state(path), {})
+
+    def test_rotation_state_discards_invalid_and_future_attempts(self):
+        with tempfile.TemporaryDirectory(prefix='teknoskor-discovery-test-') as directory:
+            path = Path(directory) / 'state.json'
+            path.write_text(json.dumps({'attempted': {'vivo-v70': discovery.utc_now(),
+                '../invalid': discovery.utc_now(), 'vivo-v80': '2099-01-01T00:00:00Z', 'vivo-v90': 'not-a-date'}}))
+            self.assertEqual(set(discovery.load_previous_state(path)['attempted']), {'vivo-v70'})
+
+    def test_checkpoint_replaces_only_its_own_valid_json_file(self):
+        with tempfile.TemporaryDirectory(prefix='teknoskor-discovery-test-') as directory:
+            path = Path(directory) / 'state.json'
+            discovery.write_json_checkpoint(path, {'created': 0})
+            discovery.write_json_checkpoint(path, {'created': 1})
+            self.assertEqual(json.loads(path.read_text()), {'created': 1})
+            self.assertFalse(path.with_name('state.json.tmp').exists())
+
     def test_official_listings_only_extract_single_models(self):
         html = '''<a href="/tr/products/v60">V60 yeni</a>
           <a href="/tr/products/v60">vivo V60</a>

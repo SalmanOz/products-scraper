@@ -42,6 +42,38 @@ def utc_now():
     return datetime.now(timezone.utc).isoformat(timespec='seconds').replace('+00:00', 'Z')
 
 
+def load_previous_state(path):
+    """Rotation is advisory; a missing/corrupt cache must not stop discovery."""
+    try:
+        if not path.is_file() or path.stat().st_size > 100_000:
+            return {}
+        raw = json.loads(path.read_text(encoding='utf-8'))
+        attempted = raw.get('attempted') if isinstance(raw, dict) else None
+        if not isinstance(attempted, dict) or len(attempted) > 500:
+            return {}
+        valid = {}
+        for slug, timestamp in attempted.items():
+            if not isinstance(slug, str) or not re.fullmatch(r'[a-z0-9]+(?:-[a-z0-9]+)*', slug) or len(slug) > 160 or not isinstance(timestamp, str):
+                continue
+            try:
+                date = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                if date.tzinfo is None or (date - datetime.now(timezone.utc)).total_seconds() > 300:
+                    continue
+                valid[slug] = date.astimezone(timezone.utc).isoformat()
+            except ValueError:
+                continue
+        return {'attempted': valid}
+    except (OSError, ValueError):
+        return {}
+
+
+def write_json_checkpoint(path, value):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + '.tmp')
+    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding='utf-8')
+    temporary.replace(path)
+
+
 def slugify(name):
     value = unicodedata.normalize('NFKD', name.replace('+', ' plus ')).encode('ascii', 'ignore').decode().lower()
     return re.sub('[^a-z0-9]+', '-', value).strip('-')
@@ -351,18 +383,17 @@ def main():
     code = 0
     def checkpoint(value):
         path = Path(args.report)
-        path.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding='utf-8')
+        write_json_checkpoint(path, value)
         if value.get('attempted') is not None:
             state_path = Path(args.state)
-            state_path.parent.mkdir(parents=True, exist_ok=True)
-            state_path.write_text(json.dumps({'attempted': value['attempted']}), encoding='utf-8')
+            write_json_checkpoint(state_path, {'attempted': value['attempted']})
     try:
         client = SourceIngestionClient.from_env()
         reader = PublicReader()
         specs = PublicSpecificationScraper(reader, ingestion_client=client, require_images=True,
             image_store=DiscoveryImageStore(required=True))
         state_path = Path(args.state)
-        previous = json.loads(state_path.read_text()) if state_path.is_file() else {}
+        previous = load_previous_state(state_path)
         run_discovery(client=client, reader=reader, specs=specs, price_scraper=TRPriceScraper(),
                       refresher=RetailerOfferRefresher(), publish=args.publish, previous=previous, report=report,
                       checkpoint=checkpoint)
