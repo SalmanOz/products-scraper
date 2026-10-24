@@ -665,7 +665,7 @@ class TRPriceScraper:
         observed_radio = self._radio_generation(title)
         # These catalog families have both radio variants. Missing radio in
         # the sale title cannot select the 5G profile merely from its CPU.
-        if re.search(r'\bredmi note (?:11|12|13|14|15)\b|\bgalaxy a(?:14|15|16|17)\b', self._normalize_words(product_name)):
+        if re.search(r'\bredmi note (?:11|12|13|14|15)\b|\bgalaxy a(?:14|15|16|17)\b|\btecno spark slim\b', self._normalize_words(product_name)):
             if radio not in {'4g', '5g'} or observed_radio != radio:
                 return False
         try:

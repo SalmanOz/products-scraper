@@ -10,6 +10,7 @@ import requests
 
 from recover_reviewed_offers import load_profiles, recover, rejection_reason, validate_browser_evidence, validate_catalog
 from source_ingestion import CatalogProduct
+from tr_price_scraper import TRPriceScraper
 
 
 NOW = datetime(2026, 10, 25, 12, tzinfo=timezone.utc)
@@ -88,6 +89,17 @@ class ReviewedRecoveryTests(unittest.TestCase):
             self.assertIsNotNone(rejection_reason(profile, {**base, 'source_title': title}, NOW))
         self.assertIsNone(rejection_reason(profile, {**base,
             'source_title': 'Tecno Spark Slim 5G 256GB 8GB RAM Türkiye Garantili'}, NOW))
+
+    def test_daily_source_guard_also_holds_ambiguous_spark_slim_radio(self):
+        scraper = TRPriceScraper()
+        profile = self.profiles[0]
+        base = {'url': 'https://www.idefix.com/tecno-spark-slim-256gb-8gb-p-123'}
+        for title in ['Tecno Spark Slim 256GB 8GB RAM Türkiye Garantili',
+                      'Tecno Spark Slim 4G 256GB 8GB RAM Türkiye Garantili']:
+            self.assertFalse(scraper.has_observed_offer_evidence(profile['name'],
+                {**base, 'source_title': title}, profile))
+        self.assertTrue(scraper.has_observed_offer_evidence(profile['name'],
+            {**base, 'source_title': 'Tecno Spark Slim 5G 256GB 8GB RAM Türkiye Garantili'}, profile))
 
     def test_audit_never_writes_and_reports_quality_blockers_honestly(self):
         reader = Mock()
