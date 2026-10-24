@@ -29,7 +29,10 @@
     {
       "id": 278, "slug": "samsung-galaxy-a37-5g", "name": "Samsung Galaxy A37 5G",
       "ram_gb": 6, "storage_gb": 128, "network_generation": "5g",
-      "targets": ["https://www.turkcell.com.tr/pasaj/cep-telefonu/android-telefonlar/samsung-galaxy-a37-5g-6gb-ram-128-gb"]
+      "targets": [
+        "https://www.turkcell.com.tr/pasaj/cep-telefonu/android-telefonlar/samsung-galaxy-a37-5g-6gb-ram-128-gb",
+        "https://www.teknosa.com/samsung-galaxy-a37-5g-128-gb-6-gb-ram-lavanta-moru-cep-telefonu-samsung-turkiye-garantili-p-780011029"
+      ]
     },
     {
       "id": 264, "slug": "samsung-galaxy-a57-5g", "name": "Samsung Galaxy A57 5G",
@@ -49,7 +52,8 @@
       "ram_gb": 8, "storage_gb": 256, "network_generation": "5g",
       "targets": [
         "https://www.trendyol.com/poco/x7-pro-8gb-ram-256gb-rom-siyah-p-887495928",
-        "https://www.hepsiburada.com/poco-x7-pro-256-gb-8-gb-ram-poco-turkiye-garantili-siyah-p-HBCV00007MJ4N8"
+        "https://www.hepsiburada.com/poco-x7-pro-256-gb-8-gb-ram-poco-turkiye-garantili-siyah-p-HBCV00007MJ4N8",
+        "https://www.hepsiburada.com/poco-x7-pro-256-gb-8-gb-ram-poco-turkiye-garantili-sari-p-HBCV00007MIO6F"
       ]
     }
   ]

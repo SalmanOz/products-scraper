@@ -1,0 +1,35 @@
+{
+  "note": "Actual selected live browser PDP observations, not search-cache prices. Explicit opt-in only. Expire after 15 minutes, not refreshable by changing timestamps. Recapture the live page for any later application.",
+  "observations": [
+    {
+      "product_id": 264, "product_slug": "samsung-galaxy-a57-5g",
+      "evidence_method": "live_browser_selected_pdp", "purchase_enabled": true,
+      "merchant": "Teknosa", "selected_seller": "BittiBitiyor",
+      "source_title": "Samsung Galaxy A57 5G 128 GB 8 GB RAM Lila Cep Telefonu ( Türkiye Garantili)",
+      "price": 29999, "displayed_cash_price": "29.999 TL", "currency": "TRY", "availability": "in_stock",
+      "url": "https://www.teknosa.com/samsung-galaxy-a57-5g-128-gb-8-gb-ram-lila-cep-telefonu-samsung-turkiye-garantili-p-780011010",
+      "observed_at": "2026-10-24T22:26:25.918Z",
+      "proof_quote": "Samsung Galaxy A57 5G 128 GB 8 GB RAM Lila Cep Telefonu ( Türkiye Garantili)\n29.999 TL\n1-2 iş günü içinde kargoda\nSatıcı:\nBittiBitiyor\nSepete Ekle"
+    },
+    {
+      "product_id": 279, "product_slug": "samsung-galaxy-a27-5g",
+      "evidence_method": "live_browser_selected_pdp", "purchase_enabled": true,
+      "merchant": "Teknosa", "selected_seller": "BittiBitiyor",
+      "source_title": "Samsung Galaxy A27 5G 6 GB RAM 128 GB Siyah Cep Telefonu ( Türkiye Garantili)",
+      "price": 19189, "displayed_cash_price": "19.189 TL", "currency": "TRY", "availability": "in_stock",
+      "url": "https://www.teknosa.com/samsung-galaxy-a27-5g-6-gb-ram-128-gb-siyah-cep-telefonu-samsung-turkiye-garantili-p-780010996",
+      "observed_at": "2026-10-24T22:26:29.050Z",
+      "proof_quote": "Samsung Galaxy A27 5G 6 GB RAM 128 GB Siyah Cep Telefonu ( Türkiye Garantili)\n19.189 TL\n1-2 iş günü içinde kargoda\nSatıcı:\nBittiBitiyor\nSepete Ekle"
+    },
+    {
+      "product_id": 273, "product_slug": "poco-x7-pro",
+      "evidence_method": "live_browser_selected_pdp", "purchase_enabled": true,
+      "merchant": "Hepsiburada", "selected_seller": "CeSE Market",
+      "source_title": "POCO X7 Pro 256 GB 8 GB Ram (Poco Türkiye Garantili) Sarı",
+      "price": 31865.06, "displayed_cash_price": "31.865,06 TL", "currency": "TRY", "availability": "in_stock",
+      "url": "https://www.hepsiburada.com/poco-x7-pro-256-gb-8-gb-ram-poco-turkiye-garantili-sari-p-HBCV00007MIO6F",
+      "observed_at": "2026-10-24T22:27:14.289Z",
+      "proof_quote": "POCO X7 Pro 256 GB 8 GB Ram (Poco Türkiye Garantili) Sarı\nSatıcı:\nCeSE Market\n31.865,06 TL\nKapasite: 256 GB\nRenk: Sarı\nSepete ekle"
+    }
+  ]
+}

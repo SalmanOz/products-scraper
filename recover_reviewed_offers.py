@@ -19,6 +19,7 @@ from tr_price_scraper import TRPriceScraper
 
 BATCH = Path(__file__).parent / 'offer_batches/budget-eight-2026-10-25.json'
 REPORT = Path('reviewed-offer-report.json')
+BROWSER_EVIDENCE = Path(__file__).parent / 'offer_batches/browser-observations-2026-10-25.json'
 EXPECTED_REFERENCES = {
     'tecno-spark-slim-5g': 244, 'tecno-camon-20-pro': 218,
     'tecno-camon-40': 267, 'samsung-galaxy-a27-5g': 279,
@@ -82,8 +83,39 @@ def rejection_reason(profile, offer, now):
     return None
 
 
-def recover(profiles, catalog, target_catalog, refresher, writer=None, now=None):
+def validate_browser_evidence(profiles, observations, now):
+    """Manual live UI observations, never cached search snippets or daily seeds.
+
+    This opt-in batch expires in 15 minutes just like HTTP observations. The
+    selected title/price/buy control and actual URL were read in the browser;
+    they are not invented to repair missing retailer structured data.
+    """
+    profiles_by_slug = {p['slug']: p for p in profiles}
+    for row in observations:
+        profile = profiles_by_slug.get(row.get('product_slug'))
+        if (not profile or row.get('product_id') != profile['id']
+                or row.get('url') not in profile['targets']
+                or row.get('evidence_method') != 'live_browser_selected_pdp'
+                or row.get('purchase_enabled') is not True
+                or not isinstance(row.get('selected_seller'), str)
+                or not row['selected_seller'].strip()):
+            raise ValueError('Unreviewed browser evidence scope or purchase state')
+        proof = row.get('proof_quote', '')
+        price_text = row.get('displayed_cash_price', '')
+        if (not isinstance(proof, str) or row.get('source_title', '') not in proof
+                or row['selected_seller'] not in proof or price_text not in proof
+                or not re.search(r'sepete ekle', proof, re.I)
+                or not re.fullmatch(r'\d{1,3}(?:\.\d{3})*(?:,\d{2})? TL', price_text)
+                or float(price_text[:-3].replace('.', '').replace(',', '.')) != row.get('price')):
+            raise ValueError('Browser quote does not support exact selected cash offer')
+        reason = rejection_reason(profile, row, now)
+        if reason:
+            raise ValueError(f"Browser evidence rejected: {profile['slug']} / {reason}")
+
+
+def recover(profiles, catalog, target_catalog, refresher, writer=None, now=None, browser_evidence=()):
     by_slug = validate_catalog(profiles, catalog)  # fail whole batch before any writes
+    validate_browser_evidence(profiles, browser_evidence, now or datetime.now(timezone.utc))
     targets_by_slug = {p['slug']: p for p in target_catalog}
     rows, payload = [], []
     for profile in profiles:
@@ -96,6 +128,7 @@ def recover(profiles, catalog, target_catalog, refresher, writer=None, now=None)
             t['source_url'] for t in existing.get('offer_targets', [])
             if _safe_url(t.get('source_url'))]))[:12]
         observations = refresher.refresh_existing_offer_targets(profile['name'], targets, profile)
+        observations += [dict(row) for row in browser_evidence if row['product_slug'] == profile['slug']]
         decisions, best = [], {}
         for offer in observations:
             reason = rejection_reason(profile, offer, now or datetime.now(timezone.utc))
@@ -146,12 +179,16 @@ def recover(profiles, catalog, target_catalog, refresher, writer=None, now=None)
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--apply', action='store_true', help='Submit only fresh exact observed offers')
+    parser.add_argument('--include-reviewed-browser-evidence', action='store_true',
+                        help='Opt in to this session\'s reviewed live UI observations; expired evidence fails closed')
     args = parser.parse_args()
     offer_client = OfferIngestionClient.from_env()
     source_client = SourceIngestionClient.from_env()
     report = recover(load_profiles(), source_client.fetch_catalog(page_size=500),
                      offer_client.get_published_products(), RetailerOfferRefresher(),
-                     offer_client if args.apply else None)
+                     offer_client if args.apply else None,
+                     browser_evidence=(json.loads(BROWSER_EVIDENCE.read_text())['observations']
+                                       if args.include_reviewed_browser_evidence else ()))
     REPORT.write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n')
     print(json.dumps(report, ensure_ascii=False))
 

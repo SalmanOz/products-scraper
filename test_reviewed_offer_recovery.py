@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 
 import requests
 
-from recover_reviewed_offers import load_profiles, recover, rejection_reason, validate_catalog
+from recover_reviewed_offers import load_profiles, recover, rejection_reason, validate_browser_evidence, validate_catalog
 from source_ingestion import CatalogProduct
 
 
@@ -120,6 +120,38 @@ class ReviewedRecoveryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             recover(self.profiles, self.catalog, changed, reader, writer, NOW)
         writer.ingest_offers.assert_not_called()
+
+    def test_reviewed_browser_evidence_expires_and_cannot_invent_price_or_purchase_state(self):
+        row = {**self.offer, 'product_id': self.profile['id'], 'product_slug': self.profile['slug'],
+               'evidence_method': 'live_browser_selected_pdp', 'purchase_enabled': True,
+               'selected_seller': 'Example Store', 'displayed_cash_price': '28.699 TL',
+               'proof_quote': self.offer['source_title'] + '\n28.699 TL\nExample Store\nSepete Ekle'}
+        validate_browser_evidence(self.profiles, [row], NOW)
+        for changes in [
+            {'price': 20000}, {'purchase_enabled': False}, {'proof_quote': ''},
+            {'product_id': 999}, {'product_slug': 'unreviewed-phone'},
+            {'url': 'https://www.teknosa.com/another-a57-128gb-8gb'},
+            {'evidence_method': 'search_snippet'},
+            {'observed_at': (NOW - timedelta(minutes=16)).isoformat()},
+        ]:
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                validate_browser_evidence(self.profiles, [{**row, **changes}], NOW)
+
+    def test_browser_evidence_obeys_same_variant_rules_and_is_not_used_by_default(self):
+        reader = Mock()
+        reader.refresh_existing_offer_targets.return_value = []
+        row = {**self.offer, 'product_id': self.profile['id'], 'product_slug': self.profile['slug'],
+               'evidence_method': 'live_browser_selected_pdp', 'purchase_enabled': True,
+               'selected_seller': 'Example Store', 'displayed_cash_price': '28.699 TL',
+               'proof_quote': self.offer['source_title'] + '\n28.699 TL\nExample Store\nSepete Ekle'}
+        self.assertEqual(recover(self.profiles, self.catalog, self.targets, reader, now=NOW)['eligible_offers'], 0)
+        report = recover(self.profiles, self.catalog, self.targets, reader, now=NOW, browser_evidence=[row])
+        self.assertEqual(report['eligible_offers'], 1)
+        self.assertEqual(report['submitted_offers'], 0)
+        wrong = {**row, 'source_title': row['source_title'].replace('128 GB', '256 GB')}
+        wrong['proof_quote'] = wrong['source_title'] + '\n28.699 TL\nExample Store\nSepete Ekle'
+        with self.assertRaises(ValueError):
+            validate_browser_evidence(self.profiles, [wrong], NOW)
 
 
 if __name__ == '__main__':

@@ -8,6 +8,10 @@ on:
         type: choice
         options: [audit, apply]
         default: audit
+      include_reviewed_browser_evidence:
+        description: 'Opt in to session-reviewed live UI observations (expire after 15 minutes; never reused daily)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -33,10 +37,12 @@ jobs:
           TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
           SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
           RECOVERY_MODE: ${{ inputs.mode }}
+          INCLUDE_BROWSER_EVIDENCE: ${{ inputs.include_reviewed_browser_evidence }}
         run: |
           set -euo pipefail
           args=()
           if [[ "$RECOVERY_MODE" == "apply" ]]; then args+=(--apply); fi
+          if [[ "$INCLUDE_BROWSER_EVIDENCE" == "true" ]]; then args+=(--include-reviewed-browser-evidence); fi
           python recover_reviewed_offers.py "${args[@]}"
       - uses: actions/upload-artifact@v4
         if: always()
