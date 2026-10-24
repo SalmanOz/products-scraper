@@ -139,6 +139,13 @@ def recover(profiles, catalog, target_catalog, refresher, writer=None, now=None,
         decisions, best = [], {}
         for offer in observations:
             reason = rejection_reason(profile, offer, now or datetime.now(timezone.utc))
+            reviewed_selected = next((b for b in browser_evidence
+                if b['product_slug'] == profile['slug'] and b['url'] == offer.get('url')), None)
+            if (reviewed_selected and offer.get('evidence_method') != 'live_browser_selected_pdp'
+                    and offer.get('price') != reviewed_selected['price']):
+                # A known conditional basket/coupon price must not win the
+                # minimum merely because JSON-LD omits its conditions.
+                reason = 'price_conflicts_with_reviewed_selected_cash_offer'
             decisions.append({**offer, 'decision': reason or 'eligible'})
             if reason:
                 continue

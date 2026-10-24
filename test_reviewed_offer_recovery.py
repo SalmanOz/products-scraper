@@ -174,6 +174,21 @@ class ReviewedRecoveryTests(unittest.TestCase):
             with self.subTest(changes=changes), self.assertRaises(ValueError):
                 validate_browser_evidence(self.profiles, [{**row, **changes}], NOW)
 
+    def test_conditional_or_conflicting_schema_price_cannot_undercut_reviewed_cash_offer(self):
+        row = {**self.offer, 'product_id': self.profile['id'], 'product_slug': self.profile['slug'],
+               'evidence_method': 'live_browser_selected_pdp', 'purchase_enabled': True,
+               'selected_seller': 'Example Store', 'displayed_cash_price': '28.699 TL',
+               'proof_quote': self.offer['source_title'] + '\n28.699 TL\nExample Store\nSepete Ekle'}
+        reader, writer = Mock(), Mock()
+        reader.refresh_existing_offer_targets.side_effect = lambda name, *args: (
+            [{**self.offer, 'price': 20000}] if name == self.profile['name'] else [])
+        writer.ingest_offers.return_value = {'committed': True, 'accepted': 1}
+        report = recover(self.profiles, self.catalog, self.targets, reader, writer, NOW, [row])
+        submitted = writer.ingest_offers.call_args.args[0]
+        self.assertEqual([r['price'] for r in submitted], [28699.0])
+        decisions = next(p for p in report['products'] if p['slug'] == self.profile['slug'])['observations']
+        self.assertEqual(decisions[0]['decision'], 'price_conflicts_with_reviewed_selected_cash_offer')
+
 
 if __name__ == '__main__':
     unittest.main()
