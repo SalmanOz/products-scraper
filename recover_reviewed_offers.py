@@ -1,0 +1,160 @@
+"""Scoped known-PDP recovery. Audit is GET-only; apply uses the normal API.
+
+No schema changes, product creation, technical claims, source-score promotion,
+aggregator prices, challenge solving, or direct database writes are performed.
+"""
+
+import argparse
+from datetime import datetime, timezone
+import json
+import math
+from pathlib import Path
+import re
+
+from offer_ingestion_client import OfferIngestionClient
+from retailer_offer_refresh import ALLOWED_HOSTS, RetailerOfferRefresher, _safe_url
+from source_ingestion import SourceIngestionClient
+from tr_price_scraper import TRPriceScraper
+
+
+BATCH = Path(__file__).parent / 'offer_batches/budget-eight-2026-10-25.json'
+REPORT = Path('reviewed-offer-report.json')
+EXPECTED_REFERENCES = {
+    'tecno-spark-slim-5g': 244, 'tecno-camon-20-pro': 218,
+    'tecno-camon-40': 267, 'samsung-galaxy-a27-5g': 279,
+    'samsung-galaxy-a37-5g': 278, 'samsung-galaxy-a57-5g': 264,
+    'samsung-galaxy-a54-5g': 31, 'poco-x7-pro': 273,
+}
+
+
+def load_profiles():
+    profiles = json.loads(BATCH.read_text())['products']
+    if (len(profiles) != len(EXPECTED_REFERENCES)
+            or {p['slug']: p['id'] for p in profiles} != EXPECTED_REFERENCES
+            or any(not p['targets'] or any(not _safe_url(u) for u in p['targets'])
+                   for p in profiles)):
+        raise ValueError('Reviewed eight-product scope is invalid')
+    return profiles
+
+
+def validate_catalog(profiles, catalog):
+    by_slug = {p.slug: p for p in catalog}
+    for profile in profiles:
+        product = by_slug.get(profile['slug'])
+        if not product or product.id != profile['id'] or product.name != profile['name']:
+            raise ValueError(f"Catalog reference changed: {profile['slug']}")
+        for key in ('ram_gb', 'storage_gb'):
+            if (isinstance(product.attributes.get(key), bool)
+                    or TRPriceScraper._spec_int(product.attributes.get(key)) != profile[key]):
+                raise ValueError(f"Catalog variant changed: {profile['slug']} / {key}")
+    return by_slug
+
+
+def rejection_reason(profile, offer, now):
+    scraper = TRPriceScraper()
+    title = offer.get('source_title', '')
+    if not scraper.has_observed_offer_evidence(profile['name'], offer, profile):
+        return 'identity_or_variant_not_verified'
+    if profile.get('require_explicit_radio') and scraper._radio_generation(title) != profile['network_generation']:
+        return 'ambiguous_radio_variant'
+    parsed = _safe_url(offer.get('url'))
+    if not parsed or offer.get('merchant') != ALLOWED_HOSTS[parsed.hostname]:
+        return 'merchant_or_url_not_verified'
+    normalized = scraper._normalize_words(title)
+    if re.search(r'\b(?:ithalatci|ithalat|yurt disi|global garanti)\b', normalized):
+        return 'warranty_conflict'
+    if not re.search(r'\b(?:turkiye|tr)\s+garantili\b', normalized):
+        return 'turkey_warranty_not_explicit'
+    if offer.get('availability') not in {'in_stock', 'limited'}:
+        return 'not_currently_purchasable'
+    price = offer.get('price')
+    if (isinstance(price, bool) or not isinstance(price, (int, float))
+            or not math.isfinite(price) or not 0 < price <= 5_000_000
+            or offer.get('currency') != 'TRY'):
+        return 'not_an_exact_try_cash_price'
+    try:
+        observed = datetime.fromisoformat(offer['observed_at'].replace('Z', '+00:00'))
+        age = (now - observed).total_seconds()
+        if age < -60 or age > 900:
+            return 'observation_not_from_this_run'
+    except (KeyError, TypeError, ValueError):
+        return 'invalid_observation_time'
+    return None
+
+
+def recover(profiles, catalog, target_catalog, refresher, writer=None, now=None):
+    by_slug = validate_catalog(profiles, catalog)  # fail whole batch before any writes
+    targets_by_slug = {p['slug']: p for p in target_catalog}
+    rows, payload = [], []
+    for profile in profiles:
+        product = by_slug[profile['slug']]
+        existing = targets_by_slug.get(profile['slug'], {})
+        if existing.get('id') != product.id:
+            raise ValueError(f"Offer catalog reference changed: {profile['slug']}")
+        # Reviewed new merchants first, then stored PDPs. Neither is price proof.
+        targets = list(dict.fromkeys(profile['targets'] + [
+            t['source_url'] for t in existing.get('offer_targets', [])
+            if _safe_url(t.get('source_url'))]))[:12]
+        observations = refresher.refresh_existing_offer_targets(profile['name'], targets, profile)
+        decisions, best = [], {}
+        for offer in observations:
+            reason = rejection_reason(profile, offer, now or datetime.now(timezone.utc))
+            decisions.append({**offer, 'decision': reason or 'eligible'})
+            if reason:
+                continue
+            merchant = offer['merchant']
+            if merchant not in best or offer['price'] < best[merchant]['price']:
+                best[merchant] = offer
+        for offer in best.values():
+            payload.append({
+                'product_id': product.id, 'product_slug': product.slug,
+                'merchant_name': offer['merchant'], 'price': offer['price'],
+                'currency': 'TRY', 'availability': offer['availability'],
+                'source_url': offer['url'], 'source_title': offer['source_title'],
+                'observed_at': offer['observed_at'], 'checked_at': offer['observed_at'],
+                'is_official': False,
+            })
+        rows.append({
+            'slug': product.slug, 'id': product.id,
+            'variant': {key: profile[key] for key in ('ram_gb', 'storage_gb', 'network_generation')},
+            'quality_status': product.data_quality_status,
+            'quality_issues': list(product.data_quality_issues),
+            'spec_verified_at': product.spec_verified_at,
+            'targets': targets, 'observations': decisions,
+            'eligible_merchants': sorted(best),
+            'fresh_pair_observed': len(best) >= 2,
+            'unresolved': ([] if observations else ['no_unambiguous_live_pdp_offer'])
+                + ([] if len(best) >= 2 else ['two_current_same_variant_merchants_not_verified']),
+        })
+    # Recheck observation age at the actual write boundary, not just at fetch.
+    for profile in profiles:
+        for row in [p for p in payload if p['product_slug'] == profile['slug']]:
+            reason = rejection_reason(profile, {
+                **row, 'merchant': row['merchant_name'], 'url': row['source_url'],
+            }, now or datetime.now(timezone.utc))
+            if reason:
+                raise ValueError(f"Observation expired before submission: {profile['slug']} / {reason}")
+    report = {'mode': 'apply' if writer else 'audit', 'products': rows,
+              'eligible_offers': len(payload), 'submitted_offers': 0,
+              'ingestion': None}
+    if writer and payload:
+        report['ingestion'] = writer.ingest_offers(payload)
+        report['submitted_offers'] = len(payload)
+    return report
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--apply', action='store_true', help='Submit only fresh exact observed offers')
+    args = parser.parse_args()
+    offer_client = OfferIngestionClient.from_env()
+    source_client = SourceIngestionClient.from_env()
+    report = recover(load_profiles(), source_client.fetch_catalog(page_size=500),
+                     offer_client.get_published_products(), RetailerOfferRefresher(),
+                     offer_client if args.apply else None)
+    REPORT.write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n')
+    print(json.dumps(report, ensure_ascii=False))
+
+
+if __name__ == '__main__':
+    main()

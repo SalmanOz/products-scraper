@@ -1,0 +1,56 @@
+{
+  "purpose": "Reviewed discovery URLs only; no remembered prices, stock or scores. Live evidence is required on every run.",
+  "products": [
+    {
+      "id": 244, "slug": "tecno-spark-slim-5g", "name": "Tecno Spark Slim",
+      "ram_gb": 8, "storage_gb": 256, "network_generation": "5g",
+      "require_explicit_radio": true,
+      "identity_reference": "https://turkiye.tecno-mobile.com/phones/product-detail/product/spark-slim-5g/",
+      "targets": ["https://www.teknosa.com/tecno-spark-slim-5g-8256-gb-siyah-akilli-telefon-p-100000059460"]
+    },
+    {
+      "id": 218, "slug": "tecno-camon-20-pro", "name": "Tecno Camon 20 Pro",
+      "ram_gb": 8, "storage_gb": 256, "network_generation": "4g",
+      "targets": [
+        "https://www.trendyol.com/tecno/camon-20-pro-ck7n-8-256-gb-mavi-tecno-turkiye-garantili-p-767044346",
+        "https://www.trendyol.com/tecno/camon-20-pro-256gb-8gb-ram-siyah-tecno-turkiye-garantili-p-758782071"
+      ]
+    },
+    {
+      "id": 267, "slug": "tecno-camon-40", "name": "Tecno Camon 40",
+      "ram_gb": 8, "storage_gb": 256, "network_generation": "4g",
+      "targets": ["https://www.trendyol.com/tecno/camon-40-cm5-8-256-gb-titanyum-tecno-turkiye-garantili-p-1115017671"]
+    },
+    {
+      "id": 279, "slug": "samsung-galaxy-a27-5g", "name": "Samsung Galaxy A27 5G",
+      "ram_gb": 6, "storage_gb": 128, "network_generation": "5g",
+      "targets": ["https://www.teknosa.com/samsung-galaxy-a27-5g-6-gb-ram-128-gb-siyah-cep-telefonu-samsung-turkiye-garantili-p-780010996"]
+    },
+    {
+      "id": 278, "slug": "samsung-galaxy-a37-5g", "name": "Samsung Galaxy A37 5G",
+      "ram_gb": 6, "storage_gb": 128, "network_generation": "5g",
+      "targets": ["https://www.turkcell.com.tr/pasaj/cep-telefonu/android-telefonlar/samsung-galaxy-a37-5g-6gb-ram-128-gb"]
+    },
+    {
+      "id": 264, "slug": "samsung-galaxy-a57-5g", "name": "Samsung Galaxy A57 5G",
+      "ram_gb": 8, "storage_gb": 128, "network_generation": "5g",
+      "targets": [
+        "https://www.teknosa.com/samsung-galaxy-a57-5g-128-gb-8-gb-ram-lila-cep-telefonu-samsung-turkiye-garantili-p-780011010",
+        "https://www.hepsiburada.com/samsung-galaxy-a57-5g-128-gb-8-gb-ram-samsung-turkiye-garantili-gri-p-HBCV0000I7FNWM"
+      ]
+    },
+    {
+      "id": 31, "slug": "samsung-galaxy-a54-5g", "name": "Samsung Galaxy A54 5G",
+      "ram_gb": 8, "storage_gb": 128, "network_generation": "5g",
+      "targets": ["https://www.trendyol.com/samsung/galaxy-a54-5g-128-gb-8-gb-ram-grafit-p-676507062"]
+    },
+    {
+      "id": 273, "slug": "poco-x7-pro", "name": "POCO X7 Pro",
+      "ram_gb": 8, "storage_gb": 256, "network_generation": "5g",
+      "targets": [
+        "https://www.trendyol.com/poco/x7-pro-8gb-ram-256gb-rom-siyah-p-887495928",
+        "https://www.hepsiburada.com/poco-x7-pro-256-gb-8-gb-ram-poco-turkiye-garantili-siyah-p-HBCV00007MJ4N8"
+      ]
+    }
+  ]
+}

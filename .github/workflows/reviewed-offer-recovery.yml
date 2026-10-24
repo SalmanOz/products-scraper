@@ -1,0 +1,46 @@
+name: Reviewed Budget Offer Recovery
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Audit is GET-only. Apply rereads live PDPs and submits exact verified offers only.'
+        type: choice
+        options: [audit, apply]
+        default: audit
+
+permissions:
+  contents: read
+concurrency:
+  group: teknoskor-daily-data-sync
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Offline safety tests
+        run: python -m unittest -q test_reviewed_offer_recovery test_retailer_offer_refresh test_offer_ingestion_client
+      - name: Inspect eight reviewed variants and live offers
+        env:
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+          RECOVERY_MODE: ${{ inputs.mode }}
+        run: |
+          set -euo pipefail
+          args=()
+          if [[ "$RECOVERY_MODE" == "apply" ]]; then args+=(--apply); fi
+          python recover_reviewed_offers.py "${args[@]}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: reviewed-budget-offers-${{ github.run_id }}
+          path: reviewed-offer-report.json
+          retention-days: 30
