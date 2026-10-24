@@ -2,6 +2,18 @@
   "note": "Actual selected live browser PDP observations, not search-cache prices. Explicit opt-in only. Expire after 15 minutes, not refreshable by changing timestamps. Recapture the live page for any later application.",
   "observations": [
     {
+      "product_id": 218, "product_slug": "tecno-camon-20-pro",
+      "evidence_method": "live_browser_selected_pdp", "purchase_enabled": true,
+      "merchant": "PttAVM", "selected_seller": "Birtane Telekom",
+      "seller_concentration_note": "The current idefix offer is also sold by Birtane Telekom. These are two checkout platforms, not two independent inventory owners.",
+      "source_title": "TECNO Camon 20 Pro CK7N 8/256 GB Mr.Doodle (Tecno Türkiye Garantili)",
+      "price": 17000, "displayed_cash_price": "17.000 TL", "currency": "TRY", "availability": "in_stock",
+      "conditional_basket_price_not_imported": 15470,
+      "url": "https://www.pttavm.com/tecno-camon-20-pro-ck7n-8-256-gb-mr-doodle-tecno-turkiye-garantili-p-1559762387",
+      "observed_at": "2026-10-24T22:30:56.235Z",
+      "proof_quote": "TECNO Camon 20 Pro CK7N 8/256 GB Mr.Doodle (Tecno Türkiye Garantili)\n17.000 TL\nSepete Özel\n15.470 TL\nSepete Ekle\n1 gün içinde kargoda\nSatıcı:\nBirtane Telekom"
+    },
+    {
       "product_id": 278, "product_slug": "samsung-galaxy-a37-5g",
       "evidence_method": "live_browser_selected_pdp", "purchase_enabled": true,
       "merchant": "Hepsiburada", "selected_seller": "Okay İletişim",
