@@ -153,6 +153,27 @@ class ReviewedRecoveryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_browser_evidence(self.profiles, [wrong], NOW)
 
+    def test_literal_warranty_field_is_supported_without_fabricating_title(self):
+        title = self.offer['source_title'].replace('(Samsung Türkiye Garantili)', '').strip()
+        row = {**self.offer, 'source_title': title, 'product_id': self.profile['id'],
+               'product_slug': self.profile['slug'], 'evidence_method': 'live_browser_selected_pdp',
+               'purchase_enabled': True, 'selected_seller': 'Example Store',
+               'displayed_cash_price': '28.699 TL',
+               'warranty_evidence': 'Garanti Tipi\nSamsung Türkiye Garantili',
+               'proof_quote': title + '\n28.699 TL\nExample Store\nSepete Ekle\nGaranti Tipi\nSamsung Türkiye Garantili'}
+        validate_browser_evidence(self.profiles, [row], NOW)
+        reader, writer = Mock(), Mock()
+        reader.refresh_existing_offer_targets.return_value = []
+        writer.ingest_offers.return_value = {'committed': True, 'accepted': 1}
+        recover(self.profiles, self.catalog, self.targets, reader, writer, NOW, [row])
+        self.assertEqual(writer.ingest_offers.call_args.args[0][0]['source_title'], title)
+        for changes in [{'warranty_evidence': 'Not on the page'},
+                        {'proof_quote': title + '\n28.699 TL\nExample Store\nSepete Ekle'},
+                        {'warranty_evidence': 'Garanti Tipi\nİthalatçı Garantili',
+                         'proof_quote': title + '\n28.699 TL\nExample Store\nSepete Ekle\nGaranti Tipi\nİthalatçı Garantili'}]:
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                validate_browser_evidence(self.profiles, [{**row, **changes}], NOW)
+
 
 if __name__ == '__main__':
     unittest.main()

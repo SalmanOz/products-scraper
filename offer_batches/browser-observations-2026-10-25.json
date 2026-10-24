@@ -2,6 +2,17 @@
   "note": "Actual selected live browser PDP observations, not search-cache prices. Explicit opt-in only. Expire after 15 minutes, not refreshable by changing timestamps. Recapture the live page for any later application.",
   "observations": [
     {
+      "product_id": 278, "product_slug": "samsung-galaxy-a37-5g",
+      "evidence_method": "live_browser_selected_pdp", "purchase_enabled": true,
+      "merchant": "Hepsiburada", "selected_seller": "Okay İletişim",
+      "source_title": "Samsung Galaxy A37 5g 6GB/128GB Cep Telefonu",
+      "warranty_evidence": "Garanti Tipi\nSamsung Türkiye Garantili",
+      "price": 21500, "displayed_cash_price": "21.500,00 TL", "currency": "TRY", "availability": "in_stock",
+      "url": "https://www.hepsiburada.com/samsung-galaxy-a37-5g-6gb-128gb-cep-telefonu-p-HBCV0000ESY588",
+      "observed_at": "2026-10-24T22:29:34.102Z",
+      "proof_quote": "Samsung Galaxy A37 5g 6GB/128GB Cep Telefonu\nSatıcı:\nOkay İletişim\n21.500,00 TL\nKapasite: 128 GB\nRenk: Beyaz\nSepete ekle\nRAM Kapasitesi\n6 GB RAM\nGaranti Tipi\nSamsung Türkiye Garantili"
+    },
+    {
       "product_id": 267, "product_slug": "tecno-camon-40",
       "evidence_method": "live_browser_selected_pdp", "purchase_enabled": true,
       "merchant": "Hepsiburada", "selected_seller": "YAZICI TİCARET",

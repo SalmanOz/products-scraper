@@ -61,7 +61,14 @@ def rejection_reason(profile, offer, now):
     parsed = _safe_url(offer.get('url'))
     if not parsed or offer.get('merchant') != ALLOWED_HOSTS[parsed.hostname]:
         return 'merchant_or_url_not_verified'
-    normalized = scraper._normalize_words(title)
+    # A literal, reviewed warranty field on the same selected PDP is equally
+    # valid evidence; never append it to or manufacture the retailer title.
+    warranty = ''
+    if (offer.get('evidence_method') == 'live_browser_selected_pdp'
+            and isinstance(offer.get('warranty_evidence'), str)
+            and offer['warranty_evidence'] in offer.get('proof_quote', '')):
+        warranty = offer['warranty_evidence']
+    normalized = scraper._normalize_words(title + ' ' + warranty)
     if re.search(r'\b(?:ithalatci|ithalat|yurt disi|global garanti)\b', normalized):
         return 'warranty_conflict'
     if not re.search(r'\b(?:turkiye|tr)\s+garantili\b', normalized):
@@ -159,11 +166,15 @@ def recover(profiles, catalog, target_catalog, refresher, writer=None, now=None,
             'unresolved': ([] if observations else ['no_unambiguous_live_pdp_offer'])
                 + ([] if len(best) >= 2 else ['two_current_same_variant_merchants_not_verified']),
         })
-    # Recheck observation age at the actual write boundary, not just at fetch.
+    # Recheck manual warranty evidence and freshness at the actual write boundary.
+    validate_browser_evidence(profiles, browser_evidence, now or datetime.now(timezone.utc))
     for profile in profiles:
         for row in [p for p in payload if p['product_slug'] == profile['slug']]:
+            original_browser = next((b for b in browser_evidence
+                if b['product_slug'] == row['product_slug'] and b['url'] == row['source_url']
+                and b['source_title'] == row['source_title'] and b['observed_at'] == row['observed_at']), {})
             reason = rejection_reason(profile, {
-                **row, 'merchant': row['merchant_name'], 'url': row['source_url'],
+                **original_browser, **row, 'merchant': row['merchant_name'], 'url': row['source_url'],
             }, now or datetime.now(timezone.utc))
             if reason:
                 raise ValueError(f"Observation expired before submission: {profile['slug']} / {reason}")
