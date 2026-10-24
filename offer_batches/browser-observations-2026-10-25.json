@@ -2,6 +2,28 @@
   "note": "Actual selected live browser PDP observations, not search-cache prices. Explicit opt-in only. Expire after 15 minutes, not refreshable by changing timestamps. Recapture the live page for any later application.",
   "observations": [
     {
+      "product_id": 267, "product_slug": "tecno-camon-40",
+      "evidence_method": "live_browser_selected_pdp", "purchase_enabled": true,
+      "merchant": "Pazarama", "selected_seller": "mobilex teknoloji",
+      "source_title": "TECNO Camon 40 CM5 8/256 GB Titanyum (TECNO Türkiye Garantili)",
+      "price": 18000, "displayed_cash_price": "18.000,00 TL", "currency": "TRY", "availability": "in_stock",
+      "conditional_basket_price_not_imported": 17460,
+      "url": "https://www.pazarama.com/tecno-camon-40-cm5-cep-telefonu-titanyum-8gb-256gb-4894947100116-p-4894947100116",
+      "observed_at": "2026-10-24T22:32:26.289Z",
+      "proof_quote": "TECNO Camon 40 CM5 8/256 GB Titanyum (TECNO Türkiye Garantili)\n18.000,00 TL\nSepette\n17.460,00 TL\nSepete Ekle\nSatıcı:\nmobilex teknoloji\nRam\n8 GB\nGaranti\nResmi Distribütör Garantili"
+    },
+    {
+      "product_id": 31, "product_slug": "samsung-galaxy-a54-5g",
+      "evidence_method": "live_browser_selected_pdp", "purchase_enabled": true,
+      "merchant": "Pazarama", "selected_seller": "ALTINKOZA TEKNOLOJİM",
+      "source_title": "Samsung Galaxy A54 Siyah 128 GB 8 GB Ram Akıllı Telefon (Samsung Türkiye Garantili)",
+      "price": 28000, "displayed_cash_price": "28.000,00 TL", "currency": "TRY", "availability": "in_stock",
+      "conditional_basket_price_not_imported": 26880,
+      "url": "https://www.pazarama.com/samsung-galaxy-a54-siyah-128-gb-8-gb-ram-akilli-telefon-samsung-turkiye-garantili-p-8806094821437",
+      "observed_at": "2026-10-24T22:32:31.784Z",
+      "proof_quote": "Samsung Galaxy A54 Siyah 128 GB 8 GB Ram Akıllı Telefon (Samsung Türkiye Garantili)\n28.000,00 TL\nSepette\n26.880,00 TL\nSepete Ekle\nSatıcı:\nALTINKOZA TEKNOLOJİM\nAğ/Bağlantı\n5G\nRam Kapasitesi\n8 GB\nDahili Hafıza\n128 GB"
+    },
+    {
       "product_id": 218, "product_slug": "tecno-camon-20-pro",
       "evidence_method": "live_browser_selected_pdp", "purchase_enabled": true,
       "merchant": "PttAVM", "selected_seller": "Birtane Telekom",
