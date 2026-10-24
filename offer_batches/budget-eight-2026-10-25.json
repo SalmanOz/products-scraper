@@ -19,7 +19,10 @@
     {
       "id": 267, "slug": "tecno-camon-40", "name": "Tecno Camon 40",
       "ram_gb": 8, "storage_gb": 256, "network_generation": "4g",
-      "targets": ["https://www.trendyol.com/tecno/camon-40-cm5-8-256-gb-titanyum-tecno-turkiye-garantili-p-1115017671"]
+      "targets": [
+        "https://www.trendyol.com/tecno/camon-40-cm5-8-256-gb-titanyum-tecno-turkiye-garantili-p-1115017671",
+        "https://www.hepsiburada.com/tecno-camon-40-256-gb-8-gb-ram-tecno-turkiye-garantili-buz-beyazi-p-HBCV00008XOXYJ"
+      ]
     },
     {
       "id": 279, "slug": "samsung-galaxy-a27-5g", "name": "Samsung Galaxy A27 5G",
@@ -45,7 +48,10 @@
     {
       "id": 31, "slug": "samsung-galaxy-a54-5g", "name": "Samsung Galaxy A54 5G",
       "ram_gb": 8, "storage_gb": 128, "network_generation": "5g",
-      "targets": ["https://www.trendyol.com/samsung/galaxy-a54-5g-128-gb-8-gb-ram-grafit-p-676507062"]
+      "targets": [
+        "https://www.trendyol.com/samsung/galaxy-a54-5g-128-gb-8-gb-ram-grafit-p-676507062",
+        "https://www.hepsiburada.com/samsung-galaxy-a54-128-gb-8-gb-ram-samsung-turkiye-garantili-siyah-p-HBCV000040I6N5"
+      ]
     },
     {
       "id": 273, "slug": "poco-x7-pro", "name": "POCO X7 Pro",

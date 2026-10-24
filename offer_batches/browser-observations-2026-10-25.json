@@ -2,6 +2,26 @@
   "note": "Actual selected live browser PDP observations, not search-cache prices. Explicit opt-in only. Expire after 15 minutes, not refreshable by changing timestamps. Recapture the live page for any later application.",
   "observations": [
     {
+      "product_id": 267, "product_slug": "tecno-camon-40",
+      "evidence_method": "live_browser_selected_pdp", "purchase_enabled": true,
+      "merchant": "Hepsiburada", "selected_seller": "YAZICI TİCARET",
+      "source_title": "Tecno CAMON 40 256 GB 8 GB Ram (Tecno Türkiye Garantili) Buz Beyazı",
+      "price": 23280, "displayed_cash_price": "23.280,00 TL", "currency": "TRY", "availability": "in_stock",
+      "url": "https://www.hepsiburada.com/tecno-camon-40-256-gb-8-gb-ram-tecno-turkiye-garantili-buz-beyazi-p-HBCV00008XOXYJ",
+      "observed_at": "2026-10-24T22:28:16.159Z",
+      "proof_quote": "Tecno CAMON 40 256 GB 8 GB Ram (Tecno Türkiye Garantili) Buz Beyazı\nSatıcı:\nYAZICI TİCARET\n23.280,00 TL\nSeçenek: 8 GB Ram\nKapasite: 256 GB\nRenk: Buz Beyazı\nSepete ekle"
+    },
+    {
+      "product_id": 31, "product_slug": "samsung-galaxy-a54-5g",
+      "evidence_method": "live_browser_selected_pdp", "purchase_enabled": true,
+      "merchant": "Hepsiburada", "selected_seller": "MOBİLSTORE.33",
+      "source_title": "Samsung Galaxy A54 128 GB 8 GB Ram (Samsung Türkiye Garantili) Siyah",
+      "price": 32997, "displayed_cash_price": "32.997,00 TL", "currency": "TRY", "availability": "in_stock",
+      "url": "https://www.hepsiburada.com/samsung-galaxy-a54-128-gb-8-gb-ram-samsung-turkiye-garantili-siyah-p-HBCV000040I6N5",
+      "observed_at": "2026-10-24T22:28:39.476Z",
+      "proof_quote": "Samsung Galaxy A54 128 GB 8 GB Ram (Samsung Türkiye Garantili) Siyah\nSatıcı:\nMOBİLSTORE.33\n32.997,00 TL\nKapasite: 128 GB\nRenk: Siyah\nSepete ekle"
+    },
+    {
       "product_id": 264, "product_slug": "samsung-galaxy-a57-5g",
       "evidence_method": "live_browser_selected_pdp", "purchase_enabled": true,
       "merchant": "Teknosa", "selected_seller": "BittiBitiyor",
