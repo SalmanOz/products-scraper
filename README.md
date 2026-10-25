@@ -74,6 +74,14 @@ mağaza stokta doğrulanamazsa kırmızı olur. Üretim yazısı ve IndexNow yok
 sonuç ve kaynak erişim nedenleri `daily-price-report.json` artifact'ındadır.
 Offline test: `python -m unittest -q test_public_retailer_sources`.
 
+İlk gerçek runner sonucu ([25 Ekim denetimi](https://github.com/SalmanOz/products-scraper/actions/runs/40178126640)):
+Troy'un iki canlı 128 GB renk bağlantısı doğrulandı; aynı mağaza oldukları için
+yalnız **bir** mağaza sayıldı. PT yerelde doğrulanabildi, ancak runner'da
+`robots.txt` 403 döndüğünden başka PT isteği yapılmadı. Dolayısıyla iki yeni
+kaynağı birlikte doğrulama denetimi başarısızdır; PT'nin kesintisiz otomasyon
+kapsamı sağladığı iddia edilmez. Bu engel kalite koşullarını düşürmek, IP/kimlik
+değiştirmek veya eski fiyatı tazelemek için gerekçe değildir.
+
 ### Yeni model grubu
 
 Model listeleri `catalog_batches/<batch_id>.json` dosyalarında tutulur. Yeni bir

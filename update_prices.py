@@ -365,6 +365,7 @@ class PriceUpdater:
                         name, discovery_targets, expected_specs,
                     ) if discovery_targets else []
                     targets = targets + discovery_targets
+                    product_report['targets'] = targets
                 accepted_discovery = [offer for offer in discovered if self.live_offer_is_valid(p, offer, expected_specs)]
                 product_report['rejected_live_observations'] += len(discovered) - len(accepted_discovery)
                 discovered = accepted_discovery
