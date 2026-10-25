@@ -82,8 +82,14 @@ class PublicRetailerSources:
             if host not in self._robots:
                 robots_url = f'https://www.{host}/robots.txt'
                 response = self._request(robots_url, host)
-                if response.status_code != 200:
+                # Some retailers return their HTML 404/challenge with status
+                # 200 at robots.txt. RobotFileParser would otherwise interpret
+                # that as an empty allow-all policy.
+                if (response.status_code != 200
+                        or re.search(r'<(?:!doctype\s+html|html|head|body)\b', response.text, re.I)
+                        or not re.search(r'^\s*user-agent\s*:', response.text, re.I | re.M)):
                     self._blocked.add(host)
+                    self._attempts[robots_url]['reason'] = 'robots_policy_unavailable'
                     raise requests.RequestException('Robots policy unavailable')
                 rules = RobotFileParser()
                 rules.parse(response.text.splitlines())

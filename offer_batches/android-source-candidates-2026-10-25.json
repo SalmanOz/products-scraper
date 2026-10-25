@@ -1,0 +1,18 @@
+{
+  "purpose": "Research-only public candidates, NOT approved daily targets or price evidence. No remembered prices may be ingested from this file.",
+  "candidates": [
+    {"slug": "tecno-spark-slim-5g", "url": "https://bireysel.turktelekom.com.tr/cihazlar/akilli-telefon/tecno-spark-slim-5g-8256gb", "review_status": "requires_live_stock_and_unconditional_online_offer_not_recommended_or_contract_price"},
+    {"slug": "tecno-spark-slim-5g", "url": "https://www.caglargsm.com/urun/tecno-spark-slim-5g-256-gb-8-gb-ram-tecno-siyah", "review_status": "retailer_identity_and_inconsistent_specification_quality_not_approved"},
+    {"slug": "tecno-camon-20-pro", "url": "https://www.firsatkurdu.com/urun/tecno-camon-20-pro-8gb-ram-256-gb-beyaz-tecno-turkiye-garantili-5913", "review_status": "out_of_stock_in_local_selected_pdp"},
+    {"slug": "tecno-camon-20-pro", "url": "https://www.kavastech.com.tr/tecno-camon-20-pro-256-gb-siyah-tecno-turkiye-garantili-76", "review_status": "requires_full_memory_stock_and_price_proof"},
+    {"slug": "tecno-camon-40", "url": "https://www.evkur.com.tr/tecno-mobile-camon-40-cm5-12256-gb-beyaz", "review_status": "wrong_ram_12gb_not_catalog_8gb"},
+    {"slug": "samsung-galaxy-a27-5g", "url": "https://www.caglargsm.com/urun/samsung-galaxy-a27-5g-128-gb-6-gb-ram-samsung-siyah", "review_status": "retailer_identity_and_inconsistent_specification_quality_not_approved"},
+    {"slug": "samsung-galaxy-a27-5g", "url": "https://www.ayazgrupiletisim.com.tr/urun/samsung-galaxy-a27-5g-8-gb-256-gb-samsung-turkiye-garantili-siyah-256-gb", "review_status": "wrong_memory_8_256_not_catalog_6_128"},
+    {"slug": "samsung-galaxy-a37-5g", "url": "https://www.ayazgrupiletisim.com.tr/urun/samsung-galaxy-a37-5g-6-gb-128-gb-samsung-turkiye-garantili-antrasit-128-gb", "review_status": "unqualified_ram_title_no_separate_ram_field_do_not_infer"},
+    {"slug": "samsung-galaxy-a57-5g", "url": "https://www.dolgunteknoloji.com.tr/urun/samsung-galaxy-a57-5g-128gb-8gb-ram-samsung-turkiye-garantili-gri-cep-telefonu/", "review_status": "requires_live_price_dom_schema_and_variant_consistency_review"},
+    {"slug": "samsung-galaxy-a54-5g", "url": "https://www.inbox.com.tr/samsung-galaxy-a54-8128-gb-graphite-u-sma546ezkctur", "review_status": "robots_returns_html_404_with_200_not_a_verified_policy"},
+    {"slug": "samsung-galaxy-a54-5g", "url": "https://www.migros.com.tr/samsung-galaxy-a54-8128-gb-5g-graft-siyah-cep-telefonu-p-255e640", "review_status": "schema_only_price_visible_price_placeholder_location_and_purchase_not_verified"},
+    {"slug": "poco-x7-pro", "url": "https://www.firsatkurdu.com/urun/poco-x7-pro-8-256gb-siyah-poco-turkiye-garantili-11364", "review_status": "out_of_stock_in_local_selected_pdp"},
+    {"slug": "poco-x7-pro", "url": "https://www.mi.com/tr/product/poco-x7-pro/buy/?gid=4223707987", "review_status": "requires_current_selected_sku_and_purchasable_stock_not_historical_launch_price"}
+  ]
+}

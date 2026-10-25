@@ -140,6 +140,15 @@ class PublicDiscoveryTests(unittest.TestCase):
             catalog.fetch(PT)
         self.assertFalse(any(u == PT for u, _ in calls))
 
+    def test_html_404_or_challenge_with_http_200_is_not_an_allow_all_policy(self):
+        for policy in ('<!DOCTYPE html><html>Sayfa bulunamadı</html>',
+                       '<html>User-agent: *<body>challenge</body></html>', '',
+                       '# no usable user-agent policy'):
+            catalog, calls, _ = self.catalog(robots=policy)
+            self.assertEqual(catalog.discover('Apple iPhone 16', SPECS), [])
+            self.assertTrue(all(url.endswith('/robots.txt') for url, _ in calls))
+            self.assertTrue(all(row['reason'] == 'robots_policy_unavailable' for row in catalog.report()))
+
     def test_new_pdp_reader_obeys_robots_and_only_fetches_https(self):
         catalog, calls, fetch = self.catalog()
         reader = RetailerOfferRefresher(fetch=fetch)

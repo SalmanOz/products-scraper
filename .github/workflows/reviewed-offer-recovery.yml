@@ -6,7 +6,7 @@ on:
       mode:
         description: 'Audit is GET-only. Apply rereads live PDPs and submits exact verified offers only.'
         type: choice
-        options: [audit, apply, daily-audit, public-source-audit]
+        options: [audit, apply, daily-audit, public-source-audit, android-source-audit]
         default: audit
       include_reviewed_browser_evidence:
         description: 'Opt in to session-reviewed live UI observations (expire after 15 minutes; never reused daily)'
@@ -32,7 +32,7 @@ jobs:
       - run: pip install -r requirements.txt
       - name: Offline safety tests
         run: |
-          python -m unittest -q test_reviewed_offer_recovery test_retailer_offer_refresh test_reviewed_offer_targets test_price_refresh_orchestration test_public_retailer_sources
+          python -m unittest -q test_reviewed_offer_recovery test_retailer_offer_refresh test_reviewed_offer_targets test_price_refresh_orchestration test_public_retailer_sources test_android_retailer_candidate_audit
           python test_offer_ingestion_client.py
           python test_matching.py
           python test_price_scraper_sources.py
@@ -44,6 +44,10 @@ jobs:
           INCLUDE_BROWSER_EVIDENCE: ${{ inputs.include_reviewed_browser_evidence }}
         run: |
           set -euo pipefail
+          if [[ "$RECOVERY_MODE" == "android-source-audit" ]]; then
+            python audit_android_retailer_candidates.py
+            exit 0
+          fi
           if [[ "$RECOVERY_MODE" == "public-source-audit" ]]; then
             python audit_public_retailer_sources.py
             exit 0
@@ -65,4 +69,5 @@ jobs:
           path: |
             reviewed-offer-report.json
             daily-price-report.json
+            android-source-candidate-report.json
           retention-days: 30

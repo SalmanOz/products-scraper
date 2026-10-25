@@ -82,6 +82,17 @@ kaynağı birlikte doğrulama denetimi başarısızdır; PT'nin kesintisiz otoma
 kapsamı sağladığı iddia edilmez. Bu engel kalite koşullarını düşürmek, IP/kimlik
 değiştirmek veya eski fiyatı tazelemek için gerekçe değildir.
 
+Android aday denetimi: **Reviewed Budget Offer Recovery → android-source-audit**.
+Önce gerçek sekiz katalog profilinin mevcut PDP'lerini normal günlük güvenlik
+koduyla GET-only yeniden okur. Ardından `android-source-candidates-2026-10-25.json`
+içindeki 13 araştırma bağlantısını, kaynak başına robots ve en çok iki PDP
+isteğiyle inceler. Robots gecikmesine uyar; HTML hata sayfası dönen HTTP 200
+`robots.txt` izin kabul edilmez. Raporlar `daily-price-report.json` ve
+`android-source-candidate-report.json` artifact'larıdır. Bu aday dosyası günlük
+fiyat ipucu dosyası **değildir**; hiçbir aday sırf HTTP 200, InStock şeması veya
+iki bağlantı bulundu diye onaylanmaz, teklifler üretime aktarılmaz. Sekiz
+modelin ikişer geçerli mağazası yoksa denetim kırmızı kalır.
+
 ### Yeni model grubu
 
 Model listeleri `catalog_batches/<batch_id>.json` dosyalarında tutulur. Yeni bir
