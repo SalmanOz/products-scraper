@@ -1377,7 +1377,7 @@ class TRPriceScraper:
 
         def merchant_count():
             return len({row['merchant'] for row in observed_listings()
-                        if row.get('availability') != 'out_of_stock'})
+                        if row.get('availability') in {'in_stock', 'limited'}})
 
         # 1. Try Google Shopping (no Cloudflare, most reliable from CI)
         gs_results = self.get_google_shopping_price(product_name, expected_specs)
@@ -1461,8 +1461,8 @@ class TRPriceScraper:
         for r in observed_listings():
             m_name = r['merchant']
             prior = merchant_best.get(m_name)
-            available = r.get('availability') != 'out_of_stock'
-            prior_available = prior and prior.get('availability') != 'out_of_stock'
+            available = r.get('availability') in {'in_stock', 'limited'}
+            prior_available = prior and prior.get('availability') in {'in_stock', 'limited'}
             if prior is None or (available and not prior_available) or (
                 available and prior_available and r['price'] < prior['price']
             ):
@@ -1473,11 +1473,11 @@ class TRPriceScraper:
         # Outlier guard: an offer far below the median is almost always a wrong
         # variant (different storage, refurbished, gray import). Since base_price
         # is set to the MINIMUM offer, one bad listing corrupts the product price.
-        purchasable = [r for r in unique_results if r.get('availability') != 'out_of_stock']
+        purchasable = [r for r in unique_results if r.get('availability') in {'in_stock', 'limited'}]
         if len(purchasable) >= 3:
             prices = sorted(r['price'] for r in purchasable)
             median = prices[len(prices) // 2]
-            filtered = [r for r in unique_results if r.get('availability') == 'out_of_stock' or r['price'] >= median * 0.6]
+            filtered = [r for r in unique_results if r.get('availability') not in {'in_stock', 'limited'} or r['price'] >= median * 0.6]
             dropped = [r for r in purchasable if r['price'] < median * 0.6]
             for d in dropped:
                 logging.warning(f"  📉 Dropping outlier offer: {d['merchant']} {d['price']} TL (median {median} TL)")

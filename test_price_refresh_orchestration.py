@@ -5,11 +5,12 @@ from copy import deepcopy
 import os
 import socket
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import requests
 
 from update_prices import PriceUpdater
+from tr_price_scraper import TRPriceScraper
 
 
 NOW = "2026-10-19T12:00:00Z"
@@ -261,6 +262,19 @@ class PriceRefreshOrchestrationTests(unittest.TestCase):
         self.assertEqual(updater.last_report['coverage']['with_two_merchants'], 0)
         self.assertEqual(updater.last_report['products'][0]['rejected_live_observations'], 1)
         self.assertEqual(client.submissions, [])
+
+    def test_discovery_does_not_stop_at_four_unknown_or_preorder_cards(self):
+        for state in ['unknown', 'preorder']:
+            with self.subTest(state=state):
+                scraper = TRPriceScraper()
+                with (patch.object(scraper, 'get_google_shopping_price', return_value=[offer(i, availability=state) for i in range(4)]),
+                      patch.object(scraper, 'get_epey_price', return_value=[]) as epey,
+                      patch.object(scraper, 'get_akakce_price', return_value=[]) as akakce,
+                      patch.object(scraper, 'scrape_site_async', new_callable=AsyncMock, return_value=None) as direct):
+                    asyncio.run(scraper.get_best_prices('Samsung Galaxy S25', {'ram_gb': 12, 'storage_gb': 256}))
+                epey.assert_called_once()
+                akakce.assert_called_once()
+                self.assertGreater(direct.await_count, 0)
 
     def test_wrong_model_or_ram_refreshes_do_not_count_or_bypass_discovery(self):
         for wrong_title, wrong_path in [
