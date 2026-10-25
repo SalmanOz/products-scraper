@@ -5,7 +5,7 @@ from copy import deepcopy
 import os
 import socket
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import requests
 
@@ -155,6 +155,36 @@ class PriceRefreshOrchestrationTests(unittest.TestCase):
         discovered = next(row for row in client.submissions[0] if row["seller"] == "Hepsiburada")
         self.assertEqual(discovered["checked_at"], PDP_OBSERVED_AT)
         self.assertEqual(len(_refresher.calls), 2)
+
+    def test_public_catalog_urls_go_through_same_pdp_validation_and_ingestion(self):
+        updater, client, refresher, discovery = self.updater([offer(0)], [offer(1)])
+        discovery.rows = []
+        refresher.public_sources = Mock()
+        refresher.public_sources.discover.return_value = [{'source_url': offer(1)['url']}]
+        refresher.public_sources.report.return_value = []
+        asyncio.run(updater.run_update())
+        refresher.public_sources.discover.assert_called_once()
+        self.assertEqual(refresher.calls[1][1], [{'source_url': offer(1)['url']}])
+        self.assertEqual({r['seller'] for r in client.submissions[0]}, {'Teknosa', 'Trendyol'})
+        self.assertTrue(all(r['checked_at'] == PDP_OBSERVED_AT for r in client.submissions[0]))
+
+    def test_discovery_outages_do_not_discard_valid_current_pdp(self):
+        updater, client, refresher, discovery = self.updater([offer(0)])
+        refresher.public_sources = Mock()
+        refresher.public_sources.discover.side_effect = ValueError('Malformed public link')
+        refresher.public_sources.report.return_value = []
+        discovery.get_best_prices = AsyncMock(side_effect=RuntimeError('Source down'))
+        asyncio.run(updater.run_update())
+        self.assertEqual(len(client.submissions[0]), 1)
+        self.assertEqual(client.submissions[0][0]['seller'], 'Teknosa')
+
+    def test_known_pdp_audit_never_calls_new_public_catalog_discovery(self):
+        updater, client, refresher, _ = self.updater([offer(0)])
+        refresher.public_sources = Mock()
+        refresher.public_sources.report.return_value = []
+        asyncio.run(updater.run_update(dry_run=True, known_pdp_only=True))
+        refresher.public_sources.discover.assert_not_called()
+        self.assertEqual(client.submissions, [])
 
     def test_refresher_exception_does_not_suppress_discovery(self):
         updater, client, refresher, discovery = self.updater(

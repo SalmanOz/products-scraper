@@ -522,6 +522,7 @@ def test_epey_pdp_stock_overrides_same_url_search_and_preserves_other_available_
     scraper = TRPriceScraper()
     title = 'Samsung Galaxy S25 12GB RAM 128GB'
     source = {'merchant': 'Teknosa', 'price': 10000, 'source_title': title,
+              'availability': 'in_stock',
               'url': 'https://www.teknosa.com/phone-one'}
     other = {**source, 'price': 30000, 'url': 'https://www.teknosa.com/phone-two'}
     class StockEvidence:

@@ -41,6 +41,39 @@ Recovery → mode: daily-audit** kullanılır. Bu mod yalnız bilinen PDP'leri o
 ürün/teklif/şema/R2 yazmaz, IndexNow veya challenge çözümü çalıştırmaz. Veri
 kapsamı yetersizse testler geçse bile denetim kırmızı olur; nedeni artifact'tadır.
 
+### Ortaklık gerektirmeyen yeni fiyat kaynakları
+
+25 Ekim 2026'da incelenen tüketici mağazaları: [Pozitif Teknoloji](https://www.pt.com.tr/)
+ve [Troy / Artı Bilgisayar](https://www.troyestore.com/troy-hakkimizda). Bu iki
+kaynak Apple içindir; engellenen Android bütçe modellerinin ikinci mağaza açığını
+kapatmış sayılmaz. Örnekler: [PT iPhone 16 128 GB](https://www.pt.com.tr/iphone-16-128gb-deniz-mavisi-myed3tu-a),
+[Troy iPhone 16 128 GB](https://www.troyestore.com/apple-iphone-16-128gb-deniz-mavisi-myed3tua_216591).
+
+Günlük 03:00 UTC / 06:00 Türkiye işi `PublicRetailerSources` üzerinden canlı ana
+sayfada gerçekten bağlantısı bulunan iPhone ailelerini ve tam depolama varyantını
+bulur; aile sayfası fiyatını kullanmaz. Kaynak başına ana sayfa/robots/aile
+önbelleği, 150 HTTP isteği sınırı, en az 500 ms istek aralığı (robots crawl-delay
+daha uzunsa o süre), model başına en fazla altı renk bağlantısı vardır. Robots
+okunamazsa veya izin vermiyorsa kaynak kapalı kalır. 403/429, sunucu/ulaşım hatası
+ve challenge durumunda alternatif kimlik/proxy denenmez. Sepet, filtre, oturum,
+ödeme, üyelik veya token URL'leri çağrılmaz; sorgusuz HTTPS bağlantıları kullanılır.
+
+Mevcut tüm SKU/radyo/RAM/depolama, stok, tazelik, fiyat aykırılığı ve iki mağaza
+şartları korunur. Yeni kaynaklar ayrıca kendi satıcı kimliğini, yeni ürün
+durumunu, Apple Türkiye TU/A satış kodunu, ürün başlığını ve görünen standart
+fiyatın tekil JSON-LD teklifiyle eşitliğini kanıtlamalıdır. PT için ana ürün
+stok alanı ve tüm kartlara tek çekim seçeneği gerekir; aksesuar fiyatı/stoku
+telefon fiyatı sayılmaz. Troy'un HTTP yazılmış şema URL'si yalnız aynı HTTPS
+canonical ve aynı SKU için belge içinde düzeltilir; hiçbir HTTP isteği yapılmaz.
+Gizli stok tükenme şablonu, açık satın alma düğmesinin yerine yorumlanmaz.
+
+Runner denetimi: **Reviewed Budget Offer Recovery → public-source-audit**.
+Gerçek katalogdaki iPhone 16 128 GB profilinde günlük keşif/okuma/kalite kodunu
+çalıştırır; eski teklifler, aggregator veya tarayıcı çözücü kullanmaz. İki yeni
+mağaza stokta doğrulanamazsa kırmızı olur. Üretim yazısı ve IndexNow yoktur;
+sonuç ve kaynak erişim nedenleri `daily-price-report.json` artifact'ındadır.
+Offline test: `python -m unittest -q test_public_retailer_sources`.
+
 ### Yeni model grubu
 
 Model listeleri `catalog_batches/<batch_id>.json` dosyalarında tutulur. Yeni bir

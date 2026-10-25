@@ -188,7 +188,7 @@ jobs:
           python test_price_scraper_sources.py
           python test_offer_ingestion_client.py
           python test_price_update_resilience.py
-          python -m unittest -q test_retailer_offer_refresh test_price_refresh_orchestration test_reviewed_offer_targets test_reviewed_offer_recovery
+          python -m unittest -q test_retailer_offer_refresh test_price_refresh_orchestration test_reviewed_offer_targets test_reviewed_offer_recovery test_public_retailer_sources
           python test_source_ingestion.py
           python test_catalog_expansion.py
           python test_product_images.py

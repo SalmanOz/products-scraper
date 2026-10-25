@@ -337,9 +337,24 @@ class PriceUpdater:
                                      for offer in refreshed if offer.get('availability') in PURCHASABLE}
                 discovered = []
                 if len(refreshed_sellers) < 4 and not known_pdp_only:
-                    hints = await self.price_scraper.get_best_prices(name, expected_specs)
+                    public_sources = getattr(self.offer_refresher, 'public_sources', None)
+                    public_targets = []
+                    try:
+                        if public_sources:
+                            public_targets = await asyncio.to_thread(public_sources.discover, name, expected_specs)
+                    except Exception as error:
+                        product_report['public_discovery_error'] = type(error).__name__
+                        logging.warning('  ⚠️ Public catalog discovery unavailable (%s)', type(error).__name__)
+                    try:
+                        hints = await self.price_scraper.get_best_prices(name, expected_specs)
+                    except Exception as error:
+                        # A discovery outage must not discard already verified
+                        # PDP refreshes or new public-source destinations.
+                        hints = []
+                        product_report['legacy_discovery_error'] = type(error).__name__
+                        logging.warning('  ⚠️ Legacy discovery unavailable (%s)', type(error).__name__)
                     hints = hints if isinstance(hints, list) else []
-                    discovery_targets = [{'source_url': row.get('url')} for row in hints
+                    discovery_targets = public_targets + [{'source_url': row.get('url')} for row in hints
                                          if isinstance(row, dict) and _safe_url(row.get('url'))]
                     product_report['discovered_destinations'] = len(discovery_targets)
                     # Discovery cards are URL hints, not current merchant cash
@@ -409,6 +424,8 @@ class PriceUpdater:
 
             if hasattr(self.offer_refresher, 'target_report'):
                 product_report['source_attempts'] = self.offer_refresher.target_report(name, targets, expected_specs)
+            if hasattr(self.offer_refresher, 'public_sources'):
+                self.last_report['public_source_discovery'] = self.offer_refresher.public_sources.report()
 
             if processed_count % INGESTION_PRODUCT_BATCH_SIZE == 0:
                 self.flush_offers(pending_offers, aggregate_result)

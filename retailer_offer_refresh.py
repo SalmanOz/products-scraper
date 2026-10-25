@@ -19,6 +19,7 @@ from bs4 import BeautifulSoup
 import requests
 
 from tr_price_scraper import TRPriceScraper
+from public_retailer_sources import PublicRetailerSources, SOURCES, public_source
 
 
 _MERCHANT_DOMAINS = {
@@ -28,6 +29,7 @@ _MERCHANT_DOMAINS = {
     'turkcell.com.tr': 'Pasaj', 'mediamarkt.com.tr': 'MediaMarkt',
     'teknosa.com': 'Teknosa', 'pttavm.com': 'PttAVM', 'apple.com': 'Apple Store',
     'samsung.com': 'Samsung', 'mi.com': 'Xiaomi',
+    **SOURCES,
 }
 ALLOWED_HOSTS = {
     host: merchant for apex, merchant in _MERCHANT_DOMAINS.items()
@@ -75,7 +77,9 @@ def _safe_url(url):
                 or host not in ALLOWED_HOSTS):
             return None
         query = parse_qsl(parsed.query, keep_blank_values=True, max_num_fields=50)
-        if any(re.search(r'token|auth|password|secret|signature|session|email|api.?key|access.?key|credential',
+        if host.removeprefix('www.') in SOURCES and not public_source(url):
+            return None
+        if any(re.search(r'token|auth|password|secret|signature|session|email|api.?key|access.?key|credential|add.?to.?cart|wc.?ajax|nonce|pao.?key|pao.?edit',
                          key, re.I) for key, _ in query):
             return None
         _variant_query(parsed)
@@ -99,7 +103,14 @@ def _type_is(node, expected):
 
 def _same_resource(first, second):
     if isinstance(first, str) and isinstance(second, str):
-        first = urljoin(second, first)
+        try:
+            first = urljoin(second, first)
+            # JSON-LD @id fragments identify the entity within the fetched document;
+            # they are not navigable SKU selectors and are never fetched.
+            first = urlparse(first)._replace(fragment='').geturl()
+            second = urlparse(second)._replace(fragment='').geturl()
+        except ValueError:
+            return False
     a, b = _safe_url(first), _safe_url(second)
     return bool(a and b and ALLOWED_HOSTS[a.hostname] == ALLOWED_HOSTS[b.hostname]
                 and a.path.rstrip('/') == b.path.rstrip('/')
@@ -182,6 +193,16 @@ def _product_offer(soup, final_url):
             return None
         if _type_is(offer, 'AggregateOffer') or 'lowPrice' in offer or 'highPrice' in offer:
             return None
+        # Troy publishes an http Offer URL on its HTTPS PDP. Normalize document
+        # metadata only, with an exact HTTPS canonical; NEVER request HTTP or
+        # relax URL validation for any other host, path, port or variant.
+        if public_source(final_url) == 'troyestore.com' and isinstance(offer.get('url'), str):
+            raw = offer['url']
+            canonical = soup.select_one('link[rel="canonical"]')
+            if raw.startswith('http://') and canonical and canonical.get('href') == final_url:
+                secured = 'https://' + raw[len('http://'):]
+                if public_source(secured) and urlparse(secured).netloc == urlparse(final_url).netloc and _same_resource(secured, final_url):
+                    offer = {**offer, 'url': secured}
         return offer
 
     # An explicit URL links the Product/Offer to the fetched PDP. If there are
@@ -254,6 +275,8 @@ def _product_offer(soup, final_url):
         return None
     if re.search(r'\b(?:taksit|installment|monthly|aylık|aylik)\b', str(offer.get('name', '')), re.I):
         return None
+    if public_source(final_url) and not _public_retailer_product(soup, product, offer, final_url, price, availability):
+        return None
     return {'merchant': ALLOWED_HOSTS[_safe_url(final_url).hostname],
             'price': price, 'currency': 'TRY', 'availability': availability,
             # An Offer may name its canonical/seller URL while the fetched PDP
@@ -264,9 +287,61 @@ def _product_offer(soup, final_url):
             'observed_at': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')}
 
 
+def _public_retailer_product(soup, product, offer, url, price, availability):
+    """New sources are consumer, new, Turkish Apple SKUs only; fail on drift."""
+    host = public_source(url)
+    heading = soup.select_one('h1')
+    title = heading.get_text(' ', strip=True) if heading else ''
+    if not title or not TRPriceScraper().is_strict_match(title, product['name'], {}):
+        return False
+    if not re.search(r'\biphone\b', title, re.I):
+        return False
+    if re.search(r'teshir|teşhir|outlet|yenilen|ikinci|ithalatçı|ithalatci|yurt dışı', title + ' ' + url, re.I):
+        return False
+    if str(offer.get('itemCondition', '')).rstrip('/').rsplit('/', 1)[-1] != 'NewCondition':
+        return False
+    brand = product.get('brand', {})
+    if (brand.get('name') if isinstance(brand, dict) else brand) != 'Apple':
+        return False
+    # TU/A is Apple's Turkey sales SKU. Do not infer warranty for an imported
+    # or unidentifiable SKU merely from the retailer's name.
+    sku_proof = str(product.get('sku', '')) + ' ' + title + ' ' + url
+    if not re.search(r'[a-z0-9]{4,}tu(?:/a\b|-a\b|a(?:_|\b))', sku_proof, re.I):
+        return False
+    seller = offer.get('seller', {})
+    expected_seller = 'Pozitif Teknoloji' if host == 'pt.com.tr' else 'Troyestore'
+    if not isinstance(seller, dict) or seller.get('name') != expected_seller:
+        return False
+    selector = '.summary .pt-price-col > .product-page-price' if host == 'pt.com.tr' else '.product-details-area .p-info .p-price .one-price'
+    prices = soup.select(selector)
+    if len(prices) != 1:
+        return False
+    text = prices[0].get_text(' ', strip=True)
+    amounts = re.findall(r'\d{1,3}(?:\.\d{3})+(?:,\d{2})|\d+(?:,\d{2})', text)
+    if len(amounts) != 1 or float(amounts[0].replace('.', '').replace(',', '.')) != price:
+        return False
+    if host == 'pt.com.tr':
+        if 'Tüm Kartlar Tek Çekim' not in soup.get_text(' ', strip=True):
+            return False
+        # Main SKU stock, not accessory stock or the related-product carousel.
+        stock = soup.select_one('.summary > .stock')
+        if not stock:
+            return False
+        stock_classes = stock.get('class', [])
+        expected = 'in_stock' if 'in-stock' in stock_classes else 'out_of_stock' if 'out-of-stock' in stock_classes else None
+        if availability != expected:
+            return False
+    elif availability in {'in_stock', 'limited'}:
+        button = soup.select_one('button[data-js="btn-add-basket"]')
+        if not button or button.has_attr('disabled') or 'btn-disabled' in button.get('class', []):
+            return False
+    return True
+
+
 class RetailerOfferRefresher:
     def __init__(self, session=None, fetch=None):
         self._fetch = fetch or (session.get if session is not None else requests.get)
+        self.public_sources = PublicRetailerSources(fetch=self._fetch)
         self._scraper = TRPriceScraper()
         self._cache = {}
         self._blocked_hosts = set()
@@ -284,7 +359,7 @@ class RetailerOfferRefresher:
 
     def target_report(self, product_name, targets, expected_specs):
         rows = []
-        urls = [t.get('source_url') if isinstance(t, dict) else t for t in targets[:12]]
+        urls = [t.get('source_url') if isinstance(t, dict) else t for t in targets[:24]]
         for url in dict.fromkeys(u for u in urls if _safe_url(u)):
             with self._lock:
                 detail = dict(self._diagnostics.get(url, {'reason': 'not_attempted', 'http_status': None}))
@@ -323,7 +398,8 @@ class RetailerOfferRefresher:
                 self._record_attempt(source_url, 'host_circuit_open')
                 break
             try:
-                response = self._fetch(current, timeout=(5, 15), allow_redirects=False,
+                fetch = self.public_sources.fetch if public_source(current) else self._fetch
+                response = fetch(current, timeout=(5, 15), allow_redirects=False,
                                        headers={'Accept': 'text/html', 'Accept-Language': 'tr-TR,tr;q=0.9'})
                 status = response.status_code
                 if status in (403, 429):
@@ -343,7 +419,8 @@ class RetailerOfferRefresher:
                     destination = urljoin(current, location)
                     destination_url = _safe_url(destination)
                     if not destination_url or (requested_variant and
-                            _variant_query(destination_url) != requested_variant):
+                            _variant_query(destination_url) != requested_variant) or (public_source(source_url) and
+                            public_source(destination) != public_source(source_url)):
                         self._record_attempt(source_url, 'unsafe_or_changed_variant_redirect', status)
                         break
                     current = destination

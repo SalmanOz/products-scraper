@@ -20,6 +20,7 @@ class TRPriceScraper:
         'hepsiburada', 'trendyol', 'amazon', 'n11', 'pttavm', 'ptt avm',
         'mediamarkt', 'media markt', 'teknosa', 'vatan', 'pasaj', 'turkcell',
         'pazarama', 'gürgençler', 'gurgencler', 'idefix', 'vodafone',
+        'pozitif teknoloji', 'troy', 'troyestore',
         'türk telekom', 'turk telekom', 'apple', 'samsung', 'xiaomi', 'mi store',
         'd&r', 'boyner', 'a101', 'migros', 'carrefoursa', 'gittigidiyor', 'çiçeksepeti', 'ciceksepeti',
     ]
@@ -65,6 +66,9 @@ class TRPriceScraper:
         'pazarama': 'Pazarama',
         'gurgencler': 'Gürgençler',
         'idefix': 'idefix',
+        'pozitif teknoloji': 'Pozitif Teknoloji',
+        'troy': 'Troy',
+        'troyestore': 'Troy',
         'vodafone': 'Vodafone',
         'turk telekom': 'Türk Telekom',
         'apple': 'Apple Store',
