@@ -5,6 +5,8 @@ writes. The same PriceUpdater discovery and quality gates used daily are tested.
 """
 
 import asyncio
+import json
+from pathlib import Path
 import re
 
 from offer_ingestion_client import OfferIngestionClient
@@ -37,11 +39,18 @@ async def audit():
     # Only this audit suppresses old destinations, never the normal daily job.
     selected = [{**p, 'offer_targets': []} for p in selected]
     updater = PriceUpdater(ReadOnlyCatalog(selected), NoLegacyDiscovery())
-    await updater.run_update(dry_run=True, product_slugs=[selected[0]['slug']])
-    merchants = set(updater.last_report['products'][0]['purchasable_merchants'])
-    expected = {'Troy', 'Pozitif Teknoloji'}
-    if not expected.issubset(merchants):
-        raise RuntimeError('Public sources not both verified in stock on runner: ' + ', '.join(sorted(expected - merchants)))
+    try:
+        await updater.run_update(dry_run=True, product_slugs=[selected[0]['slug']])
+        merchants = set(updater.last_report['products'][0]['purchasable_merchants'])
+        expected = {'Troy', 'Pozitif Teknoloji'}
+        if not expected.issubset(merchants):
+            issue = 'Public sources not both verified in stock on runner: ' + ', '.join(sorted(expected - merchants))
+            updater.last_report['status'] = 'failed'
+            updater.last_report['issues'].append(issue)
+            raise RuntimeError(issue)
+    finally:
+        if updater.last_report:
+            Path('daily-price-report.json').write_text(json.dumps(updater.last_report, ensure_ascii=False, indent=2) + '\n')
     print('Verified two new public retailers on actual published SKU; zero writes.')
 
 
