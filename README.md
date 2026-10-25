@@ -93,6 +93,15 @@ fiyat ipucu dosyası **değildir**; hiçbir aday sırf HTTP 200, InStock şemas�
 iki bağlantı bulundu diye onaylanmaz, teklifler üretime aktarılmaz. Sekiz
 modelin ikişer geçerli mağazası yoksa denetim kırmızı kalır.
 
+[25 Ekim Android runner sonucu](https://github.com/SalmanOz/products-scraper/actions/runs/40179012954):
+73 offline test geçti; 8 modelin 5'inde yalnız idefix doğrulanabildi, A54,
+Camon 40 ve Spark Slim 5G'de mevcut URL'lerden geçerli otomatik gözlem alınamadı.
+Bu, piyasada stok olmadığı anlamına gelmez. 13 yeni adayın hiçbiri üretime
+onaylanmadı; ikinci mağaza açığı 0/8 kapandı. Araştırma denetimi bu nedenle
+başarısızdır; üretime teklif/ürün/şema yazılmadı. Yanlış bellek varyantı,
+stokta olmayan ürün, konuma bağlı okunamayan görünür fiyat veya doğrulanmamış
+doğrudan satıcı kimliği kalite kurallarını düşürerek kabul edilmedi.
+
 ### Yeni model grubu
 
 Model listeleri `catalog_batches/<batch_id>.json` dosyalarında tutulur. Yeni bir
