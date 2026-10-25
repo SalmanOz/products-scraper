@@ -6,6 +6,43 @@ Bu depo, Türkiye'nin en kapsamlı cep telefonu özellik ve fiyat karşılaştı
 
 ## İncelenmiş telefon grubu ekleme
 
+### Günlük fiyatların yeniden doğrulanması
+
+`update_prices.py`, kaydedilmiş mağaza bağlantılarını ve SKU kimliği hâlâ aynı
+olan incelenmiş URL ipuçlarını her çalışmada yeniden okur. URL ipuçları
+`offer_batches/budget-eight-2026-10-25.json` içindedir; fiyat, stok veya eski
+tarayıcı gözlem tarihi günlük işe taşınmaz. `browser-observations-*.json` yalnız
+önceki açık onaylı, süresi sınırlı aktarım içindir; günlük kod bu dosyayı açmaz.
+
+Keşif/arama kartları yalnızca mağaza URL'si sağlar. Güncelleme için mağazanın
+kendi tam ürün/teklif kaydı, fiziksel RAM/depolama, model/radyo, TRY peşin fiyat,
+stok ve gerçek gözlem zamanı yeniden doğrulanır. Sepete/üyeliğe/kupona bağlı
+fiyatın koşulsuz fiyat olarak aktarılması engellenir; standart fiyat bu nedenle
+doğrulanamıyorsa bir tahmin üretilmez. Ön sipariş ve bilinmeyen stok, satın
+alınabilir mağaza kapsamına sayılmaz. Aynı alan adının farklı satıcı adlarıyla
+iki mağaza gibi sayılması engellenir.
+
+403/429/challenge cevabında o mağaza için aynı çalışmada devre kesici açılır;
+PDP okuyucu engel çözmez veya eski gözlemi tazelemez. Geçici okuma hatası mevcut
+teklifleri silmez, fakat canlı sitenin 72 saatlik tazelik sınırını da uzatmaz.
+Dolayısıyla engellenen mağazalar için izinli ürün/fiyat feed'i veya resmî API
+olmadan sürekli iki kaynak kapsamı garanti edilemez.
+
+Her günlük iş, başarısız olsa da `daily-price-report.json` artifact'ını 30 gün
+saklar. Raporda ürün başına gerçek gözlem zamanı, satın alınabilir mağazalar,
+erişim/şema/kimlik hataları ve iki mağazası eksilen modeller bulunur. Mevcut
+%50 genel kapsam eşiği korunur; ayrıca tamamlanan yedi bütçe modelinde iki canlı
+mağaza kaybolursa iş başarısız olarak bildirilir. Bu kontrol gerçek fiyat
+güncellemelerini geri almaz ve puan yayın eşiğini düşürmez. Spark Slim 5G,
+belirsiz radyo kimliği çözülmediği için tamamlanmış çift kaynak grubuna katılmaz.
+
+Gerçek günlük kodu üretime yazmadan kontrol etmek için **Reviewed Budget Offer
+Recovery → mode: daily-audit** kullanılır. Bu mod yalnız bilinen PDP'leri okur;
+ürün/teklif/şema/R2 yazmaz, IndexNow veya challenge çözümü çalıştırmaz. Veri
+kapsamı yetersizse testler geçse bile denetim kırmızı olur; nedeni artifact'tadır.
+
+### Yeni model grubu
+
 Model listeleri `catalog_batches/<batch_id>.json` dosyalarında tutulur. Yeni bir
 grup eklemek için mevcut JSON biçimini kullanın; dosya adı ile `batch_id` aynı
 olmalı, grupta 1–20 farklı model bulunmalıdır. Her modelin adı, URL kısa adı,

@@ -11,6 +11,7 @@ import ipaddress
 import json
 import math
 import re
+import unicodedata
 from threading import Lock
 from urllib.parse import parse_qsl, urljoin, urlparse
 
@@ -139,6 +140,27 @@ def _challenge_page(soup):
                           r'continue shopping.*click the button', visible, re.I))
 
 
+def _is_conditional_price(soup, offer, price):
+    if any(key in offer for key in ('validForMemberTier', 'eligibleCustomerType', 'eligibleTransactionVolume')):
+        return True
+    def fold(value):
+        return ''.join(c for c in unicodedata.normalize('NFKD', value)
+                       if not unicodedata.combining(c)).lower().replace('ı', 'i')
+    label = fold(str(offer.get('name', '')) + ' ' + str(offer.get('description', '')))
+    condition = r'(?:sepette|sepete\s+ozel|kuponla|uyelere\s+ozel|premium[\s\x27’]*a?\s+ozel)'
+    if re.search(condition, label):
+        return True
+    # Visible conditional prices are denial evidence even if JSON-LD silently
+    # loses that condition. Never derive the unconditional price by subtracting
+    # a discount, choosing a struck price or taking another product's number.
+    visible = fold(soup.get_text(' ', strip=True))
+    amount = r'([0-9]{1,3}(?:\.[0-9]{3})+(?:,[0-9]{1,2})?|[0-9]{4,7}(?:,[0-9]{1,2})?)'
+    for match in re.finditer(condition + r'\s*:?\s*' + amount + r'\s*(?:tl|₺)', visible):
+        if float(match[1].replace('.', '').replace(',', '.')) == price:
+            return True
+    return False
+
+
 def _product_offer(soup, final_url):
     nodes = _schema_nodes(soup)
     products = [node for node in nodes if _type_is(node, 'Product')]
@@ -213,6 +235,8 @@ def _product_offer(soup, final_url):
     price = float(raw_price)
     if not math.isfinite(price) or not 0 < price <= 5_000_000:
         return None
+    if _is_conditional_price(soup, offer, price):
+        return None
     availability = offer.get('availability')
     if not isinstance(availability, str):
         return None
@@ -247,7 +271,28 @@ class RetailerOfferRefresher:
         self._cache = {}
         self._blocked_hosts = set()
         self._transport_failures = {}
+        self._diagnostics = {}
         self._lock = Lock()
+
+    def _record_attempt(self, source_url, reason, http_status=None):
+        # URL safety is checked before this method; never log credentials or
+        # response bodies, and never turn a failed attempt into checked_at.
+        with self._lock:
+            self._diagnostics[source_url] = {
+                'reason': reason, 'http_status': http_status,
+            }
+
+    def target_report(self, product_name, targets, expected_specs):
+        rows = []
+        urls = [t.get('source_url') if isinstance(t, dict) else t for t in targets[:12]]
+        for url in dict.fromkeys(u for u in urls if _safe_url(u)):
+            with self._lock:
+                detail = dict(self._diagnostics.get(url, {'reason': 'not_attempted', 'http_status': None}))
+                offer = self._cache.get(url)
+            if offer and not self._scraper.has_observed_offer_evidence(product_name, offer, expected_specs):
+                detail['reason'] = 'identity_or_variant_not_verified'
+            rows.append({'source_url': url, 'merchant': ALLOWED_HOSTS[_safe_url(url).hostname], **detail})
+        return rows
 
     def _transport_failure(self, host):
         host = host.removeprefix('www.')
@@ -267,56 +312,70 @@ class RetailerOfferRefresher:
         requested_variant = _variant_query(parsed)
         current = source_url
         candidate = None
+        self._record_attempt(source_url, 'no_exact_product_offer')
         for redirects in range(4):
             parsed = _safe_url(current)
             if not parsed:
                 break
             with self._lock:
-                if parsed.hostname.removeprefix('www.') in self._blocked_hosts:
-                    break
+                blocked = parsed.hostname.removeprefix('www.') in self._blocked_hosts
+            if blocked:
+                self._record_attempt(source_url, 'host_circuit_open')
+                break
             try:
                 response = self._fetch(current, timeout=(5, 15), allow_redirects=False,
                                        headers={'Accept': 'text/html', 'Accept-Language': 'tr-TR,tr;q=0.9'})
                 status = response.status_code
                 if status in (403, 429):
+                    self._record_attempt(source_url, 'access_denied' if status == 403 else 'rate_limited', status)
                     with self._lock:
                         self._blocked_hosts.add(parsed.hostname.removeprefix('www.'))
                     break
                 if status in (500, 502, 503, 504):
+                    self._record_attempt(source_url, 'retailer_unavailable', status)
                     self._transport_failure(parsed.hostname)
                     break
                 if status in _REDIRECTS:
                     location = response.headers.get('Location') or response.headers.get('location')
                     if redirects == 3 or not isinstance(location, str):
+                        self._record_attempt(source_url, 'redirect_limit_or_missing_location', status)
                         break
                     destination = urljoin(current, location)
                     destination_url = _safe_url(destination)
                     if not destination_url or (requested_variant and
                             _variant_query(destination_url) != requested_variant):
+                        self._record_attempt(source_url, 'unsafe_or_changed_variant_redirect', status)
                         break
                     current = destination
                     continue
                 if status != 200:
+                    self._record_attempt(source_url, 'http_error', status)
                     break
                 actual_url = getattr(response, 'url', None) or current
                 if not _safe_url(actual_url) or not _same_resource(actual_url, current):
+                    self._record_attempt(source_url, 'unexpected_final_destination', status)
                     break
                 html = response.text
                 if not isinstance(html, str) or len(html.encode('utf-8')) > _MAX_BODY_BYTES:
+                    self._record_attempt(source_url, 'invalid_or_oversized_response', status)
                     break
                 soup = BeautifulSoup(html, 'html.parser')
                 if _challenge_page(soup):
+                    self._record_attempt(source_url, 'challenge_page', status)
                     with self._lock:
                         self._blocked_hosts.add(parsed.hostname.removeprefix('www.'))
                     break
                 with self._lock:
                     self._transport_failures[parsed.hostname.removeprefix('www.')] = 0
                 candidate = _product_offer(soup, actual_url)
+                self._record_attempt(source_url, 'observed_exact_offer' if candidate else 'no_exact_product_offer', status)
                 break
             except requests.RequestException:
+                self._record_attempt(source_url, 'transport_error')
                 self._transport_failure(parsed.hostname)
                 break
             except (TypeError, ValueError):
+                self._record_attempt(source_url, 'invalid_response')
                 break
         with self._lock:
             self._cache[source_url] = candidate

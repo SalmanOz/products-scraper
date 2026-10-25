@@ -7,3 +7,4 @@ debug_*.html
 .DS_Store
 .discovery-state/
 daily-discovery-report.json
+daily-price-report.json

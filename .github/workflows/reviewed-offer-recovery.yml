@@ -6,7 +6,7 @@ on:
       mode:
         description: 'Audit is GET-only. Apply rereads live PDPs and submits exact verified offers only.'
         type: choice
-        options: [audit, apply]
+        options: [audit, apply, daily-audit]
         default: audit
       include_reviewed_browser_evidence:
         description: 'Opt in to session-reviewed live UI observations (expire after 15 minutes; never reused daily)'
@@ -31,7 +31,11 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt
       - name: Offline safety tests
-        run: python -m unittest -q test_reviewed_offer_recovery test_retailer_offer_refresh test_offer_ingestion_client
+        run: |
+          python -m unittest -q test_reviewed_offer_recovery test_retailer_offer_refresh test_reviewed_offer_targets test_price_refresh_orchestration
+          python test_offer_ingestion_client.py
+          python test_matching.py
+          python test_price_scraper_sources.py
       - name: Inspect eight reviewed variants and live offers
         env:
           TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
@@ -40,6 +44,12 @@ jobs:
           INCLUDE_BROWSER_EVIDENCE: ${{ inputs.include_reviewed_browser_evidence }}
         run: |
           set -euo pipefail
+          if [[ "$RECOVERY_MODE" == "daily-audit" ]]; then
+            slugs="$(python -c "from recover_reviewed_offers import load_profiles; print(','.join(p['slug'] for p in load_profiles()))")"
+            test -n "$slugs"
+            python update_prices.py --dry-run --known-pdp-only --slugs "$slugs"
+            exit 0
+          fi
           args=()
           if [[ "$RECOVERY_MODE" == "apply" ]]; then args+=(--apply); fi
           if [[ "$INCLUDE_BROWSER_EVIDENCE" == "true" ]]; then args+=(--include-reviewed-browser-evidence); fi
@@ -48,5 +58,7 @@ jobs:
         if: always()
         with:
           name: reviewed-budget-offers-${{ github.run_id }}
-          path: reviewed-offer-report.json
+          path: |
+            reviewed-offer-report.json
+            daily-price-report.json
           retention-days: 30

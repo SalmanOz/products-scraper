@@ -4,19 +4,24 @@ import asyncio
 import json
 import math
 from datetime import datetime, timezone
+from pathlib import Path
+import re
 from dotenv import load_dotenv
 from urllib.parse import urlparse
 from tr_price_scraper import TRPriceScraper
 from indexnow import submit_urls
 from offer_ingestion_client import OfferIngestionClient
 from price_sanity import filter_price_outliers
-from retailer_offer_refresh import RetailerOfferRefresher
+from retailer_offer_refresh import ALLOWED_HOSTS, RetailerOfferRefresher, _safe_url
+from reviewed_offer_targets import daily_offer_targets, PROTECTED_TWO_STORE_SLUGS
 
 load_dotenv()
 
 MIN_FULL_RUN_PRODUCT_COVERAGE = 0.50
 INGESTION_PRODUCT_BATCH_SIZE = 10
 MAX_OFFER_PRICE = 5_000_000
+PURCHASABLE = {'in_stock', 'limited'}
+MAX_SOURCE_OBSERVATION_AGE_SECONDS = 3 * 60 * 60
 
 class PriceUpdater:
     def __init__(self, ingestion_client=None, price_scraper=None, offer_refresher=None):
@@ -28,6 +33,7 @@ class PriceUpdater:
         self.offer_refresher = offer_refresher or RetailerOfferRefresher()
         if isinstance(self.price_scraper, TRPriceScraper):
             self.price_scraper.retailer_offer_refresher = self.offer_refresher
+        self.last_report = None
 
     def get_all_products(self):
         return self.ingestion_client.get_published_products()
@@ -67,6 +73,31 @@ class PriceUpdater:
     def utc_timestamp():
         return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
+    def live_offer_is_valid(self, product, offer, expected_specs):
+        if not isinstance(offer, dict) or not _safe_url(offer.get('url')):
+            return False
+        host = _safe_url(offer['url']).hostname
+        merchant = self.offer_matcher._standardize_merchant_name(str(offer.get('merchant', '')))
+        expected_merchant = self.offer_matcher._standardize_merchant_name(ALLOWED_HOSTS[host])
+        if not merchant or merchant.casefold() != expected_merchant.casefold():
+            return False
+        if not self.offer_matcher.has_observed_offer_evidence(product['name'], offer, expected_specs):
+            return False
+        if offer.get('availability') not in PURCHASABLE | {'out_of_stock', 'preorder'}:
+            return False
+        if isinstance(offer.get('price'), bool):
+            return False
+        try:
+            price = float(offer['price'])
+            observed = datetime.fromisoformat(offer['observed_at'].replace('Z', '+00:00'))
+            now = datetime.fromisoformat(self.utc_timestamp().replace('Z', '+00:00'))
+            age = (now - observed).total_seconds()
+            return (math.isfinite(price) and 0 < price <= MAX_OFFER_PRICE
+                    and offer.get('currency') == 'TRY'
+                    and -60 <= age <= MAX_SOURCE_OBSERVATION_AGE_SECONDS)
+        except (KeyError, TypeError, ValueError, AttributeError):
+            return False
+
     def prepare_product_offers(
         self,
         product,
@@ -80,13 +111,13 @@ class PriceUpdater:
         # Wrong-listing guard: a fuzzy-matched accessory/wrong variant surfaces
         # as a price far below the rest of the market and would poison the
         # current offer set.
-        purchasable = [o for o in offers if o.get('availability') != 'out_of_stock']
+        purchasable = [o for o in offers if o.get('availability') in PURCHASABLE]
         clean = filter_price_outliers(purchasable)
         if len(clean) < len(purchasable):
             dropped = [o for o in purchasable if o not in clean]
             for d in dropped:
                 logging.warning(f"  🚫 Outlier offer dropped: {d['merchant']} {d['price']} TL ({d['url'][:80]})")
-            offers = [o for o in offers if o.get('availability') == 'out_of_stock' or o in clean]
+            offers = [o for o in offers if o.get('availability') not in PURCHASABLE or o in clean]
 
         records = []
         for offer in offers:
@@ -215,12 +246,39 @@ class PriceUpdater:
             )
         pending_offers.clear()
 
-    async def run_update(self, product_id=None, phase2_backfill=False):
+    async def run_update(self, product_id=None, phase2_backfill=False, *, dry_run=False,
+                         product_slugs=None, known_pdp_only=False, report_path=None):
+        self.last_report = {'mode': 'audit' if dry_run else 'apply',
+                            'known_pdp_only': known_pdp_only, 'products': [], 'issues': []}
+        try:
+            result = await self._run_update(product_id, phase2_backfill, dry_run=dry_run,
+                                            product_slugs=product_slugs, known_pdp_only=known_pdp_only)
+            self.last_report['status'] = 'completed'
+            return result
+        except Exception as error:
+            self.last_report['status'] = 'failed'
+            self.last_report['issues'].append(str(error))
+            raise
+        finally:
+            if report_path:
+                Path(report_path).write_text(json.dumps(self.last_report, ensure_ascii=False, indent=2) + '\n')
+
+    async def _run_update(self, product_id=None, phase2_backfill=False, *, dry_run=False,
+                          product_slugs=None, known_pdp_only=False):
         if product_id is not None and phase2_backfill:
             raise RuntimeError(
                 "Phase 2 backfill must validate the full published catalog"
             )
         products = self.get_all_products()
+        if product_slugs is not None:
+            if (product_id is not None or phase2_backfill or not product_slugs
+                    or len(set(product_slugs)) != len(product_slugs)
+                    or any(not re.fullmatch(r'[a-z0-9]+(?:-[a-z0-9]+)*', s) for s in product_slugs)):
+                raise RuntimeError('Invalid or conflicting scoped product selection')
+            available = {p['slug'] for p in products}
+            if set(product_slugs) - available:
+                raise RuntimeError('Requested product slug was not found in the catalog')
+            products = [p for p in products if p['slug'] in product_slugs]
         if product_id is not None:
             try:
                 target_id = int(product_id)
@@ -242,21 +300,27 @@ class PriceUpdater:
 
         pending_offers = []
         aggregate_result = self.empty_ingestion_result()
+        self.last_report['ingestion'] = aggregate_result
         failures = []
         products_with_offers = 0
         merchant_counts = {}
         for processed_count, p in enumerate(products, start=1):
             name = p['name']
             expected_specs = self.get_expected_specs(p.get('attributes'))
+            targets = daily_offer_targets(p, expected_specs)
+            product_report = {'slug': p['slug'], 'targets': targets,
+                              'purchasable_merchants': [], 'prepared_offers': [],
+                              'rejected_live_observations': 0, 'discovered_destinations': 0}
+            self.last_report['products'].append(product_report)
 
             logging.info(f"\n🔍 Updating prices for: {name}")
             try:
                 refreshed = []
-                if p.get('offer_targets'):
+                if targets:
                     try:
                         refreshed = await asyncio.to_thread(
                             self.offer_refresher.refresh_existing_offer_targets,
-                            name, p['offer_targets'], expected_specs,
+                            name, targets, expected_specs,
                         )
                     except Exception as error:
                         # An unavailable old destination must not suppress
@@ -266,13 +330,29 @@ class PriceUpdater:
                     logging.info('  🔎 Existing retailer destinations: %s observed offer(s)', len(refreshed))
                 # Reuse successful discovery work. A stored URL alone never
                 # counts; every refreshed offer must pass the current matcher.
-                refreshed = [offer for offer in refreshed if
-                    self.offer_matcher.has_observed_offer_evidence(name, offer, expected_specs)]
+                accepted_refresh = [offer for offer in refreshed if self.live_offer_is_valid(p, offer, expected_specs)]
+                product_report['rejected_live_observations'] += len(refreshed) - len(accepted_refresh)
+                refreshed = accepted_refresh
                 refreshed_sellers = {str(offer.get('merchant', '')).strip().casefold()
-                                     for offer in refreshed if offer.get('availability') != 'out_of_stock'}
+                                     for offer in refreshed if offer.get('availability') in PURCHASABLE}
                 discovered = []
-                if len(refreshed_sellers) < 4:
-                    discovered = await self.price_scraper.get_best_prices(name, expected_specs)
+                if len(refreshed_sellers) < 4 and not known_pdp_only:
+                    hints = await self.price_scraper.get_best_prices(name, expected_specs)
+                    hints = hints if isinstance(hints, list) else []
+                    discovery_targets = [{'source_url': row.get('url')} for row in hints
+                                         if isinstance(row, dict) and _safe_url(row.get('url'))]
+                    product_report['discovered_destinations'] = len(discovery_targets)
+                    # Discovery cards are URL hints, not current merchant cash
+                    # prices. A second live-PDP read (or same-run exact URL
+                    # cache hit) must establish every discovered offer too.
+                    discovered = await asyncio.to_thread(
+                        self.offer_refresher.refresh_existing_offer_targets,
+                        name, discovery_targets, expected_specs,
+                    ) if discovery_targets else []
+                    targets = targets + discovery_targets
+                accepted_discovery = [offer for offer in discovered if self.live_offer_is_valid(p, offer, expected_specs)]
+                product_report['rejected_live_observations'] += len(discovered) - len(accepted_discovery)
+                discovered = accepted_discovery
                 by_listing = {}
                 # Direct retailer observations override a search-card copy of
                 # the same URL, including a newly observed out-of-stock state.
@@ -283,8 +363,8 @@ class PriceUpdater:
                 for offer in by_listing.values():
                     merchant = offer['merchant'].casefold()
                     prior = by_seller.get(merchant)
-                    is_available = offer.get('availability') != 'out_of_stock'
-                    prior_available = prior and prior.get('availability') != 'out_of_stock'
+                    is_available = offer.get('availability') in PURCHASABLE
+                    prior_available = prior and prior.get('availability') in PURCHASABLE
                     if prior is None or (is_available and not prior_available) or (
                         is_available and prior_available and float(offer['price']) < float(prior['price'])
                     ):
@@ -299,14 +379,17 @@ class PriceUpdater:
                         observed_at,
                         checked_at,
                     )
-                    pending_offers.extend(product_offers)
-                    if any(record['availability'] != 'out_of_stock' for record in product_offers):
+                    if not dry_run:
+                        pending_offers.extend(product_offers)
+                    if any(record['availability'] in PURCHASABLE for record in product_offers):
                         products_with_offers += 1
                     merchant_counts[p["slug"]] = len({
                         record["seller"].strip().casefold()
                         for record in product_offers
-                        if record['availability'] != 'out_of_stock'
+                        if record['availability'] in PURCHASABLE
                     })
+                    product_report['purchasable_merchants'] = sorted({r['seller'] for r in product_offers if r['availability'] in PURCHASABLE})
+                    product_report['prepared_offers'] = product_offers
                     logging.info(
                         "  ✅ Prepared %s matched listing(s) for ingestion",
                         len(product_offers),
@@ -322,6 +405,10 @@ class PriceUpdater:
             except Exception as e:
                 logging.error(f"  ❌ Error fetching prices for {name}: {str(e)}")
                 failures.append(f"{p['slug']}: {e}")
+                product_report['error'] = str(e)
+
+            if hasattr(self.offer_refresher, 'target_report'):
+                product_report['source_attempts'] = self.offer_refresher.target_report(name, targets, expected_specs)
 
             if processed_count % INGESTION_PRODUCT_BATCH_SIZE == 0:
                 self.flush_offers(pending_offers, aggregate_result)
@@ -346,18 +433,29 @@ class PriceUpdater:
             coverage * 100,
         )
 
-        if changed_paths:
+        self.last_report['coverage'] = {
+            'products': len(products), 'with_purchasable_offer': products_with_offers,
+            'with_two_merchants': sum(c >= 2 for c in merchant_counts.values()),
+            'without_two_merchants': [p['slug'] for p in products if merchant_counts.get(p['slug'], 0) < 2],
+            'protected_pair_failures': [p['slug'] for p in products
+                if p['slug'] in PROTECTED_TWO_STORE_SLUGS and merchant_counts.get(p['slug'], 0) < 2],
+        }
+        self.last_report['ingestion'] = aggregate_result
+        if changed_paths and not dry_run:
             submit_urls(changed_paths + ["/", "/products"])
 
         logging.info("\n🏁 Price update completed!")
         run_issues = []
+        if self.last_report['coverage']['protected_pair_failures']:
+            run_issues.append('Protected budget models did not retain two live verified merchants: '
+                              + ', '.join(self.last_report['coverage']['protected_pair_failures']))
         if aggregate_result["variant_rejected"]:
             run_issues.append(
                 f"{aggregate_result['variant_rejected']} offer(s) rejected for "
                 "identity/variant conflicts; valid committed updates retained"
             )
         if (
-            product_id is None
+            product_id is None and product_slugs is None
             and products
             and coverage < MIN_FULL_RUN_PRODUCT_COVERAGE
         ):
@@ -398,6 +496,10 @@ if __name__ == "__main__":
     )
     parser = argparse.ArgumentParser()
     parser.add_argument("product_id", nargs="?")
+    parser.add_argument('--dry-run', action='store_true', help='GET-only: no ingestion or IndexNow submission')
+    parser.add_argument('--known-pdp-only', action='store_true', help='Skip discovery; inspect known retailer PDPs only')
+    parser.add_argument('--slugs', help='Comma-separated exact published slugs for a scoped run')
+    parser.add_argument('--report', default='daily-price-report.json')
     parser.add_argument(
         "--phase2-backfill",
         action="store_true",
@@ -409,5 +511,9 @@ if __name__ == "__main__":
         updater.run_update(
             arguments.product_id,
             phase2_backfill=arguments.phase2_backfill,
+            dry_run=arguments.dry_run,
+            known_pdp_only=arguments.known_pdp_only,
+            product_slugs=arguments.slugs.split(',') if arguments.slugs else None,
+            report_path=arguments.report,
         )
     )

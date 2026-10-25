@@ -188,7 +188,7 @@ jobs:
           python test_price_scraper_sources.py
           python test_offer_ingestion_client.py
           python test_price_update_resilience.py
-          python -m unittest -q test_retailer_offer_refresh test_price_refresh_orchestration
+          python -m unittest -q test_retailer_offer_refresh test_price_refresh_orchestration test_reviewed_offer_targets test_reviewed_offer_recovery
           python test_source_ingestion.py
           python test_catalog_expansion.py
           python test_product_images.py
@@ -287,6 +287,35 @@ jobs:
           else
             python update_prices.py
           fi
+
+      - name: Save daily merchant evidence and coverage report
+        if: ${{ always() && !cancelled() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_technical_data != 'true')) }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-price-evidence-${{ github.run_id }}
+          path: daily-price-report.json
+          retention-days: 30
+
+      - name: Summarize verified merchant coverage
+        if: ${{ always() && !cancelled() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_technical_data != 'true')) }}
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          p = Path('daily-price-report.json')
+          if p.is_file():
+              r = json.loads(p.read_text())
+              c = r.get('coverage', {})
+              lines = ['## Live merchant coverage', f"Status: {r['status']}; mode: {r['mode']}",
+                       f"At least one purchasable merchant: {c.get('with_purchasable_offer', 0)}; at least two: {c.get('with_two_merchants', 0)}"]
+              for product in r['products']:
+                  if len(product['purchasable_merchants']) < 2:
+                      reasons = sorted({s['reason'] for s in product.get('source_attempts', [])})
+                      lines.append(f"- {product['slug']}: {len(product['purchasable_merchants'])} live merchants; {', '.join(reasons) or 'no verified live PDP'}")
+              lines += ['- ' + issue for issue in r.get('issues', [])]
+              with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:
+                  out.write('\n'.join(lines) + '\n')
+          PY
 
       - name: Audit Price Index Data Readiness
         if: ${{ always() && !cancelled() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_technical_data != 'true')) }}

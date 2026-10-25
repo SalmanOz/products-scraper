@@ -77,16 +77,17 @@ class FakeIngestionClient:
 
 
 class FakeRefresher:
-    def __init__(self, rows=(), error=None):
+    def __init__(self, rows=(), error=None, discovery_rows=()):
         self.rows = deepcopy(list(rows))
+        self.discovery_rows = deepcopy(list(discovery_rows))
         self.error = error
         self.calls = []
 
     def refresh_existing_offer_targets(self, name, targets, expected_specs):
         self.calls.append((name, deepcopy(targets), deepcopy(expected_specs)))
-        if self.error is not None:
+        if self.error is not None and len(self.calls) == 1:
             raise self.error
-        return deepcopy(self.rows)
+        return deepcopy(self.rows if len(self.calls) == 1 else self.discovery_rows)
 
 
 class FakeDiscovery:
@@ -123,7 +124,8 @@ class PriceRefreshOrchestrationTests(unittest.TestCase):
 
     def updater(self, refreshed=(), discovered=(), error=None):
         client = FakeIngestionClient([product()])
-        refresher = FakeRefresher(refreshed, error)
+        verified_discovery = [{**row, 'observed_at': PDP_OBSERVED_AT} for row in discovered]
+        refresher = FakeRefresher(refreshed, error, verified_discovery)
         discovery = FakeDiscovery(discovered)
         return PriceUpdater(client, discovery, refresher), client, refresher, discovery
 
@@ -150,14 +152,15 @@ class PriceRefreshOrchestrationTests(unittest.TestCase):
         self.assertEqual({row["seller"] for row in client.submissions[0]},
                          {"Teknosa", "Trendyol", "Hepsiburada"})
         discovered = next(row for row in client.submissions[0] if row["seller"] == "Hepsiburada")
-        self.assertEqual(discovered["checked_at"], NOW)
+        self.assertEqual(discovered["checked_at"], PDP_OBSERVED_AT)
+        self.assertEqual(len(_refresher.calls), 2)
 
     def test_refresher_exception_does_not_suppress_discovery(self):
         updater, client, refresher, discovery = self.updater(
             discovered=[offer(0, observed=False)], error=RuntimeError("Offline fixture failure"),
         )
         result = asyncio.run(updater.run_update())
-        self.assertEqual(len(refresher.calls), 1)
+        self.assertEqual(len(refresher.calls), 2)
         self.assertEqual(len(discovery.calls), 1)
         self.assertEqual(result["accepted"], 1)
         self.assertEqual(client.submissions[0][0]["source_title"], TITLE)
@@ -186,7 +189,78 @@ class PriceRefreshOrchestrationTests(unittest.TestCase):
         self.assertEqual(len(discovery.calls), 1)
         self.assertEqual(client.submissions, [])
         self.assertEqual(client.catalog, catalog_before)
-        self.assertEqual(refresher.calls[0][1], catalog_before[0]["offer_targets"])
+        self.assertEqual([r['source_url'] for r in refresher.calls[0][1]],
+                         [r['source_url'] for r in catalog_before[0]['offer_targets']])
+
+    def test_search_price_alone_cannot_renew_or_replace_a_real_offer(self):
+        updater, client, refresher, _discovery = self.updater([offer(0)], [offer(1, observed=False)])
+        refresher.discovery_rows = []  # blocked/missing merchant PDP
+        result = asyncio.run(updater.run_update())
+        self.assertEqual(result['accepted'], 1)
+        self.assertEqual([r['seller'] for r in client.submissions[0]], ['Teknosa'])
+
+    def test_unknown_stock_and_preorder_do_not_count_toward_four_merchants(self):
+        for state in ['unknown', 'preorder']:
+            with self.subTest(state=state):
+                updater, client, _refresher, discovery = self.updater(
+                    [offer(i, availability=state) for i in range(4)], [offer(0, observed=False)])
+                if state == 'preorder':
+                    with self.assertRaisesRegex(RuntimeError, 'coverage 0.0%'):
+                        asyncio.run(updater.run_update())
+                else:
+                    asyncio.run(updater.run_update())
+                self.assertEqual(len(discovery.calls), 1)
+                self.assertEqual(updater.last_report['coverage']['with_two_merchants'], 0)
+                self.assertEqual(updater.last_report['coverage']['with_purchasable_offer'], 0 if state == 'preorder' else 1)
+
+    def test_dry_run_and_known_pdp_mode_never_write_or_run_discovery(self):
+        updater, client, _refresher, discovery = self.updater([offer(0), offer(1)])
+        result = asyncio.run(updater.run_update(dry_run=True, known_pdp_only=True))
+        self.assertEqual(client.submissions, [])
+        self.assertEqual(result['accepted'], 0)
+        self.assertEqual(discovery.calls, [])
+        self.assertEqual(updater.last_report['coverage']['with_two_merchants'], 1)
+        self.assertEqual(updater.last_report['mode'], 'audit')
+
+    def test_stale_missing_or_future_observations_never_receive_a_new_timestamp(self):
+        for timestamp in [None, '2001-01-01T00:00:00Z', '2026-10-20T12:00:00Z', 'invalid']:
+            with self.subTest(timestamp=timestamp):
+                row = {**offer(0), 'observed_at': timestamp}
+                updater, client, _refresher, _discovery = self.updater([row])
+                asyncio.run(updater.run_update(dry_run=True, product_slugs=['samsung-galaxy-s25'], known_pdp_only=True))
+                self.assertEqual(client.submissions, [])
+                self.assertEqual(updater.last_report['coverage']['with_purchasable_offer'], 0)
+
+    def test_unknown_scoped_slug_fails_before_any_fetch_or_write(self):
+        updater, client, refresher, discovery = self.updater([offer(0)])
+        with self.assertRaisesRegex(RuntimeError, 'not found'):
+            asyncio.run(updater.run_update(dry_run=True, product_slugs=['not-in-catalog']))
+        self.assertEqual(client.submissions, [])
+        self.assertEqual(refresher.calls, [])
+        self.assertEqual(discovery.calls, [])
+
+    def test_protected_budget_pair_loss_is_reported_even_when_one_store_coverage_is_100_percent(self):
+        p = {'id': 279, 'slug': 'samsung-galaxy-a27-5g', 'name': 'Samsung Galaxy A27 5G',
+             'attributes': {'ram_gb': 6, 'storage_gb': 128, 'Connectivity': {'5G': True}},
+             'offer_targets': []}
+        row = {**offer(0), 'source_title': 'Samsung Galaxy A27 5G 6GB RAM 128GB',
+               'url': 'https://www.teknosa.com/samsung-galaxy-a27-5g-6gb-ram-128gb'}
+        client = FakeIngestionClient([p])
+        updater = PriceUpdater(client, FakeDiscovery(), FakeRefresher([row]))
+        with self.assertRaisesRegex(RuntimeError, 'Protected budget models'):
+            asyncio.run(updater.run_update(dry_run=True, known_pdp_only=True))
+        self.assertEqual(client.submissions, [])
+        self.assertEqual(updater.last_report['coverage']['with_purchasable_offer'], 1)
+        self.assertEqual(updater.last_report['coverage']['protected_pair_failures'], [p['slug']])
+        self.assertEqual(updater.last_report['status'], 'failed')
+
+    def test_one_domain_cannot_count_as_two_merchants_by_forged_merchant_name(self):
+        forged = {**offer(1), 'url': offer(0)['url']}
+        updater, client, _refresher, _discovery = self.updater([offer(0), forged])
+        asyncio.run(updater.run_update(dry_run=True, known_pdp_only=True))
+        self.assertEqual(updater.last_report['coverage']['with_two_merchants'], 0)
+        self.assertEqual(updater.last_report['products'][0]['rejected_live_observations'], 1)
+        self.assertEqual(client.submissions, [])
 
     def test_wrong_model_or_ram_refreshes_do_not_count_or_bypass_discovery(self):
         for wrong_title, wrong_path in [

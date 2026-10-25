@@ -8,6 +8,8 @@ from offer_ingestion_client import (
     OfferIngestionClient,
 )
 from update_prices import PriceUpdater
+from retailer_offer_refresh import ALLOWED_HOSTS
+from urllib.parse import urlparse
 
 
 TEST_SECRET = "s" * 32
@@ -56,7 +58,7 @@ class RecordingIngestionClient:
         return [
             {
                 "id": 42,
-                "name": "Example Phone 8/256GB",
+                "name": "Samsung Example Phone",
                 "slug": "example-phone",
                 "attributes": {"ram_gb": 8, "storage_gb": 256},
             }
@@ -78,6 +80,23 @@ class RecordingIngestionClient:
 
 async def no_delay(_seconds):
     return None
+
+
+class VerifiedRetailerFixture:
+    """Separate live-PDP evidence; discovery prices alone are no longer enough."""
+    def refresh_existing_offer_targets(self, name, targets, expected_specs):
+        return [{
+            'merchant': ALLOWED_HOSTS[urlparse(t['source_url']).hostname],
+            'price': 21999, 'url': t['source_url'], 'currency': 'TRY',
+            'source_title': f'{name if name.startswith("Samsung") else "Samsung " + name} 8GB RAM 256GB',
+            'availability': 'in_stock', 'observed_at': '2026-07-27T09:58:00Z',
+        } for t in targets]
+
+
+def fixture_updater(client, scraper):
+    updater = PriceUpdater(client, scraper, VerifiedRetailerFixture())
+    updater.utc_timestamp = lambda: '2026-07-27T10:00:01Z'
+    return updater
 
 
 def sample_offer(index):
@@ -367,11 +386,7 @@ def test_committed_count_mismatch_fails_the_run():
 
 def test_price_updater_builds_the_complete_offer_contract():
     ingestion_client = RecordingIngestionClient()
-    updater = PriceUpdater(ingestion_client, OneOfferScraper())
-    timestamps = iter(
-        ["2026-07-27T10:00:00Z", "2026-07-27T10:00:01Z"]
-    )
-    updater.utc_timestamp = lambda: next(timestamps)
+    updater = fixture_updater(ingestion_client, OneOfferScraper())
 
     with (
         patch("update_prices.asyncio.sleep", new=no_delay),
@@ -388,10 +403,11 @@ def test_price_updater_builds_the_complete_offer_contract():
                 "seller": "Teknosa",
                 "price": 21999.0,
                 "currency": "TRY",
-                "availability": "unknown",
+                "availability": "in_stock",
                 "source_url": "https://www.teknosa.com/example-phone-p-123",
-                "observed_at": "2026-07-27T10:00:00Z",
-                "checked_at": "2026-07-27T10:00:01Z",
+                "observed_at": "2026-07-27T09:58:00Z",
+                "checked_at": "2026-07-27T09:58:00Z",
+                "source_title": "Samsung Example Phone 8GB RAM 256GB",
                 "is_official": False,
             }
         ]
@@ -408,7 +424,7 @@ def test_full_catalog_zero_offer_outage_fails():
         async def get_best_prices(self, product_name, expected_specs=None):
             return []
 
-    updater = PriceUpdater(ingestion_client, EmptyOfferScraper())
+    updater = fixture_updater(ingestion_client, EmptyOfferScraper())
     with (
         patch("update_prices.asyncio.sleep", new=no_delay),
         patch("update_prices.submit_urls"),
@@ -430,7 +446,7 @@ def test_partial_catalog_outage_commits_good_rows_but_fails_the_run():
             "id": index,
             "name": f"Phone {index}",
             "slug": f"phone-{index}",
-            "attributes": {},
+            "attributes": {"ram_gb": 8, "storage_gb": 256},
         }
         for index in range(1, 11)
     ]
@@ -449,7 +465,7 @@ def test_partial_catalog_outage_commits_good_rows_but_fails_the_run():
                 else []
             )
 
-    updater = PriceUpdater(ingestion_client, MostlyEmptyScraper())
+    updater = fixture_updater(ingestion_client, MostlyEmptyScraper())
     with (
         patch("update_prices.asyncio.sleep", new=no_delay),
         patch("update_prices.submit_urls"),
@@ -472,11 +488,11 @@ def test_long_run_commits_bounded_product_batches():
             "id": index,
             "name": f"Phone {index}",
             "slug": f"phone-{index}",
-            "attributes": {},
+            "attributes": {"ram_gb": 8, "storage_gb": 256},
         }
         for index in range(1, 12)
     ]
-    updater = PriceUpdater(ingestion_client, OneOfferScraper())
+    updater = fixture_updater(ingestion_client, OneOfferScraper())
 
     with (
         patch("update_prices.asyncio.sleep", new=no_delay),
@@ -490,7 +506,7 @@ def test_long_run_commits_bounded_product_batches():
 
 def test_phase2_backfill_commits_rows_but_requires_two_merchants():
     ingestion_client = RecordingIngestionClient()
-    updater = PriceUpdater(ingestion_client, OneOfferScraper())
+    updater = fixture_updater(ingestion_client, OneOfferScraper())
 
     with (
         patch("update_prices.asyncio.sleep", new=no_delay),
@@ -521,7 +537,7 @@ def test_invalid_offer_is_rejected_before_batch_submission():
                 }
             ]
 
-    updater = PriceUpdater(ingestion_client, InvalidOfferScraper())
+    updater = fixture_updater(ingestion_client, InvalidOfferScraper())
     with (
         patch("update_prices.asyncio.sleep", new=no_delay),
         patch("update_prices.submit_urls"),
@@ -529,7 +545,7 @@ def test_invalid_offer_is_rejected_before_batch_submission():
         try:
             asyncio.run(updater.run_update())
         except RuntimeError as error:
-            assert "Invalid extracted offer for example-phone" in str(error)
+            assert "offer coverage 0.0%" in str(error)
         else:
             raise AssertionError("Invalid source URL reached ingestion")
 
@@ -537,7 +553,7 @@ def test_invalid_offer_is_rejected_before_batch_submission():
 
 
 def test_observed_title_is_forwarded_and_blank_titles_are_not_synthesized():
-    updater = PriceUpdater(RecordingIngestionClient(), OneOfferScraper())
+    updater = fixture_updater(RecordingIngestionClient(), OneOfferScraper())
     product = {"id": 42, "name": "Expected catalog phone", "slug": "example-phone"}
     offer = {"merchant": "Teknosa", "price": 21999,
              "url": "https://www.teknosa.com/phone"}
@@ -567,7 +583,7 @@ def test_observed_title_is_forwarded_and_blank_titles_are_not_synthesized():
 
 
 def test_source_title_limit_matches_endpoint_without_truncation():
-    updater = PriceUpdater(RecordingIngestionClient(), OneOfferScraper())
+    updater = fixture_updater(RecordingIngestionClient(), OneOfferScraper())
     product = {"id": 42, "slug": "example-phone"}
     offer = {"merchant": "Teknosa", "price": 21999,
              "url": "https://www.teknosa.com/phone"}
@@ -672,7 +688,7 @@ def test_variant_rejection_marks_run_failure_after_retaining_good_updates():
             return [{"merchant": merchant, "price": 21999,
                      "url": f"https://www.{merchant.lower()}.com/phone"}
                     for merchant in ["Teknosa", "Trendyol"]]
-    updater = PriceUpdater(client, TwoOfferScraper())
+    updater = fixture_updater(client, TwoOfferScraper())
     with (patch("update_prices.asyncio.sleep", new=no_delay),
           patch("update_prices.submit_urls") as submit_urls,
           patch("update_prices.logging.error") as log_error):
@@ -690,7 +706,7 @@ def test_variant_rejection_marks_run_failure_after_retaining_good_updates():
 
 
 def test_refreshed_stock_and_actual_fetch_time_are_not_rewritten_as_new_unknown_evidence():
-    updater = PriceUpdater(RecordingIngestionClient(), OneOfferScraper())
+    updater = fixture_updater(RecordingIngestionClient(), OneOfferScraper())
     product = {'id': 42, 'slug': 'example-phone'}
     offer = {'merchant': 'idefix', 'price': 21999, 'url': 'https://www.idefix.com/phone',
              'source_title': 'Samsung Galaxy S25 12GB RAM 256GB', 'currency': 'TRY',

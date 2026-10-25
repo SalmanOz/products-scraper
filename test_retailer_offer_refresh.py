@@ -128,6 +128,34 @@ class RetailerRefreshTests(unittest.TestCase):
         offers, _, _ = self.refresh(schema)
         self.assertEqual(offers[0]['availability'], 'out_of_stock')
 
+    def test_conditional_basket_or_member_price_is_never_unconditional_cash(self):
+        schema = product_schema()
+        schema['offers']['price'] = '15470'
+        html = page(schema) + '<main>17.000 TL <strong>Sepete Özel</strong>15.470 TL</main>'
+        self.assertEqual(self.refresh(schema, response=Response(html))[0], [])
+        schema['offers']['price'] = '17000'
+        self.assertEqual(self.refresh(schema, response=Response(page(schema) + '<main>Sepette 15.470 TL</main>'))[0][0]['price'], 17000)
+        for condition in [{'name': 'Kuponla fiyat'}, {'validForMemberTier': 'Premium'},
+                          {'eligibleCustomerType': 'Member'}, {'eligibleTransactionVolume': {'price': '1000'}}]:
+            row = product_schema()
+            row['offers'].update(condition)
+            self.assertEqual(self.refresh(row)[0], [])
+
+    def test_denied_host_is_reported_without_fallback_or_timestamp_renewal(self):
+        calls = []
+        def fetch(url, **kwargs):
+            calls.append(url)
+            return Response(status=403, url=url)
+        reader = RetailerOfferRefresher(fetch=fetch)
+        targets = [URL]
+        self.assertEqual(reader.refresh_existing_offer_targets('Samsung Galaxy S25', targets, SPECS), [])
+        report = reader.target_report('Samsung Galaxy S25', targets, SPECS)
+        self.assertEqual(report[0]['reason'], 'access_denied')
+        self.assertEqual(report[0]['http_status'], 403)
+        self.assertNotIn('observed_at', report[0])
+        self.assertEqual(reader.refresh_existing_offer_targets('Samsung Galaxy S25', targets, SPECS), [])
+        self.assertEqual(calls, [URL])
+
     def test_exact_host_boundary_rejects_credentials_ips_ports_and_suffix_tricks_before_fetch(self):
         urls = ['http://www.idefix.com/a', 'https://www.idefix.com:444/a',
                 'https://user:pass@www.idefix.com/a', 'https://127.0.0.1/a',
