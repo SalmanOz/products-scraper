@@ -67,6 +67,7 @@ class OfferIngestionClient:
     def _request_json(self, method, path, **kwargs):
         url = self._url(path)
         last_error = None
+        scoring_retry_pending = False
 
         for attempt in range(1, self.max_attempts + 1):
             try:
@@ -121,7 +122,10 @@ class OfferIngestionClient:
                 # stale until the score recalculation succeeds. Replaying the
                 # exact observation is idempotent and gives that follow-up
                 # work another bounded chance to complete.
-                if body.get("scores_recalculated") is False:
+                if body.get("scores_recalculated") is False or (
+                    scoring_retry_pending and body.get("scores_recalculated") is not True
+                ):
+                    scoring_retry_pending = True
                     last_error = IngestionClientError(
                         "Offer batch was committed, but score recalculation "
                         f"failed with HTTP {response.status_code}"
@@ -356,3 +360,19 @@ class OfferIngestionClient:
             dict.fromkeys(totals["changed_paths"])
         )
         return totals
+
+    def reconcile_scores(self):
+        """Recompute from existing server evidence; never refresh offer dates."""
+        body = self._request_json(
+            "POST", "/api/ingestion/scoring/reconcile",
+            headers={"Authorization": f"Bearer {self.secret}",
+                     "Content-Type": "application/json"},
+            json={},
+        )
+        if not isinstance(body, dict) or body.get("scores_recalculated") is not True:
+            raise IngestionClientError("Score reconciliation did not confirm success")
+        counters = [body.get(key) for key in ("total", "scored", "skipped")]
+        if (any(type(value) is not int or value < 0 for value in counters)
+                or counters[0] != counters[1] + counters[2]):
+            raise IngestionClientError("Score reconciliation returned invalid counters")
+        return body

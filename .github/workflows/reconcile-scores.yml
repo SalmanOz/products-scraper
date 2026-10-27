@@ -1,0 +1,43 @@
+name: Reconcile Current Offer Scores
+
+on:
+  schedule:
+    # Off-peak minute; GitHub may delay scheduled jobs. Public gates continue
+    # to hide expired evidence immediately while this job is waiting.
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Dedicated queue: a new hourly run must not replace a pending daily price run.
+# Server product-row locks serialize the score snapshot with offer mutations.
+concurrency:
+  group: teknoskor-score-reconciliation
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install maintenance dependencies
+        run: pip install requests
+      - name: Offline reconciliation contracts
+        run: python -m unittest -q test_score_reconciliation
+      - name: Reconcile from stored verified evidence
+        env:
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+        run: python reconcile_scores.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: score-reconciliation-${{ github.run_id }}
+          path: score-reconciliation.json
+          if-no-files-found: warn
+          retention-days: 30

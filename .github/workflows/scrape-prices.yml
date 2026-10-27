@@ -188,6 +188,7 @@ jobs:
           python test_price_scraper_sources.py
           python test_offer_ingestion_client.py
           python test_price_update_resilience.py
+          python -m unittest -q test_score_reconciliation
           python -m unittest -q test_retailer_offer_refresh test_price_refresh_orchestration test_reviewed_offer_targets test_reviewed_offer_recovery test_public_retailer_sources test_android_retailer_candidate_audit
           python test_source_ingestion.py
           python test_catalog_expansion.py
@@ -262,6 +263,7 @@ jobs:
           retention-days: 30
 
       - name: Discover Prices for Expanded Catalog
+        id: expanded_prices
         if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.catalog_expansion_batch != 'none' }}
         env:
           TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
@@ -273,6 +275,7 @@ jobs:
           python update_prices.py
 
       - name: Run Price Update Scraper (TR Merchants)
+        id: daily_prices
         if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_technical_data != 'true') }}
         env:
           TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
@@ -287,6 +290,25 @@ jobs:
           else
             python update_prices.py
           fi
+
+      # Also finalize partial/failed price runs: committed offers and passive
+      # expiry must not leave a previous score generation behind. Audit-only
+      # modes never enter either of the preceding price-writing steps.
+      - name: Reconcile catalog scores after price refresh
+        if: ${{ always() && !cancelled() && (steps.daily_prices.outcome == 'success' || steps.daily_prices.outcome == 'failure' || steps.expanded_prices.outcome == 'success' || steps.expanded_prices.outcome == 'failure') }}
+        env:
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+        run: python reconcile_scores.py
+
+      - name: Save score reconciliation result
+        if: ${{ always() && !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: score-reconciliation-${{ github.run_id }}
+          path: score-reconciliation.json
+          if-no-files-found: ignore
+          retention-days: 30
 
       - name: Save daily merchant evidence and coverage report
         if: ${{ always() && !cancelled() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_technical_data != 'true')) }}

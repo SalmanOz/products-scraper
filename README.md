@@ -255,6 +255,29 @@ Actions üzerinden uygulamak için `run_technical_data=true`,
 İşlem öncesi/sonrası değerler 30 gün saklanan `spec-mapping-repair` çıktısındadır.
 Bu işlem yeni ürün eklemez; günlük fiyat taramasının davranışını değiştirmez.
 
+## Fiyat yenileme / puan senkronizasyonu
+
+Günlük fiyat adımı başarılı olsa da kısmen başarısız olsa da ardından
+`reconcile_scores.py` çalışır. Hiç yeni teklif bulunmaması, eski fiyat kanıtlarının
+süresinin dolmadığı anlamına gelmez. Ayrıca `Reconcile Current Offer Scores`
+saatlik olarak aynı denetimi yapar; kendi concurrency kuyruğunu kullanarak
+bekleyen günlük fiyat işini iptal etmez. Fiyat yazımıyla tutarlılık sunucudaki
+ürün satırı kilitleriyle sağlanır. GitHub kuyrukları nedeniyle kesin saat garantisi yoktur.
+Salt-okunur audit modlarına hiçbir puan/teklif yazma adımı eklenmemiştir.
+
+Bu işlem yalnız sunucudaki mevcut kanıtlardan tüm katalog yüzdeliğini tek
+transaction içinde yeniden hesaplar. Mağazayı taramaz, fiyat veya gözlem tarihini
+yenilemez. 72 saat, iki farklı güncel mağaza, varyant/para birimi/stok kontrolleri
+ve doğrulanmış teknik puan gereklilikleri aynıdır. İkinci kaynak bulunamayan model
+puan alamaz; bu açığı gidermiş gibi raporlanmaz. Sonuç `score-reconciliation.json`
+çıktısındadır; HTTP/hesaplama hatası iş akışını başarısız bırakır.
+
+Dağıtım sırası: önce products deposundaki `/api/ingestion/scoring/reconcile`
+uç noktasının yayına çıkmasını doğrulayın, sonra bu scraper sürümünü yayınlayın.
+Aynı mevcut `SCRAPER_INGESTION_SECRET` kullanılır; anahtar veya DB erişimi
+rapora yazılmaz. Elle onarım için Actions → Reconcile Current Offer Scores → Run
+workflow kullanılabilir. Offline test: `python -m unittest -q test_score_reconciliation`.
+
 ## 🔗 Hızlı Bağlantılar
 
 * **Ana Sayfa:** [Teknoskor.com](https://teknoskor.com)
