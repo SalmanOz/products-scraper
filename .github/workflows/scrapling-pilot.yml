@@ -1,0 +1,48 @@
+name: Scrapling Android Read-only Pilot
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: teknoskor-scrapling-readonly-pilot
+  cancel-in-progress: false
+
+jobs:
+  pilot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install isolated pinned pilot dependencies
+        run: pip install -r requirements-scrapling-pilot.txt
+      - name: Install browser runtime
+        run: python -m patchright install --with-deps chromium
+      - name: Offline pilot and existing quality contracts
+        run: python -m unittest -q test_scrapling_pilot test_retailer_offer_refresh test_reviewed_offer_recovery
+      - name: Isolated Scrapling browser rendering smoke test
+        run: python -m unittest -q test_scrapling_pilot_runtime
+      - name: Compare reviewed Android PDPs without credentials or writes
+        run: python scrapling_pilot.py
+      - name: Publish result summary
+        if: always()
+        run: |
+          if [ -f scrapling-pilot-summary.md ]; then
+            cat scrapling-pilot-summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: scrapling-readonly-pilot-${{ github.run_id }}
+          path: |
+            scrapling-pilot-report.json
+            scrapling-pilot-summary.md
+          if-no-files-found: warn
+          retention-days: 30

@@ -278,6 +278,47 @@ Aynı mevcut `SCRAPER_INGESTION_SECRET` kullanılır; anahtar veya DB erişimi
 rapora yazılmaz. Elle onarım için Actions → Reconcile Current Offer Scores → Run
 workflow kullanılabilir. Offline test: `python -m unittest -q test_score_reconciliation`.
 
+## Scrapling Android salt-okunur pilotu
+
+Actions → **Scrapling Android Read-only Pilot** → Run workflow. Yalnız manuel
+çalışır; günlük fiyat işini veya canlı siteyi değiştirmez. İş akışına hiçbir
+production secret verilmez, checkout kimlik bilgileri saklanmaz. Pilot kendisine
+production yazma anahtarı verilirse çalışmayı reddeder. Tek Teknoskor erişimi,
+8 ürünün kimlik/RAM/depolama eşleşmesini doğrulayan anonim public GET çağrılarıdır.
+
+`requirements-scrapling-pilot.txt` ayrı ortamda kurulur. `scrapling_pilot.py`,
+`budget-eight-2026-10-25.json` içindeki 8 model / 19 incelenmiş ürün URL'sini
+requests, Scrapling HTTP ve Scrapling tarayıcı okuyucularıyla karşılaştırır.
+Üçü de mevcut `_product_offer`, `rejection_reason` ve fiyat aykırılık kontrolünü
+kullanır. Kaynak, mağaza veya eşik onayı genişletilmez. Model/radyo/RAM/depolama,
+açık Türkiye garantisi, TRY peşin fiyat ve satın alınabilir stok doğrulanmalıdır.
+Gözlemler bu çalışmadan ve en fazla 15 dakika eski olmalıdır; 72 saatlik üretim
+eşiği değiştirilmez. Eski manuel kanıt dosyaları okunmaz.
+
+Robots kuralları ve hız sınırları uygulanır. Eksik robots, 403/429 veya CAPTCHA
+durumunda başka yöntemle engel aşılmaz. Tarayıcıda sadece GET, incelenen aynı
+ana sayfa URL'si, gerekli public statik dosyalar ve aynı kökendeki izinli veri
+istekleri açılır; POST, sepet/hesap/ödeme uçları, özel IP'ler, yeni sayfaya geçiş,
+servis çalışanları ve indirmeler kapalıdır. Oturum açma, proxy, CAPTCHA çözme ve
+adaptive fiyat eşleştirme yoktur. Bu nedenle erişim reddedilen hedeflerde
+Scrapling'in engel aşma kapasitesi ölçülmez; rapor bunu açıkça belirtir.
+
+`scrapling-pilot-report.json` her URL/yöntem için ret nedenini, gözlem tarihini,
+yanıt hash'ini ve varsa doğrulanan teklifi içerir; çerez/başlık veya tüm sayfa
+içeriğini saklamaz. `additional_model_merchant_pairs` aynı modele requests'e
+göre eklenen farklı mağaza sayısıdır; renkler/ilanlar mağaza sayısını artırmaz.
+Yöntemler fiyat, stok veya başlıkta çelişirse ek teklif kabul edilmez. İki
+mağazaya yeni ulaşan model sayısı ayrıca raporlanır. Sonuç 0 ise 0 yazılır.
+Hiçbir Scrapling hedefi denenememişse `comparison_status` "not_evaluated" olur;
+işin tamamlanması kaynak başarısı olarak sunulmaz. Runtime hataları işi başarısız
+bırakır. Tamamen engellenmiş kaynaklar ise geçerli ama kapsamı sınırlı rapordur.
+
+Offline test: `python -m unittest -q test_scrapling_pilot test_retailer_offer_refresh
+test_reviewed_offer_recovery`. Chromium kurulduktan sonra
+`python -m unittest -q test_scrapling_pilot_runtime` dış ağa çıkmadan sentetik
+sayfada gerçek JavaScript render eder. Canlı sonuçlar ancak tekrar çalışmaları
+ve kanıt incelemesi sonrasında ayrı bir onayla günlük yazma akışına alınabilir.
+
 ## 🔗 Hızlı Bağlantılar
 
 * **Ana Sayfa:** [Teknoskor.com](https://teknoskor.com)
