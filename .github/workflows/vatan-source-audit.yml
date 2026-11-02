@@ -1,0 +1,45 @@
+name: Vatan Public PDP Source Audit
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Read-only and independent of the daily catalog/price writer queue.
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Test Vatan discovery and exact PDP evidence
+        run: python -m unittest -q test_vatan_source_audit test_vatan_sitemap_source test_retailer_offer_refresh
+      - name: Probe three exact catalog profiles on this runner
+        env:
+          VATAN_AUDIT_OUTPUT_DIR: ${{ runner.temp }}
+        run: python audit_vatan_source.py
+      - name: Publish read-only audit summary
+        if: always()
+        run: |
+          if test -f "${{ runner.temp }}/vatan-source-audit.md"; then
+            cat "${{ runner.temp }}/vatan-source-audit.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Vatan audit exited before writing a report.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload Vatan access evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vatan-source-audit-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/vatan-source-audit.json
+            ${{ runner.temp }}/vatan-source-audit.md
+          if-no-files-found: warn
+          retention-days: 30
