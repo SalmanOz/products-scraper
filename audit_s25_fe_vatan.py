@@ -7,6 +7,7 @@ from pathlib import Path
 from tempfile import gettempdir
 
 from retailer_offer_refresh import RetailerOfferRefresher
+from vatan_reviewed_source import VatanReviewedSource
 
 
 NAME = 'Samsung Galaxy S25 FE 256GB'
@@ -16,7 +17,10 @@ OUT = Path(os.environ.get('S25_FE_VATAN_AUDIT_OUTPUT_DIR', gettempdir()))
 
 
 def run_audit(reader=None):
-    reader = reader or RetailerOfferRefresher()
+    # This URL is reviewed for this read-only audit, without adding a product
+    # ID or a price seed to the scheduled production target batch.
+    reader = reader or RetailerOfferRefresher(
+        vatan_source=VatanReviewedSource(additional_reviewed_urls=(URL,)))
     targets = [{'source_url': URL}]
     offers = reader.refresh_existing_offer_targets(NAME, targets, SPECS)
     verified = [offer for offer in offers if offer.get('merchant') == 'Vatan Bilgisayar'

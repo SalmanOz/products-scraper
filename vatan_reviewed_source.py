@@ -29,16 +29,20 @@ def reviewed_profiles():
 
 
 class VatanReviewedSource:
-    def __init__(self, get=None, post=None, sleep=time.sleep, monotonic=time.monotonic):
+    def __init__(self, get=None, post=None, sleep=time.sleep, monotonic=time.monotonic,
+                 additional_reviewed_urls=()):
         self._get = get or requests.get
         self._post = post or requests.post
         self._sleep = sleep
         self._monotonic = monotonic
         self._lock = RLock()
+        additional_reviewed_urls = tuple(additional_reviewed_urls)
+        if any(not VatanSitemapSource._safe_product_url(url) for url in additional_reviewed_urls):
+            raise ValueError('Invalid additional reviewed Vatan PDP URL')
         self._urls = frozenset(
             url for profile in reviewed_profiles() for url in profile['targets']
             if VatanSitemapSource._safe_product_url(url)
-        )
+        ) | frozenset(additional_reviewed_urls)
         self._loaded = False
         self._rules = None
         self._delay = 0

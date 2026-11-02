@@ -3,6 +3,7 @@
 import unittest
 
 from audit_s25_fe_vatan import NAME, SPECS, URL, run_audit, summary
+from vatan_reviewed_source import VatanReviewedSource
 
 
 class Reader:
@@ -24,6 +25,12 @@ class Reader:
 
 
 class VatanAuditTests(unittest.TestCase):
+    def test_audit_url_is_reviewed_only_when_explicitly_scoped(self):
+        self.assertFalse(VatanReviewedSource().is_reviewed(URL))
+        self.assertTrue(VatanReviewedSource(additional_reviewed_urls=(URL,)).is_reviewed(URL))
+        with self.assertRaises(ValueError):
+            VatanReviewedSource(additional_reviewed_urls=('https://other.example/p.html',))
+
     def test_only_exact_live_variant_is_verified(self):
         offer = {'merchant': 'Vatan Bilgisayar', 'url': URL, 'price': 38949,
                  'currency': 'TRY', 'availability': 'in_stock',
