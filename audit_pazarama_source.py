@@ -60,31 +60,55 @@ class BrowserGetTransport:
 
     def __init__(self, post=None):
         self._post = post or requests.post
+        self.diagnostics = []
 
     def __call__(self, url, **_kwargs):
         if url != ROBOTS_URL and _category_page_number(url) is None and not pazarama_product_url(url):
             raise requests.RequestException('Unreviewed Pazarama browser GET URL')
-        response = self._post(SOLVER_URL, json={
-            'cmd': 'request.get', 'url': url, 'maxTimeout': 45000,
-        }, timeout=60, stream=True)
+        diagnostic = {'url': url, 'solver_http_status': None,
+                      'solver_response_bytes': 0, 'solver_status': None,
+                      'solution_status': None, 'solution_url_matches': None,
+                      'reason': 'started'}
+        self.diagnostics.append(diagnostic)
         try:
+            response = self._post(SOLVER_URL, json={
+                'cmd': 'request.get', 'url': url, 'maxTimeout': 45000,
+            }, timeout=60, stream=True)
+        except requests.RequestException:
+            diagnostic['reason'] = 'solver_transport_error'
+            raise
+        try:
+            diagnostic['solver_http_status'] = response.status_code
             if response.status_code != 200:
+                diagnostic['reason'] = 'solver_http_error'
                 raise requests.RequestException('Browser GET service unavailable')
             data = bytearray()
             for chunk in response.iter_content(chunk_size=64 * 1024):
                 data.extend(chunk)
+                diagnostic['solver_response_bytes'] = len(data)
                 if len(data) > MAX_SOLVER_BYTES:
+                    diagnostic['reason'] = 'solver_response_too_large'
                     raise requests.RequestException('Oversized browser GET result')
         finally:
             response.close()
         try:
             payload = json.loads(data)
+            diagnostic['solver_status'] = payload.get('status') if isinstance(payload, dict) else None
+            if diagnostic['solver_status'] != 'ok':
+                diagnostic['reason'] = 'solver_reported_failure'
+                raise ValueError('Browser GET service did not return a solution')
             solution = payload['solution']
             status, final_url, body = (solution['status'], solution['url'], solution['response'])
+            diagnostic['solution_status'] = status if isinstance(status, int) else None
+            diagnostic['solution_url_matches'] = final_url == url
             if not isinstance(status, int) or not isinstance(body, str) or final_url != url:
+                diagnostic['reason'] = 'invalid_solution_fields'
                 raise ValueError('Invalid browser GET result')
+            diagnostic['reason'] = 'site_response'
             return BrowserResponse(final_url, status, body)
         except (KeyError, TypeError, ValueError, UnicodeError) as error:
+            if diagnostic['reason'] == 'started':
+                diagnostic['reason'] = 'invalid_solver_json'
             raise requests.RequestException('Invalid browser GET result') from error
 
 
@@ -194,12 +218,15 @@ def run_audit(recorder=None, source=None, refresher=None):
                          else 'pdp_verified_but_not_discovered' if offer and not row['discovered_exact_url']
                          else 'not_verified')
     verified = sum(row['status'] == 'verified' for row in rows)
+    transport_diagnostics = (recorder._fetch.diagnostics
+                             if isinstance(recorder._fetch, BrowserGetTransport) else [])
     return {'purpose': 'read_only_runner_access_probe',
             'transport': 'browser_get' if browser_get else 'normal_http_get',
             'checked_at': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
             'status': 'passed' if verified == len(PROFILES) else 'partial' if verified else 'failed',
             'verified_products': verified, 'required_products': len(PROFILES),
-            'category': source.report(), 'http_events': recorder.events, 'products': rows}
+            'category': source.report(), 'http_events': recorder.events,
+            'transport_diagnostics': transport_diagnostics, 'products': rows}
 
 
 def format_summary(report):
@@ -213,6 +240,12 @@ def format_summary(report):
              f"Robots HTTP {robots}; category pages {report['category']['category_pages']} "
              f"(statuses: {', '.join(map(str, sorted(set(category)))) or 'none'}); "
              f"eligible cards {report['category']['eligible_card_urls']}."]
+    for diagnostic in report.get('transport_diagnostics', [])[:1]:
+        lines.append(
+            f"Browser GET robots: {diagnostic['reason']}; service HTTP {diagnostic['solver_http_status']}; "
+            f"service status {diagnostic['solver_status']}; site HTTP {diagnostic['solution_status']}; "
+            f"URL matched {diagnostic['solution_url_matches']}; response bytes {diagnostic['solver_response_bytes']}."
+        )
     for row in report['products']:
         pdp_status = next((event['http_status'] for event in events
                            if event['url'] == row['exact_pdp_url']), None)

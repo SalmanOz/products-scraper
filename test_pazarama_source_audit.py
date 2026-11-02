@@ -79,9 +79,20 @@ class PazaramaSourceAuditTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(b''.join(response.iter_content(10)), b'User-agent: *\nAllow: /\n')
         self.assertEqual(calls[0][1]['json']['cmd'], 'request.get')
+        self.assertEqual(browser.diagnostics[0]['reason'], 'site_response')
+        self.assertEqual(browser.diagnostics[0]['solution_status'], 200)
         with self.assertRaisesRegex(Exception, 'Unreviewed'):
             browser('https://www.pazarama.com/arama?q=galaxy')
         self.assertEqual(len(calls), 1)
+
+    def test_browser_get_failure_records_stage_without_response_body(self):
+        def post(_url, **_kwargs):
+            return Response(SOLVER_URL, b'{"status":"error","message":"private challenge text"}')
+        browser = BrowserGetTransport(post=post)
+        with self.assertRaisesRegex(Exception, 'Invalid browser GET result'):
+            browser(ROBOTS_URL)
+        self.assertEqual(browser.diagnostics[0]['reason'], 'solver_reported_failure')
+        self.assertNotIn('message', browser.diagnostics[0])
 
     def test_three_exact_variants_and_http_statuses_are_reported_without_writes(self):
         fetch = Fetch(pages())
