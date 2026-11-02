@@ -48,7 +48,9 @@ OUT = Path(os.environ.get('S25_FE_PUBLISH_OUTPUT_DIR', gettempdir()))
 
 
 class PublicationPreflightError(RuntimeError):
-    pass
+    def __init__(self, reason: str, *, details: dict | None = None):
+        super().__init__(reason)
+        self.details = details or {}
 
 
 @dataclass
@@ -168,10 +170,21 @@ def exact_live_offers(reader=None, updater=None) -> tuple[list[dict], list[dict]
     valid = [offer for offer in offers if offer.get('url') in allowed
              and offer.get('availability') in {'in_stock', 'limited'}
              and updater.live_offer_is_valid({'name': NAME, 'slug': SLUG}, offer, SPECS)]
+    attempts = reader.target_report(NAME, TARGETS, SPECS)
     merchants = {offer['merchant'] for offer in valid}
     if not {'MediaMarkt', 'Vatan Bilgisayar'}.issubset(merchants):
-        raise PublicationPreflightError('two_exact_live_merchants_missing')
-    return valid, reader.target_report(NAME, TARGETS, SPECS)
+        def public_offer(offer):
+            return {key: offer.get(key) for key in
+                    ('merchant', 'url', 'price', 'currency', 'availability',
+                     'source_title', 'observed_at')}
+        raise PublicationPreflightError('two_exact_live_merchants_missing', details={
+            'source_attempts': attempts,
+            'raw_offers': [public_offer(offer) for offer in offers],
+            'valid_offers': [public_offer(offer) for offer in valid],
+            'raw_merchants': sorted({str(offer.get('merchant')) for offer in offers}),
+            'valid_merchants': sorted(merchants),
+        })
+    return valid, attempts
 
 
 def preflight(*, pdf_check=fetch_official_sku_pdf, scraper=None, reader=None, updater=None) -> Preflight:
@@ -282,6 +295,8 @@ def main(argv=None):
     except Exception as error:
         report['status'] = 'failed'
         report['reason'] = str(error) if isinstance(error, PublicationPreflightError) else type(error).__name__
+        if isinstance(error, PublicationPreflightError):
+            report.update(error.details)
         code = 1
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / 's25-fe-256-publication.json').write_text(
@@ -290,6 +305,15 @@ def main(argv=None):
              f"Mode: {report['mode']}; status: {report['status']}; writes: {report['writes']}."]
     for offer in report.get('live_offers', []):
         lines.append(f"- {offer['merchant']}: {offer['price']} TRY, {offer['availability']}; {offer['url']}")
+    if report.get('reason') == 'two_exact_live_merchants_missing':
+        lines.append(f"- Raw merchants: {', '.join(report.get('raw_merchants', [])) or 'none'}; "
+                     f"valid merchants: {', '.join(report.get('valid_merchants', [])) or 'none'}.")
+        for attempt in report.get('source_attempts', []):
+            lines.append(f"- {attempt.get('merchant')}: {attempt.get('reason')} "
+                         f"HTTP {attempt.get('http_status')}; {attempt.get('source_url')}")
+        for offer in report.get('raw_offers', []):
+            lines.append(f"- Raw {offer.get('merchant')}: {offer.get('price')} "
+                         f"{offer.get('currency')} {offer.get('availability')}; {offer.get('url')}")
     if report.get('reason'):
         lines.append(f"- Reason: {report['reason']}")
     (OUT / 's25-fe-256-publication.md').write_text('\n'.join(lines) + '\n')

@@ -3,6 +3,9 @@
 import unittest
 from unittest.mock import Mock, patch
 from io import BytesIO
+from pathlib import Path
+from tempfile import TemporaryDirectory
+import json
 
 import requests
 
@@ -130,10 +133,31 @@ class ReviewedVariantPublicationTests(unittest.TestCase):
                                     updater=FakeUpdater())
         self.assertEqual({row['merchant'] for row in checked.offers},
                          {'MediaMarkt', 'Vatan Bilgisayar'})
-        with self.assertRaisesRegex(variant.PublicationPreflightError, 'two_exact_live_merchants_missing'):
+        with self.assertRaisesRegex(variant.PublicationPreflightError,
+                                    'two_exact_live_merchants_missing') as failure:
             variant.preflight(pdf_check=lambda: {'observed': True},
                               scraper=FakeScraper(), reader=FakeReader(offers()[:1]),
                               updater=FakeUpdater())
+        self.assertEqual(failure.exception.details['raw_merchants'], ['MediaMarkt'])
+        self.assertEqual(failure.exception.details['valid_merchants'], ['MediaMarkt'])
+        self.assertEqual(len(failure.exception.details['source_attempts']), 1)
+
+    def test_failed_preflight_artifact_keeps_target_diagnostics_without_writes(self):
+        failure = variant.PublicationPreflightError('two_exact_live_merchants_missing', details={
+            'source_attempts': [{'merchant': 'Vatan Bilgisayar',
+                                 'source_url': variant.VATAN_URL,
+                                 'reason': 'access_denied', 'http_status': 403}],
+            'raw_merchants': ['MediaMarkt'], 'valid_merchants': ['MediaMarkt'],
+            'raw_offers': offers()[:1], 'valid_offers': offers()[:1],
+        })
+        with TemporaryDirectory() as directory, patch.object(variant, 'OUT', Path(directory)), \
+             patch.object(variant, 'preflight', side_effect=failure):
+            self.assertEqual(variant.main([]), 1)
+            report = json.loads((Path(directory) / 's25-fe-256-publication.json').read_text())
+            summary = (Path(directory) / 's25-fe-256-publication.md').read_text()
+        self.assertFalse(report['writes'])
+        self.assertEqual(report['source_attempts'][0]['http_status'], 403)
+        self.assertIn('Vatan Bilgisayar: access_denied HTTP 403', summary)
 
     def test_published_rerun_skips_source_and_publish_writes(self):
         preflight = variant.Preflight(source_records(), offers(), [], [])
