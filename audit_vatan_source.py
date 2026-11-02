@@ -10,9 +10,12 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import gettempdir
+import xml.etree.ElementTree as ET
+
+import requests
 
 from retailer_offer_refresh import RetailerOfferRefresher
-from vatan_sitemap_source import VatanSitemapSource
+from vatan_sitemap_source import MAX_SITEMAP_BYTES, MAX_SITEMAP_URLS, SITEMAP_URL, VatanSitemapSource
 
 
 PROFILES = (
@@ -27,6 +30,56 @@ OUTPUT_DIR = Path(os.environ.get('VATAN_AUDIT_OUTPUT_DIR', gettempdir()))
 REPORT_PATH = OUTPUT_DIR / 'vatan-source-audit.json'
 SUMMARY_PATH = OUTPUT_DIR / 'vatan-source-audit.md'
 PURCHASABLE = {'in_stock', 'limited'}
+SOLVER_URL = 'http://localhost:8191/v1'
+MAX_SOLVER_BYTES = 4 * 1024 * 1024
+
+
+def probe_browser_sitemap(post=None):
+    """One bounded browser GET of the already robots-approved sitemap."""
+    post = post or requests.post
+    result = {'status': 'unavailable', 'http_status': None, 'url_count': 0}
+    try:
+        response = post(SOLVER_URL, json={
+            'cmd': 'request.get', 'url': SITEMAP_URL, 'maxTimeout': 45000,
+        }, timeout=60, stream=True)
+        try:
+            if response.status_code != 200:
+                return {**result, 'status': f'solver_http_{response.status_code}'}
+            data = bytearray()
+            for chunk in response.iter_content(chunk_size=64 * 1024):
+                data.extend(chunk)
+                if len(data) > MAX_SOLVER_BYTES:
+                    return {**result, 'status': 'solver_response_too_large'}
+        finally:
+            response.close()
+        payload = json.loads(data)
+        if not isinstance(payload, dict) or payload.get('status') != 'ok':
+            return {**result, 'status': 'solver_unavailable'}
+        solution = payload.get('solution')
+        if not isinstance(solution, dict):
+            return {**result, 'status': 'invalid_solution'}
+        status = solution.get('status')
+        result['http_status'] = status if isinstance(status, int) else None
+        if status != 200:
+            return {**result, 'status': f'site_http_{status}'}
+        if solution.get('url') != SITEMAP_URL:
+            return {**result, 'status': 'unexpected_final_url'}
+        body = solution.get('response')
+        if not isinstance(body, str):
+            return {**result, 'status': 'missing_xml'}
+        xml = body.encode('utf-8')
+        if len(xml) > MAX_SITEMAP_BYTES:
+            return {**result, 'status': 'sitemap_too_large'}
+        if b'<!DOCTYPE' in xml.upper() or b'<!ENTITY' in xml.upper():
+            return {**result, 'status': 'unsafe_xml'}
+        root = ET.fromstring(xml)
+        if root.tag != '{http://www.sitemaps.org/schemas/sitemap/0.9}urlset':
+            return {**result, 'status': 'not_urlset'}
+        if len(root) > MAX_SITEMAP_URLS:
+            return {**result, 'status': 'too_many_urls'}
+        return {**result, 'status': 'valid_urlset', 'url_count': len(root)}
+    except (requests.RequestException, ValueError, TypeError, UnicodeError, ET.ParseError):
+        return {**result, 'status': 'probe_error'}
 
 
 def run_audit(source=None, refresher=None):
@@ -73,6 +126,9 @@ def format_summary(report):
     lines = ['## Vatan public PDP source audit',
              f"Status: {report['status']} — {report['verified_products']}/{report['required_products']} exact catalog profiles verified.",
              f"Sitemap: {report['sitemap']['status']}; eligible URLs: {report['sitemap']['eligible_urls']}."]
+    probe = report.get('browser_sitemap_probe')
+    if isinstance(probe, dict):
+        lines.append(f"Browser GET sitemap: {probe['status']}; HTTP {probe['http_status']}; URLs {probe['url_count']}.")
     for row in report['products']:
         prices = ', '.join(f"{offer['price']:,.2f} TRY ({offer['availability']})"
                            for offer in row['verified_offers'])
@@ -92,6 +148,8 @@ def write_outputs(report, report_path=REPORT_PATH, summary_path=SUMMARY_PATH):
 
 def main():
     report = run_audit()
+    if report['sitemap']['status'] == 'sitemap_http_403':
+        report['browser_sitemap_probe'] = probe_browser_sitemap()
     write_outputs(report, REPORT_PATH, SUMMARY_PATH)
     print(format_summary(report), end='')
     return 0 if report['status'] == 'passed' else 1

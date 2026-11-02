@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 from xml.sax.saxutils import escape
 
-from audit_vatan_source import PROFILES, format_summary, main, run_audit, write_outputs
+from audit_vatan_source import PROFILES, format_summary, main, probe_browser_sitemap, run_audit, write_outputs
 from retailer_offer_refresh import RetailerOfferRefresher
 from vatan_sitemap_source import ROBOTS_URL, SITEMAP_URL, VatanSitemapSource
 
@@ -87,6 +87,28 @@ def components(*, xiaomi_status=200, robots_status=200):
 
 
 class VatanRunnerAuditTests(unittest.TestCase):
+    def test_browser_sitemap_probe_requires_exact_200_xml(self):
+        xml = ('<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+               f'<url><loc>{URLS[0]}</loc></url></urlset>')
+
+        def post(solution):
+            return lambda url, **kwargs: Response(url, json.dumps({
+                'status': 'ok', 'solution': solution,
+            }))
+
+        valid = probe_browser_sitemap(post=post({
+            'status': 200, 'url': SITEMAP_URL, 'response': xml,
+        }))
+        self.assertEqual(valid, {'status': 'valid_urlset', 'http_status': 200, 'url_count': 1})
+        blocked = probe_browser_sitemap(post=post({
+            'status': 403, 'url': SITEMAP_URL, 'response': 'blocked',
+        }))
+        self.assertEqual(blocked['status'], 'site_http_403')
+        challenge = probe_browser_sitemap(post=post({
+            'status': 200, 'url': SITEMAP_URL, 'response': '<html>challenge</html>',
+        }))
+        self.assertEqual(challenge['status'], 'not_urlset')
+
     def test_three_exact_live_pdp_observations_are_reported_without_writes(self):
         source, reader, fetch = components()
         report = run_audit(source, reader)

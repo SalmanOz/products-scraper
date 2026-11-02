@@ -21,6 +21,17 @@ jobs:
         run: pip install -r requirements.txt
       - name: Test Vatan discovery and exact PDP evidence
         run: python -m unittest -q test_vatan_source_audit test_vatan_sitemap_source test_retailer_offer_refresh
+      - name: Start read-only browser GET service
+        run: |
+          docker run -d --name=vatan-audit-browser -p 8191:8191 -e LOG_LEVEL=info ghcr.io/flaresolverr/flaresolverr:latest
+          for attempt in {1..30}; do
+            if curl --fail --silent http://localhost:8191/ > /dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs vatan-audit-browser
+          exit 1
       - name: Probe three exact catalog profiles on this runner
         env:
           VATAN_AUDIT_OUTPUT_DIR: ${{ runner.temp }}
