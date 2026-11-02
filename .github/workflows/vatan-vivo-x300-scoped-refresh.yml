@@ -1,0 +1,93 @@
+name: Vivo X300 Vatan Scoped Offer Refresh
+
+on:
+  schedule:
+    - cron: '25 5 * * *'
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Write only after this run reverifies the exact selected Vivo offer'
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ (github.event_name == 'schedule' || inputs.publish) && 'teknoskor-daily-data-sync' || 'teknoskor-vivo-vatan-preflight' }}
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Test selected Vatan variant, catalog, preflight and writer scope
+        run: python -m unittest -q test_vatan_vivo_x300 test_vatan_vivo_exact_readonly test_vatan_category_unpriced test_vatan_reviewed_source test_retailer_offer_refresh
+      - name: Start bounded exact PDP browser GET service
+        run: |
+          docker run -d --name=vivo-vatan-browser -p 8191:8191 -e LOG_LEVEL=info ghcr.io/flaresolverr/flaresolverr:latest
+          for attempt in {1..30}; do
+            if curl --fail --silent http://localhost:8191/ > /dev/null; then exit 0; fi
+            sleep 2
+          done
+          docker logs vivo-vatan-browser
+          exit 1
+      - name: Reverify exact Vivo catalog variant and selected Vatan offer
+        env:
+          VATAN_VIVO_AUDIT_OUTPUT_DIR: ${{ runner.temp }}
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+        run: python audit_vatan_vivo_exact_readonly.py
+      - name: Validate same-run Vivo payload and write on schedule or explicit publish
+        id: scoped_prices
+        env:
+          VATAN_VIVO_REFRESH_OUTPUT_DIR: ${{ runner.temp }}
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+        run: |
+          set -euo pipefail
+          : "${SCRAPER_INGESTION_SECRET:?SCRAPER_INGESTION_SECRET is required}"
+          if [ "$GITHUB_EVENT_NAME" = "schedule" ] || [ "${{ inputs.publish }}" = "true" ]; then
+            python refresh_vatan_vivo_x300.py --audit-file "${{ runner.temp }}/vatan-vivo-exact.json" --publish
+          else
+            python refresh_vatan_vivo_x300.py --audit-file "${{ runner.temp }}/vatan-vivo-exact.json"
+          fi
+      - name: Reconcile scores after committed offer
+        if: ${{ (github.event_name == 'schedule' || inputs.publish) && always() && !cancelled() && (steps.scoped_prices.outcome == 'success' || steps.scoped_prices.outcome == 'failure') }}
+        env:
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+        run: python reconcile_scores.py
+      - name: Summarize exact selected Vivo offer
+        if: always()
+        run: |
+          if test -f "${{ runner.temp }}/vatan-vivo-exact.md"; then
+            cat "${{ runner.temp }}/vatan-vivo-exact.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if test -f "${{ runner.temp }}/vatan-vivo-x300-refresh.md"; then
+            cat "${{ runner.temp }}/vatan-vivo-x300-refresh.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload scoped evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vatan-vivo-x300-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/vatan-vivo-exact.json
+            ${{ runner.temp }}/vatan-vivo-exact.md
+            ${{ runner.temp }}/vatan-vivo-x300-refresh.json
+            ${{ runner.temp }}/vatan-vivo-x300-refresh.md
+            score-reconciliation.json
+          if-no-files-found: warn
+          retention-days: 14
