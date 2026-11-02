@@ -11,12 +11,15 @@ from decimal import Decimal, InvalidOperation
 import json
 import os
 from pathlib import Path
+import re
 
 from audit_mediamarkt_fold7_readonly import (
     CATALOG, SELLER, SELLER_URL, TITLE, URL, exact_fold7_offer, run_audit,
 )
 from coverage_two_marketplace import _collision_evidence
-from offer_ingestion_client import OfferIngestionClient
+from offer_ingestion_client import (
+    IngestionClientError, OfferIngestionClient, TARGET_INVALID_REASONS,
+)
 from update_prices import PriceUpdater
 
 
@@ -77,34 +80,109 @@ def _catalog(client):
     initial_targets = product.get('offer_targets')
     if not isinstance(initial_targets, list):
         raise ValueError('catalog_targets_unavailable')
-    complete = _catalog_read('complete_targets_get_failed',
-                             lambda: client.get_complete_offer_targets(CATALOG['id']))
-    if (any(complete.get(key) != product.get(key)
-            for key in ('id', 'slug', 'name'))
-            or complete.get('offer_targets_truncated') is not False
-            or complete.get('offer_targets', [])[:len(initial_targets)] != initial_targets):
-        raise ValueError('complete_catalog_target_snapshot_changed')
+    fallback_needed = False
+    try:
+        complete = client.get_complete_offer_targets(CATALOG['id'])
+    except IngestionClientError:
+        # The strict complete reader rejects even a policy-only historical
+        # target. A single inspected page and independent raw-row proof can
+        # establish that every seller was still checked before publication.
+        fallback_needed = True
+    except Exception:
+        raise CatalogStageError('complete_targets_get_failed') from None
+    if fallback_needed:
+        inspected = _catalog_read('target_inspection_get_failed',
+                                  lambda: client.get_offer_target_inspection(
+                                      CATALOG['id']))
+        raw = _catalog_read('raw_seller_proof_get_failed',
+                            lambda: client.get_raw_seller_collision_proof(
+                                CATALOG['id'], SELLER, URL))
+        total = inspected.get('offer_targets_total')
+        invalid = inspected.get('offer_targets_invalid_count')
+        duplicate = inspected.get('offer_targets_duplicate_count')
+        reasons = inspected.get('offer_targets_invalid_reasons')
+        targets = inspected.get('offer_targets')
+        snapshot = inspected.get('offer_targets_snapshot')
+        if (any(inspected.get(key) != product.get(key)
+                for key in ('id', 'slug', 'name', 'attributes'))
+                or type(total) is not int or not 0 <= total <= 12
+                or type(invalid) is not int or invalid < 0
+                or duplicate != 0
+                or not isinstance(targets, list) or len(targets) != total
+                or initial_targets != targets
+                or product.get('offer_targets_truncated') is not bool(invalid)
+                or inspected.get('offer_targets_truncated') is not bool(invalid)
+                or not isinstance(snapshot, str)
+                or not re.fullmatch(r'[0-9a-f]{64}', snapshot)
+                or not isinstance(reasons, dict)
+                or set(reasons) != set(TARGET_INVALID_REASONS)
+                or any(type(reasons[key]) is not int or reasons[key] < 0
+                       for key in TARGET_INVALID_REASONS)
+                or sum(reasons.values()) != invalid):
+            raise ValueError('single_page_target_identity_or_count_changed')
+        if invalid != (reasons['unsupported_host'] +
+                       reasons['retailer_query_restricted']):
+            raise ValueError('single_page_target_rejection_reason_unsafe')
+        if (raw.get('purpose') != 'read_only_raw_seller_collision_proof'
+                or raw.get('writes') is not False
+                or raw.get('product_id') != CATALOG['id']
+                or raw.get('complete') is not True
+                or raw.get('blocked') is not False
+                or raw.get('reasons') != []
+                or raw.get('stored_rows_checked') != total + invalid
+                or raw.get('unknown_seller_rows') != 0
+                or raw.get('invalid_row_identity_rows') != 0
+                or raw.get('invalid_url_rows') != 0
+                or raw.get('proposed_seller_other_url_rows') != 0
+                or raw.get('refresh_targets_total') != total
+                or raw.get('refresh_targets_invalid_count') != invalid
+                or raw.get('refresh_targets_duplicate_count') != 0
+                or raw.get('refresh_targets_invalid_reasons') != reasons
+                or raw.get('refresh_targets_snapshot') != snapshot):
+            raise ValueError('single_page_raw_seller_or_target_proof_changed')
+        complete = {'id': inspected['id'], 'slug': inspected['slug'],
+                    'name': inspected['name'], 'offer_targets': targets,
+                    'offer_targets_total': total,
+                    'offer_targets_snapshot': snapshot,
+                    'offer_targets_truncated': False}
+        target_mode = 'single_page_raw_proven'
+    else:
+        if (not isinstance(complete, dict)
+                or any(complete.get(key) != product.get(key)
+                for key in ('id', 'slug', 'name'))
+                or complete.get('offer_targets_truncated') is not False
+                or complete.get('offer_targets', [])[:len(initial_targets)] != initial_targets):
+            raise ValueError('complete_catalog_target_snapshot_changed')
+        raw = None
+        invalid = 0
+        reasons = None
+        target_mode = 'complete_reader'
     full_product = {**product, **complete}
     collision = _collision_evidence(full_product, PROFILE, URL)
     if collision['blocked'] or collision['reasons']:
         raise ValueError('catalog_seller_or_target_collision')
-    raw = _catalog_read('raw_seller_proof_get_failed',
-                        lambda: client.get_raw_seller_collision_proof(
-                            CATALOG['id'], SELLER, URL))
+    if raw is None:
+        raw = _catalog_read('raw_seller_proof_get_failed',
+                            lambda: client.get_raw_seller_collision_proof(
+                                CATALOG['id'], SELLER, URL))
     if (raw.get('complete') is not True or raw.get('blocked') is not False
             or raw.get('reasons') != []
             or raw.get('unknown_seller_rows') != 0
             or raw.get('invalid_row_identity_rows') != 0
             or raw.get('proposed_seller_other_url_rows') != 0
-            or raw.get('refresh_targets_invalid_count') != 0
+            or raw.get('refresh_targets_invalid_count') != invalid
             or raw.get('refresh_targets_duplicate_count') != 0
             or raw.get('refresh_targets_total') != len(complete['offer_targets'])
-            or raw.get('stored_rows_checked') != len(complete['offer_targets'])
+            or raw.get('stored_rows_checked') !=
+                len(complete['offer_targets']) + invalid
             or raw.get('refresh_targets_snapshot') !=
                 complete.get('offer_targets_snapshot')):
         raise ValueError('raw_seller_or_target_collision')
     return product, {'target_count': len(complete['offer_targets']),
                      'target_snapshot': complete['offer_targets_snapshot'],
+                     'target_mode': target_mode, 'invalid_count': invalid,
+                     'invalid_reasons': (reasons if reasons is not None else
+                                         raw.get('refresh_targets_invalid_reasons')),
                      'raw_seller_proof': raw}
 
 

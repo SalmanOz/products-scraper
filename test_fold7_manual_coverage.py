@@ -10,6 +10,7 @@ from audit_mediamarkt_fold7_readonly import (
     TITLE, URL,
 )
 from fold7_manual_coverage import audit, publish, summary, verified_offer
+from offer_ingestion_client import IngestionClientError, TARGET_INVALID_REASONS
 
 
 EVIDENCE = {
@@ -54,6 +55,12 @@ class Client:
         self.targets = []
         self.snapshot = SNAPSHOT
         self.raw_blocked = False
+        self.complete_failure = False
+        self.invalid_count = 0
+        self.duplicate_count = 0
+        self.invalid_reasons = {key: 0 for key in TARGET_INVALID_REASONS}
+        self.raw_overrides = {}
+        self.inspection_overrides = {}
         self.writes = []
         self.ack = {'committed': True, 'accepted': 1,
                     'stale_ignored': 0, 'variant_rejected': 0}
@@ -66,23 +73,44 @@ class Client:
         return deepcopy(self.prices)
 
     def get_complete_offer_targets(self, product_id):
+        if self.complete_failure:
+            raise IngestionClientError('strict complete target reader rejected rows')
         return {'id': self.product['id'], 'slug': self.product['slug'],
                 'name': self.product['name'], 'offer_targets': deepcopy(self.targets),
                 'offer_targets_truncated': False,
                 'offer_targets_total': len(self.targets),
                 'offer_targets_snapshot': self.snapshot}
 
+    def get_offer_target_inspection(self, product_id):
+        return {'id': self.product['id'], 'slug': self.product['slug'],
+                'name': self.product['name'],
+                'attributes': deepcopy(self.product['attributes']),
+                'offer_targets': deepcopy(self.targets),
+                'offer_targets_total': len(self.targets),
+                'offer_targets_invalid_count': self.invalid_count,
+                'offer_targets_duplicate_count': self.duplicate_count,
+                'offer_targets_invalid_reasons': deepcopy(self.invalid_reasons),
+                'offer_targets_truncated': bool(self.invalid_count or self.duplicate_count),
+                'offer_targets_snapshot': self.snapshot,
+                **deepcopy(self.inspection_overrides)}
+
     def get_raw_seller_collision_proof(self, product_id, seller, url):
-        return {'complete': True, 'blocked': self.raw_blocked,
+        return {'purpose': 'read_only_raw_seller_collision_proof',
+                'writes': False, 'product_id': product_id,
+                'complete': True, 'blocked': self.raw_blocked,
                 'reasons': ['proposed_seller_on_other_url_or_platform']
                     if self.raw_blocked else [],
                 'unknown_seller_rows': 0, 'invalid_row_identity_rows': 0,
+                'invalid_url_rows': 0,
                 'proposed_seller_other_url_rows': int(self.raw_blocked),
-                'refresh_targets_invalid_count': 0,
-                'refresh_targets_duplicate_count': 0,
+                'refresh_targets_invalid_count': self.invalid_count,
+                'refresh_targets_duplicate_count': self.duplicate_count,
+                'refresh_targets_invalid_reasons': deepcopy(self.invalid_reasons),
                 'refresh_targets_total': len(self.targets),
-                'stored_rows_checked': len(self.targets),
-                'refresh_targets_snapshot': self.snapshot}
+                'stored_rows_checked': len(self.targets) + self.invalid_count +
+                    self.duplicate_count,
+                'refresh_targets_snapshot': self.snapshot,
+                **deepcopy(self.raw_overrides)}
 
     def ingest_offers(self, rows):
         self.writes.append(deepcopy(rows))
@@ -100,6 +128,21 @@ class Client:
 
 
 class Fold7ManualCoverageTests(unittest.TestCase):
+    @staticmethod
+    def safe_single_page_client():
+        client = Client()
+        client.complete_failure = True
+        client.targets = [
+            {'merchant_name': 'idefix', 'seller_name': 'Other Seller',
+             'source_url': 'https://www.idefix.com/urun-123',
+             'checked_at': None},
+        ]
+        client.product['offer_targets'] = deepcopy(client.targets)
+        client.product['offer_targets_truncated'] = True
+        client.invalid_count = 1
+        client.invalid_reasons['unsupported_host'] = 1
+        return client
+
     def audited(self, client=None, source=None):
         client = client or Client()
         source = source or Source()
@@ -119,6 +162,77 @@ class Fold7ManualCoverageTests(unittest.TestCase):
         self.assertIs(report['writes'], False)
         self.assertEqual(report['catalog_evidence']['target_count'], 0)
         self.assertEqual(source.urls, [URL, SELLER_URL])
+        self.assertEqual(client.writes, [])
+
+    def test_single_page_fallback_proves_safe_rejected_row_and_rechecks_before_write(self):
+        for allowed_reason in ('unsupported_host', 'retailer_query_restricted'):
+            with self.subTest(allowed_reason=allowed_reason):
+                client = self.safe_single_page_client()
+                client.invalid_reasons['unsupported_host'] = 0
+                client.invalid_reasons[allowed_reason] = 1
+                report, client, source = self.audited(client)
+                self.assertEqual(report['status'], 'passed', report['catalog_error'])
+                evidence = report['catalog_evidence']
+                self.assertEqual(evidence['target_mode'], 'single_page_raw_proven')
+                self.assertEqual((evidence['target_count'], evidence['invalid_count']), (1, 1))
+                self.assertEqual(evidence['invalid_reasons'][allowed_reason], 1)
+                self.assertEqual(evidence['raw_seller_proof']['stored_rows_checked'], 2)
+                self.assertEqual(client.writes, [])
+                result = self.publish_exact(report, client, source)
+                self.assertEqual(result['accepted'], 1)
+                self.assertEqual(len(client.writes), 1)
+
+    def test_single_page_fallback_rejects_missing_duplicate_or_unsafe_raw_rows(self):
+        changes = (
+            lambda client: setattr(client, 'duplicate_count', 1),
+            lambda client: client.raw_overrides.update(stored_rows_checked=3),
+            lambda client: client.raw_overrides.update(unknown_seller_rows=1),
+            lambda client: setattr(client, 'raw_blocked', True),
+            lambda client: client.raw_overrides.update(invalid_url_rows=1),
+            lambda client: client.raw_overrides.update(invalid_row_identity_rows=1),
+            lambda client: client.raw_overrides.update(
+                proposed_seller_other_url_rows=1),
+            lambda client: client.raw_overrides.update(
+                refresh_targets_snapshot='b' * 64),
+            lambda client: client.inspection_overrides.update(
+                attributes={'storage_gb': 512}),
+            lambda client: client.inspection_overrides.update(
+                offer_targets_total=13),
+            lambda client: client.product.update(offer_targets=[]),
+            lambda client: (client.targets[0].update(seller_name=SELLER),
+                            client.product['offer_targets'][0].update(
+                                seller_name=SELLER)),
+            lambda client: client.product.update(offer_targets_truncated=False),
+            lambda client: setattr(client, 'snapshot', 'z' * 64),
+            lambda client: (client.invalid_reasons.update(
+                unsupported_host=0, sensitive_query=1)),
+        )
+        for change in changes:
+            with self.subTest(change=change):
+                client = self.safe_single_page_client()
+                change(client)
+                report, client, source = self.audited(client)
+                self.assertEqual(report['status'], 'failed')
+                self.assertEqual(report['catalog_status'], 'failed')
+                self.assertEqual(source.urls, [])
+                self.assertEqual(client.writes, [])
+
+    def test_single_page_fallback_blocks_publish_if_raw_proof_changes(self):
+        report, _, source = self.audited(self.safe_single_page_client())
+        self.assertEqual(report['status'], 'passed')
+        client = self.safe_single_page_client()
+        client.raw_overrides['refresh_targets_snapshot'] = 'b' * 64
+        with self.assertRaises(ValueError):
+            self.publish_exact(report, client, source)
+        self.assertEqual(client.writes, [])
+
+    def test_missing_complete_response_does_not_select_fallback(self):
+        client, source = Client(), Source()
+        client.get_complete_offer_targets = lambda _id: None
+        report = audit(client=client, source=source)
+        self.assertEqual(report['catalog_error'],
+                         'complete_catalog_target_snapshot_changed')
+        self.assertEqual(source.urls, [])
         self.assertEqual(client.writes, [])
 
     def test_catalog_get_failures_report_only_fixed_stage_codes(self):
@@ -145,6 +259,17 @@ class Fold7ManualCoverageTests(unittest.TestCase):
                 self.assertEqual(client.writes, [])
                 self.assertNotIn(secret, str(report))
                 self.assertNotIn(secret, summary(report))
+        client, source = self.safe_single_page_client(), Source()
+
+        def fail_inspection(*_args, **_kwargs):
+            raise RuntimeError(secret)
+
+        client.get_offer_target_inspection = fail_inspection
+        report = audit(client=client, source=source)
+        self.assertEqual(report['catalog_error'], 'target_inspection_get_failed')
+        self.assertEqual(source.urls, [])
+        self.assertEqual(client.writes, [])
+        self.assertNotIn(secret, str(report))
 
     def test_publish_rechecks_live_pdp_legal_seller_and_catalog_then_writes_one(self):
         report, client, source = self.audited()
