@@ -1,0 +1,32 @@
+{
+  "purpose": "Three runner-verified Türk Telekom eMağaza exact selected-variant PDP URL hints. Prices and stock are never saved; each run rechecks robots, the selected variant, an active credit-card cash price and purchase control.",
+  "products": [
+    {
+      "id": 264,
+      "slug": "samsung-galaxy-a57-5g",
+      "name": "Samsung Galaxy A57 5G",
+      "ram_gb": 8,
+      "storage_gb": 128,
+      "network_generation": "5g",
+      "targets": ["https://emagaza.turktelekom.com.tr/tr/products/samsung/samsung-galaxy-a57-5g?v=2692"]
+    },
+    {
+      "id": 247,
+      "slug": "samsung-galaxy-s26",
+      "name": "Samsung Galaxy S26",
+      "ram_gb": 12,
+      "storage_gb": 256,
+      "network_generation": "5g",
+      "targets": ["https://emagaza.turktelekom.com.tr/tr/products/samsung/samsung-galaxy-s26?v=2630"]
+    },
+    {
+      "id": 295,
+      "slug": "xiaomi-17t",
+      "name": "Xiaomi 17T",
+      "ram_gb": 12,
+      "storage_gb": 256,
+      "network_generation": "5g",
+      "targets": ["https://emagaza.turktelekom.com.tr/tr/products/xiaomi/xiaomi-17t?v=2761"]
+    }
+  ]
+}

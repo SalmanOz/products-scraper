@@ -3,7 +3,8 @@ from unittest.mock import patch
 import unittest
 
 from reviewed_offer_targets import (
-    APPLE_STORE_BATCH_PATH, MEDIAMARKT_BATCH_PATH, URL_BATCH, VATAN_BATCH_PATH,
+    APPLE_STORE_BATCH_PATH, MEDIAMARKT_BATCH_PATH, TURK_TELEKOM_BATCH_PATH,
+    URL_BATCH, VATAN_BATCH_PATH,
     daily_offer_targets, with_reviewed_radio,
 )
 
@@ -56,7 +57,7 @@ class ReviewedDailyTargetTests(unittest.TestCase):
             daily_offer_targets(product, specs)
             self.assertEqual([call.args[0] for call in read.call_args_list],
                              [URL_BATCH, VATAN_BATCH_PATH, MEDIAMARKT_BATCH_PATH,
-                              APPLE_STORE_BATCH_PATH])
+                              APPLE_STORE_BATCH_PATH, TURK_TELEKOM_BATCH_PATH])
 
     def test_same_reviewed_iphone_retains_vatan_and_mediamarkt_targets(self):
         profile = next(p for p in json.loads(VATAN_BATCH_PATH.read_text())['products']
@@ -81,6 +82,28 @@ class ReviewedDailyTargetTests(unittest.TestCase):
             self.assertFalse(any(row['merchant_name'] == 'Apple Store'
                                  for row in daily_offer_targets(
                                      product, {**specs, 'storage_gb': 512})))
+
+    def test_three_runner_verified_turk_telekom_urls_require_exact_catalog_sku(self):
+        profiles = json.loads(TURK_TELEKOM_BATCH_PATH.read_text())['products']
+        self.assertEqual({p['slug'] for p in profiles}, {
+            'samsung-galaxy-a57-5g', 'samsung-galaxy-s26', 'xiaomi-17t',
+        })
+        for profile in profiles:
+            product = {key: profile[key] for key in ('id', 'slug', 'name')}
+            specs = {key: profile[key] for key in
+                     ('ram_gb', 'storage_gb', 'network_generation')}
+            urls = [row['source_url'] for row in daily_offer_targets(product, specs)
+                    if row['merchant_name'] == 'Türk Telekom eMağaza']
+            self.assertEqual(urls, profile['targets'])
+            self.assertEqual(with_reviewed_radio(product, {
+                'ram_gb': profile['ram_gb'], 'storage_gb': profile['storage_gb'],
+            })['network_generation'], '5g')
+            for key, wrong in (('id', -1), ('slug', 'wrong'), ('name', 'Other Phone')):
+                self.assertFalse(any(row['merchant_name'] == 'Türk Telekom eMağaza'
+                                     for row in daily_offer_targets({**product, key: wrong}, specs)))
+            for key, wrong in (('ram_gb', 6), ('storage_gb', 512), ('network_generation', '4g')):
+                self.assertFalse(any(row['merchant_name'] == 'Türk Telekom eMağaza'
+                                     for row in daily_offer_targets(product, {**specs, key: wrong})))
 
     def test_distinct_merchants_get_priority_and_unsafe_targets_are_not_forwarded(self):
         product = {'id': 999, 'slug': 'other-phone', 'name': 'Other Phone', 'offer_targets': [

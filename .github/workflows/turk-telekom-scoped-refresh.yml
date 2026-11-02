@@ -1,0 +1,86 @@
+name: Türk Telekom Scoped Price Refresh
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: teknoskor-daily-data-sync
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Test exact variant and ingestion gates
+        run: python -m unittest -q test_turk_telekom_source test_retailer_offer_refresh test_reviewed_offer_targets test_price_refresh_orchestration
+      - name: Start bounded browser GET service for other scoped merchants
+        run: |
+          docker run -d --name=tt-scoped-browser -p 8191:8191 -e LOG_LEVEL=info ghcr.io/flaresolverr/flaresolverr:latest
+          for attempt in {1..30}; do
+            if curl --fail --silent http://localhost:8191/ > /dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs tt-scoped-browser
+          exit 1
+      - name: Refresh three exact catalog profiles with discovery
+        id: scoped_prices
+        env:
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+        run: |
+          set -euo pipefail
+          : "${SCRAPER_INGESTION_SECRET:?SCRAPER_INGESTION_SECRET is required}"
+          slugs="$(python -c 'import json; from pathlib import Path; print(",".join(row["slug"] for row in json.loads(Path("offer_batches/turk-telekom-exact-2026-11-02.json").read_text())["products"]))')"
+          python update_prices.py --slugs "$slugs" --report turk-telekom-scoped-report.json
+      - name: Reconcile scores after committed offers
+        if: ${{ always() && !cancelled() && (steps.scoped_prices.outcome == 'success' || steps.scoped_prices.outcome == 'failure') }}
+        env:
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+        run: python reconcile_scores.py
+      - name: Summarize Türk Telekom outcomes
+        if: always()
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          path = Path('turk-telekom-scoped-report.json')
+          if path.is_file():
+              report = json.loads(path.read_text())
+              coverage = report.get('coverage', {})
+              lines = ['## Türk Telekom scoped refresh',
+                       f"Status: {report.get('status')}; any verified offer on {coverage.get('with_purchasable_offer', 0)}/{coverage.get('products', 0)} models; two merchants on {coverage.get('with_two_merchants', 0)}."]
+              source = report.get('turk_telekom_source', {})
+              lines.append(f"TT source: {source.get('status')}; stock cards {source.get('stock_card_urls')}; PDP reads {source.get('pdp_requests')}.")
+              for product in report.get('products', []):
+                  attempts = [row for row in product.get('source_attempts', [])
+                              if row.get('merchant') == 'Türk Telekom eMağaza']
+                  lines.append(f"- {product['slug']}: " + (', '.join(
+                      f"{row.get('reason')} HTTP {row.get('http_status')}"
+                      for row in attempts) or 'no TT target'))
+              with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:
+                  out.write('\n'.join(lines) + '\n')
+          PY
+      - name: Upload offer and score evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: turk-telekom-scoped-${{ github.run_id }}
+          path: |
+            turk-telekom-scoped-report.json
+            score-reconciliation.json
+          if-no-files-found: warn
+          retention-days: 30
