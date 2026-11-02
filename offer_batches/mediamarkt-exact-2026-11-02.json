@@ -1,0 +1,159 @@
+{
+  "purpose": "Reviewed exact MediaMarkt sitemap URL hints only; no prices or stock are retained. Every run rechecks robots and the selected live first-party Offer.",
+  "products": [
+    {
+      "id": 297,
+      "slug": "apple-iphone-18-pro-max",
+      "name": "Apple iPhone 18 Pro Max",
+      "ram_gb": 12,
+      "storage_gb": 256,
+      "network_generation": null,
+      "targets": [
+        "https://www.mediamarkt.com.tr/tr/product/_apple-iphone-18-pro-max-12-gb-256-gb-akilli-telefon-gumus-184009610.html"
+      ]
+    },
+    {
+      "id": 279,
+      "slug": "samsung-galaxy-a27-5g",
+      "name": "Samsung Galaxy A27 5G",
+      "ram_gb": 6,
+      "storage_gb": 128,
+      "network_generation": "5g",
+      "targets": [
+        "https://www.mediamarkt.com.tr/tr/product/_samsung-galaxy-a27-5g-6-gb-128-gb-akilli-telefon-siyah-181000845.html"
+      ]
+    },
+    {
+      "id": 272,
+      "slug": "apple-iphone-16-pro",
+      "name": "Apple iPhone 16 Pro",
+      "ram_gb": 8,
+      "storage_gb": 128,
+      "network_generation": null,
+      "targets": [
+        "https://www.mediamarkt.com.tr/tr/product/_apple-iphone-16-pro-128-gb-akilli-telefon-siyah-146317261.html"
+      ]
+    },
+    {
+      "id": 242,
+      "slug": "samsung-galaxy-a56",
+      "name": "Samsung Galaxy A56",
+      "ram_gb": 8,
+      "storage_gb": 128,
+      "network_generation": null,
+      "targets": [
+        "https://www.mediamarkt.com.tr/tr/product/_samsung-galaxy-a56-5g-8-gb-128-gb-akilli-telefon-antrasit-168636028.html"
+      ]
+    },
+    {
+      "id": 235,
+      "slug": "apple-iphone-17",
+      "name": "Apple iPhone 17",
+      "ram_gb": 8,
+      "storage_gb": 256,
+      "network_generation": "5g",
+      "targets": [
+        "https://www.mediamarkt.com.tr/tr/product/_apple-iphone-17-256-gb-akilli-telefon-beyaz-166347558.html"
+      ]
+    },
+    {
+      "id": 28,
+      "slug": "samsung-galaxy-s24-ultra",
+      "name": "Samsung Galaxy S24 Ultra",
+      "ram_gb": 12,
+      "storage_gb": 256,
+      "network_generation": null,
+      "targets": [
+        "https://www.mediamarkt.com.tr/tr/product/_samsung-galaxy-s24-ultra-5g-12-gb-256-gb-akilli-telefon-mor-166438383.html"
+      ]
+    },
+    {
+      "id": 27,
+      "slug": "samsung-galaxy-s23",
+      "name": "Samsung Galaxy S23",
+      "ram_gb": 8,
+      "storage_gb": 128,
+      "network_generation": null,
+      "targets": [
+        "https://www.mediamarkt.com.tr/tr/product/_samsung-galaxy-s23-8-gb-128-gb-akilli-telefon-yesil-180405962.html"
+      ]
+    },
+    {
+      "id": 24,
+      "slug": "apple-iphone-16-pro-max",
+      "name": "Apple iPhone 16 Pro Max",
+      "ram_gb": 8,
+      "storage_gb": 256,
+      "network_generation": null,
+      "targets": [
+        "https://www.mediamarkt.com.tr/tr/product/_apple-iphone-16-pro-max-256-gb-akilli-telefon-beyaz-147052697.html"
+      ]
+    },
+    {
+      "id": 23,
+      "slug": "apple-iphone-16",
+      "name": "Apple iPhone 16",
+      "ram_gb": 8,
+      "storage_gb": 128,
+      "network_generation": "5g",
+      "targets": [
+        "https://www.mediamarkt.com.tr/tr/product/_apple-iphone-16-128-gb-akilli-telefon-pembe-146562561.html"
+      ]
+    },
+    {
+      "id": 20,
+      "slug": "apple-iphone-15",
+      "name": "Apple iPhone 15",
+      "ram_gb": 6,
+      "storage_gb": 128,
+      "network_generation": null,
+      "targets": [
+        "https://www.mediamarkt.com.tr/tr/product/_apple-mtp03tua-iphone-15-128-gb-akilli-telefon-siyah-146563972.html"
+      ]
+    },
+    {
+      "id": 19,
+      "slug": "apple-iphone-14-pro-max",
+      "name": "Apple iPhone 14 Pro Max",
+      "ram_gb": 6,
+      "storage_gb": 128,
+      "network_generation": null,
+      "targets": [
+        "https://www.mediamarkt.com.tr/tr/product/_apple-iphone-14-pro-max-128-gb-akilli-telefon-altin-146314891.html"
+      ]
+    },
+    {
+      "id": 18,
+      "slug": "apple-iphone-14",
+      "name": "Apple iPhone 14",
+      "ram_gb": 6,
+      "storage_gb": 128,
+      "network_generation": null,
+      "targets": [
+        "https://www.mediamarkt.com.tr/tr/product/_apple-iphone-14-128-gb-akilli-telefon-sari-146322756.html"
+      ]
+    },
+    {
+      "id": 17,
+      "slug": "apple-iphone-13",
+      "name": "Apple iPhone 13",
+      "ram_gb": 4,
+      "storage_gb": 128,
+      "network_generation": null,
+      "targets": [
+        "https://www.mediamarkt.com.tr/tr/product/_apple-iphone-13-4-gb-128-gb-akilli-telefon-midnight-146317267.html"
+      ]
+    },
+    {
+      "id": 15,
+      "slug": "apple-iphone-11",
+      "name": "Apple iPhone 11",
+      "ram_gb": 4,
+      "storage_gb": 64,
+      "network_generation": null,
+      "targets": [
+        "https://www.mediamarkt.com.tr/tr/product/_apple-mhdf3tua-iphone-11-4-gb-64-gb-akilli-telefon-mor-146314731.html"
+      ]
+    }
+  ]
+}

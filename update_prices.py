@@ -35,6 +35,7 @@ class PriceUpdater:
         self.offer_refresher = offer_refresher or RetailerOfferRefresher()
         self.vatan_sitemap_source = vatan_sitemap_source or VatanSitemapSource()
         self.pazarama_source = getattr(self.offer_refresher, 'pazarama_source', None)
+        self.mediamarkt_source = getattr(self.offer_refresher, 'mediamarkt_source', None)
         if isinstance(self.price_scraper, TRPriceScraper):
             self.price_scraper.retailer_offer_refresher = self.offer_refresher
         self.last_report = None
@@ -357,6 +358,15 @@ class PriceUpdater:
                         product_report['vatan_sitemap_error'] = type(error).__name__
                         logging.warning('  ⚠️ Vatan sitemap discovery unavailable (%s)', type(error).__name__)
                     product_report['vatan_sitemap_candidates'] = len(vatan_targets)
+                    mediamarkt_targets = []
+                    try:
+                        if self.mediamarkt_source:
+                            mediamarkt_targets = await asyncio.to_thread(
+                                self.mediamarkt_source.discover, name, expected_specs)
+                    except Exception as error:
+                        product_report['mediamarkt_discovery_error'] = type(error).__name__
+                        logging.warning('  ⚠️ MediaMarkt sitemap discovery unavailable (%s)', type(error).__name__)
+                    product_report['mediamarkt_candidates'] = len(mediamarkt_targets)
                     pazarama_targets = []
                     try:
                         if self.pazarama_source:
@@ -375,7 +385,7 @@ class PriceUpdater:
                         product_report['legacy_discovery_error'] = type(error).__name__
                         logging.warning('  ⚠️ Legacy discovery unavailable (%s)', type(error).__name__)
                     hints = hints if isinstance(hints, list) else []
-                    discovery_targets = public_targets + vatan_targets + pazarama_targets + [{'source_url': row.get('url')} for row in hints
+                    discovery_targets = public_targets + vatan_targets + mediamarkt_targets + pazarama_targets + [{'source_url': row.get('url')} for row in hints
                                          if isinstance(row, dict) and _safe_url(row.get('url'))]
                     product_report['discovered_destinations'] = len(discovery_targets)
                     # Discovery cards are URL hints, not current merchant cash
@@ -452,6 +462,8 @@ class PriceUpdater:
             if vatan_browser is not None:
                 self.last_report['vatan_reviewed_pdp'] = vatan_browser.report()
             self.last_report['vatan_sitemap_discovery'] = self.vatan_sitemap_source.report()
+            if self.mediamarkt_source:
+                self.last_report['mediamarkt_source'] = self.mediamarkt_source.report()
             if self.pazarama_source:
                 self.last_report['pazarama_category_discovery'] = self.pazarama_source.report()
 
@@ -491,7 +503,7 @@ class PriceUpdater:
 
         logging.info("\n🏁 Price update completed!")
         run_issues = []
-        if self.last_report['coverage']['protected_pair_failures']:
+        if product_id is None and product_slugs is None and self.last_report['coverage']['protected_pair_failures']:
             run_issues.append('Protected budget models did not retain two live verified merchants: '
                               + ', '.join(self.last_report['coverage']['protected_pair_failures']))
         if aggregate_result["variant_rejected"]:

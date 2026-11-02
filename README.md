@@ -35,9 +35,10 @@ Bir mağazanın çok sayıda renk bağlantısı diğer mağazaları bütçeden d
 kalan güvenli URL'ler günlük raporda `target_budget_skipped` olarak görünür.
 
 403/429/challenge cevabında o mağaza için aynı çalışmada devre kesici açılır.
-Yalnız incelenmiş altı tam SKU Vatan bağlantısında, normal GET 403 dönerse
-`robots.txt` izni tekrar doğrulanarak mevcut FlareSolverr ile salt GET denenir;
-en fazla altı tarayıcı isteği yapılır. Başka bağlantı ya da 429 bu yola girmez.
+İncelenmiş Vatan ve MediaMarkt tam ürün bağlantılarında normal GET 403 dönerse
+`robots.txt` izni doğrulanarak mevcut FlareSolverr ile salt GET denenir;
+Vatan'da en fazla altı, MediaMarkt'ta en fazla 16 tarayıcı isteği yapılır.
+Başka bağlantı ya da 429 bu yola girmez.
 Geçici okuma hatası mevcut
 teklifleri silmez, fakat canlı sitenin 72 saatlik tazelik sınırını da uzatmaz.
 Dolayısıyla engellenen mağazalar için izinli ürün/fiyat feed'i veya resmî API
@@ -290,8 +291,19 @@ Product→Offer, görünen peşin fiyat, satıcı, sepet ve stok yeniden doğrul
 yanıt veya doğrulama başarısızsa teklif üretilmez. Tek çalışmada en fazla altı
 FlareSolverr GET yapılır; robots gecikmesine uyulur. Raporun
 `vatan_reviewed_pdp` alanı robots durumu ve tarayıcı istek sayısını gösterir.
-İlk salt okunur runner pilotunda üç incelenmiş ürün sayfası 3/3 doğrulandı;
-bu sonuç diğer üç bağlantının runner'da da çalışacağını garanti etmez.
+Son salt okunur runner pilotunda altı incelenmiş ürün sayfası 6/6 doğrulandı.
+
+MediaMarkt'ın `robots.txt` içinde ilan ettiği iki ürün sitemap'i günlük işte
+birer kez ve boyut sınırıyla okunur. On dört incelenmiş katalog varyantının tam
+ürün URL'si ayrıca yalnız keşif ipucu olarak saklanır. GitHub runner normal
+ürün GET'inde 403 alırsa, robots izinli ürün URL'si için mevcut FlareSolverr
+üzerinden salt GET yapılır; tek çalışmada en fazla 16 tarayıcı isteği vardır.
+Fiyat ancak seçili sayfadaki H1, canonical URL, SKU, tek Product/Offer, görünür
+peşin fiyat, aktif sepet ve stok aynı varyanta bağlandığında alınır. Üçüncü
+taraf pazar yeri satıcısı, yenilenmiş ürün, koşullu fiyat ve URL/varyant
+çelişkisi reddedilir. `mediamarkt_source` raporu robots/sitemap ve tarayıcı
+sonucunu ayırır. `MediaMarkt Reviewed SKU Price Refresh` manuel işi, günlük
+fiyat yazarıyla aynı kuyruğu kullanarak yalnız bu 14 varyantı yeniler.
 
 Pazarama keşfi, `robots.txt` izniyle Android telefon kategorisinin en fazla 16
 yayınlanmış sayfasını bir kez okuyup çalışma boyunca önbelleğe alır. Kartlardan

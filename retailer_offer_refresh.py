@@ -23,6 +23,7 @@ from tr_price_scraper import TRPriceScraper
 from public_retailer_sources import PublicRetailerSources, SOURCES, public_source
 from pazarama_category_source import PazaramaCategorySource, pazarama_product_url
 from vatan_reviewed_source import VatanReviewedSource
+from mediamarkt_source import MediaMarktSource, product_url as mediamarkt_product_url
 
 
 _MERCHANT_DOMAINS = {
@@ -324,6 +325,13 @@ def _pazarama_visible_cash_price(soup, product, offer, url, schema_price, availa
 
 
 def _product_offer(soup, final_url):
+    # MediaMarkt publishes marketplace and refurbished BuyAction offers under
+    # its own host. Only the dedicated selected first-party reader may accept
+    # those pages; the generic Product parser must never label a third-party
+    # seller as MediaMarkt.
+    if (_safe_url(final_url) and
+            _safe_url(final_url).hostname.removeprefix('www.') == 'mediamarkt.com.tr'):
+        return None
     nodes = _schema_nodes(soup)
     products = [node for node in nodes if _type_is(node, 'Product')]
     by_id = {node['@id']: node for node in nodes
@@ -498,11 +506,12 @@ def _public_retailer_product(soup, product, offer, url, price, availability):
 class RetailerOfferRefresher:
     MAX_TARGETS_PER_REFRESH = 12
 
-    def __init__(self, session=None, fetch=None, vatan_source=None):
+    def __init__(self, session=None, fetch=None, vatan_source=None, mediamarkt_source=None):
         self._fetch = fetch or (session.get if session is not None else requests.get)
         self.public_sources = PublicRetailerSources(fetch=self._fetch)
         self.pazarama_source = PazaramaCategorySource(fetch=self._fetch)
         self.vatan_reviewed_source = vatan_source or VatanReviewedSource(get=self._fetch)
+        self.mediamarkt_source = mediamarkt_source or MediaMarktSource(get=self._fetch)
         self._scraper = TRPriceScraper()
         self._cache = {}
         self._blocked_hosts = set()
@@ -555,6 +564,15 @@ class RetailerOfferRefresher:
         with self._lock:
             if source_url in self._cache:
                 return self._cache[source_url]
+        if parsed.hostname.removeprefix('www.') == 'mediamarkt.com.tr':
+            if mediamarkt_product_url(source_url):
+                candidate, reason, status = self.mediamarkt_source.read_offer(source_url)
+            else:
+                candidate, reason, status = None, 'invalid_mediamarkt_pdp_url', None
+            self._record_attempt(source_url, reason, status)
+            with self._lock:
+                self._cache[source_url] = candidate
+            return candidate
         requested_variant = _variant_query(parsed)
         current = source_url
         candidate = None

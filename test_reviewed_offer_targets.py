@@ -2,7 +2,10 @@ import json
 from unittest.mock import patch
 import unittest
 
-from reviewed_offer_targets import URL_BATCH, daily_offer_targets, with_reviewed_radio
+from reviewed_offer_targets import (
+    MEDIAMARKT_BATCH_PATH, URL_BATCH, VATAN_BATCH_PATH,
+    daily_offer_targets, with_reviewed_radio,
+)
 
 
 class ReviewedDailyTargetTests(unittest.TestCase):
@@ -15,7 +18,7 @@ class ReviewedDailyTargetTests(unittest.TestCase):
             specs = {key: p[key] for key in ('ram_gb', 'storage_gb', 'network_generation')}
             targets = daily_offer_targets(product, specs)
             self.assertTrue(targets, p['slug'])
-            self.assertEqual({r['source_url'] for r in targets}, set(p['targets']))
+            self.assertTrue(set(p['targets']).issubset({r['source_url'] for r in targets}))
             for row in targets:
                 self.assertEqual(set(row), {'merchant_name', 'source_url'})
 
@@ -51,7 +54,16 @@ class ReviewedDailyTargetTests(unittest.TestCase):
         raw = URL_BATCH.read_text()
         with patch('pathlib.Path.read_text', autospec=True, return_value=raw) as read:
             daily_offer_targets(product, specs)
-            self.assertEqual([call.args[0] for call in read.call_args_list], [URL_BATCH])
+            self.assertEqual([call.args[0] for call in read.call_args_list],
+                             [URL_BATCH, VATAN_BATCH_PATH, MEDIAMARKT_BATCH_PATH])
+
+    def test_same_reviewed_iphone_retains_vatan_and_mediamarkt_targets(self):
+        profile = next(p for p in json.loads(VATAN_BATCH_PATH.read_text())['products']
+                       if p['slug'] == 'apple-iphone-17')
+        product = {key: profile[key] for key in ('id', 'slug', 'name')}
+        specs = {key: profile[key] for key in ('ram_gb', 'storage_gb', 'network_generation')}
+        self.assertEqual({row['merchant_name'] for row in daily_offer_targets(product, specs)},
+                         {'Vatan Bilgisayar', 'MediaMarkt'})
 
     def test_distinct_merchants_get_priority_and_unsafe_targets_are_not_forwarded(self):
         product = {'id': 999, 'slug': 'other-phone', 'name': 'Other Phone', 'offer_targets': [

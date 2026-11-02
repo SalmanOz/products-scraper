@@ -44,8 +44,8 @@ class VatanReviewedSourceTests(unittest.TestCase):
         for profile in profiles:
             product = {key: profile[key] for key in ('id', 'slug', 'name')}
             specs = {key: profile[key] for key in ('ram_gb', 'storage_gb', 'network_generation')}
-            self.assertEqual({row['source_url'] for row in daily_offer_targets(product, specs)},
-                             set(profile['targets']))
+            self.assertTrue(set(profile['targets']).issubset(
+                {row['source_url'] for row in daily_offer_targets(product, specs)}))
             self.assertEqual(with_reviewed_radio(product, {key: specs[key] for key in ('ram_gb', 'storage_gb')}),
                              specs)
             for key, wrong in [('ram_gb', 99), ('storage_gb', 99), ('network_generation', '4g')]:

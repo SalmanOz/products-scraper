@@ -320,6 +320,19 @@ class PriceRefreshOrchestrationTests(unittest.TestCase):
         self.assertEqual(updater.last_report['coverage']['protected_pair_failures'], [p['slug']])
         self.assertEqual(updater.last_report['status'], 'failed')
 
+    def test_scoped_refresh_reports_pair_loss_without_applying_full_catalog_gate(self):
+        p = {'id': 279, 'slug': 'samsung-galaxy-a27-5g', 'name': 'Samsung Galaxy A27 5G',
+             'attributes': {'ram_gb': 6, 'storage_gb': 128, 'Connectivity': {'5G': True}},
+             'offer_targets': []}
+        row = {**offer(0), 'source_title': 'Samsung Galaxy A27 5G 6GB RAM 128GB',
+               'url': 'https://www.teknosa.com/samsung-galaxy-a27-5g-6gb-ram-128gb'}
+        client = FakeIngestionClient([p])
+        updater = PriceUpdater(client, FakeDiscovery(), FakeRefresher([row]))
+        asyncio.run(updater.run_update(dry_run=True, known_pdp_only=True,
+                                       product_slugs=[p['slug']]))
+        self.assertEqual(updater.last_report['status'], 'completed')
+        self.assertEqual(updater.last_report['coverage']['protected_pair_failures'], [p['slug']])
+
     def test_one_domain_cannot_count_as_two_merchants_by_forged_merchant_name(self):
         forged = {**offer(1), 'url': offer(0)['url']}
         updater, client, _refresher, _discovery = self.updater([offer(0), forged])

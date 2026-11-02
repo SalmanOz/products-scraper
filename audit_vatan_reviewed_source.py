@@ -23,7 +23,8 @@ def run_audit(reader=None):
     for profile in reviewed_profiles():
         product = {key: profile[key] for key in ('id', 'slug', 'name')}
         specs = {key: profile[key] for key in ('ram_gb', 'storage_gb', 'network_generation')}
-        targets = daily_offer_targets(product, specs)
+        targets = [target for target in daily_offer_targets(product, specs)
+                   if target['merchant_name'] == 'Vatan Bilgisayar']
         offers = reader.refresh_existing_offer_targets(profile['name'], targets, specs)
         verified = [offer for offer in offers if offer.get('availability') in PURCHASABLE]
         rows.append({
