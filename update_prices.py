@@ -37,6 +37,7 @@ class PriceUpdater:
         self.pazarama_source = getattr(self.offer_refresher, 'pazarama_source', None)
         self.mediamarkt_source = getattr(self.offer_refresher, 'mediamarkt_source', None)
         self.apple_store_source = getattr(self.offer_refresher, 'apple_store_source', None)
+        self.turk_telekom_source = getattr(self.offer_refresher, 'turk_telekom_source', None)
         if isinstance(self.price_scraper, TRPriceScraper):
             self.price_scraper.retailer_offer_refresher = self.offer_refresher
         self.last_report = None
@@ -377,6 +378,16 @@ class PriceUpdater:
                         product_report['pazarama_discovery_error'] = type(error).__name__
                         logging.warning('  ⚠️ Pazarama category discovery unavailable (%s)', type(error).__name__)
                     product_report['pazarama_candidates'] = len(pazarama_targets)
+                    turk_telekom_targets = []
+                    try:
+                        if self.turk_telekom_source:
+                            turk_telekom_targets = await asyncio.to_thread(
+                                self.turk_telekom_source.discover, name, expected_specs)
+                    except Exception as error:
+                        product_report['turk_telekom_discovery_error'] = type(error).__name__
+                        logging.warning('  ⚠️ Türk Telekom stock-card discovery unavailable (%s)',
+                                        type(error).__name__)
+                    product_report['turk_telekom_candidates'] = len(turk_telekom_targets)
                     try:
                         hints = await self.price_scraper.get_best_prices(name, expected_specs)
                     except Exception as error:
@@ -386,7 +397,7 @@ class PriceUpdater:
                         product_report['legacy_discovery_error'] = type(error).__name__
                         logging.warning('  ⚠️ Legacy discovery unavailable (%s)', type(error).__name__)
                     hints = hints if isinstance(hints, list) else []
-                    discovery_targets = public_targets + vatan_targets + mediamarkt_targets + pazarama_targets + [{'source_url': row.get('url')} for row in hints
+                    discovery_targets = public_targets + vatan_targets + mediamarkt_targets + pazarama_targets + turk_telekom_targets + [{'source_url': row.get('url')} for row in hints
                                          if isinstance(row, dict) and _safe_url(row.get('url'))]
                     product_report['discovered_destinations'] = len(discovery_targets)
                     # Discovery cards are URL hints, not current merchant cash
@@ -469,6 +480,8 @@ class PriceUpdater:
                 self.last_report['apple_store_source'] = self.apple_store_source.report()
             if self.pazarama_source:
                 self.last_report['pazarama_category_discovery'] = self.pazarama_source.report()
+            if self.turk_telekom_source:
+                self.last_report['turk_telekom_source'] = self.turk_telekom_source.report()
 
             if processed_count % INGESTION_PRODUCT_BATCH_SIZE == 0:
                 self.flush_offers(pending_offers, aggregate_result)

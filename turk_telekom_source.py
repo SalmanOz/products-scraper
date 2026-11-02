@@ -256,7 +256,9 @@ class TurkTelekomSource:
                     return None, reason, status
                 offer = _selected_offer(body, url)
                 return offer, 'observed_exact_cash_offer' if offer else 'no_selected_cash_offer', 200
-            except (requests.RequestException, ValueError, TypeError, UnicodeError) as error:
+            except ValueError as error:
+                return None, str(error), None
+            except (requests.RequestException, TypeError, UnicodeError) as error:
                 return None, type(error).__name__, None
 
     def report(self):

@@ -3,6 +3,7 @@
 import unittest
 
 from audit_turk_telekom_source import run_audit
+from retailer_offer_refresh import RetailerOfferRefresher, _safe_url
 from turk_telekom_source import (BASE, CATEGORY_URL, ROBOTS_URL,
                                 TurkTelekomSource, _selected_offer, product_url)
 
@@ -89,10 +90,12 @@ def fixture(*, status=200):
 class TurkTelekomSourceTests(unittest.TestCase):
     def test_selected_url_requires_single_numeric_v(self):
         self.assertTrue(product_url(URLS[0]))
+        self.assertIsNotNone(_safe_url(URLS[0]))
         for url in (URLS[0].split('?')[0], URLS[0] + '&v=2691',
                     URLS[0] + '&token=x', URLS[0].replace('?v=2692', '?v=abc'),
                     URLS[0].replace('/tr/products/', '/tr/akilli-telefon/')):
             self.assertFalse(product_url(url))
+            self.assertIsNone(_safe_url(url))
 
     def test_selected_cash_offer_excludes_installment_and_checks_variant(self):
         html = page(URLS[0], TITLES[0], CAPACITIES[0], PRICES[0], IDS[0])
@@ -128,6 +131,19 @@ class TurkTelekomSourceTests(unittest.TestCase):
         blocked = run_audit(blocked_source)
         self.assertEqual(blocked['status'], 'partial')
         self.assertEqual(blocked['products'][1]['source_attempts'][0]['reason'], 'http_403')
+
+    def test_retailer_refresher_uses_exact_selected_pdp_and_records_attempt(self):
+        source, fetch = fixture()
+        reader = RetailerOfferRefresher(turk_telekom_source=source)
+        specs = {'ram_gb': 8, 'storage_gb': 128, 'network_generation': '5g'}
+        offers = reader.refresh_existing_offer_targets(
+            'Samsung Galaxy A57 5G', [{'source_url': URLS[0]}], specs)
+        self.assertEqual(len(offers), 1)
+        self.assertEqual(offers[0]['price'], 33499)
+        self.assertEqual(offers[0]['merchant'], 'Türk Telekom eMağaza')
+        self.assertEqual(reader.target_report('Samsung Galaxy A57 5G', [URLS[0]], specs)[0]['reason'],
+                         'observed_exact_cash_offer')
+        self.assertEqual(fetch.calls, [ROBOTS_URL, URLS[0]])
 
 
 if __name__ == '__main__':

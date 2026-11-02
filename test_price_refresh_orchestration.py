@@ -203,6 +203,25 @@ class PriceRefreshOrchestrationTests(unittest.TestCase):
         self.assertEqual({row['seller'] for row in client.submissions[0]}, {'Teknosa', 'Pazarama'})
         self.assertEqual(updater.last_report['pazarama_category_discovery']['status'], 'ready')
 
+    def test_turk_telekom_stock_card_url_requires_live_selected_pdp_observation(self):
+        tt = {**offer(0), 'merchant': 'Türk Telekom eMağaza',
+              'url': 'https://emagaza.turktelekom.com.tr/tr/products/samsung/samsung-galaxy-s25?v=1234',
+              'price': 21500}
+        updater, client, refresher, discovery = self.updater([offer(0)], [tt])
+        discovery.rows = []
+        source = Mock()
+        source.discover.return_value = [{'source_url': tt['url']}]
+        source.report.return_value = {'status': 'ready', 'stock_card_urls': 1}
+        updater.turk_telekom_source = source
+        asyncio.run(updater.run_update())
+        source.discover.assert_called_once_with('Samsung Galaxy S25', {
+            'ram_gb': 12, 'storage_gb': 256, 'network_generation': '5g',
+        })
+        self.assertEqual(refresher.calls[1][1], [{'source_url': tt['url']}])
+        self.assertEqual({row['seller'] for row in client.submissions[0]},
+                         {'Teknosa', 'Türk Telekom eMağaza'})
+        self.assertEqual(updater.last_report['turk_telekom_source']['stock_card_urls'], 1)
+
     def test_discovery_outages_do_not_discard_valid_current_pdp(self):
         updater, client, refresher, discovery = self.updater([offer(0)])
         refresher.public_sources = Mock()
