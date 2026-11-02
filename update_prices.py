@@ -17,6 +17,7 @@ from retailer_offer_refresh import ALLOWED_HOSTS, RetailerOfferRefresher, _safe_
 from reviewed_offer_targets import daily_offer_targets, with_reviewed_radio, PROTECTED_TWO_STORE_SLUGS
 from vatan_sitemap_source import VatanSitemapSource
 from xiaomi_17t_preflight import PROFILES as XIAOMI_17T_PREFLIGHT_URLS
+from price_sync_priority import prioritize_unpriced_products
 
 load_dotenv()
 
@@ -309,6 +310,22 @@ class PriceUpdater:
                 raise RuntimeError(
                     f"Published product {target_id} was not found in the catalog"
                 )
+
+        if (product_id is None and product_slugs is None and not known_pdp_only
+                and hasattr(self.ingestion_client, 'get_public_price_priority')):
+            try:
+                status = self.ingestion_client.get_public_price_priority()
+                products, counts = prioritize_unpriced_products(products, status)
+                self.last_report['discovery_priority'] = {
+                    'source': 'public_current_price_snapshot', **counts,
+                }
+            except Exception as error:
+                # Priority is an efficiency hint; a temporary public API
+                # outage must not stop the source-verified refresh itself.
+                self.last_report['discovery_priority'] = {
+                    'source': 'original_catalog_order',
+                    'reason': type(error).__name__,
+                }
 
         logging.info(f"🚀 Starting price update for {len(products)} products...")
 

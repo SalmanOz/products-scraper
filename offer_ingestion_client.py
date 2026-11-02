@@ -1,4 +1,5 @@
 import logging
+import math
 import os
 import time
 from urllib.parse import urljoin, urlparse
@@ -264,6 +265,40 @@ class OfferIngestionClient:
                 "Catalog endpoint returned no published products"
             )
         return products
+
+    def get_public_price_priority(self):
+        """Read a bounded public catalog snapshot only to order crawl work.
+
+        The returned values are not offers and must never be ingested as prices.
+        An absent/mismatched row remains unknown rather than being treated as
+        unpriced. Full sync can fall back to its original order on API errors.
+        """
+        rows = self._request_json(
+            "GET", "/api/products", params={"limit": "1000"},
+            headers={"Accept": "application/json"},
+        )
+        if not isinstance(rows, list) or len(rows) > 1000:
+            raise IngestionClientError("Public price priority snapshot is invalid")
+        status = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            try:
+                product_id = int(row['id'])
+                slug = row['slug']
+                if (product_id <= 0 or product_id in status
+                        or not isinstance(slug, str) or not slug
+                        or 'fresh_lowest_price' not in row
+                        or 'fresh_offer_count' not in row):
+                    continue
+                price = float(row['fresh_lowest_price'] or 0)
+                offer_count = int(row['fresh_offer_count'] or 0)
+                if not math.isfinite(price) or price < 0 or offer_count < 0:
+                    continue
+                status[product_id] = (slug, price > 0 and offer_count > 0)
+            except (KeyError, TypeError, ValueError, OverflowError):
+                continue
+        return status
 
     def ingest_offers(self, offers):
         if not offers:
