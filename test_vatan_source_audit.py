@@ -109,6 +109,11 @@ class VatanRunnerAuditTests(unittest.TestCase):
         }))
         self.assertEqual(challenge['status'], 'not_urlset')
 
+        oversized = probe_browser_sitemap(post=lambda url, **kwargs: Response(
+            url, b'x' * (8 * 1024 * 1024 + 1)))
+        self.assertEqual(oversized['status'], 'solver_response_too_large')
+        self.assertGreater(oversized['response_bytes_at_abort'], 8 * 1024 * 1024)
+
     def test_three_exact_live_pdp_observations_are_reported_without_writes(self):
         source, reader, fetch = components()
         report = run_audit(source, reader)

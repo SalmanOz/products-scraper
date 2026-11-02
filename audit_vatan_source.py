@@ -31,7 +31,7 @@ REPORT_PATH = OUTPUT_DIR / 'vatan-source-audit.json'
 SUMMARY_PATH = OUTPUT_DIR / 'vatan-source-audit.md'
 PURCHASABLE = {'in_stock', 'limited'}
 SOLVER_URL = 'http://localhost:8191/v1'
-MAX_SOLVER_BYTES = 4 * 1024 * 1024
+MAX_SOLVER_BYTES = 8 * 1024 * 1024
 
 
 def probe_browser_sitemap(post=None):
@@ -49,7 +49,8 @@ def probe_browser_sitemap(post=None):
             for chunk in response.iter_content(chunk_size=64 * 1024):
                 data.extend(chunk)
                 if len(data) > MAX_SOLVER_BYTES:
-                    return {**result, 'status': 'solver_response_too_large'}
+                    return {**result, 'status': 'solver_response_too_large',
+                            'response_bytes_at_abort': len(data)}
         finally:
             response.close()
         payload = json.loads(data)
