@@ -1,8 +1,9 @@
+import json
 import unittest
 from xml.sax.saxutils import escape
 
 from vatan_sitemap_source import (
-    ROBOTS_URL, SITEMAP_URL, VatanSitemapSource,
+    ROBOTS_URL, SITEMAP_URL, SOLVER_URL, VatanSitemapSource,
 )
 
 
@@ -45,6 +46,78 @@ class Fetch:
 
 
 class VatanSitemapSourceTests(unittest.TestCase):
+    def test_robots_allowed_sitemap_403_uses_one_bounded_browser_get(self):
+        exact = 'https://www.vatanbilgisayar.com/xiaomi-17t-12-256gb-akilli-telefon-siyah.html'
+        direct = Fetch({ROBOTS_URL: ROBOTS,
+                        SITEMAP_URL: Response(SITEMAP_URL, b'denied', status=403)})
+        browser_calls = []
+
+        def post(url, **kwargs):
+            browser_calls.append((url, kwargs['json']))
+            return Response(url, json.dumps({'status': 'ok', 'solution': {
+                'status': 200, 'url': SITEMAP_URL, 'response': sitemap(exact).decode(),
+            }}).encode())
+
+        delays = []
+        source = VatanSitemapSource(fetch=direct, post=post, sleep=delays.append)
+        specs = {'ram_gb': 12, 'storage_gb': 256, 'network_generation': '5g'}
+        self.assertEqual(source.discover('Xiaomi 17T', specs), [{'source_url': exact}])
+        self.assertEqual(source.discover('Xiaomi 17T', specs), [{'source_url': exact}])
+        self.assertEqual(direct.calls, [ROBOTS_URL, SITEMAP_URL])
+        self.assertEqual(browser_calls, [(SOLVER_URL, {
+            'cmd': 'request.get', 'url': SITEMAP_URL, 'maxTimeout': 45000,
+        })])
+        self.assertEqual(delays, [0.5])
+        self.assertEqual(source.report()['sitemap_transport'], 'browser')
+        self.assertEqual(source.report()['sitemap_direct_http_status'], 403)
+        self.assertEqual(source.report()['browser_requests'], 1)
+
+    def test_browser_sitemap_failures_cannot_create_candidates(self):
+        exact = 'https://www.vatanbilgisayar.com/xiaomi-17t-12-256gb-akilli-telefon-siyah.html'
+        valid_xml = sitemap(exact).decode()
+        cases = (
+            ({'status': 200, 'url': SITEMAP_URL + '?changed=1', 'response': valid_xml},
+             'sitemap_browser_changed_url'),
+            ({'status': 403, 'url': SITEMAP_URL, 'response': valid_xml},
+             'sitemap_browser_http_403'),
+            ({'status': 200, 'url': SITEMAP_URL, 'response': '<html>challenge</html>'},
+             'not_urlset'),
+            ({'status': 200, 'url': SITEMAP_URL, 'response':
+              '<!DOCTYPE urlset [<!ENTITY x "bad">]>' + valid_xml},
+             'unsafe_xml'),
+        )
+        for solution, expected_status in cases:
+            with self.subTest(expected_status=expected_status):
+                fetch = Fetch({ROBOTS_URL: ROBOTS,
+                               SITEMAP_URL: Response(SITEMAP_URL, b'denied', status=403)})
+                post = lambda url, **_kwargs: Response(url, json.dumps({
+                    'status': 'ok', 'solution': solution,
+                }).encode())
+                source = VatanSitemapSource(fetch=fetch, post=post, sleep=lambda _: None)
+                self.assertEqual(source.discover('Xiaomi 17T', {
+                    'ram_gb': 12, 'storage_gb': 256, 'network_generation': '5g',
+                }), [])
+                self.assertEqual(source.report()['status'], expected_status)
+                self.assertEqual(source.report()['eligible_urls'], 0)
+                self.assertEqual(source.report()['browser_requests'], 1)
+
+    def test_robots_denial_or_sitemap_rate_limit_never_calls_browser(self):
+        for pages in (
+            {ROBOTS_URL: Response(ROBOTS_URL, b'denied', status=403)},
+            {ROBOTS_URL: ROBOTS,
+             SITEMAP_URL: Response(SITEMAP_URL, b'rate limited', status=429)},
+        ):
+            with self.subTest(pages=pages):
+                post_calls = []
+                source = VatanSitemapSource(fetch=Fetch(pages),
+                    post=lambda *_args, **_kwargs: post_calls.append(True),
+                    sleep=lambda _: None)
+                self.assertEqual(source.discover('Xiaomi 17T', {
+                    'ram_gb': 12, 'storage_gb': 256,
+                }), [])
+                self.assertEqual(post_calls, [])
+                self.assertEqual(source.report()['browser_requests'], 0)
+
     def test_discovers_only_exact_model_memory_radio_and_caches_sitemap(self):
         exact = 'https://www.vatanbilgisayar.com/xiaomi-17t-12-256gb-akilli-telefon-siyah.html'
         wrong_ram = 'https://www.vatanbilgisayar.com/xiaomi-17t-8-256gb-akilli-telefon-mor.html'

@@ -2,9 +2,11 @@
 
 Vatan disallows ``/arama/*`` in robots.txt. Its advertised sitemap gives us
 bounded, public URL hints; the existing retailer PDP reader remains the only
-source of live price, availability and product identity evidence.
+source of live price, availability and product identity evidence. A denied
+direct sitemap GET may retry once through the already running browser service.
 """
 
+import json
 import re
 import time
 import xml.etree.ElementTree as ET
@@ -22,16 +24,20 @@ SITEMAP_URL = f'https://{HOST}/sitemap.axd'
 BOT = 'TeknoskorPriceBot'
 MAX_ROBOTS_BYTES = 64 * 1024
 MAX_SITEMAP_BYTES = 3 * 1024 * 1024
+MAX_SOLVER_BYTES = 8 * 1024 * 1024
 MAX_SITEMAP_URLS = 20_000
 MAX_PRODUCT_CANDIDATES = 4
+MAX_BROWSER_REQUESTS = 1
+SOLVER_URL = 'http://localhost:8191/v1'
 _SITEMAP_NS = '{http://www.sitemaps.org/schemas/sitemap/0.9}'
 
 
 class VatanSitemapSource:
     """One robots read and one sitemap read per updater run, including failure."""
 
-    def __init__(self, fetch=None, sleep=time.sleep):
+    def __init__(self, fetch=None, post=None, sleep=time.sleep):
         self._fetch = fetch or requests.get
+        self._post = post or requests.post
         self._sleep = sleep
         self._loaded = False
         self._urls = []
@@ -39,6 +45,51 @@ class VatanSitemapSource:
         self._status = 'not_loaded'
         self._failed_stage = None
         self._http_status = None
+        self._crawl_delay = 0
+        self._sitemap_transport = 'not_attempted'
+        self._sitemap_direct_status = None
+        self._browser_requests = 0
+
+    def _browser_sitemap(self):
+        """One exact-URL retry, only after a robots-approved sitemap GET is 403."""
+        if (self._rules is None or not self._rules.can_fetch(BOT, SITEMAP_URL)
+                or self._browser_requests >= MAX_BROWSER_REQUESTS):
+            raise ValueError('sitemap_browser_not_allowed')
+        self._browser_requests += 1
+        self._sleep(max(0.5, self._crawl_delay))
+        response = self._post(SOLVER_URL, json={
+            'cmd': 'request.get', 'url': SITEMAP_URL, 'maxTimeout': 45000,
+        }, timeout=60, stream=True)
+        try:
+            if response.status_code != 200:
+                raise ValueError(f'sitemap_solver_http_{response.status_code}')
+            data = bytearray()
+            for chunk in response.iter_content(chunk_size=64 * 1024):
+                data.extend(chunk)
+                if len(data) > MAX_SOLVER_BYTES:
+                    raise ValueError('sitemap_solver_oversized')
+        finally:
+            response.close()
+        try:
+            payload = json.loads(data)
+        except (TypeError, ValueError) as error:
+            raise ValueError('sitemap_solver_invalid_json') from error
+        solution = payload.get('solution') if isinstance(payload, dict) else None
+        if not isinstance(payload, dict) or payload.get('status') != 'ok' or not isinstance(solution, dict):
+            raise ValueError('sitemap_solver_unavailable')
+        if solution.get('url') != SITEMAP_URL:
+            raise ValueError('sitemap_browser_changed_url')
+        if solution.get('status') != 200:
+            raise ValueError(f"sitemap_browser_http_{solution.get('status')}")
+        xml = solution.get('response')
+        if not isinstance(xml, str):
+            raise ValueError('sitemap_browser_missing_xml')
+        body = xml.encode('utf-8')
+        if len(body) > MAX_SITEMAP_BYTES:
+            raise ValueError('sitemap_browser_oversized')
+        self._sitemap_transport = 'browser'
+        self._http_status = 200
+        return body
 
     def _read(self, url, limit):
         stage = 'robots' if url == ROBOTS_URL else 'sitemap'
@@ -52,23 +103,35 @@ class VatanSitemapSource:
                 'Accept-Language': 'tr-TR,tr;q=0.9',
             },
         )
+        retry_browser = False
         try:
             self._http_status = response.status_code
-            if response.status_code != 200:
-                raise ValueError(f'{stage}_http_{response.status_code}')
+            if stage == 'sitemap':
+                self._sitemap_direct_status = response.status_code
             if response.url != url:
                 raise ValueError(f'{stage}_unexpected_final_url')
-            size = str(response.headers.get('Content-Length') or '')
-            if size.isdigit() and int(size) > limit:
-                raise ValueError('oversized_response')
-            chunks = bytearray()
-            for chunk in response.iter_content(chunk_size=64 * 1024):
-                chunks.extend(chunk)
-                if len(chunks) > limit:
+            if response.status_code != 200:
+                if stage == 'sitemap' and response.status_code == 403:
+                    retry_browser = True
+                else:
+                    raise ValueError(f'{stage}_http_{response.status_code}')
+            else:
+                size = str(response.headers.get('Content-Length') or '')
+                if size.isdigit() and int(size) > limit:
                     raise ValueError('oversized_response')
-            return bytes(chunks)
+                chunks = bytearray()
+                for chunk in response.iter_content(chunk_size=64 * 1024):
+                    chunks.extend(chunk)
+                    if len(chunks) > limit:
+                        raise ValueError('oversized_response')
+                if stage == 'sitemap':
+                    self._sitemap_transport = 'direct'
+                return bytes(chunks)
         finally:
             response.close()
+        if retry_browser:
+            return self._browser_sitemap()
+        raise ValueError(f'{stage}_unavailable')
 
     @staticmethod
     def _safe_product_url(url):
@@ -111,6 +174,7 @@ class VatanSitemapSource:
                 delay = max(delay, rate.seconds / max(1, rate.requests))
             if delay > 30:
                 raise ValueError('crawl_delay_exceeds_budget')
+            self._crawl_delay = delay
             if delay:
                 self._sleep(delay)
 
@@ -185,5 +249,8 @@ class VatanSitemapSource:
     def report(self):
         return {'status': self._status, 'eligible_urls': len(self._urls),
                 'robots_url': ROBOTS_URL, 'sitemap_url': SITEMAP_URL,
+                'sitemap_transport': self._sitemap_transport,
+                'sitemap_direct_http_status': self._sitemap_direct_status,
+                'browser_requests': self._browser_requests,
                 'failed_stage': self._failed_stage,
                 'http_status': self._http_status if self._failed_stage else None}

@@ -11,6 +11,7 @@ from xml.sax.saxutils import escape
 
 from audit_vatan_source import PROFILES, format_summary, main, probe_browser_sitemap, run_audit, write_outputs
 from retailer_offer_refresh import RetailerOfferRefresher
+from vatan_reviewed_source import VatanReviewedSource
 from vatan_sitemap_source import ROBOTS_URL, SITEMAP_URL, VatanSitemapSource
 
 
@@ -83,7 +84,13 @@ def components(*, xiaomi_status=200, robots_status=200):
         pages[url] = Response(url, product_page(url, title, price, sku),
                               xiaomi_status if url == URLS[1] else 200)
     fetch = Fetch(pages)
-    return VatanSitemapSource(fetch=fetch, sleep=lambda _: None), RetailerOfferRefresher(fetch=fetch), fetch
+    # Reviewed PDPs have their own robots check and browser fallback. Keep
+    # that fallback offline and deterministic in the runner-audit fixture.
+    reviewed = VatanReviewedSource(get=fetch,
+                                   post=lambda url, **_kwargs: Response(url, b'', status=503),
+                                   sleep=lambda _: None)
+    reader = RetailerOfferRefresher(fetch=fetch, vatan_source=reviewed)
+    return VatanSitemapSource(fetch=fetch, sleep=lambda _: None), reader, fetch
 
 
 class VatanRunnerAuditTests(unittest.TestCase):
@@ -123,23 +130,23 @@ class VatanRunnerAuditTests(unittest.TestCase):
         self.assertEqual([row['verified_offers'][0]['price'] for row in report['products']], list(PRICES))
         self.assertTrue(all(row['source_attempts'][0]['reason'] == 'observed_exact_offer'
                             for row in report['products']))
-        self.assertEqual(fetch.calls, [ROBOTS_URL, SITEMAP_URL, *URLS])
+        self.assertEqual(fetch.calls, [ROBOTS_URL, SITEMAP_URL, ROBOTS_URL, *URLS])
         self.assertIn('3/3 exact catalog profiles verified', format_summary(report))
 
-    def test_access_denial_yields_partial_artifact_with_host_circuit_reasons(self):
+    def test_access_denial_yields_partial_artifact_without_blocking_other_reviewed_urls(self):
         source, reader, fetch = components(xiaomi_status=403)
         report = run_audit(source, reader)
         self.assertEqual(report['status'], 'partial')
-        self.assertEqual(report['verified_products'], 1)
-        self.assertEqual(report['products'][1]['source_attempts'][0]['reason'], 'access_denied')
-        self.assertEqual(report['products'][2]['source_attempts'][0]['reason'], 'host_circuit_open')
-        self.assertNotIn(URLS[2], fetch.calls)
+        self.assertEqual(report['verified_products'], 2)
+        self.assertEqual(report['products'][1]['source_attempts'][0]['reason'], 'solver_http_503')
+        self.assertEqual(report['products'][2]['source_attempts'][0]['reason'], 'observed_exact_offer')
+        self.assertIn(URLS[2], fetch.calls)
         with TemporaryDirectory() as directory:
             json_path = Path(directory) / 'audit.json'
             markdown_path = Path(directory) / 'audit.md'
             write_outputs(report, json_path, markdown_path)
-            self.assertEqual(json.loads(json_path.read_text())['verified_products'], 1)
-            self.assertIn('access_denied', markdown_path.read_text())
+            self.assertEqual(json.loads(json_path.read_text())['verified_products'], 2)
+            self.assertIn('solver_http_503', markdown_path.read_text())
 
     def test_unavailable_robots_never_requests_sitemap_or_pdp(self):
         source, reader, fetch = components(robots_status=403)
