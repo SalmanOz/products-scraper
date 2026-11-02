@@ -1,0 +1,55 @@
+name: Vatan Exact PDP Access Audit
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Test exact PDP audit and Vatan reader
+        run: python -m unittest -q test_vatan_pdp_access test_retailer_offer_refresh
+      - name: Start read-only browser GET service
+        run: |
+          docker run -d --name=vatan-pdp-audit-browser -p 8191:8191 -e LOG_LEVEL=info ghcr.io/flaresolverr/flaresolverr:latest
+          for attempt in {1..30}; do
+            if curl --fail --silent http://localhost:8191/ > /dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs vatan-pdp-audit-browser
+          exit 1
+      - name: Probe three exact Vatan PDPs on this runner
+        env:
+          VATAN_AUDIT_OUTPUT_DIR: ${{ runner.temp }}
+        run: python audit_vatan_pdp_access.py
+      - name: Publish read-only PDP summary
+        if: always()
+        run: |
+          if test -f "${{ runner.temp }}/vatan-pdp-access.md"; then
+            cat "${{ runner.temp }}/vatan-pdp-access.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Vatan PDP audit exited before writing a report.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload Vatan PDP access evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vatan-pdp-access-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/vatan-pdp-access.json
+            ${{ runner.temp }}/vatan-pdp-access.md
+          if-no-files-found: warn
+          retention-days: 30
