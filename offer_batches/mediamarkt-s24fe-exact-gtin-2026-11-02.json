@@ -1,0 +1,19 @@
+{
+  "purpose": "Reviewed exact S24 FE blue 8/128 marketplace URL. GTIN 8806095750163 binds the selected SKU to independently checked 5G identity; every run rereads price, stock and seller.",
+  "radio_evidence": {
+    "gtin13": "8806095750163",
+    "samsung_model_spec": "https://www.samsung.com/tr/smartphones/galaxy-s/galaxy-s24-fe-blue-128gb-sm-s721blbdtur/",
+    "exact_gtin_retailer": "https://www.trendyol.com/samsung/galaxy-s24-fe-8-gb-ram-128-gb-mavi-p-857140583"
+  },
+  "products": [
+    {
+      "id": 220,
+      "slug": "samsung-galaxy-s24fe",
+      "name": "Samsung Galaxy S24 FE",
+      "ram_gb": 8,
+      "storage_gb": 128,
+      "network_generation": "5g",
+      "targets": ["https://www.mediamarkt.com.tr/tr/product/_samsung-galaxy-s24-fe-8-gb-128-gb-akilli-telefon-mavi-166774856.html"]
+    }
+  ]
+}

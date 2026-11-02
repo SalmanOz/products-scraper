@@ -22,9 +22,12 @@ from fold8_ultra_preflight import (PROFILE as FOLD8_ULTRA_PROFILE,
                                    URLS as FOLD8_ULTRA_PREFLIGHT_URLS,
                                    load_verified_offers as load_fold8_ultra_offers)
 from mediamarkt_marketplace_source import (PROFILES as MEDIAMARKT_MARKETPLACE_PROFILES,
+                                           ALL_PROFILES as ALL_MARKETPLACE_PROFILES,
+                                           S24FE_PROFILES, S24FE_URL,
                                            reviewed_marketplace_offer)
 from mediamarkt_marketplace_preflight import (load_verified_offers as load_marketplace_offers,
                                               no_merchant_collision)
+from mediamarkt_s24fe_preflight import load_verified_offer as load_s24fe_offer
 
 load_dotenv()
 
@@ -95,8 +98,8 @@ class PriceUpdater:
             return False
         host = _safe_url(offer['url']).hostname
         merchant = self.offer_matcher._standardize_merchant_name(str(offer.get('merchant', '')))
-        if offer['url'] in MEDIAMARKT_MARKETPLACE_PROFILES:
-            profile = MEDIAMARKT_MARKETPLACE_PROFILES[offer['url']]
+        if offer['url'] in ALL_MARKETPLACE_PROFILES:
+            profile = ALL_MARKETPLACE_PROFILES[offer['url']]
             if (not reviewed_marketplace_offer(offer, product['name'], expected_specs, product)
                     or not no_merchant_collision(product, profile, offer['url'])):
                 return False
@@ -293,6 +296,17 @@ class PriceUpdater:
         fold8_preflight_only = bool(fold8_preflight_file)
         marketplace_preflight_file = os.environ.get('MEDIAMARKT_MARKETPLACE_VERIFIED_AUDIT_FILE')
         marketplace_preflight_only = bool(marketplace_preflight_file)
+        s24fe_preflight_file = os.environ.get('MEDIAMARKT_S24FE_VERIFIED_AUDIT_FILE')
+        s24fe_preflight_only = bool(s24fe_preflight_file)
+        if sum((xiaomi_preflight_only, fold8_preflight_only,
+                marketplace_preflight_only, s24fe_preflight_only)) > 1:
+            raise RuntimeError('Only one scoped preflight may be active')
+        if s24fe_preflight_only:
+            if (product_id is not None or phase2_backfill or not known_pdp_only
+                    or product_slugs != [S24FE_PROFILES[S24FE_URL]['slug']]):
+                raise RuntimeError('S24 FE preflight requires only its exact reviewed SKU and known PDP')
+            if load_s24fe_offer(s24fe_preflight_file) is None:
+                raise RuntimeError('S24 FE exact-GTIN preflight invalid or stale')
         if marketplace_preflight_only:
             reviewed_slugs = {profile['slug'] for profile in MEDIAMARKT_MARKETPLACE_PROFILES.values()}
             if (product_id is not None or phase2_backfill or not known_pdp_only
@@ -333,6 +347,13 @@ class PriceUpdater:
                         or product.get('name') != profile['name']
                         or not no_merchant_collision(product, profile, url)):
                     raise RuntimeError('Marketplace catalog identity or seller platform collision')
+        if s24fe_preflight_only:
+            profile = S24FE_PROFILES[S24FE_URL]
+            product = next((p for p in products if p.get('slug') == profile['slug']), None)
+            if (not product or product.get('id') != profile['id']
+                    or product.get('name') != profile['name']
+                    or not no_merchant_collision(product, profile, S24FE_URL)):
+                raise RuntimeError('S24 FE catalog identity or seller platform collision')
         if product_id is not None:
             try:
                 target_id = int(product_id)
@@ -395,6 +416,10 @@ class PriceUpdater:
                 targets = [row for row in targets if row['source_url'] == reviewed_url]
                 if len(targets) != 1:
                     raise RuntimeError('Exact marketplace reviewed target missing for ' + p['slug'])
+            if s24fe_preflight_only:
+                targets = [row for row in targets if row['source_url'] == S24FE_URL]
+                if len(targets) != 1:
+                    raise RuntimeError('Exact S24 FE marketplace target missing')
             product_report = {'slug': p['slug'], 'targets': targets,
                               'purchasable_merchants': [], 'prepared_offers': [],
                               'rejected_live_observations': 0, 'discovered_destinations': 0}
@@ -519,6 +544,10 @@ class PriceUpdater:
                     or MEDIAMARKT_MARKETPLACE_PROFILES[offers[0]['url']]['slug'] != p['slug']
                 ):
                     raise RuntimeError('Exact marketplace preflight observation must survive matching')
+                if s24fe_preflight_only and (
+                    len(offers) != 1 or offers[0].get('url') != S24FE_URL
+                ):
+                    raise RuntimeError('S24 FE exact-GTIN preflight observation must survive matching')
                 if offers:
                     observed_at = self.utc_timestamp()
                     checked_at = self.utc_timestamp()
@@ -618,6 +647,13 @@ class PriceUpdater:
             or aggregate_result['committed'] is not True
         ):
             raise RuntimeError('Marketplace scoped ingestion did not accept both exact offers')
+        if s24fe_preflight_only and not dry_run and (
+            aggregate_result['accepted'] != 1
+            or aggregate_result['stale_ignored'] != 0
+            or aggregate_result['variant_rejected'] != 0
+            or aggregate_result['committed'] is not True
+        ):
+            raise RuntimeError('S24 FE exact-GTIN ingestion did not accept the sole offer')
         if changed_paths and not dry_run:
             submit_urls(changed_paths + ["/", "/products"])
 

@@ -27,12 +27,36 @@ PROFILES = {
          'seller_name': 'Başaran Ticaret', 'seller_id': '12140'},
 }
 
+# MediaMarkt omits radio generation on this selected SKU, and its generic
+# "Mobil Telefon Standardı: No" feature is unusable. The selected GTIN is
+# independently listed as S24 FE blue 8/128 5G by Trendyol; Samsung Türkiye's
+# blue 8/128 product specification confirms 5G Sub6. This exception cannot
+# apply to another SKU, EAN, seller, capacity or catalog radio generation.
+# https://www.trendyol.com/samsung/galaxy-s24-fe-8-gb-ram-128-gb-mavi-p-857140583
+# https://www.samsung.com/tr/smartphones/galaxy-s/galaxy-s24-fe-blue-128gb-sm-s721blbdtur/
+S24FE_URL = ('https://www.mediamarkt.com.tr/tr/product/'
+             '_samsung-galaxy-s24-fe-8-gb-128-gb-akilli-telefon-mavi-166774856.html')
+S24FE_PROFILES = {S24FE_URL:
+    {'id': 220, 'slug': 'samsung-galaxy-s24fe', 'name': 'Samsung Galaxy S24 FE',
+     'ram_gb': 8, 'storage_gb': 128, 'network_generation': '5g',
+     'sku': '166774856', 'gtin13': '8806095750163',
+     'seller_name': 'VintageOnline', 'seller_id': '12953'}}
+S24FE_RADIO_EVIDENCE = {
+    'method': 'reviewed_exact_gtin_5g',
+    'gtin13': '8806095750163',
+    'samsung_model_spec':
+        'https://www.samsung.com/tr/smartphones/galaxy-s/galaxy-s24-fe-blue-128gb-sm-s721blbdtur/',
+    'exact_gtin_retailer':
+        'https://www.trendyol.com/samsung/galaxy-s24-fe-8-gb-ram-128-gb-mavi-p-857140583',
+}
+ALL_PROFILES = {**PROFILES, **S24FE_PROFILES}
+
 
 def reviewed_marketplace_offer(offer, product_name, expected_specs, product=None):
     """Verify an observation from the exact selected new-seller reader."""
     if not isinstance(offer, dict) or not isinstance(expected_specs, dict):
         return False
-    profile = PROFILES.get(offer.get('url'))
+    profile = ALL_PROFILES.get(offer.get('url'))
     if not profile or product_name != profile['name']:
         return False
     if product is not None and (product.get('id') != profile['id'] or
@@ -59,6 +83,15 @@ def reviewed_marketplace_offer(offer, product_name, expected_specs, product=None
             not isinstance(offer.get('offer_id'), str) or
             not re.fullmatch(r'\d{1,15}', offer['offer_id'])):
         return False
+    if offer.get('url') == S24FE_URL:
+        if (offer.get('gtin13') != profile['gtin13'] or
+                offer.get('selected_variant_gtin13') != profile['gtin13'] or
+                offer.get('network_generation') not in (None, '5g')):
+            return False
+        # The exact GTIN has a reviewed model-level 5G identity. Keep source
+        # RAM/storage/model matching strict; never infer radio for other URLs.
+        return catalog_variant_matches(offer, profile['name'],
+                                       {'ram_gb': ram, 'storage_gb': storage})
     return catalog_variant_matches(offer, profile['name'], expected_specs)
 
 
@@ -68,7 +101,7 @@ class MediaMarktMarketplaceSource:
         self._now = now or (lambda: datetime.now(timezone.utc))
 
     def read_offer(self, url):
-        profile = PROFILES.get(url)
+        profile = ALL_PROFILES.get(url)
         if not profile or not product_url(url):
             return None, 'unreviewed_marketplace_url', None
         transport = self.transport

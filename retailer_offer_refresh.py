@@ -28,8 +28,11 @@ from vatan_reviewed_source import VatanReviewedSource
 from mediamarkt_source import MediaMarktSource, product_url as mediamarkt_product_url
 from mediamarkt_marketplace_source import (MediaMarktMarketplaceSource,
                                            PROFILES as MEDIAMARKT_MARKETPLACE_PROFILES,
+                                           ALL_PROFILES as ALL_MARKETPLACE_PROFILES,
+                                           S24FE_URL,
                                            reviewed_marketplace_offer)
 from mediamarkt_marketplace_preflight import load_verified_offers as load_marketplace_offers
+from mediamarkt_s24fe_preflight import load_verified_offer as load_s24fe_offer
 from apple_store_source import AppleStoreSource, reviewed_slug as apple_store_reviewed_slug
 from turk_telekom_source import TurkTelekomSource, product_url as turk_telekom_product_url
 from pasaj_source import PasajSource, product_url as pasaj_product_url
@@ -558,6 +561,7 @@ class RetailerOfferRefresher:
         self._clock = clock
         self._fold8_preflight_file = os.environ.get('FOLD8_ULTRA_VERIFIED_AUDIT_FILE')
         self._marketplace_preflight_file = os.environ.get('MEDIAMARKT_MARKETPLACE_VERIFIED_AUDIT_FILE')
+        self._s24fe_preflight_file = os.environ.get('MEDIAMARKT_S24FE_VERIFIED_AUDIT_FILE')
         self._diagnostics = {}
         self._lock = Lock()
 
@@ -588,14 +592,14 @@ class RetailerOfferRefresher:
                 offer = self._cache.get(url)
             if offer and not self._offer_identity_matches(product_name, offer, expected_specs):
                 detail['reason'] = 'identity_or_variant_not_verified'
-            merchant = (MEDIAMARKT_MARKETPLACE_PROFILES[url]['seller_name']
-                        if url in MEDIAMARKT_MARKETPLACE_PROFILES else
+            merchant = (ALL_MARKETPLACE_PROFILES[url]['seller_name']
+                        if url in ALL_MARKETPLACE_PROFILES else
                         ALLOWED_HOSTS[_safe_url(url).hostname])
             rows.append({'source_url': url, 'merchant': merchant, **detail})
         return rows
 
     def _offer_identity_matches(self, product_name, offer, expected_specs):
-        if offer.get('url') in MEDIAMARKT_MARKETPLACE_PROFILES:
+        if offer.get('url') in ALL_MARKETPLACE_PROFILES:
             return reviewed_marketplace_offer(offer, product_name, expected_specs)
         return (self._scraper.is_strict_match(product_name, offer['source_title'], expected_specs)
                 and self._scraper.has_observed_offer_evidence(product_name, offer, expected_specs))
@@ -639,6 +643,15 @@ class RetailerOfferRefresher:
             with self._lock:
                 self._cache[source_url] = candidate
             return candidate
+        if self._s24fe_preflight_file and source_url == S24FE_URL:
+            verified = load_s24fe_offer(self._s24fe_preflight_file)
+            candidate = verified.get(source_url) if verified else None
+            self._record_attempt(source_url,
+                                 'observed_exact_new_marketplace_offer_from_preflight' if candidate
+                                 else 'preflight_invalid_or_stale', 200 if candidate else None)
+            with self._lock:
+                self._cache[source_url] = candidate
+            return candidate
         if source_url == HEPSIBURADA_S25_FE_256_URL:
             candidate, reason, status = self.hepsiburada_s25_fe_source.read_offer()
             self._record_attempt(source_url, reason, status)
@@ -658,7 +671,7 @@ class RetailerOfferRefresher:
                 self._cache[source_url] = candidate
             return candidate
         if parsed.hostname.removeprefix('www.') == 'mediamarkt.com.tr':
-            if source_url in MEDIAMARKT_MARKETPLACE_PROFILES:
+            if source_url in ALL_MARKETPLACE_PROFILES:
                 candidate, reason, status = self.mediamarkt_marketplace_source.read_offer(source_url)
             elif mediamarkt_product_url(source_url):
                 candidate, reason, status = self.mediamarkt_source.read_offer(source_url)

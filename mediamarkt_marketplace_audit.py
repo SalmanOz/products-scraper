@@ -72,6 +72,15 @@ def _price(raw):
     return value
 
 
+def _gtin13(raw):
+    """Accept an actual EAN-13, not merely a 13-digit-looking string."""
+    if not isinstance(raw, str) or not re.fullmatch(r'\d{13}', raw):
+        return None
+    total = sum((1 if index % 2 == 0 else 3) * int(digit)
+                for index, digit in enumerate(raw[:12]))
+    return raw if (10 - total % 10) % 10 == int(raw[-1]) else None
+
+
 def _product_capacities(apollo, graph_product, sku):
     """Read explicit RAM and storage from this SKU's technical feature graph."""
     product_ref = graph_product.get('product')
@@ -171,6 +180,22 @@ def selected_marketplace_offer(html, final_url):
         return None
     product, offer = selected[0]
     sku = str(product.get('sku', ''))
+    raw_gtin = product.get('gtin13')
+    gtin = _gtin13(raw_gtin) if raw_gtin is not None else None
+    if raw_gtin is not None and gtin is None:
+        return None
+    variants = product.get('hasVariant')
+    selected_variant_gtin = None
+    if variants is not None:
+        if not isinstance(variants, list):
+            return None
+        selected_variants = [row for row in variants if isinstance(row, dict)
+                             and str(row.get('sku', '')) == sku]
+        if selected_variants and (len(selected_variants) != 1 or
+                                  selected_variants[0].get('gtin13') != gtin):
+            return None
+        if selected_variants:
+            selected_variant_gtin = selected_variants[0].get('gtin13')
     brand = product.get('brand')
     if (not re.fullmatch(r'\d{6,12}', sku) or
             not final_url.endswith('-' + sku + '.html') or
@@ -324,6 +349,8 @@ def selected_marketplace_offer(html, final_url):
             'seller_id': seller_id, 'price': price, 'currency': 'TRY',
             'availability': 'in_stock' if availability == 'InStock' else 'limited',
             'condition': 'new', 'source_title': unescape(title),
-            'sku': sku, 'offer_id': offer_id, 'url': final_url,
+            'sku': sku, 'gtin13': gtin,
+            'selected_variant_gtin13': selected_variant_gtin,
+            'offer_id': offer_id, 'url': final_url,
             'ram_gb': capacities[0], 'storage_gb': capacities[1],
             'network_generation': radio}
