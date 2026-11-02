@@ -448,6 +448,9 @@ class PriceUpdater:
                 product_report['source_attempts'] = self.offer_refresher.target_report(name, targets, expected_specs)
             if hasattr(self.offer_refresher, 'public_sources'):
                 self.last_report['public_source_discovery'] = self.offer_refresher.public_sources.report()
+            vatan_browser = getattr(self.offer_refresher, 'vatan_reviewed_source', None)
+            if vatan_browser is not None:
+                self.last_report['vatan_reviewed_pdp'] = vatan_browser.report()
             self.last_report['vatan_sitemap_discovery'] = self.vatan_sitemap_source.report()
             if self.pazarama_source:
                 self.last_report['pazarama_category_discovery'] = self.pazarama_source.report()

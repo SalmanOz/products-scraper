@@ -1,0 +1,35 @@
+{
+  "purpose": "Reviewed exact Vatan PDP URL hints only. No prices or stock are retained; every run must recheck robots and the live selected Offer.",
+  "products": [
+    {
+      "id": 295, "slug": "xiaomi-17t", "name": "Xiaomi 17T",
+      "ram_gb": 12, "storage_gb": 256, "network_generation": "5g",
+      "targets": ["https://www.vatanbilgisayar.com/xiaomi-17t-12-256gb-akilli-telefon-koyu-mor.html"]
+    },
+    {
+      "id": 280, "slug": "samsung-galaxy-s26-plus", "name": "Samsung Galaxy S26+",
+      "ram_gb": 12, "storage_gb": 256, "network_generation": "5g",
+      "targets": ["https://www.vatanbilgisayar.com/samsung-galaxy-s26-plus-5g-12-256-gb-akilli-telefon-kobalt-mor.html"]
+    },
+    {
+      "id": 247, "slug": "samsung-galaxy-s26", "name": "Samsung Galaxy S26",
+      "ram_gb": 12, "storage_gb": 256, "network_generation": "5g",
+      "targets": ["https://www.vatanbilgisayar.com/samsung-galaxy-s26-12-256-gb-akilli-telefon-kobalt-mor.html"]
+    },
+    {
+      "id": 235, "slug": "apple-iphone-17", "name": "Apple iPhone 17",
+      "ram_gb": 8, "storage_gb": 256, "network_generation": "5g",
+      "targets": ["https://www.vatanbilgisayar.com/iphone-17-256-gb-akilli-telefon-beyaz.html"]
+    },
+    {
+      "id": 23, "slug": "apple-iphone-16", "name": "Apple iPhone 16",
+      "ram_gb": 8, "storage_gb": 128, "network_generation": "5g",
+      "targets": ["https://www.vatanbilgisayar.com/iphone-16-128-gb-akilli-telefon-beyaz.html"]
+    },
+    {
+      "id": 12, "slug": "samsung-galaxy-s26-ultra", "name": "Samsung Galaxy S26 Ultra",
+      "ram_gb": 12, "storage_gb": 256, "network_generation": "5g",
+      "targets": ["https://www.vatanbilgisayar.com/samsung-galaxy-s26-ultra-5g-12-256-gb-akilli-telefon-kobalt-mor.html"]
+    }
+  ]
+}

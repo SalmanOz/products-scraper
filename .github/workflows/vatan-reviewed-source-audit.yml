@@ -1,0 +1,55 @@
+name: Vatan Reviewed SKU Source Audit
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Test reviewed Vatan source and strict reader
+        run: python -m unittest -q test_vatan_reviewed_source test_vatan_reviewed_source_audit test_retailer_offer_refresh test_reviewed_offer_targets
+      - name: Start read-only browser GET service
+        run: |
+          docker run -d --name=vatan-reviewed-audit-browser -p 8191:8191 -e LOG_LEVEL=info ghcr.io/flaresolverr/flaresolverr:latest
+          for attempt in {1..30}; do
+            if curl --fail --silent http://localhost:8191/ > /dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs vatan-reviewed-audit-browser
+          exit 1
+      - name: Probe six reviewed SKU PDPs through the daily reader
+        env:
+          VATAN_REVIEWED_AUDIT_OUTPUT_DIR: ${{ runner.temp }}
+        run: python audit_vatan_reviewed_source.py
+      - name: Publish read-only summary
+        if: always()
+        run: |
+          if test -f "${{ runner.temp }}/vatan-reviewed-source.md"; then
+            cat "${{ runner.temp }}/vatan-reviewed-source.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Vatan reviewed audit exited before writing a report.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload read-only evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vatan-reviewed-source-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/vatan-reviewed-source.json
+            ${{ runner.temp }}/vatan-reviewed-source.md
+          if-no-files-found: warn
+          retention-days: 30

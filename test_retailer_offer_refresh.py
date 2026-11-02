@@ -76,7 +76,13 @@ class RetailerRefreshTests(unittest.TestCase):
         def fetch(target, **kwargs):
             calls.append((target, kwargs))
             return response or Response(page(schema if schema is not None else product_schema(url)), url=url)
-        refresher = RetailerOfferRefresher(fetch=fetch)
+        # Parser regression cases supply their own PDP HTML. The reviewed
+        # Vatan transport and robots gate are covered in dedicated tests.
+        class NoReviewedVatan:
+            @staticmethod
+            def is_reviewed(_url):
+                return False
+        refresher = RetailerOfferRefresher(fetch=fetch, vatan_source=NoReviewedVatan())
         offers = refresher.refresh_existing_offer_targets(name, [{'source_url': url}], specs or SPECS)
         return offers, calls, refresher
 

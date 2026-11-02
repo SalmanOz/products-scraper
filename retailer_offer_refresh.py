@@ -22,6 +22,7 @@ import requests
 from tr_price_scraper import TRPriceScraper
 from public_retailer_sources import PublicRetailerSources, SOURCES, public_source
 from pazarama_category_source import PazaramaCategorySource, pazarama_product_url
+from vatan_reviewed_source import VatanReviewedSource
 
 
 _MERCHANT_DOMAINS = {
@@ -497,10 +498,11 @@ def _public_retailer_product(soup, product, offer, url, price, availability):
 class RetailerOfferRefresher:
     MAX_TARGETS_PER_REFRESH = 12
 
-    def __init__(self, session=None, fetch=None):
+    def __init__(self, session=None, fetch=None, vatan_source=None):
         self._fetch = fetch or (session.get if session is not None else requests.get)
         self.public_sources = PublicRetailerSources(fetch=self._fetch)
         self.pazarama_source = PazaramaCategorySource(fetch=self._fetch)
+        self.vatan_reviewed_source = vatan_source or VatanReviewedSource(get=self._fetch)
         self._scraper = TRPriceScraper()
         self._cache = {}
         self._blocked_hosts = set()
@@ -561,6 +563,12 @@ class RetailerOfferRefresher:
             parsed = _safe_url(current)
             if not parsed:
                 break
+            reviewed_vatan = self.vatan_reviewed_source.is_reviewed(current)
+            if reviewed_vatan:
+                allowed, reason = self.vatan_reviewed_source.prepare(current)
+                if not allowed:
+                    self._record_attempt(source_url, reason)
+                    break
             with self._lock:
                 blocked = parsed.hostname.removeprefix('www.') in self._blocked_hosts
             if blocked:
@@ -572,8 +580,16 @@ class RetailerOfferRefresher:
                 response = fetch(current, timeout=(5, 15), allow_redirects=False,
                                        headers={'Accept': 'text/html', 'Accept-Language': 'tr-TR,tr;q=0.9'})
                 status = response.status_code
+                browser_html = None
+                if status == 403 and reviewed_vatan:
+                    browser_html, reason = self.vatan_reviewed_source.browser_get(current)
+                    if browser_html is None:
+                        self._record_attempt(source_url, reason, status)
+                    else:
+                        status = 200
                 if status in (403, 429):
-                    self._record_attempt(source_url, 'access_denied' if status == 403 else 'rate_limited', status)
+                    if not (status == 403 and reviewed_vatan):
+                        self._record_attempt(source_url, 'access_denied' if status == 403 else 'rate_limited', status)
                     with self._lock:
                         self._blocked_hosts.add(parsed.hostname.removeprefix('www.'))
                     break
@@ -582,6 +598,9 @@ class RetailerOfferRefresher:
                     self._transport_failure(parsed.hostname)
                     break
                 if status in _REDIRECTS:
+                    if reviewed_vatan:
+                        self._record_attempt(source_url, 'reviewed_url_redirect', status)
+                        break
                     location = response.headers.get('Location') or response.headers.get('location')
                     if redirects == 3 or not isinstance(location, str):
                         self._record_attempt(source_url, 'redirect_limit_or_missing_location', status)
@@ -599,11 +618,11 @@ class RetailerOfferRefresher:
                 if status != 200:
                     self._record_attempt(source_url, 'http_error', status)
                     break
-                actual_url = getattr(response, 'url', None) or current
+                actual_url = current if browser_html is not None else getattr(response, 'url', None) or current
                 if not _safe_url(actual_url) or not _same_resource(actual_url, current):
                     self._record_attempt(source_url, 'unexpected_final_destination', status)
                     break
-                html = response.text
+                html = browser_html if browser_html is not None else response.text
                 if not isinstance(html, str) or len(html.encode('utf-8')) > _MAX_BODY_BYTES:
                     self._record_attempt(source_url, 'invalid_or_oversized_response', status)
                     break

@@ -5,6 +5,7 @@ from pathlib import Path
 
 from retailer_offer_refresh import ALLOWED_HOSTS, _safe_url
 from tr_price_scraper import TRPriceScraper
+from vatan_reviewed_source import BATCH_PATH as VATAN_BATCH_PATH
 
 
 URL_BATCH = Path(__file__).parent / 'offer_batches/budget-eight-2026-10-25.json'
@@ -13,6 +14,11 @@ PROTECTED_TWO_STORE_SLUGS = frozenset({
     'samsung-galaxy-a37-5g', 'samsung-galaxy-a57-5g',
     'samsung-galaxy-a54-5g', 'poco-x7-pro',
 })
+
+
+def _profiles():
+    for path in (URL_BATCH, VATAN_BATCH_PATH):
+        yield from json.loads(path.read_text())['products']
 
 
 def with_reviewed_radio(product, expected_specs):
@@ -25,7 +31,7 @@ def with_reviewed_radio(product, expected_specs):
     specs = dict(expected_specs)
     if specs.get('network_generation') is not None:
         return specs
-    for profile in json.loads(URL_BATCH.read_text())['products']:
+    for profile in _profiles():
         if (profile.get('id') == product.get('id')
                 and profile.get('slug') == product.get('slug')
                 and profile.get('name') == product.get('name')
@@ -46,7 +52,7 @@ def daily_offer_targets(product, expected_specs):
     merchant first so 12 color URLs cannot crowd out the second store.
     """
     seeds = []
-    for profile in json.loads(URL_BATCH.read_text())['products']:
+    for profile in _profiles():
         if (profile.get('id') != product.get('id') or profile.get('slug') != product.get('slug')
                 or profile.get('name') != product.get('name')):
             continue

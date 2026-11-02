@@ -10,7 +10,8 @@ Bu depo, Türkiye'nin en kapsamlı cep telefonu özellik ve fiyat karşılaştı
 
 `update_prices.py`, kaydedilmiş mağaza bağlantılarını ve SKU kimliği hâlâ aynı
 olan incelenmiş URL ipuçlarını her çalışmada yeniden okur. URL ipuçları
-`offer_batches/budget-eight-2026-10-25.json` içindedir; fiyat, stok veya eski
+`offer_batches/budget-eight-2026-10-25.json` ve
+`offer_batches/vatan-exact-2026-11-02.json` içindedir; fiyat, stok veya eski
 tarayıcı gözlem tarihi günlük işe taşınmaz. `browser-observations-*.json` yalnız
 önceki açık onaylı, süresi sınırlı aktarım içindir; günlük kod bu dosyayı açmaz.
 
@@ -22,7 +23,7 @@ doğrulanamıyorsa bir tahmin üretilmez. Ön sipariş ve bilinmeyen stok, satı
 alınabilir mağaza kapsamına sayılmaz. Aynı alan adının farklı satıcı adlarıyla
 iki mağaza gibi sayılması engellenir.
 
-Katalogda radyo nesli alanı eksikse yalnız incelenmiş sekiz modelin aynı
+Katalogda radyo nesli alanı eksikse yalnız incelenmiş profillerin aynı
 ID/ad/fiziksel RAM/depolama kimliğiyle eşleşen kayıtları için gözden geçirilmiş
 4G/5G profili kullanılır. Katalogda açıkça farklı radyo bilgisi varsa bu profil
 onu değiştirmez ve URL tohumu devre dışı kalır. Mağaza sayfasındaki model ve
@@ -33,8 +34,11 @@ Bir mağazanın çok sayıda renk bağlantısı diğer mağazaları bütçeden d
 önce her mağazadan bir bağlantı, sonra sırayla ek renkler denenir. Bütçe dışında
 kalan güvenli URL'ler günlük raporda `target_budget_skipped` olarak görünür.
 
-403/429/challenge cevabında o mağaza için aynı çalışmada devre kesici açılır;
-PDP okuyucu engel çözmez veya eski gözlemi tazelemez. Geçici okuma hatası mevcut
+403/429/challenge cevabında o mağaza için aynı çalışmada devre kesici açılır.
+Yalnız incelenmiş altı tam SKU Vatan bağlantısında, normal GET 403 dönerse
+`robots.txt` izni tekrar doğrulanarak mevcut FlareSolverr ile salt GET denenir;
+en fazla altı tarayıcı isteği yapılır. Başka bağlantı ya da 429 bu yola girmez.
+Geçici okuma hatası mevcut
 teklifleri silmez, fakat canlı sitenin 72 saatlik tazelik sınırını da uzatmaz.
 Dolayısıyla engellenen mağazalar için izinli ürün/fiyat feed'i veya resmî API
 olmadan sürekli iki kaynak kapsamı garanti edilemez.
@@ -278,6 +282,16 @@ fiyatı ve stok durumu mevcut kesin ürün sayfası doğrulamasından geçmelidi
 Engellenen ya da erişilemeyen sitemap fiyat üretmez. Çalışma raporundaki
 `vatan_sitemap_discovery` alanı keşif durumunu ve uygun URL sayısını gösterir;
 gerçek fiyat kapsamı ancak aday sayfalar doğrulandıktan sonra anlaşılır.
+
+GitHub runner'da Vatan sitemap'i ve normal ürün GET'i 403 dönebildiği için
+altı tam SKU bağlantısı ayrıca incelenmiş URL ipucu olarak tutulur. Bu kayıtlar
+fiyat veya stok taşımaz. Her bağlantı için canlı robots izni, tam URL, seçili
+Product→Offer, görünen peşin fiyat, satıcı, sepet ve stok yeniden doğrulanır;
+yanıt veya doğrulama başarısızsa teklif üretilmez. Tek çalışmada en fazla altı
+FlareSolverr GET yapılır; robots gecikmesine uyulur. Raporun
+`vatan_reviewed_pdp` alanı robots durumu ve tarayıcı istek sayısını gösterir.
+İlk salt okunur runner pilotunda üç incelenmiş ürün sayfası 3/3 doğrulandı;
+bu sonuç diğer üç bağlantının runner'da da çalışacağını garanti etmez.
 
 Pazarama keşfi, `robots.txt` izniyle Android telefon kategorisinin en fazla 16
 yayınlanmış sayfasını bir kez okuyup çalışma boyunca önbelleğe alır. Kartlardan
