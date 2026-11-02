@@ -13,6 +13,11 @@ MAX_INGESTION_BATCH_SIZE = 500
 CATALOG_PAGE_SIZE = 500
 COMPLETE_TARGET_PAGE_SIZE = 12
 MAX_COMPLETE_TARGET_PAGES = 5
+TARGET_INVALID_REASONS = (
+    'missing_or_oversize_url', 'malformed_url', 'non_https_url',
+    'unsupported_host', 'credentials_or_port', 'retailer_query_restricted',
+    'sensitive_query', 'missing_product_path', 'seller_identity',
+)
 
 
 class IngestionClientError(RuntimeError):
@@ -397,6 +402,92 @@ class OfferIngestionClient:
                         'offer_targets_snapshot': snapshot}
         raise IngestionClientError('Complete target page limit exceeded')
 
+    def get_offer_target_inspection(self, product_id):
+        """Read one authenticated diagnostic page, including aggregate rejects.
+
+        The exact one-off Redmi gate only accepts a single full page. Rejected
+        rows are counted and categorized by the server, never returned as URLs.
+        """
+        if type(product_id) is not int or product_id <= 0:
+            raise IngestionClientError('Target inspection product id is invalid')
+        body = self._request_json(
+            'GET', '/api/ingestion/catalog',
+            headers={'Authorization': f'Bearer {self.secret}',
+                     'Accept': 'application/json'},
+            params={'include_offer_targets': '1',
+                    'offer_target_product_id': str(product_id),
+                    'offer_target_page': '1'},
+        )
+        rows = body.get('products') if isinstance(body, dict) else None
+        if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict):
+            raise IngestionClientError('Target inspection product is unavailable')
+        product = rows[0]
+        total = product.get('offer_targets_total')
+        invalid = product.get('offer_targets_invalid_count')
+        duplicate = product.get('offer_targets_duplicate_count')
+        reasons = product.get('offer_targets_invalid_reasons')
+        snapshot = product.get('offer_targets_snapshot')
+        targets = product.get('offer_targets')
+        if (type(product.get('id')) is not int or product['id'] != product_id
+                or not isinstance(product.get('slug'), str) or not product['slug']
+                or not isinstance(product.get('name'), str) or not product['name']
+                or type(total) is not int or not 0 <= total <= 12
+                or type(invalid) is not int or not 0 <= invalid <= 60
+                or type(duplicate) is not int or not 0 <= duplicate <= 60
+                or type(product.get('offer_targets_page')) is not int
+                or product['offer_targets_page'] != 1
+                or product.get('offer_targets_truncated') is not
+                bool(invalid or duplicate)
+                or not isinstance(snapshot, str)
+                or not re.fullmatch(r'[0-9a-f]{64}', snapshot)
+                or not isinstance(reasons, dict)
+                or set(reasons) != set(TARGET_INVALID_REASONS)
+                or any(type(reasons[key]) is not int or reasons[key] < 0
+                       for key in TARGET_INVALID_REASONS)
+                or sum(reasons.values()) != invalid
+                or not isinstance(targets, list) or len(targets) != total):
+            raise IngestionClientError('Target inspection metadata is invalid')
+        seen_urls = set()
+        safe_targets = []
+        for target in targets:
+            if not isinstance(target, dict):
+                raise IngestionClientError('Target inspection row is invalid')
+            url = target.get('source_url')
+            merchant = target.get('merchant_name')
+            seller = target.get('seller_name') if 'seller_name' in target else merchant
+            try:
+                parsed = urlparse(url) if isinstance(url, str) else None
+                valid_url = bool(parsed and parsed.scheme == 'https' and
+                                 parsed.hostname and not parsed.port and
+                                 not parsed.username and not parsed.password and
+                                 parsed.path not in ('', '/') and not parsed.fragment and
+                                 not any(re.search(
+                                     r'(?:token|auth|password|secret|signature|session|email|api.?key|access.?key|credential|add.?to.?cart|wc.?ajax|nonce|pao.?key|pao.?edit)',
+                                     key, re.I)
+                                     for key, _ in parse_qsl(parsed.query,
+                                                            max_num_fields=50)))
+            except ValueError:
+                valid_url = False
+            if (not isinstance(url, str) or len(url) > 1000 or not valid_url
+                    or url in seen_urls or not isinstance(merchant, str)
+                    or not merchant.strip() or not isinstance(seller, str)
+                    or not seller.strip() or target.get('checked_at') is not None
+                    and not isinstance(target.get('checked_at'), str)):
+                raise IngestionClientError('Target inspection row is invalid')
+            seen_urls.add(url)
+            safe_targets.append({key: target.get(key) for key in
+                                 ('merchant_name', 'source_url', 'checked_at')}
+                                | ({'seller_name': target['seller_name']}
+                                   if 'seller_name' in target else {}))
+        return {'id': product_id, 'slug': product['slug'], 'name': product['name'],
+                'attributes': product.get('attributes'),
+                'offer_targets': safe_targets, 'offer_targets_total': total,
+                'offer_targets_invalid_count': invalid,
+                'offer_targets_duplicate_count': duplicate,
+                'offer_targets_invalid_reasons': reasons,
+                'offer_targets_truncated': product['offer_targets_truncated'],
+                'offer_targets_snapshot': snapshot}
+
     def get_raw_seller_collision_proof(self, product_id, seller_name, source_url):
         """Read a separate authenticated proof over raw stored seller/URL rows.
 
@@ -420,6 +511,9 @@ class OfferIngestionClient:
                   'invalid_url_other_seller_rows', 'invalid_url_proposed_seller_rows',
                   'proposed_seller_other_url_rows', 'exact_seller_url_rows',
                   'invalid_row_identity_rows')
+        refresh_fields = ('refresh_targets_total', 'refresh_targets_invalid_count',
+                          'refresh_targets_duplicate_count')
+        refresh_reasons = body.get('refresh_targets_invalid_reasons') if isinstance(body, dict) else None
         if (not isinstance(body, dict) or
                 body.get('purpose') != 'read_only_raw_seller_collision_proof' or
                 body.get('writes') is not False or
@@ -428,6 +522,16 @@ class OfferIngestionClient:
                 type(body.get('complete')) is not bool or
                 type(body.get('blocked')) is not bool or
                 any(type(body.get(key)) is not int or body[key] < 0 for key in fields) or
+                any(type(body.get(key)) is not int or body[key] < 0
+                    for key in refresh_fields) or
+                not isinstance(refresh_reasons, dict) or
+                set(refresh_reasons) != set(TARGET_INVALID_REASONS) or
+                any(type(refresh_reasons[key]) is not int or refresh_reasons[key] < 0
+                    for key in TARGET_INVALID_REASONS) or
+                sum(refresh_reasons.values()) != body['refresh_targets_invalid_count'] or
+                not isinstance(body.get('refresh_targets_snapshot'), str) or
+                not re.fullmatch(r'[0-9a-f]{64}', body['refresh_targets_snapshot']) or
+                sum(body[key] for key in refresh_fields) != body['stored_rows_checked'] or
                 body['stored_rows_checked'] > 61 or
                 body['complete'] != (body['stored_rows_checked'] <= 60) or
                 body['unknown_seller_rows'] > body['stored_rows_checked'] or
