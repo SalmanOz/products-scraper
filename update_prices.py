@@ -24,10 +24,12 @@ from fold8_ultra_preflight import (PROFILE as FOLD8_ULTRA_PROFILE,
 from mediamarkt_marketplace_source import (PROFILES as MEDIAMARKT_MARKETPLACE_PROFILES,
                                            ALL_PROFILES as ALL_MARKETPLACE_PROFILES,
                                            S24FE_PROFILES, S24FE_URL,
+                                           A37_PROFILES,
                                            reviewed_marketplace_offer)
 from mediamarkt_marketplace_preflight import (load_verified_offers as load_marketplace_offers,
                                               no_merchant_collision)
 from mediamarkt_s24fe_preflight import load_verified_offer as load_s24fe_offer
+from mediamarkt_a37_preflight import load_verified_offers as load_a37_offers
 
 load_dotenv()
 
@@ -298,9 +300,18 @@ class PriceUpdater:
         marketplace_preflight_only = bool(marketplace_preflight_file)
         s24fe_preflight_file = os.environ.get('MEDIAMARKT_S24FE_VERIFIED_AUDIT_FILE')
         s24fe_preflight_only = bool(s24fe_preflight_file)
+        a37_preflight_file = os.environ.get('MEDIAMARKT_A37_VERIFIED_AUDIT_FILE')
+        a37_preflight_only = bool(a37_preflight_file)
         if sum((xiaomi_preflight_only, fold8_preflight_only,
-                marketplace_preflight_only, s24fe_preflight_only)) > 1:
+                marketplace_preflight_only, s24fe_preflight_only,
+                a37_preflight_only)) > 1:
             raise RuntimeError('Only one scoped preflight may be active')
+        if a37_preflight_only:
+            if (product_id is not None or phase2_backfill or not known_pdp_only
+                    or product_slugs != ['samsung-galaxy-a37-5g']):
+                raise RuntimeError('A37 preflight requires only its exact 6/128 SKU and known PDPs')
+            if load_a37_offers(a37_preflight_file) is None:
+                raise RuntimeError('A37 two-seller preflight invalid or stale')
         if s24fe_preflight_only:
             if (product_id is not None or phase2_backfill or not known_pdp_only
                     or product_slugs != [S24FE_PROFILES[S24FE_URL]['slug']]):
@@ -354,6 +365,13 @@ class PriceUpdater:
                     or product.get('name') != profile['name']
                     or not no_merchant_collision(product, profile, S24FE_URL)):
                 raise RuntimeError('S24 FE catalog identity or seller platform collision')
+        if a37_preflight_only:
+            product = next((p for p in products if p.get('slug') == 'samsung-galaxy-a37-5g'), None)
+            if (not product or product.get('id') != 278
+                    or product.get('name') != 'Samsung Galaxy A37 5G'
+                    or any(not no_merchant_collision(product, profile, url)
+                           for url, profile in A37_PROFILES.items())):
+                raise RuntimeError('A37 catalog identity or seller platform collision')
         if product_id is not None:
             try:
                 target_id = int(product_id)
@@ -420,6 +438,10 @@ class PriceUpdater:
                 targets = [row for row in targets if row['source_url'] == S24FE_URL]
                 if len(targets) != 1:
                     raise RuntimeError('Exact S24 FE marketplace target missing')
+            if a37_preflight_only:
+                targets = [row for row in targets if row['source_url'] in A37_PROFILES]
+                if len(targets) != len(A37_PROFILES) or {row['source_url'] for row in targets} != set(A37_PROFILES):
+                    raise RuntimeError('Both exact A37 marketplace targets are required')
             product_report = {'slug': p['slug'], 'targets': targets,
                               'purchasable_merchants': [], 'prepared_offers': [],
                               'rejected_live_observations': 0, 'discovered_destinations': 0}
@@ -548,6 +570,11 @@ class PriceUpdater:
                     len(offers) != 1 or offers[0].get('url') != S24FE_URL
                 ):
                     raise RuntimeError('S24 FE exact-GTIN preflight observation must survive matching')
+                if a37_preflight_only and (
+                    len(offers) != len(A37_PROFILES) or
+                    {offer.get('url') for offer in offers} != set(A37_PROFILES)
+                ):
+                    raise RuntimeError('Both A37 preflight observations must survive matching')
                 if offers:
                     observed_at = self.utc_timestamp()
                     checked_at = self.utc_timestamp()
@@ -654,6 +681,13 @@ class PriceUpdater:
             or aggregate_result['committed'] is not True
         ):
             raise RuntimeError('S24 FE exact-GTIN ingestion did not accept the sole offer')
+        if a37_preflight_only and not dry_run and (
+            aggregate_result['accepted'] != len(A37_PROFILES)
+            or aggregate_result['stale_ignored'] != 0
+            or aggregate_result['variant_rejected'] != 0
+            or aggregate_result['committed'] is not True
+        ):
+            raise RuntimeError('A37 scoped ingestion did not accept both exact offers')
         if changed_paths and not dry_run:
             submit_urls(changed_paths + ["/", "/products"])
 

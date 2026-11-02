@@ -41,6 +41,22 @@ S24FE_PROFILES = {S24FE_URL:
      'ram_gb': 8, 'storage_gb': 128, 'network_generation': '5g',
      'sku': '166774856', 'gtin13': '8806095750163',
      'seller_name': 'VintageOnline', 'seller_id': '12953'}}
+A37_PROFILES = {
+    'https://www.mediamarkt.com.tr/tr/product/_samsung-galaxy-a37-5g-6-gb-128-gb-akilli-telefon-antrasit-181053707.html':
+        {'id': 278, 'slug': 'samsung-galaxy-a37-5g',
+         'name': 'Samsung Galaxy A37 5G', 'ram_gb': 6, 'storage_gb': 128,
+         'network_generation': '5g', 'sku': '181053707',
+         'gtin13': '8806099054977',
+         'source_title': 'SAMSUNG Galaxy A37 5G 6 GB 128 GB Akıllı Telefon Antrasit',
+         'seller_name': 'CepHane Teknoloji', 'seller_id': '11289'},
+    'https://www.mediamarkt.com.tr/tr/product/_samsung-galaxy-a37-5g-6-gb-128-gb-akilli-telefon-beyaz-181053717.html':
+        {'id': 278, 'slug': 'samsung-galaxy-a37-5g',
+         'name': 'Samsung Galaxy A37 5G', 'ram_gb': 6, 'storage_gb': 128,
+         'network_generation': '5g', 'sku': '181053717',
+         'gtin13': '8806099054922',
+         'source_title': 'SAMSUNG Galaxy A37 5G 6 GB 128 GB Akıllı Telefon Beyaz',
+         'seller_name': 'Birtane Telekom', 'seller_id': '12099'},
+}
 S24FE_RADIO_EVIDENCE = {
     'method': 'reviewed_exact_gtin_5g',
     'gtin13': '8806095750163',
@@ -49,7 +65,7 @@ S24FE_RADIO_EVIDENCE = {
     'exact_gtin_retailer':
         'https://www.trendyol.com/samsung/galaxy-s24-fe-8-gb-ram-128-gb-mavi-p-857140583',
 }
-ALL_PROFILES = {**PROFILES, **S24FE_PROFILES}
+ALL_PROFILES = {**PROFILES, **S24FE_PROFILES, **A37_PROFILES}
 
 
 def reviewed_marketplace_offer(offer, product_name, expected_specs, product=None):
@@ -83,6 +99,11 @@ def reviewed_marketplace_offer(offer, product_name, expected_specs, product=None
             not isinstance(offer.get('offer_id'), str) or
             not re.fullmatch(r'\d{1,15}', offer['offer_id'])):
         return False
+    if offer.get('url') in A37_PROFILES:
+        if (offer.get('gtin13') != profile['gtin13'] or
+                offer.get('source_title') != profile['source_title'] or
+                offer.get('network_generation') != '5g'):
+            return False
     if offer.get('url') == S24FE_URL:
         if (offer.get('gtin13') != profile['gtin13'] or
                 offer.get('selected_variant_gtin13') != profile['gtin13'] or

@@ -30,9 +30,11 @@ from mediamarkt_marketplace_source import (MediaMarktMarketplaceSource,
                                            PROFILES as MEDIAMARKT_MARKETPLACE_PROFILES,
                                            ALL_PROFILES as ALL_MARKETPLACE_PROFILES,
                                            S24FE_URL,
+                                           A37_PROFILES,
                                            reviewed_marketplace_offer)
 from mediamarkt_marketplace_preflight import load_verified_offers as load_marketplace_offers
 from mediamarkt_s24fe_preflight import load_verified_offer as load_s24fe_offer
+from mediamarkt_a37_preflight import load_verified_offers as load_a37_offers
 from apple_store_source import AppleStoreSource, reviewed_slug as apple_store_reviewed_slug
 from turk_telekom_source import TurkTelekomSource, product_url as turk_telekom_product_url
 from pasaj_source import PasajSource, product_url as pasaj_product_url
@@ -604,6 +606,7 @@ class RetailerOfferRefresher:
         self._fold8_preflight_file = os.environ.get('FOLD8_ULTRA_VERIFIED_AUDIT_FILE')
         self._marketplace_preflight_file = os.environ.get('MEDIAMARKT_MARKETPLACE_VERIFIED_AUDIT_FILE')
         self._s24fe_preflight_file = os.environ.get('MEDIAMARKT_S24FE_VERIFIED_AUDIT_FILE')
+        self._a37_preflight_file = os.environ.get('MEDIAMARKT_A37_VERIFIED_AUDIT_FILE')
         self._diagnostics = {}
         self._lock = Lock()
 
@@ -687,6 +690,15 @@ class RetailerOfferRefresher:
             return candidate
         if self._s24fe_preflight_file and source_url == S24FE_URL:
             verified = load_s24fe_offer(self._s24fe_preflight_file)
+            candidate = verified.get(source_url) if verified else None
+            self._record_attempt(source_url,
+                                 'observed_exact_new_marketplace_offer_from_preflight' if candidate
+                                 else 'preflight_invalid_or_stale', 200 if candidate else None)
+            with self._lock:
+                self._cache[source_url] = candidate
+            return candidate
+        if self._a37_preflight_file and source_url in A37_PROFILES:
+            verified = load_a37_offers(self._a37_preflight_file)
             candidate = verified.get(source_url) if verified else None
             self._record_attempt(source_url,
                                  'observed_exact_new_marketplace_offer_from_preflight' if candidate

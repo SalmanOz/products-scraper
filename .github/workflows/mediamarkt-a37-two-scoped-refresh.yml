@@ -1,0 +1,110 @@
+name: MediaMarkt A37 Two Seller Scoped Refresh
+
+on:
+  schedule:
+    - cron: '0 5 * * *'
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Write only after this run verifies both exact 6/128 PDPs and selected sellers'
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ (github.event_name == 'schedule' || inputs.publish) && 'teknoskor-daily-data-sync' || 'teknoskor-mediamarkt-a37-preflight' }}
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Test two exact PDPs, selected sellers and scoped writer
+        run: python -m unittest -q test_mediamarkt_a37_two test_mediamarkt_marketplace_audit test_mediamarkt_marketplace_pipeline test_mediamarkt_source test_retailer_offer_refresh test_price_refresh_orchestration
+      - name: Start bounded MediaMarkt browser GET service
+        run: |
+          docker run -d --name=mediamarkt-a37-browser -p 8191:8191 -e LOG_LEVEL=info ghcr.io/flaresolverr/flaresolverr:latest
+          for attempt in {1..30}; do
+            if curl --fail --silent http://localhost:8191/ > /dev/null; then exit 0; fi
+            sleep 2
+          done
+          docker logs mediamarkt-a37-browser
+          exit 1
+      - name: Reverify both selected sellers, exact GTINs and catalog without writes
+        env:
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+          MEDIAMARKT_A37_AUDIT_OUTPUT_DIR: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          : "${SCRAPER_INGESTION_SECRET:?SCRAPER_INGESTION_SECRET is required}"
+          python audit_mediamarkt_a37_two.py
+      - name: Publish only the two freshly audited seller offers
+        if: ${{ github.event_name == 'schedule' || inputs.publish }}
+        id: scoped_prices
+        env:
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+          MEDIAMARKT_A37_VERIFIED_AUDIT_FILE: ${{ runner.temp }}/mediamarkt-a37-two.json
+        run: |
+          set -euo pipefail
+          : "${SCRAPER_INGESTION_SECRET:?SCRAPER_INGESTION_SECRET is required}"
+          python update_prices.py --slugs samsung-galaxy-a37-5g \
+            --known-pdp-only --report mediamarkt-a37-two-report.json
+      - name: Require both exact seller offers accepted
+        if: ${{ (github.event_name == 'schedule' || inputs.publish) && steps.scoped_prices.outcome == 'success' }}
+        id: verify
+        run: |
+          python verify_mediamarkt_a37_two.py \
+            "${{ runner.temp }}/mediamarkt-a37-two.json" \
+            mediamarkt-a37-two-report.json
+      - name: Reconcile scores after acceptance
+        if: ${{ (github.event_name == 'schedule' || inputs.publish) && steps.verify.outcome == 'success' }}
+        env:
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+        run: python reconcile_scores.py
+      - name: Summarize audit and scoped refresh
+        if: always()
+        run: |
+          if test -f "${{ runner.temp }}/mediamarkt-a37-two.md"; then
+            cat "${{ runner.temp }}/mediamarkt-a37-two.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if test -f mediamarkt-a37-two-report.json; then
+            python - <<'PY'
+          import json, os
+          from pathlib import Path
+          report = json.loads(Path('mediamarkt-a37-two-report.json').read_text())
+          ingestion = report.get('ingestion') or {}
+          lines = ['## A37 5G 6/128 iki pazar yeri satıcısı',
+                   f"Durum: {report.get('status')}; kabul {ingestion.get('accepted')}/2; "
+                   f"ret {ingestion.get('variant_rejected')}; eski {ingestion.get('stale_ignored')}."]
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:
+              out.write('\n'.join(lines) + '\n')
+          PY
+          fi
+      - name: Upload audit and scoped write evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mediamarkt-a37-two-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/mediamarkt-a37-two.json
+            ${{ runner.temp }}/mediamarkt-a37-two.md
+            mediamarkt-a37-two-report.json
+            score-reconciliation.json
+          if-no-files-found: warn
+          retention-days: 30
