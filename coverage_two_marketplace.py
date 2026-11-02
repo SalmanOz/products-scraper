@@ -168,6 +168,16 @@ def _collision_evidence(product, profile, url):
     }
 
 
+def _raw_collision_evidence(client, profile, url):
+    """Independent authenticated diagnostic; never clears the target gate."""
+    try:
+        proof = client.get_raw_seller_collision_proof(
+            profile['id'], profile['seller_name'], url)
+        return {'available': True, 'proof': proof}
+    except (IngestionClientError, AttributeError, TypeError, ValueError, OSError):
+        return {'available': False, 'proof': None}
+
+
 def _offer_matches(offer, url, profile):
     """Fail closed on selected identity, seller, visible cash and stock drift."""
     if not isinstance(offer, dict):
@@ -242,13 +252,16 @@ def audit(*, client=None, source=None):
     source = source or MediaMarktSource()
     report = {'purpose': PURPOSE, 'writes': False, 'status': 'failed',
               'checked_at': None, 'robots_status': None, 'source': None,
-              'rows': [], 'catalog_collisions': {}, 'catalog_errors': []}
+              'rows': [], 'catalog_collisions': {},
+              'raw_seller_collisions': {}, 'catalog_errors': []}
     try:
         catalog, report['catalog_errors'] = _catalog_rows(client)
         for url, profile in PROFILES.items():
             catalog_row = catalog[url]
             collision = _collision_evidence(catalog_row['product'], profile, url)
             report['catalog_collisions'][profile['slug']] = collision
+            report['raw_seller_collisions'][profile['slug']] = _raw_collision_evidence(
+                client, profile, url)
             offer, attempt = _read_selected(source, url)
             verified = offer if _offer_matches(offer, url, profile) else None
             row_errors = list(catalog_row['evidence']['reasons'])
@@ -318,6 +331,14 @@ def summary(report):
         lines.append(f"  Katalog hedefleri {collision.get('target_count')}/12, "
                      f"kırpılmış {collision.get('offer_targets_truncated')}; "
                      f"çakışma {', '.join(collision.get('reasons', [])) or 'yok'}.")
+        raw = report.get('raw_seller_collisions', {}).get(row['product']['slug']) or {}
+        proof = raw.get('proof') or {}
+        lines.append(f"  Ham satıcı kanıtı: erişilebilir {raw.get('available')}; "
+                     f"tam {proof.get('complete')}; satır {proof.get('stored_rows_checked')}; "
+                     f"geçersiz URL {proof.get('invalid_url_rows')}; "
+                     f"bilinmeyen satıcı {proof.get('unknown_seller_rows')}; "
+                     f"başka URL/platform {proof.get('proposed_seller_other_url_rows')}; "
+                     f"engel {proof.get('blocked')}.")
     if report.get('error'):
         lines.append('Hata: ' + report['error'])
     lines.append('Katalog, fiyat, skor veya arama dizini yazımı yok.')

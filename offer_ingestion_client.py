@@ -397,6 +397,58 @@ class OfferIngestionClient:
                         'offer_targets_snapshot': snapshot}
         raise IngestionClientError('Complete target page limit exceeded')
 
+    def get_raw_seller_collision_proof(self, product_id, seller_name, source_url):
+        """Read a separate authenticated proof over raw stored seller/URL rows.
+
+        The endpoint returns only booleans and counts. Historical URLs are
+        never used as refresh hints here, and this proof does not clear the
+        existing complete-target ingestion gate.
+        """
+        if (type(product_id) is not int or product_id <= 0 or
+                not isinstance(seller_name, str) or not seller_name.strip() or
+                len(seller_name) > 100 or not isinstance(source_url, str) or
+                len(source_url) > 500):
+            raise IngestionClientError('Raw seller collision request is invalid')
+        body = self._request_json(
+            'GET', '/api/ingestion/offer-target-collision',
+            headers={'Authorization': f'Bearer {self.secret}',
+                     'Accept': 'application/json'},
+            params={'product_id': str(product_id),
+                    'seller_name': seller_name, 'source_url': source_url},
+        )
+        fields = ('stored_rows_checked', 'unknown_seller_rows', 'invalid_url_rows',
+                  'invalid_url_other_seller_rows', 'invalid_url_proposed_seller_rows',
+                  'proposed_seller_other_url_rows', 'exact_seller_url_rows',
+                  'invalid_row_identity_rows')
+        if (not isinstance(body, dict) or
+                body.get('purpose') != 'read_only_raw_seller_collision_proof' or
+                body.get('writes') is not False or
+                type(body.get('product_id')) is not int or
+                body['product_id'] != product_id or
+                type(body.get('complete')) is not bool or
+                type(body.get('blocked')) is not bool or
+                any(type(body.get(key)) is not int or body[key] < 0 for key in fields) or
+                body['stored_rows_checked'] > 61 or
+                body['complete'] != (body['stored_rows_checked'] <= 60) or
+                body['unknown_seller_rows'] > body['stored_rows_checked'] or
+                body['invalid_url_rows'] > body['stored_rows_checked'] or
+                body['invalid_url_other_seller_rows'] +
+                body['invalid_url_proposed_seller_rows'] > body['invalid_url_rows'] or
+                body['exact_seller_url_rows'] +
+                body['proposed_seller_other_url_rows'] > body['stored_rows_checked'] or
+                not isinstance(body.get('reasons'), list)):
+            raise IngestionClientError('Raw seller collision proof is invalid')
+        reasons = [
+            *(['stored_row_limit_exceeded'] if not body['complete'] else []),
+            *(['invalid_stored_row_identity'] if body['invalid_row_identity_rows'] else []),
+            *(['unknown_seller_identity'] if body['unknown_seller_rows'] else []),
+            *(['proposed_seller_on_other_url_or_platform']
+              if body['proposed_seller_other_url_rows'] else []),
+        ]
+        if body['reasons'] != reasons or body['blocked'] != bool(reasons):
+            raise IngestionClientError('Raw seller collision proof is inconsistent')
+        return body
+
     def get_public_price_priority(self):
         """Read a bounded public catalog snapshot only to order crawl work.
 
