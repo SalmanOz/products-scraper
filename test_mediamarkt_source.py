@@ -2,8 +2,11 @@ import json
 import unittest
 from xml.sax.saxutils import escape
 
+import requests
+
 from mediamarkt_source import (
-    MediaMarktSource, ROBOTS_URL, SITEMAP_URLS, REVIEWED_COMPACT_PHONE_URLS,
+    MediaMarktSource, MAX_BROWSER_REQUESTS, MAX_DIRECT_REQUESTS,
+    ROBOTS_URL, SITEMAP_URLS, REVIEWED_COMPACT_PHONE_URLS,
     _selected_offer, product_url,
 )
 from retailer_offer_refresh import RetailerOfferRefresher
@@ -150,6 +153,49 @@ class MediaMarktSourceTests(unittest.TestCase):
         self.assertEqual((offer['price'], reason, status), (89999, 'observed_exact_offer', 200))
         self.assertEqual(browser_calls, [OLD_URL])
         self.assertEqual(source.report()['browser_html_responses'], 1)
+
+    def test_browser_quota_does_not_poison_later_direct_cash_offer(self):
+        direct_title = 'APPLE iPhone 17 256 GB Akıllı Telefon Beyaz MG6K4TU/A'
+        fetch = Fetch({ROBOTS_URL: ROBOTS,
+                       URL: Response(URL, status=403),
+                       OLD_URL: html(url=OLD_URL, sku='166347558', title=direct_title)})
+        source = MediaMarktSource(get=fetch, sleep=lambda _: None,
+                                 post=lambda *_args, **_kwargs: self.fail('Browser quota must not be exceeded'))
+        source._browser_count = MAX_BROWSER_REQUESTS
+
+        self.assertEqual(source.read_offer(URL), (None, 'browser_budget_exhausted', None))
+        self.assertFalse(source._blocked)
+        self.assertEqual(source._browser_failures, 0)
+        offer, reason, status = source.read_offer(OLD_URL)
+        self.assertEqual((offer['price'], reason, status), (89999, 'observed_exact_offer', 200))
+        self.assertEqual(fetch.calls, [ROBOTS_URL, URL, OLD_URL])
+        self.assertEqual(source.report()['browser_requests'], MAX_BROWSER_REQUESTS)
+
+    def test_direct_quota_is_reported_without_transport_or_network_request(self):
+        fetch = Fetch({ROBOTS_URL: ROBOTS})
+        source = MediaMarktSource(get=fetch, sleep=lambda _: None)
+        source._load_robots()
+        source._direct_count = MAX_DIRECT_REQUESTS
+        self.assertEqual(source.read_offer(URL), (None, 'direct_budget_exhausted', None))
+        self.assertEqual(fetch.calls, [ROBOTS_URL])
+        self.assertEqual(source._browser_failures, 0)
+        self.assertFalse(source._blocked)
+
+    def test_real_transport_failures_still_open_source_circuit(self):
+        calls = []
+
+        def fetch(url, **_kwargs):
+            calls.append(url)
+            if url == ROBOTS_URL:
+                return Response(url, ROBOTS)
+            raise requests.RequestException('simulated connection failure')
+
+        source = MediaMarktSource(get=fetch, sleep=lambda _: None)
+        self.assertEqual(source.read_offer(URL), (None, 'transport_error', None))
+        self.assertEqual(source.read_offer(OLD_URL), (None, 'transport_error', None))
+        self.assertEqual(source.read_offer(URL), (None, 'source_circuit_open', None))
+        self.assertEqual(calls, [ROBOTS_URL, URL, OLD_URL])
+        self.assertTrue(source._blocked)
 
     def test_missing_robots_or_marketplace_offer_never_publish(self):
         blocked = Fetch({ROBOTS_URL: Response(ROBOTS_URL, b'denied', status=403)})

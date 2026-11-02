@@ -45,6 +45,18 @@ _HEADERS = {'User-Agent': BOT + '/1.0 (+https://teknoskor.com)',
             'Accept-Language': 'tr-TR,tr;q=0.9'}
 _USED = re.compile(r'outlet|yenilenmi[sş]|refurbish|ikinci[- ]el|te[sş]hir|kullan[iı]lm[iı][sş]', re.I)
 _PRICE = re.compile(r'₺\s*(\d{1,3}(?:\.\d{3})*|\d+),')
+
+
+class SourceBudgetExhausted(requests.RequestException):
+    def __init__(self, transport):
+        self.transport = transport
+        super().__init__(f'MediaMarkt {transport} request budget exhausted')
+
+
+class SourceCircuitOpen(requests.RequestException):
+    pass
+
+
 REVIEWED_COMPACT_PHONE_URLS = frozenset({
     'https://www.mediamarkt.com.tr/tr/product/_samsung-galaxy-s25fe-8256gb-lacivert-1249060.html',
     'https://www.mediamarkt.com.tr/tr/product/_samsung-galaxy-s25fe-8256gb-buz-mavisi-1249062.html',
@@ -194,14 +206,14 @@ class MediaMarktSource:
     def _pace(self, browser=False):
         with self._lock:
             if self._blocked:
-                raise requests.RequestException('MediaMarkt circuit open')
+                raise SourceCircuitOpen('MediaMarkt circuit open')
             if browser:
                 if self._browser_count >= MAX_BROWSER_REQUESTS:
-                    raise requests.RequestException('MediaMarkt browser budget exhausted')
+                    raise SourceBudgetExhausted('browser')
                 self._browser_count += 1
             else:
                 if self._direct_count >= MAX_DIRECT_REQUESTS:
-                    raise requests.RequestException('MediaMarkt direct budget exhausted')
+                    raise SourceBudgetExhausted('direct')
                 self._direct_count += 1
             if self._last_request is not None:
                 remaining = self._delay - (self._monotonic() - self._last_request)
@@ -390,6 +402,13 @@ class MediaMarktSource:
                         # or fail differently from its strict offer contract.
                         pass
                 return offer, 'observed_exact_offer' if offer else 'no_exact_product_offer', 200
+            except SourceBudgetExhausted as error:
+                # A run-wide request quota is not a retailer transport outage.
+                # Do not open the failure circuit: a later exact PDP may still
+                # return a direct 200 without spending the browser quota.
+                return None, f'{error.transport}_budget_exhausted', None
+            except SourceCircuitOpen:
+                return None, 'source_circuit_open', None
             except (requests.RequestException, ValueError, TypeError, UnicodeError):
                 self._browser_failures += 1
                 if self._browser_failures >= 2:
