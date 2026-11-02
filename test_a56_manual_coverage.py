@@ -321,6 +321,22 @@ class A56ManualCoverageTests(unittest.TestCase):
                           row['source_url'], row['source_title'], row['price']),
                          (242, CATALOG['slug'], SELLER, URL, TITLE, 30000.0))
 
+    def test_slow_catalog_preparation_expires_audit_before_ingestion(self):
+        report, client, source = self.audited()
+        current = datetime.now(timezone.utc)
+        late = current + timedelta(minutes=6)
+        with patch('a56_manual_coverage.datetime', wraps=datetime) as clock:
+            clock.now.side_effect = [current, current, late]
+            with patch('a56_manual_coverage.verified_offer',
+                       wraps=verified_offer) as gate:
+                with patch('audit_mediamarkt_a56_readonly.selected_marketplace_offer',
+                           return_value=deepcopy(EVIDENCE)):
+                    with self.assertRaisesRegex(ValueError,
+                                                'audit_stale_before_ingest'):
+                        publish(report, client=client, source=source)
+                self.assertEqual(gate.call_count, 2)
+        self.assertEqual(client.writes, [])
+
     def test_other_variants_sellers_conditions_stock_and_price_never_write(self):
         report, client, source = self.audited()
         drifts = (
@@ -423,6 +439,11 @@ class A56ManualCoverageTests(unittest.TestCase):
         self.assertIn('Yayın sonucu doğrulanamadı',
                       summary({**report, 'status': 'failed'},
                               publish_requested=True, publication=result))
+        failed_without_publication = summary({**report, 'status': 'failed'},
+                                             publish_requested=True)
+        self.assertIn('Denetim başarısız; yayın adımı çalışmadı, fiyat yazımı yok',
+                      failed_without_publication)
+        self.assertNotIn('Yayın sonucu doğrulanamadı', failed_without_publication)
         self.assertIn('Yayın sonucu doğrulanamadı',
                       summary(report, publish_requested=False,
                               publication=result))

@@ -354,6 +354,14 @@ def publish(report, *, client=None, source=None, now=None):
             or record.get('checked_at') != live['observed_at']
             or record.get('is_official') is not False):
         raise ValueError('prepared_offer_changed')
+    # Catalog pagination and record preparation may take longer than the
+    # observation TTL. Check both timestamps at the last possible read-only
+    # point, after all preparation and immediately before the ingestion POST.
+    pre_ingest_now = datetime.now(timezone.utc)
+    if verified_offer(report, pre_ingest_now) is None:
+        raise ValueError('exact_a56_audit_stale_before_ingest')
+    if not -60 <= (pre_ingest_now - _utc(live['observed_at'])).total_seconds() <= MAX_AGE_SECONDS:
+        raise ValueError('exact_a56_live_offer_stale_before_ingest')
     result = client.ingest_offers([record])
     if (not isinstance(result, dict) or result.get('committed') is not True
             or type(result.get('accepted')) is not int or result['accepted'] != 1
@@ -398,6 +406,9 @@ def summary(report, *, publication=None, publish_requested=None):
         publication_state = 'Denetim aşaması: yazım yok; koşunun yayın sonucu henüz belirlenmedi.'
     elif publish_requested is False and publication is None:
         publication_state = 'Yayın istenmedi; bu koşuda fiyat yazımı yok.'
+    elif (publish_requested is True and report.get('status') != 'passed'
+          and publication is None):
+        publication_state = 'Denetim başarısız; yayın adımı çalışmadı, fiyat yazımı yok.'
     elif (publish_requested is True and report.get('status') == 'passed'
           and report.get('catalog_status') == 'passed'
           and _publication_confirmed(report, publication)):
