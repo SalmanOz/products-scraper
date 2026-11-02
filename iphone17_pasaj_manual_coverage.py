@@ -207,12 +207,16 @@ def _catalog(client):
             (target_proof['target_mode'] == 'complete_reader' and
              product.get('offer_targets_truncated') is not (total > 12))):
         raise ValueError('complete_target_snapshot_changed')
+    # The target's merchant_name is the checkout platform. A historical
+    # Turkcell seller row can share that platform without being this Pasaj
+    # seller's exact offer; the independent raw proof checks all stored rows.
     pasaj = [row for row in targets if isinstance(row, dict) and
-             str(row.get('merchant_name') or '').strip().casefold() ==
+             str(row.get('seller_name') or '').strip().casefold() ==
              MERCHANT.casefold()]
     same_url = [row for row in targets if isinstance(row, dict) and
                 row.get('source_url') == URL]
     if (len(pasaj) != 1 or len(same_url) != 1 or pasaj[0] != same_url[0]
+            or pasaj[0].get('merchant_name') != MERCHANT
             or pasaj[0].get('source_url') != URL):
         raise ValueError('pasaj_seller_or_source_url_collision')
     try:

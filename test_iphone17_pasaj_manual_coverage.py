@@ -47,12 +47,15 @@ class Client:
         prior = datetime.now(timezone.utc) - timedelta(hours=80 if pasaj_stale else 8)
         self.targets = [
             {'merchant_name': 'Vatan Bilgisayar', 'source_url': VATAN,
+             'seller_name': 'Vatan Bilgisayar',
              'checked_at': (NOW - timedelta(hours=1)).isoformat()},
-            {'merchant_name': MERCHANT, 'source_url': URL,
+            {'merchant_name': MERCHANT, 'seller_name': MERCHANT, 'source_url': URL,
              'checked_at': prior.isoformat()},
             {'merchant_name': 'MediaMarkt', 'source_url': MEDIAMARKT,
+             'seller_name': 'MediaMarkt',
              'checked_at': (NOW - timedelta(hours=2)).isoformat()},
             {'merchant_name': 'Apple Store', 'source_url': APPLE,
+             'seller_name': 'Apple Store',
              'checked_at': (NOW - timedelta(hours=3)).isoformat()},
         ]
         self.product = {'id': CATALOG['id'], 'slug': CATALOG['slug'],
@@ -186,6 +189,23 @@ class Iphone17PasajManualTests(unittest.TestCase):
                 self.assertEqual(result['accepted'], 1)
                 self.assertEqual(len(client.writes), 1)
 
+    def test_stale_other_seller_on_pasaj_platform_does_not_mask_exact_seller(self):
+        client = self.historical_row_client()
+        client.targets.append({
+            'merchant_name': MERCHANT, 'seller_name': 'Turkcell',
+            'source_url': URL + '?source=legacy',
+            'checked_at': (NOW - timedelta(days=24)).isoformat(),
+        })
+        client.product['offer_targets'] = deepcopy(client.targets)
+        source = Source()
+        report = audit(client=client, source=source)
+        self.assertEqual(report['status'], 'passed', report['catalog_error'])
+        self.assertEqual(report['catalog_evidence']['target_count'], 5)
+        self.assertEqual(report['catalog_evidence']['prior_pasaj_checked_at'],
+                         client.targets[1]['checked_at'])
+        self.assertEqual(source.reads, [URL])
+        self.assertEqual(client.writes, [])
+
     def test_fallback_rejects_unsafe_or_incomplete_historical_rows(self):
         changes = (
             lambda c: c.invalid_reasons.update(
@@ -222,10 +242,12 @@ class Iphone17PasajManualTests(unittest.TestCase):
                 client = self.historical_row_client()
                 if change == 'pasaj_other_url':
                     client.targets.append({'merchant_name': MERCHANT,
+                                           'seller_name': MERCHANT,
                                            'source_url': URL + '?other=1',
                                            'checked_at': NOW.isoformat()})
                 else:
-                    client.targets.append({'merchant_name': 'Another Store',
+                    client.targets.append({'merchant_name': MERCHANT,
+                                           'seller_name': 'Another Store',
                                            'source_url': URL,
                                            'checked_at': NOW.isoformat()})
                 client.product['offer_targets'] = deepcopy(client.targets)
@@ -266,7 +288,7 @@ class Iphone17PasajManualTests(unittest.TestCase):
                 if change == 'other_url':
                     client.targets[1]['source_url'] = URL + '?variant=other'
                 else:
-                    client.targets[1]['merchant_name'] = 'Another Store'
+                    client.targets[1]['seller_name'] = 'Another Store'
                 client.product['offer_targets'] = deepcopy(client.targets)
                 report = audit(client=client, source=source)
                 self.assertEqual(report['status'], 'failed')
