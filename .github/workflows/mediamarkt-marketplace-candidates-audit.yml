@@ -1,0 +1,65 @@
+name: MediaMarkt Marketplace Candidate Queue Read-Only Audit
+
+on:
+  workflow_dispatch:
+    inputs:
+      offset:
+        description: 'Start at this candidate URL offset; each run reads at most 12 selected PDPs'
+        required: false
+        type: string
+        default: '0'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: teknoskor-mediamarkt-marketplace-readonly
+  queue: max
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Test bounded candidate and selected PDP boundaries
+        run: python -m unittest -q test_mediamarkt_marketplace_candidates test_mediamarkt_marketplace_audit test_mediamarkt_source
+      - name: Start bounded browser GET service
+        run: |
+          docker run -d --name=mediamarkt-marketplace-candidates-browser -p 8191:8191 -e LOG_LEVEL=info ghcr.io/flaresolverr/flaresolverr:latest
+          for attempt in {1..30}; do
+            if curl --fail --silent http://localhost:8191/ > /dev/null; then exit 0; fi
+            sleep 2
+          done
+          docker logs mediamarkt-marketplace-candidates-browser
+          exit 1
+      - name: Audit unpriced catalog and selected marketplace PDPs without writes
+        env:
+          AUDIT_OFFSET: ${{ inputs.offset }}
+          MEDIAMARKT_MARKETPLACE_CANDIDATES_DIR: ${{ runner.temp }}
+        run: python audit_mediamarkt_marketplace_candidates.py --offset "$AUDIT_OFFSET"
+      - name: Summarize read-only candidates
+        if: always()
+        run: |
+          if test -f "${{ runner.temp }}/mediamarkt-marketplace-candidates.md"; then
+            cat "${{ runner.temp }}/mediamarkt-marketplace-candidates.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload read-only evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mediamarkt-marketplace-candidates-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/mediamarkt-marketplace-candidates.json
+            ${{ runner.temp }}/mediamarkt-marketplace-candidates.md
+          if-no-files-found: warn
+          retention-days: 14
