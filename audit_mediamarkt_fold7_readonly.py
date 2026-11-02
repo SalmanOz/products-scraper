@@ -62,9 +62,10 @@ def exact_seller_identity(html):
 def run_audit(transport=None):
     """Robots preflight, then two ordinary public GETs; no browser or DB writes."""
     result = {'purpose': 'read_only_exact_fold7_marketplace_audit',
-              'checked_at': datetime.now(timezone.utc).isoformat(),
+              'checked_at': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
               'catalog': CATALOG, 'url': URL, 'seller_url': SELLER_URL,
-              'verified': False, 'reason': None, 'offer': None, 'writes': False}
+              'verified': False, 'reason': None, 'offer': None, 'writes': False,
+              'robots_allowed': False, 'pdp_observed_at': None}
     source = transport or MediaMarktSource()
     try:
         source._load_robots()
@@ -74,6 +75,7 @@ def run_audit(transport=None):
         if not all(source._rules.can_fetch(BOT, url) for url in (URL, SELLER_URL)):
             result['reason'] = 'robots_disallowed'
             return result
+        result['robots_allowed'] = True
         body, reason, status = source._direct(URL, MAX_HTML_BYTES, 'text/html')
         result['pdp_http_status'] = status
         if reason != 'ready':
@@ -83,6 +85,7 @@ def run_audit(transport=None):
         if not exact_fold7_offer(evidence):
             result['reason'] = 'selected_offer_or_catalog_mismatch'
             return result
+        result['pdp_observed_at'] = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
         seller_body, reason, status = source._direct(SELLER_URL, MAX_HTML_BYTES, 'text/html')
         result['seller_http_status'] = status
         if reason != 'ready' or not exact_seller_identity(seller_body):
@@ -91,6 +94,7 @@ def run_audit(transport=None):
         result['verified'] = True
         result['reason'] = 'selected_new_cash_offer_and_legal_seller_verified'
         result['offer'] = evidence
+        result['checked_at'] = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
         return result
     except (requests.RequestException, ValueError, TypeError, UnicodeError, OSError) as error:
         result['reason'] = type(error).__name__

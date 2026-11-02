@@ -1,0 +1,74 @@
+name: Fold7 Exact Manual Offer Coverage
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish one exact Fold7 offer only after this run passes its read-only audit'
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ inputs.publish && 'teknoskor-daily-data-sync' || 'teknoskor-fold7-readonly-audit' }}
+  queue: max
+  cancel-in-progress: false
+
+jobs:
+  exact_fold7:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Test exact one-off audit and writer gates
+        run: python -m unittest -q test_fold7_manual_coverage test_mediamarkt_fold7_readonly test_mediamarkt_marketplace_audit test_mediamarkt_source
+      - name: Read exact selected Fold7 PDP, legal seller and authenticated catalog without writes
+        id: audit
+        env:
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+        run: |
+          : "${SCRAPER_INGESTION_SECRET:?SCRAPER_INGESTION_SECRET is required}"
+          python fold7_manual_coverage.py audit --audit-file "${{ runner.temp }}/fold7-audit.json"
+      - name: Publish only the one audited Fold7 selected offer
+        if: ${{ inputs.publish && steps.audit.outcome == 'success' }}
+        env:
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+        run: |
+          : "${SCRAPER_INGESTION_SECRET:?SCRAPER_INGESTION_SECRET is required}"
+          python fold7_manual_coverage.py publish \
+            --publish-exact-one \
+            --audit-file "${{ runner.temp }}/fold7-audit.json" \
+            --output-file "${{ runner.temp }}/fold7-publish.json"
+      - name: Summarize exact Fold7 audit and accepted readback
+        if: always()
+        run: |
+          if test -f "${{ runner.temp }}/fold7-audit.md"; then
+            cat "${{ runner.temp }}/fold7-audit.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if test -f "${{ runner.temp }}/fold7-publish.json"; then
+            cat "${{ runner.temp }}/fold7-publish.json" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload audit and optional publication evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fold7-exact-manual-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/fold7-audit.json
+            ${{ runner.temp }}/fold7-audit.md
+            ${{ runner.temp }}/fold7-publish.json
+          if-no-files-found: warn
+          retention-days: 30
