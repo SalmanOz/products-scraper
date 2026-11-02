@@ -1,0 +1,53 @@
+name: iPhone 16e MediaMarkt Exact PDP Audit
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Test exact target and first-party reader
+        run: python -m unittest -q test_reviewed_offer_targets test_mediamarkt_source test_iphone16e_mediamarkt_audit
+      - name: Start read-only browser GET service
+        run: |
+          docker run -d --name=iphone16e-mediamarkt-browser -p 8191:8191 -e LOG_LEVEL=info ghcr.io/flaresolverr/flaresolverr:latest
+          for attempt in {1..30}; do
+            if curl --fail --silent http://localhost:8191/ > /dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs iphone16e-mediamarkt-browser
+          exit 1
+      - name: Check live selected iPhone 16e offer without writes
+        env:
+          IPHONE16E_MEDIAMARKT_AUDIT_OUTPUT_DIR: ${{ runner.temp }}
+        run: python audit_iphone16e_mediamarkt.py
+      - name: Publish read-only summary
+        if: always()
+        run: |
+          if test -f "${{ runner.temp }}/iphone16e-mediamarkt-audit.md"; then
+            cat "${{ runner.temp }}/iphone16e-mediamarkt-audit.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload read-only evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: iphone16e-mediamarkt-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/iphone16e-mediamarkt-audit.json
+            ${{ runner.temp }}/iphone16e-mediamarkt-audit.md
+          if-no-files-found: warn
+          retention-days: 30

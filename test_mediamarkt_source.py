@@ -24,21 +24,22 @@ def sitemap(*urls):
 
 
 def html(*, seller=None, condition='NewCondition', price=89999,
-         visible='₺ 89.999,', disabled='false', marketplace='false', title=None):
+         visible='₺ 89.999,', disabled='false', marketplace='false', title=None,
+         url=URL, sku='1249222'):
     title = title or 'APPLE iPhone 17 256 GB Akıllı Telefon Beyaz MG6K4TU/A'
-    product = {'@type': 'ProductGroup', 'name': title, 'url': URL,
-               'sku': '1249222', 'brand': {'@type': 'Brand', 'name': 'APPLE'},
-               'offers': {'@type': 'Offer', 'url': URL, 'price': price,
+    product = {'@type': 'ProductGroup', 'name': title, 'url': url,
+               'sku': sku, 'brand': {'@type': 'Brand', 'name': 'APPLE'},
+               'offers': {'@type': 'Offer', 'url': url, 'price': price,
                           'priceCurrency': 'TRY',
                           'itemCondition': 'https://schema.org/' + condition,
                           'availability': 'https://schema.org/InStock', 'seller': seller}}
     state = ('window.__PRELOADED_STATE__ = '
-             '{"__typename":"CofrOnlineStatusFeature","id":"Media:tr:1249222",'
+             '{"__typename":"CofrOnlineStatusFeature","id":"Media:tr:' + sku + '",'
              '"isAvailableAndBuyable":true,"onlineStatus":"AVAILABLE"},'
-             '{"__typename":"CofrPriceFeature","id":"Media:tr:1249222",'
+             '{"__typename":"CofrPriceFeature","id":"Media:tr:' + sku + '",'
              '"currency":"TRY","isProductOfTypeMarketplace":' + marketplace
              + ',"marketplaceSeller":null};')
-    return (f'<html><head><link rel="canonical" href="{URL}">'
+    return (f'<html><head><link rel="canonical" href="{url}">'
             f'<script type="application/ld+json">{json.dumps({"@type":"BuyAction","object":product})}</script>'
             f'<script>{state}</script></head><body><h1>{title}</h1>'
             f'<div data-test="cofr-price mms-branded-price">'
@@ -73,6 +74,26 @@ class Fetch:
 
 
 class MediaMarktSourceTests(unittest.TestCase):
+    def test_iphone_16e_exact_first_party_cash_offer_reaches_product_reader(self):
+        url = ('https://www.mediamarkt.com.tr/tr/product/'
+               '_apple-md1r4tua-iphone-16e-128gb-akilli-telefon-beyaz-1244800.html')
+        title = 'APPLE iPhone 16e 8/128 GB Akıllı Telefon Beyaz MD1R4TU/A'
+        body = html(url=url, sku='1244800', title=title, price=54999,
+                    visible='₺ 54.999,')
+        fetch = Fetch({ROBOTS_URL: ROBOTS, url: body})
+        reader = RetailerOfferRefresher(fetch=fetch)
+        specs = {'ram_gb': 8, 'storage_gb': 128, 'network_generation': '5g'}
+        targets = [{'source_url': url}]
+        offers = reader.refresh_existing_offer_targets('Apple iPhone 16e', targets, specs)
+        self.assertEqual([(offer['merchant'], offer['price'], offer['url'])
+                          for offer in offers], [('MediaMarkt', 54999, url)])
+        self.assertEqual(reader.target_report('Apple iPhone 16e', targets, specs)[0]['reason'],
+                         'observed_exact_offer')
+        for name, variant in (('Apple iPhone 16', specs),
+                              ('Apple iPhone 16e', {**specs, 'storage_gb': 256}),
+                              ('Apple iPhone 16e', {**specs, 'ram_gb': 6})):
+            self.assertEqual(reader.refresh_existing_offer_targets(name, targets, variant), [])
+
     def test_first_party_cash_offer_and_negative_evidence(self):
         offer = _selected_offer(html(), URL)
         self.assertEqual(offer['price'], 89999)

@@ -95,6 +95,27 @@ class ReviewedDailyTargetTests(unittest.TestCase):
         self.assertEqual({row['merchant_name'] for row in daily_offer_targets(product, specs)},
                          {'Vatan Bilgisayar', 'MediaMarkt', 'Apple Store', 'Pasaj'})
 
+    def test_iphone_16e_mediamarkt_seed_requires_exact_catalog_variant(self):
+        profile = next(p for p in json.loads(MEDIAMARKT_BATCH_PATH.read_text())['products']
+                       if p['slug'] == 'apple-iphone-16e')
+        self.assertEqual((profile['id'], profile['name'], profile['ram_gb'],
+                          profile['storage_gb'], profile['network_generation']),
+                         (250, 'Apple iPhone 16e', 8, 128, '5g'))
+        product = {key: profile[key] for key in ('id', 'slug', 'name')}
+        specs = {key: profile[key] for key in ('ram_gb', 'storage_gb', 'network_generation')}
+
+        def mediamarkt_urls(item, attributes):
+            return [row['source_url'] for row in daily_offer_targets(item, attributes)
+                    if row['merchant_name'] == 'MediaMarkt']
+
+        self.assertEqual(mediamarkt_urls(product, specs), profile['targets'])
+        for key, wrong in (('id', 23), ('slug', 'apple-iphone-16'),
+                           ('name', 'Apple iPhone 16')):
+            self.assertEqual(mediamarkt_urls({**product, key: wrong}, specs), [])
+        for key, wrong in (('ram_gb', 6), ('storage_gb', 256),
+                           ('network_generation', '4g')):
+            self.assertEqual(mediamarkt_urls(product, {**specs, key: wrong}), [])
+
     def test_pasaj_seed_requires_exact_catalog_identity_and_variant(self):
         profiles = json.loads(PASAJ_BATCH_PATH.read_text())['products']
         self.assertEqual({profile['slug']: (profile['id'], profile['ram_gb'],

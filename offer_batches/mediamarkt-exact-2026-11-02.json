@@ -35,6 +35,17 @@
       ]
     },
     {
+      "id": 250,
+      "slug": "apple-iphone-16e",
+      "name": "Apple iPhone 16e",
+      "ram_gb": 8,
+      "storage_gb": 128,
+      "network_generation": "5g",
+      "targets": [
+        "https://www.mediamarkt.com.tr/tr/product/_apple-md1r4tua-iphone-16e-128gb-akilli-telefon-beyaz-1244800.html"
+      ]
+    },
+    {
       "id": 242,
       "slug": "samsung-galaxy-a56",
       "name": "Samsung Galaxy A56",
