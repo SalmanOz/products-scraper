@@ -144,13 +144,44 @@ def _same_resource(first, second):
                 and _variant_query(a) == _variant_query(b))
 
 
-def _schema_nodes(soup):
+VIVO_X300_VATAN_PDP = (
+    'https://www.vatanbilgisayar.com/'
+    'vivo-x300-16-512gb-akilli-telefon-pembe.html'
+)
+_JSON_REVIEW_BODY = re.compile(r'("reviewBody"\s*:\s*")((?:\\.|[^"\\])*)(")', re.S)
+_RAW_JSON_CONTROL = re.compile(r'[\x00-\x1f]')
+
+
+def _vivo_review_jsonld(raw):
+    """Repair only raw control characters in this PDP's customer review text.
+
+    Vatan currently emits literal line breaks inside JSON-LD reviewBody
+    strings. This does not change Product, Offer or variant fields; the parsed
+    selected offer still has to pass every first-party Vatan PDP assertion.
+    """
+    def repair(match):
+        body = _RAW_JSON_CONTROL.sub(
+            lambda control: '\\u%04x' % ord(control.group()), match.group(2))
+        return match.group(1) + body + match.group(3)
+    repaired = _JSON_REVIEW_BODY.sub(repair, raw)
+    return json.loads(repaired) if repaired != raw else None
+
+
+def _schema_nodes(soup, final_url=None):
     nodes = []
     for script in soup.find_all('script', type='application/ld+json'):
         try:
             pending = [json.loads(script.get_text())]
         except (TypeError, ValueError):
-            continue
+            if final_url != VIVO_X300_VATAN_PDP:
+                continue
+            try:
+                repaired = _vivo_review_jsonld(script.get_text())
+            except (TypeError, ValueError):
+                continue
+            if repaired is None:
+                continue
+            pending = [repaired]
         # Traverse document lists/@graph only, not arbitrary recommendation or
         # hasVariant branches whose price may belong to another phone.
         while pending and len(nodes) < 2000:
@@ -354,7 +385,7 @@ def _product_offer(soup, final_url):
             _safe_url(final_url).hostname.removeprefix('www.') in
             {'mediamarkt.com.tr', 'teknosa.com'}):
         return None
-    nodes = _schema_nodes(soup)
+    nodes = _schema_nodes(soup, final_url)
     products = [node for node in nodes if _type_is(node, 'Product')]
     by_id = {node['@id']: node for node in nodes
              if isinstance(node.get('@id'), str)}
@@ -410,6 +441,11 @@ def _product_offer(soup, final_url):
     if len(selected) != 1:
         return None
     product = selected[0]
+    # The reviewed Vivo PDP must remain a selected SKU next to the other
+    # color; otherwise the generic path would skip Vatan's seller/cash/cart
+    # assertions when the site's schema changes.
+    if final_url == VIVO_X300_VATAN_PDP and not product.get('hasVariant'):
+        return None
     offer = own_offer(product)
     title = product.get('name')
     if (not offer or not isinstance(title, str) or not title.strip()

@@ -1,0 +1,61 @@
+name: Vatan Vivo X300 Exact PDP Read-only Audit
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: teknoskor-vatan-vivo-exact-readonly-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Test exact Vivo PDP evidence guards
+        run: python -m unittest -q test_vatan_category_unpriced test_vatan_reviewed_source test_retailer_offer_refresh test_vatan_vivo_exact_readonly
+      - name: Start read-only exact PDP browser GET service
+        run: |
+          docker run -d --name=vatan-vivo-browser -p 8191:8191 -e LOG_LEVEL=info ghcr.io/flaresolverr/flaresolverr:latest
+          for attempt in {1..30}; do
+            if curl --fail --silent http://localhost:8191/ > /dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs vatan-vivo-browser
+          exit 1
+      - name: Probe selected Vivo PDP without writes
+        env:
+          VATAN_VIVO_AUDIT_OUTPUT_DIR: ${{ runner.temp }}
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+        run: python audit_vatan_vivo_exact_readonly.py
+      - name: Publish read-only summary
+        if: always()
+        run: |
+          if test -f "${{ runner.temp }}/vatan-vivo-exact.md"; then
+            cat "${{ runner.temp }}/vatan-vivo-exact.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload read-only evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vatan-vivo-exact-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/vatan-vivo-exact.json
+            ${{ runner.temp }}/vatan-vivo-exact.md
+          if-no-files-found: warn
+          retention-days: 14

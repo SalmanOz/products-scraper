@@ -5,9 +5,10 @@ import unittest
 from urllib.robotparser import RobotFileParser
 
 import requests
+from bs4 import BeautifulSoup
 
 from audit_vatan_category_unpriced import PROFILES, run_audit
-from retailer_offer_refresh import RetailerOfferRefresher
+from retailer_offer_refresh import RetailerOfferRefresher, _schema_nodes
 from test_retailer_offer_refresh import Response, vatan_variant_page, vatan_variant_schema
 from tr_price_scraper import TRPriceScraper
 from vatan_category_source import (OPPO_CATEGORY, VIVO_CATEGORY, VatanCategorySource,
@@ -91,6 +92,67 @@ class Catalog:
 
 
 class VatanCategoryTests(unittest.TestCase):
+    @staticmethod
+    def vivo_page(*, seller='Vatan Bilgisayar', visible_price='75.999 TL',
+                  cart=True, has_variant=True):
+        profile = PROFILES[1]
+        title = TITLES[1]
+        schema = vatan_variant_schema(profile['url'], title, '154791', '75999')
+        schema['name'] = title.replace('Akıllı', 'Ak&#x131;ll&#x131;')
+        schema['hasVariant'] = ([{'@type': 'Product', 'sku': '154790',
+                                 'url': 'https://www.vatanbilgisayar.com/'
+                                        'vivo-x300-16-512gb-akilli-telefon-siyah.html'}]
+                                if has_variant else [])
+        schema['offers']['seller']['name'] = seller
+        schema['review'] = [{'@type': 'Review',
+                             'reviewBody': 'Telefon gerçekten iyi,\nbaşka yönden üstün.'}]
+        html = vatan_variant_page(schema, title=title, code='5671588 / 154791',
+                                  visible_price=visible_price, web_price=False,
+                                  cart=cart)
+        return html.replace('iyi,\\nb', 'iyi,\nb')
+
+    def test_vivo_pdp_repairs_only_review_body_raw_newline_and_proves_selected_offer(self):
+        profile = PROFILES[1]
+        html = self.vivo_page()
+        self.assertIn('iyi,\nbaşka', html)
+        soup = BeautifulSoup(html, 'html.parser')
+        self.assertEqual([node.get('sku') for node in _schema_nodes(soup, profile['url'])
+                          if node.get('@type') == 'Product'], ['154791'])
+        self.assertEqual([node for node in _schema_nodes(soup, PROFILES[0]['url'])
+                          if node.get('@type') == 'Product'], [])
+        class NoReviewedVatan:
+            @staticmethod
+            def is_reviewed(_url):
+                return False
+        reader = RetailerOfferRefresher(
+            fetch=lambda _url, **_kw: Response(html, url=profile['url']),
+            vatan_source=NoReviewedVatan())
+        found = reader.refresh_existing_offer_targets(profile['name'],
+            [{'source_url': profile['url']}],
+            {'ram_gb': 16, 'storage_gb': 512, 'network_generation': '5g'})
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]['source_title'], TITLES[1])
+        self.assertEqual(found[0]['price'], 75999)
+        self.assertEqual(found[0]['merchant'], 'Vatan Bilgisayar')
+
+    def test_vivo_repaired_schema_still_requires_first_party_selected_variant(self):
+        profile = PROFILES[1]
+        for options in ({'seller': 'Other'}, {'visible_price': '74.999 TL'},
+                        {'cart': False}, {'has_variant': False}):
+            with self.subTest(options=options):
+                html = self.vivo_page(**options)
+                class NoReviewedVatan:
+                    @staticmethod
+                    def is_reviewed(_url):
+                        return False
+                reader = RetailerOfferRefresher(
+                    fetch=lambda _url, **_kw: Response(html, url=profile['url']),
+                    vatan_source=NoReviewedVatan())
+                found = reader.refresh_existing_offer_targets(profile['name'],
+                    [{'source_url': profile['url']}],
+                    {'ram_gb': 16, 'storage_gb': 512, 'network_generation': '5g'})
+                self.assertEqual(found, [])
+
     def test_bare_16_512_needs_real_title_and_corresponding_vatan_pdp_slug(self):
         matcher = TRPriceScraper()
         profile = PROFILES[0]
