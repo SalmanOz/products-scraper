@@ -1,0 +1,83 @@
+name: POCO X6 Pro Exact Manual Offer Coverage
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish one exact offer only after this run passes its read-only audit'
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ inputs.publish && 'teknoskor-daily-data-sync' || 'teknoskor-poco-x6-pro-readonly-audit' }}
+  queue: max
+  cancel-in-progress: false
+
+jobs:
+  exact_poco:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Test exact one-off audit and writer gates
+        run: python -m unittest -q test_poco_x6_pro_manual_coverage test_coverage_two_marketplace test_mediamarkt_marketplace_audit test_mediamarkt_source
+      - name: Start bounded browser GET service
+        run: |
+          docker run -d --name=poco-x6-pro-browser -p 8191:8191 -e LOG_LEVEL=info ghcr.io/flaresolverr/flaresolverr:latest
+          for attempt in {1..30}; do
+            if curl --fail --silent http://localhost:8191/ > /dev/null; then exit 0; fi
+            sleep 2
+          done
+          docker logs poco-x6-pro-browser
+          exit 1
+      - name: Read exact selected POCO PDP and authenticated catalog without writes
+        id: audit
+        env:
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+        run: |
+          : "${SCRAPER_INGESTION_SECRET:?SCRAPER_INGESTION_SECRET is required}"
+          python poco_x6_pro_manual_coverage.py audit --audit-file "${{ runner.temp }}/poco-x6-pro-audit.json"
+      - name: Publish only the one audited POCO selected offer
+        if: ${{ inputs.publish && steps.audit.outcome == 'success' }}
+        env:
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+        run: |
+          : "${SCRAPER_INGESTION_SECRET:?SCRAPER_INGESTION_SECRET is required}"
+          python poco_x6_pro_manual_coverage.py publish \
+            --publish-exact-one \
+            --audit-file "${{ runner.temp }}/poco-x6-pro-audit.json" \
+            --output-file "${{ runner.temp }}/poco-x6-pro-publish.json"
+      - name: Summarize exact POCO audit and accepted readback
+        if: always()
+        run: |
+          if test -f "${{ runner.temp }}/poco-x6-pro-audit.md"; then
+            cat "${{ runner.temp }}/poco-x6-pro-audit.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if test -f "${{ runner.temp }}/poco-x6-pro-publish.json"; then
+            cat "${{ runner.temp }}/poco-x6-pro-publish.json" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload audit and optional publication evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: poco-x6-pro-exact-manual-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/poco-x6-pro-audit.json
+            ${{ runner.temp }}/poco-x6-pro-audit.md
+            ${{ runner.temp }}/poco-x6-pro-publish.json
+          if-no-files-found: warn
+          retention-days: 30
