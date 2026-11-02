@@ -1,0 +1,59 @@
+name: Samsung S25 FE 8 256 Vatan Read-only PDP Audit
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: teknoskor-s25-fe-vatan-readonly-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Test exact Vatan reader and audit
+        run: python -m unittest -q test_vatan_reviewed_source test_retailer_offer_refresh test_s25_fe_vatan_audit
+      - name: Start read-only browser GET service
+        run: |
+          docker run -d --name=s25-fe-vatan-browser -p 8191:8191 -e LOG_LEVEL=info ghcr.io/flaresolverr/flaresolverr:latest
+          for attempt in {1..30}; do
+            if curl --fail --silent http://localhost:8191/ > /dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs s25-fe-vatan-browser
+          exit 1
+      - name: Probe exact Vatan PDP without writes
+        env:
+          S25_FE_VATAN_AUDIT_OUTPUT_DIR: ${{ runner.temp }}
+        run: python audit_s25_fe_vatan.py
+      - name: Publish read-only summary
+        if: always()
+        run: |
+          if test -f "${{ runner.temp }}/s25-fe-vatan-audit.md"; then
+            cat "${{ runner.temp }}/s25-fe-vatan-audit.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload read-only evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s25-fe-vatan-audit-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/s25-fe-vatan-audit.json
+            ${{ runner.temp }}/s25-fe-vatan-audit.md
+          if-no-files-found: warn
+          retention-days: 14
