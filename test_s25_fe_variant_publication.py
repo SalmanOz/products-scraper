@@ -79,6 +79,7 @@ class ReviewedVariantPublicationTests(unittest.TestCase):
     def test_official_pdf_requires_selected_sku_on_same_8_256_row(self):
         self.assertTrue(variant.official_sku_line(
             'Other model 8+256\nGalaxy S25FE 8+256 SM-S731BDBGTUR 2,500 10'))
+        self.assertTrue(variant.official_sku_line('Galaxy S25FE 8+256\nSM-S731BDBGTUR'))
         for text in ('Galaxy S25FE 8+128 SM-S731BDBGTUR',
                      'Galaxy S25FE 8+256 SM-S731BDBGTUX',
                      'Galaxy S25FE 8+256\nOther Phone SM-S731BDBGTUR'):

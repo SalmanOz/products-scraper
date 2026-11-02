@@ -64,13 +64,12 @@ class NoImageStore:
 
 
 def official_sku_line(text: str) -> bool:
-    """Require Samsung's 8+256 label and the selected SKU on the same row."""
-    for line in str(text).splitlines():
-        normalized = re.sub(r'\s+', ' ', line).strip()
-        if re.search(r'\bGalaxy\s+S25\s*FE\s+8\s*\+\s*256\s+' + re.escape(SKU) + r'\b',
-                     normalized, re.I):
-            return True
-    return False
+    """Require adjacent Samsung 8+256 and SKU cells, allowing PDF line breaks."""
+    normalized = re.sub(r'\s+', ' ', str(text)).strip()
+    return bool(re.search(
+        r'\bGalaxy\s+S25\s*FE\s+8\s*\+\s*256\s+' + re.escape(SKU) + r'\b',
+        normalized, re.I,
+    ))
 
 
 def fetch_official_sku_pdf(fetch=requests.get, reader_factory=None) -> dict:
