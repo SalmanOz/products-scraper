@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from audit_mediamarkt_marketplace_candidates import (
-    MAX_PROBES, _read_selected, run_audit, summary,
+    CATEGORY_HINT_URLS, MAX_PROBES, _read_selected, run_audit, summary,
 )
 from audit_mediamarkt_unpriced_coverage import CATALOG_URL
 
@@ -54,8 +54,9 @@ class Response:
 
 class Source:
     def __init__(self, mapping=None, *, sitemap='ready', direct_reason='ready',
-                 browser_url=None, browser_reason='ready'):
+                 browser_url=None, browser_reason='ready', category_pages=None):
         self.mapping = mapping or {}
+        self.category_pages = category_pages or {}
         self.sitemap = sitemap
         self.direct_reason = direct_reason
         self.browser_url = browser_url
@@ -72,7 +73,8 @@ class Source:
 
     def _direct(self, url, limit, accept):
         self.direct.append(url)
-        return (b'<html></html>' if self.direct_reason == 'ready' else None,
+        body = self.category_pages.get(url, '<html></html>')
+        return (body.encode() if self.direct_reason == 'ready' else None,
                 self.direct_reason, 200 if self.direct_reason == 'ready' else 403)
 
     def _browser_get(self, url):
@@ -118,7 +120,7 @@ class MarketplaceCandidateAuditTests(unittest.TestCase):
         self.assertEqual(report['candidate_urls'], 0)
         self.assertEqual(len(report['ambiguous_urls']), 1)
         self.assertEqual(report['probed'], 0)
-        self.assertEqual(source.direct, [])
+        self.assertEqual(source.direct, list(CATEGORY_HINT_URLS))
 
     def test_offset_and_fixed_budget_never_probe_more_than_twelve(self):
         rows = [product(i, f'phone-{i}', f'Phone {i}') for i in range(20)]
@@ -131,8 +133,28 @@ class MarketplaceCandidateAuditTests(unittest.TestCase):
             report = run_audit(catalog_get=self.catalog_get(rows), source=source, offset=3)
         self.assertEqual(report['candidate_urls'], 20)
         self.assertEqual(report['probed'], MAX_PROBES)
-        self.assertEqual(len(source.direct), MAX_PROBES)
+        self.assertEqual(len(source.direct), MAX_PROBES + len(CATEGORY_HINT_URLS))
+        self.assertEqual(source.direct[:2], list(CATEGORY_HINT_URLS))
         self.assertEqual(report['source_verified'], 0)
+
+    def test_two_category_pages_recover_exact_urls_missing_from_sitemap(self):
+        rows = [product(238, 'xiaomi-redmi-note-15-pro', 'Xiaomi Redmi Note 15 Pro'),
+                product(183, 'poco-x6-pro', 'POCO X6 Pro')]
+        source = Source(category_pages={
+            CATEGORY_HINT_URLS[0]: (
+                '<a href="' + POCO + '">POCO</a>'
+                '<a href="https://elsewhere.example/tr/product/_poco-x6-pro-akilli-telefon-123456.html">other</a>'),
+            CATEGORY_HINT_URLS[1]: '<a href="' + REDMI + '">Redmi</a>',
+        })
+        with patch('audit_mediamarkt_marketplace_candidates.selected_marketplace_offer',
+                   side_effect=lambda body, url: selected(url)):
+            report = run_audit(catalog_get=self.catalog_get(rows), source=source)
+        self.assertEqual(report['category_hint_urls'], 2)
+        self.assertEqual(report['candidate_urls'], 2)
+        self.assertEqual(report['probed'], 2)
+        self.assertEqual(report['source_verified'], 2)
+        self.assertEqual({r['source_url'] for r in report['candidates']}, {REDMI, POCO})
+        self.assertEqual(source.direct[:2], list(CATEGORY_HINT_URLS))
 
     def test_exact_403_browser_retry_and_redirect_rejection(self):
         source = Source(direct_reason='http_403')

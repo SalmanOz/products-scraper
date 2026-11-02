@@ -13,7 +13,9 @@ import os
 from pathlib import Path
 import re
 from tempfile import gettempdir
+from urllib.parse import urljoin, urlparse
 
+from bs4 import BeautifulSoup
 import requests
 
 from audit_mediamarkt_unpriced_coverage import (
@@ -21,37 +23,76 @@ from audit_mediamarkt_unpriced_coverage import (
 )
 from mediamarkt_marketplace_audit import catalog_variant_matches, selected_marketplace_offer
 from mediamarkt_source import BOT, MAX_HTML_BYTES, MediaMarktSource, product_url
+from vatan_sitemap_source import VatanSitemapSource
 
 
 MAX_PROBES = 12
 MAX_BROWSER_FAILURES = 2
+# Both URLs are visible filters on the public Android phone category. MediaMarkt
+# excludes search URLs in robots.txt, so category pages supply bounded hints.
+CATEGORY_HINT_URLS = (
+    'https://www.mediamarkt.com.tr/tr/category/android-telefonlar-675172.html?brand=POCO',
+    'https://www.mediamarkt.com.tr/tr/category/android-telefonlar-675172.html?model=XIAOMI%20Redmi%20Note%2015',
+)
 OUTPUT_DIR = Path(os.environ.get('MEDIAMARKT_MARKETPLACE_CANDIDATES_DIR', gettempdir()))
 PURPOSE = 'read_only_mediamarkt_unpriced_marketplace_candidate_queue'
 
 
+def _category_hints(source):
+    """Read at most two robots-allowed category pages; URL hints are not offers."""
+    hints, status = set(), {}
+    for category_url in CATEGORY_HINT_URLS:
+        if source._rules is None or not source._rules.can_fetch(BOT, category_url):
+            status[category_url] = 'robots_disallowed'
+            continue
+        try:
+            body, reason, _ = source._direct(category_url, MAX_HTML_BYTES, 'text/html')
+            status[category_url] = reason
+            if reason != 'ready':
+                continue
+            soup = BeautifulSoup(body, 'html.parser')
+            for anchor in soup.select('a[href]'):
+                url = urljoin(category_url, anchor['href'])
+                if product_url(url) and source._rules.can_fetch(BOT, url):
+                    hints.add(url)
+        except (requests.RequestException, OSError, TypeError, ValueError, AttributeError):
+            status[category_url] = 'transport_error'
+    return hints, status
+
+
 def _candidate_queue(rows, source):
-    """Find unpriced exact URL hints and remove ambiguous catalog mappings."""
+    """Find unpriced URL hints and remove ambiguous catalog mappings."""
     by_url = {}
     unpriced = 0
+    unpriced_rows = []
     for row in sorted(rows, key=lambda item: item['slug']):
         if _has_current_price(row):
             continue
         unpriced += 1
         specs = _specs(row)
+        unpriced_rows.append((row, specs))
         for target in source.discover(row['name'], specs):
             url = target.get('source_url') if isinstance(target, dict) else None
             if product_url(url):
-                by_url.setdefault(url, []).append((row, specs))
+                by_url.setdefault(url, {})[row['id']] = (row, specs)
+    category_urls, category_status = _category_hints(source) if source.report().get(
+        'sitemap_status') == 'ready' else (set(), {})
+    for url in category_urls:
+        path = urlparse(url).path
+        for row, specs in unpriced_rows:
+            if VatanSitemapSource._variant_matches(path, row['name'], specs):
+                by_url.setdefault(url, {})[row['id']] = (row, specs)
     unique, ambiguous = [], []
-    for url, matches in sorted(by_url.items()):
+    for url, matches in sorted(by_url.items(), key=lambda item: (
+            item[0] not in category_urls, item[0])):
         if len(matches) == 1:
-            row, specs = matches[0]
+            row, specs = next(iter(matches.values()))
             unique.append((url, row, specs))
         else:
             ambiguous.append({'source_url': url,
-                              'catalog_slugs': sorted({row['slug'] for row, _ in matches}),
+                              'catalog_slugs': sorted({row['slug'] for row, _ in matches.values()}),
                               'reason': 'ambiguous_catalog_mapping'})
-    return unique, ambiguous, unpriced
+    return unique, ambiguous, unpriced, len(category_urls), category_status
 
 
 def _read_selected(source, url):
@@ -104,15 +145,19 @@ def run_audit(*, catalog_get=None, source=None, offset=0):
     report = {'purpose': PURPOSE, 'writes': False, 'status': 'failed',
               'checked_at': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
               'catalog_products': 0, 'unpriced_products': 0,
-              'candidate_urls': 0, 'ambiguous_urls': [], 'offset': offset,
+              'candidate_urls': 0, 'category_hint_urls': 0,
+              'category_status': {}, 'ambiguous_urls': [], 'offset': offset,
               'probe_budget': MAX_PROBES, 'probed': 0, 'source_verified': 0,
               'candidates': [], 'source': {}}
     try:
         rows = _catalog(catalog_get or requests.get)
         report['catalog_products'] = len(rows)
-        unique, ambiguous, unpriced = _candidate_queue(rows, source)
+        unique, ambiguous, unpriced, category_count, category_status = _candidate_queue(
+            rows, source)
         report['unpriced_products'] = unpriced
         report['candidate_urls'] = len(unique)
+        report['category_hint_urls'] = category_count
+        report['category_status'] = category_status
         report['ambiguous_urls'] = ambiguous
         if source.report().get('sitemap_status') != 'ready':
             raise ValueError('mediamarkt_sitemap_unavailable')
@@ -154,11 +199,14 @@ def summary(report):
     lines = [
         '## MediaMarkt marketplace unpriced candidate queue (read only)',
         f"Status: {report['status']}; catalog {report['catalog_products']}, "
-        f"unpriced {report['unpriced_products']}; unique sitemap hints "
-        f"{report['candidate_urls']}, ambiguous {len(report['ambiguous_urls'])}; "
+        f"unpriced {report['unpriced_products']}; unique sitemap/category hints "
+        f"{report['candidate_urls']} (category URLs {report['category_hint_urls']}), "
+        f"ambiguous {len(report['ambiguous_urls'])}; "
         f"probed {report['probed']}/{report['probe_budget']} from offset "
         f"{report['offset']}; source verified {report['source_verified']}.",
     ]
+    for category_url, status in report['category_status'].items():
+        lines.append(f"- Category hint {category_url}: {status}.")
     for row in report['candidates']:
         offer = row.get('selected_offer') or {}
         lines.append(
