@@ -162,6 +162,7 @@ class VatanCategoryTests(unittest.TestCase):
                 self.assertEqual(found[0]['source_title'], title)
                 self.assertEqual(found[0]['price'], float(price))
                 self.assertEqual(found[0]['availability'], 'in_stock')
+                self.assertTrue(found[0]['selected_vatan_variant_verified'])
 
     def test_read_only_audit_requires_both_exact_category_and_pdp_offers(self):
         good = offers()

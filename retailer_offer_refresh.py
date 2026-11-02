@@ -455,16 +455,19 @@ def _product_offer(soup, final_url):
         return None
     if re.search(r'\b(?:taksit|installment|monthly|aylık|aylik)\b', str(offer.get('name', '')), re.I):
         return None
-    if product.get('hasVariant') and not _vatan_selected_variant(
-            soup, product, offer, final_url, price, availability):
-        return None
+    selected_vatan_variant_verified = False
+    if product.get('hasVariant'):
+        selected_vatan_variant_verified = _vatan_selected_variant(
+            soup, product, offer, final_url, price, availability)
+        if not selected_vatan_variant_verified:
+            return None
     if is_pazarama:
         price = _pazarama_visible_cash_price(soup, product, offer, final_url, price, availability)
         if price is None:
             return None
     if public_source(final_url) and not _public_retailer_product(soup, product, offer, final_url, price, availability):
         return None
-    return {'merchant': ALLOWED_HOSTS[_safe_url(final_url).hostname],
+    result = {'merchant': ALLOWED_HOSTS[_safe_url(final_url).hostname],
             'price': price, 'currency': 'TRY', 'availability': availability,
             # An Offer may name its canonical/seller URL while the fetched PDP
             # carries tracking or another seller query. Keep the observed
@@ -472,6 +475,9 @@ def _product_offer(soup, final_url):
             'source_title': unescape(title.strip()) if product.get('hasVariant') else title.strip(),
             'url': urljoin(final_url, offer['url']) if offer.get('url') else final_url,
             'observed_at': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')}
+    if _safe_url(final_url).hostname.removeprefix('www.') == 'vatanbilgisayar.com':
+        result['selected_vatan_variant_verified'] = selected_vatan_variant_verified
+    return result
 
 
 def _public_retailer_product(soup, product, offer, url, price, availability):

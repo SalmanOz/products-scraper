@@ -108,8 +108,10 @@ def summary(report):
     for row in report['products']:
         attempt = row['source_attempts'][0] if row['source_attempts'] else {}
         offer = row['offer'] or {}
+        category = report['categories']['categories'].get(row['category_url'], {})
         lines.append(f"- {row['slug']}: catalog {row['catalog_confirmed']}; "
-                     f"category {row['category_confirmed']}; "
+                     f"category {row['category_confirmed']} "
+                     f"({category.get('status', 'not_attempted')} HTTP {category.get('http_status')}); "
                      f"selected PDP {row['offer_verified']}; "
                      f"{attempt.get('reason', 'not_attempted')} HTTP {attempt.get('http_status')}; "
                      f"cash TRY {offer.get('price')}; stock {offer.get('availability')}.")

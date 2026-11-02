@@ -1,0 +1,91 @@
+name: OPPO Find X9 Pro Vatan Scoped Offer Refresh
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Write only after this run reverifies the exact selected OPPO offer'
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ inputs.publish && 'teknoskor-daily-data-sync' || 'teknoskor-oppo-vatan-preflight' }}
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Test selected Vatan variant, catalog, preflight and writer scope
+        run: python -m unittest -q test_vatan_oppo_find_x9_pro test_vatan_category_unpriced test_vatan_reviewed_source test_retailer_offer_refresh
+      - name: Start bounded exact PDP browser GET service
+        run: |
+          docker run -d --name=oppo-vatan-browser -p 8191:8191 -e LOG_LEVEL=info ghcr.io/flaresolverr/flaresolverr:latest
+          for attempt in {1..30}; do
+            if curl --fail --silent http://localhost:8191/ > /dev/null; then exit 0; fi
+            sleep 2
+          done
+          docker logs oppo-vatan-browser
+          exit 1
+      - name: Reverify exact OPPO catalog variant and selected Vatan offer
+        env:
+          VATAN_OPPO_AUDIT_OUTPUT_DIR: ${{ runner.temp }}
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+        run: python audit_vatan_oppo_find_x9_pro.py
+      - name: Validate same-run OPPO payload and optionally write
+        id: scoped_prices
+        env:
+          VATAN_OPPO_REFRESH_OUTPUT_DIR: ${{ runner.temp }}
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+        run: |
+          set -euo pipefail
+          : "${SCRAPER_INGESTION_SECRET:?SCRAPER_INGESTION_SECRET is required}"
+          if [ "${{ inputs.publish }}" = "true" ]; then
+            python refresh_vatan_oppo_find_x9_pro.py --audit-file "${{ runner.temp }}/vatan-oppo-find-x9-pro-audit.json" --publish
+          else
+            python refresh_vatan_oppo_find_x9_pro.py --audit-file "${{ runner.temp }}/vatan-oppo-find-x9-pro-audit.json"
+          fi
+      - name: Reconcile scores after committed offer
+        if: ${{ inputs.publish && always() && !cancelled() && (steps.scoped_prices.outcome == 'success' || steps.scoped_prices.outcome == 'failure') }}
+        env:
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+        run: python reconcile_scores.py
+      - name: Summarize exact selected OPPO offer
+        if: always()
+        run: |
+          if test -f "${{ runner.temp }}/vatan-oppo-find-x9-pro-audit.md"; then
+            cat "${{ runner.temp }}/vatan-oppo-find-x9-pro-audit.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if test -f "${{ runner.temp }}/vatan-oppo-find-x9-pro-refresh.md"; then
+            cat "${{ runner.temp }}/vatan-oppo-find-x9-pro-refresh.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload scoped evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vatan-oppo-find-x9-pro-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/vatan-oppo-find-x9-pro-audit.json
+            ${{ runner.temp }}/vatan-oppo-find-x9-pro-audit.md
+            ${{ runner.temp }}/vatan-oppo-find-x9-pro-refresh.json
+            ${{ runner.temp }}/vatan-oppo-find-x9-pro-refresh.md
+            score-reconciliation.json
+          if-no-files-found: warn
+          retention-days: 14
