@@ -33,6 +33,8 @@ HEADERS = {'User-Agent': BOT + '/1.0 (+https://teknoskor.com)',
 MAX_ROBOTS = 64 * 1024
 MAX_SITEMAP = 3 * 1024 * 1024
 MAX_HTML = 5 * 1024 * 1024
+MAX_SOLVER = 8 * 1024 * 1024
+SOLVER_URL = 'http://localhost:8191/v1'
 OUT = Path(os.environ.get('MEDIAMARKT_AUDIT_OUTPUT_DIR', gettempdir()))
 
 
@@ -74,6 +76,55 @@ def read(url, limit, accept):
                 return row, b''
         row['bytes'] = len(body)
         return row, bytes(body)
+    finally:
+        response.close()
+
+
+def browser_read(url, rules):
+    """One local browser GET for a robots-allowed PDP after ordinary GET 403."""
+    row = {'transport': 'browser_get', 'url': url, 'service_http': None,
+           'site_http': None, 'final_url': None, 'bytes': 0}
+    if not safe_url(url) or not rules.can_fetch(BOT, url):
+        row['reason'] = 'invalid_or_disallowed'
+        return row, b''
+    response = requests.post(SOLVER_URL, json={
+        'cmd': 'request.get', 'url': url, 'maxTimeout': 45000,
+    }, timeout=60, stream=True)
+    try:
+        row['service_http'] = response.status_code
+        data = bytearray()
+        for chunk in response.iter_content(chunk_size=64 * 1024):
+            data.extend(chunk)
+            if len(data) > MAX_SOLVER:
+                row['reason'] = 'solver_response_too_large'
+                return row, b''
+        if response.status_code != 200:
+            row['reason'] = 'solver_http_error'
+            return row, b''
+        payload = json.loads(data)
+        solution = payload.get('solution') if isinstance(payload, dict) else None
+        if not isinstance(payload, dict) or payload.get('status') != 'ok' or not isinstance(solution, dict):
+            row['reason'] = 'solver_unavailable'
+            return row, b''
+        row['site_http'] = solution.get('status')
+        row['final_url'] = solution.get('url')
+        final = row['final_url']
+        if not safe_url(final) or not rules.can_fetch(BOT, final):
+            row['reason'] = 'unsafe_or_disallowed_redirect'
+            return row, b''
+        if row['site_http'] != 200:
+            row['reason'] = 'site_http_error'
+            return row, b''
+        body = solution.get('response')
+        if not isinstance(body, str):
+            row['reason'] = 'invalid_html'
+            return row, b''
+        content = body.encode('utf-8')
+        row['bytes'] = len(content)
+        if len(content) > MAX_HTML:
+            row['reason'] = 'html_too_large'
+            return row, b''
+        return row, content
     finally:
         response.close()
 
@@ -150,6 +201,14 @@ def run():
                 report['products'][name] = {'reason': 'invalid_or_disallowed'}
                 continue
             row, content = read(url, MAX_HTML, 'text/html')
+            if row['http_status'] == 403 and os.environ.get('MEDIAMARKT_AUDIT_BROWSER_GET') == '1':
+                try:
+                    browser_row, content = browser_read(url, rules)
+                except (requests.RequestException, ValueError, TypeError):
+                    browser_row, content = {'transport': 'browser_get', 'reason': 'transport_error'}, b''
+                row['browser_response'] = browser_row
+                if browser_row.get('site_http') == 200 and content:
+                    row['selected'] = selected_offer(content, browser_row['final_url'])
             if row.get('redirect'):
                 destination = row['redirect']
                 row['redirect_allowed'] = safe_url(destination) and rules.can_fetch(BOT, destination)
@@ -186,11 +245,13 @@ def main():
                + f"; first-party iPhone17 price={offer.get('price')}.\n")
     detail_lines = []
     for name, row in report['products'].items():
-        final = row.get('redirect_response') or row
+        final = row.get('browser_response') or row.get('redirect_response') or row
         chosen = row.get('selected') or {}
         item = chosen.get('selected_offer') or {}
         detail_lines.append(
             f"- {name}: initial HTTP {row.get('http_status')}, final HTTP {final.get('http_status')}, "
+            f"browser service HTTP {final.get('service_http')}, browser site HTTP {final.get('site_http')}, "
+            f"browser reason {final.get('reason')}, "
             f"redirect allowed {row.get('redirect_allowed')}, selected {chosen.get('selected_offer_count')}, "
             f"cash {item.get('price')}, seller {str(item.get('seller'))[:60]}, "
             f"condition {str(item.get('condition'))[-30:]}, active basket {chosen.get('active_basket_buttons')}."

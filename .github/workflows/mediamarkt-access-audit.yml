@@ -18,9 +18,21 @@ jobs:
           cache: pip
       - name: Install dependencies
         run: pip install -r requirements.txt
+      - name: Start read-only browser GET service
+        run: |
+          docker run -d --name=mediamarkt-audit-browser -p 8191:8191 -e LOG_LEVEL=info ghcr.io/flaresolverr/flaresolverr:latest
+          for attempt in {1..30}; do
+            if curl --fail --silent http://localhost:8191/ > /dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs mediamarkt-audit-browser
+          exit 1
       - name: Probe robots, advertised sitemaps, and three public PDPs
         env:
           MEDIAMARKT_AUDIT_OUTPUT_DIR: ${{ runner.temp }}
+          MEDIAMARKT_AUDIT_BROWSER_GET: '1'
         run: python audit_mediamarkt_access.py
       - name: Publish read-only summary
         if: always()
