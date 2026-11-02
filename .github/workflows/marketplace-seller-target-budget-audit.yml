@@ -1,0 +1,49 @@
+name: Marketplace Seller Target Budget Read-only Audit
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: teknoskor-marketplace-seller-target-budget-readonly
+  queue: max
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Test target-budget report
+        run: python -m unittest -q test_audit_marketplace_seller_budget test_reviewed_offer_targets
+      - name: Compare current daily target selection with named sellers
+        env:
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+        run: |
+          : "${SCRAPER_INGESTION_SECRET:?SCRAPER_INGESTION_SECRET is required}"
+          python audit_marketplace_seller_budget.py \
+            --report seller-target-budget.json \
+            --summary seller-target-budget.md
+          cat seller-target-budget.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload read-only catalog report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: seller-target-budget-${{ github.run_id }}
+          path: |
+            seller-target-budget.json
+            seller-target-budget.md
+          if-no-files-found: warn
+          retention-days: 30
