@@ -300,6 +300,21 @@ class OfferIngestionClient:
                 continue
         return status
 
+    def get_offer_identity_readiness(self):
+        """Authenticated, current commercial-offer identity readback."""
+        body = self._request_json(
+            "GET", "/api/ingestion/price-index-readiness",
+            headers={"Authorization": f"Bearer {self.secret}",
+                     "Accept": "application/json"},
+        )
+        identity = body.get('offerIdentity') if isinstance(body, dict) else None
+        if (not isinstance(identity, dict)
+                or identity.get('evidenceVersion') != 'product-offer-match-v1'
+                or identity.get('mode') != 'shadow_audit_only'
+                or not isinstance(identity.get('productCoverage'), list)):
+            raise IngestionClientError('Offer identity readiness response is invalid')
+        return identity
+
     def ingest_offers(self, offers):
         if not offers:
             return {

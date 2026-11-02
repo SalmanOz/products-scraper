@@ -7,7 +7,8 @@ from pathlib import Path
 from tempfile import gettempdir
 
 from mediamarkt_marketplace_preflight import no_merchant_collision
-from mediamarkt_marketplace_source import A37_PROFILES, reviewed_marketplace_offer
+from mediamarkt_marketplace_source import (A37_PROFILES, reviewed_marketplace_offer,
+                                           scoped_a37_specs)
 from offer_ingestion_client import OfferIngestionClient
 from retailer_offer_refresh import RetailerOfferRefresher
 from reviewed_offer_targets import with_reviewed_radio
@@ -19,7 +20,7 @@ EXPECTED_SLUG = 'samsung-galaxy-a37-5g'
 
 
 def run_audit(reader=None, catalog_client=None):
-    reader = reader or RetailerOfferRefresher()
+    reader = reader or RetailerOfferRefresher(allow_a37_readonly=True)
     catalog_client = catalog_client or OfferIngestionClient.from_env()
     report = {'purpose': 'read_only_mediamarkt_a37_two_selected_offers',
               'writes': False, 'status': 'failed', 'checked_at': None,
@@ -35,7 +36,10 @@ def run_audit(reader=None, catalog_client=None):
         if len(matches) != 1:
             raise ValueError('catalog_identity_missing')
         product = matches[0]
-        specs = with_reviewed_radio(product, PriceUpdater.get_expected_specs(product.get('attributes')))
+        specs = scoped_a37_specs(product, with_reviewed_radio(
+            product, PriceUpdater.get_expected_specs(product.get('attributes'))))
+        if specs is None:
+            raise ValueError('catalog_identity_or_variant_changed')
         urls = list(A37_PROFILES)
         for url, profile in A37_PROFILES.items():
             expected = {key: profile[key] for key in ('ram_gb', 'storage_gb', 'network_generation')}

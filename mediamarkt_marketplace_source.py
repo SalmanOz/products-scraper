@@ -68,6 +68,18 @@ S24FE_RADIO_EVIDENCE = {
 ALL_PROFILES = {**PROFILES, **S24FE_PROFILES, **A37_PROFILES}
 
 
+def scoped_a37_specs(product, specs):
+    """Use this exact catalog name's 5G suffix only in the paired A37 flow."""
+    if (not isinstance(product, dict) or not isinstance(specs, dict)
+            or product.get('id') != 278
+            or product.get('slug') != 'samsung-galaxy-a37-5g'
+            or product.get('name') != 'Samsung Galaxy A37 5G'
+            or specs.get('ram_gb') != 6 or specs.get('storage_gb') != 128
+            or specs.get('network_generation') not in (None, '5g')):
+        return None
+    return {**specs, 'network_generation': '5g'}
+
+
 def reviewed_marketplace_offer(offer, product_name, expected_specs, product=None):
     """Verify an observation from the exact selected new-seller reader."""
     if not isinstance(offer, dict) or not isinstance(expected_specs, dict):

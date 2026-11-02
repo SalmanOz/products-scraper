@@ -15,7 +15,9 @@ from mediamarkt_a37_preflight import validated_offers
 from mediamarkt_marketplace_audit import selected_marketplace_offer
 from mediamarkt_marketplace_source import (
     A37_PROFILES, MediaMarktMarketplaceSource, reviewed_marketplace_offer,
+    scoped_a37_specs,
 )
+from offer_ingestion_client import IngestionClientError, OfferIngestionClient
 from retailer_offer_refresh import RetailerOfferRefresher
 from reviewed_offer_targets import daily_offer_targets, with_reviewed_radio
 from test_mediamarkt_marketplace_audit import (
@@ -85,15 +87,62 @@ def reader():
     transport = Transport()
     return RetailerOfferRefresher(
         mediamarkt_source=transport,
-        mediamarkt_marketplace_source=MediaMarktMarketplaceSource(transport=transport))
+        mediamarkt_marketplace_source=MediaMarktMarketplaceSource(transport=transport),
+        allow_a37_readonly=True)
+
+
+def matched_readback(audit):
+    return {'evidenceVersion': 'product-offer-match-v1',
+            'mode': 'shadow_audit_only',
+            'auditedAt': datetime.now(timezone.utc).isoformat(),
+            'productCoverage': [{
+                'slug': 'samsung-galaxy-a37-5g', 'matchedMerchants': 2,
+                'matchedOffers': [
+                    {'source_url': row['url'],
+                     'merchant_name': row['verified_offer']['seller_name'],
+                     'price': row['verified_offer']['price']}
+                    for row in audit['rows']],
+            }]}
 
 
 class A37TwoSellerTests(unittest.TestCase):
+    def test_readback_client_uses_authenticated_uncached_diagnostics(self):
+        class Session:
+            calls = []
+            def request(self, method, url, **kwargs):
+                self.calls.append((method, url, kwargs))
+                class Response:
+                    status_code = 200
+                    def json(self):
+                        return {'offerIdentity': matched_readback({
+                            'rows': [{'url': url, 'verified_offer': {
+                                'seller_name': A37_PROFILES[url]['seller_name'], 'price': price}}
+                                for url, price in zip(URLS, PRICES)]})}
+                return Response()
+        session = Session()
+        client = OfferIngestionClient('https://teknoskor.example', 's' * 32,
+                                      session=session)
+        self.assertEqual(client.get_offer_identity_readiness()['mode'], 'shadow_audit_only')
+        self.assertEqual(session.calls[0][0:2], (
+            'GET', 'https://teknoskor.example/api/ingestion/price-index-readiness'))
+        self.assertEqual(session.calls[0][2]['headers']['Authorization'], 'Bearer ' + 's' * 32)
+        class Malformed(Session):
+            def request(self, method, url, **kwargs):
+                class Response:
+                    status_code = 200
+                    def json(self):
+                        return {'offerIdentity': {'productCoverage': []}}
+                return Response()
+        with self.assertRaises(IngestionClientError):
+            OfferIngestionClient('https://teknoskor.example', 's' * 32,
+                                 session=Malformed()).get_offer_identity_readiness()
+
     def test_both_exact_gtins_titles_and_selected_sellers_match_one_catalog_variant(self):
         product = catalog_product()
-        specs = with_reviewed_radio(product, PriceUpdater.get_expected_specs(product['attributes']))
+        specs = scoped_a37_specs(product, with_reviewed_radio(
+            product, PriceUpdater.get_expected_specs(product['attributes'])))
         self.assertEqual(specs['network_generation'], '5g')
-        self.assertTrue(set(URLS).issubset(
+        self.assertTrue(set(URLS).isdisjoint(
             {row['source_url'] for row in daily_offer_targets(product, specs)}))
         for url, price in zip(URLS, PRICES):
             profile = A37_PROFILES[url]
@@ -160,14 +209,68 @@ class A37TwoSellerTests(unittest.TestCase):
                     offer_refresher=RetailerOfferRefresher(fetch=network))
                 asyncio.run(updater.run_update(product_slugs=['samsung-galaxy-a37-5g'],
                                                known_pdp_only=True))
-                self.assertTrue(validate_scoped_refresh(audit, updater.last_report)[0])
+                self.assertTrue(validate_scoped_refresh(
+                    audit, updater.last_report, matched_readback(audit))[0])
             self.assertEqual(len(ingestion.submissions), 1)
             self.assertEqual({row['seller'] for row in ingestion.submissions[0]},
                              {'CepHane Teknoloji', 'Birtane Telekom'})
             network.assert_not_called()
         bad_report = copy.deepcopy(updater.last_report)
         bad_report['ingestion']['accepted'] = 1
-        self.assertFalse(validate_scoped_refresh(audit, bad_report)[0])
+        self.assertFalse(validate_scoped_refresh(
+            audit, bad_report, matched_readback(audit))[0])
+
+    def test_general_jobs_cannot_fetch_or_publish_a37_without_paired_preflight(self):
+        product = catalog_product()
+        product['offer_targets'] = [{'source_url': URLS[0],
+                                     'merchant_name': A37_PROFILES[URLS[0]]['seller_name']}]
+        specs = scoped_a37_specs(product, PriceUpdater.get_expected_specs(product['attributes']))
+        transport = Transport()
+        generic = RetailerOfferRefresher(mediamarkt_source=transport,
+            mediamarkt_marketplace_source=MediaMarktMarketplaceSource(transport=transport))
+        self.assertEqual(generic.refresh_existing_offer_targets(
+            product['name'], [{'source_url': URLS[0]}], specs), [])
+        self.assertEqual(generic.target_report(
+            product['name'], [{'source_url': URLS[0]}], specs)[0]['reason'],
+            'a37_requires_scoped_preflight')
+        observed = run_audit(reader=reader(), catalog_client=CatalogClient())['rows'][0]['verified_offer']
+        self.assertFalse(PriceUpdater(ingestion_client=object()).live_offer_is_valid(
+            product, observed, specs))
+
+        class Ingestion(CatalogClient):
+            def get_published_products(self):
+                return [product]
+        updater = PriceUpdater(ingestion_client=Ingestion(), offer_refresher=generic)
+        with self.assertRaisesRegex(RuntimeError, 'paired preflight'):
+            asyncio.run(updater.run_update(product_slugs=['samsung-galaxy-a37-5g'],
+                                           known_pdp_only=True))
+        with self.assertRaisesRegex(RuntimeError, 'paired preflight'):
+            asyncio.run(updater.run_update(product_id=278, known_pdp_only=True))
+        self.assertEqual(len(updater.last_report.get('products', [])), 0)
+        asyncio.run(updater.run_update(dry_run=True, known_pdp_only=True))
+        self.assertEqual(updater.last_report['status'], 'completed')
+        self.assertEqual(updater.last_report['products'], [])
+
+    def test_authenticated_readback_requires_exact_two_seller_urls_and_prices(self):
+        audit = run_audit(reader=reader(), catalog_client=CatalogClient())
+        observed = validated_offers(audit)
+        from verify_mediamarkt_a37_two import _current_matched_offers
+        self.assertTrue(_current_matched_offers(matched_readback(audit), observed))
+        for changed in ('url', 'seller', 'price', 'one', 'stale'):
+            identity = matched_readback(audit)
+            offers = identity['productCoverage'][0]['matchedOffers']
+            if changed == 'url':
+                offers[0]['source_url'] = 'https://example.com/wrong'
+            elif changed == 'seller':
+                offers[0]['merchant_name'] = 'Wrong Seller'
+            elif changed == 'price':
+                offers[0]['price'] += 1
+            elif changed == 'one':
+                offers.pop()
+            else:
+                identity['auditedAt'] = (datetime.now(timezone.utc) -
+                                         timedelta(minutes=6)).isoformat()
+            self.assertFalse(_current_matched_offers(identity, observed), changed)
 
 
 if __name__ == '__main__':

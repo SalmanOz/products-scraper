@@ -20,7 +20,6 @@ XIAOMI_17T_BATCH_PATH = Path(__file__).parent / 'offer_batches/xiaomi-17t-first-
 FOLD8_ULTRA_BATCH_PATH = Path(__file__).parent / 'offer_batches/fold8-ultra-two-first-party-exact-2026-11-02.json'
 MEDIAMARKT_MARKETPLACE_BATCH_PATH = Path(__file__).parent / 'offer_batches/mediamarkt-marketplace-exact-2026-11-02.json'
 MEDIAMARKT_S24FE_GTIN_BATCH_PATH = Path(__file__).parent / 'offer_batches/mediamarkt-s24fe-exact-gtin-2026-11-02.json'
-A37_MARKETPLACE_BATCH_PATH = Path(__file__).parent / 'offer_batches/mediamarkt-a37-two-marketplace-exact-2026-11-02.json'
 PROTECTED_TWO_STORE_SLUGS = frozenset({
     'tecno-camon-20-pro', 'tecno-camon-40', 'samsung-galaxy-a27-5g',
     'samsung-galaxy-a37-5g', 'samsung-galaxy-a57-5g',
@@ -35,8 +34,7 @@ def _profiles():
                  TURK_TELEKOM_BATCH_PATH, PASAJ_BATCH_PATH,
                  S25_FE_256_BATCH_PATH, XIAOMI_17T_BATCH_PATH,
                  FOLD8_ULTRA_BATCH_PATH, MEDIAMARKT_MARKETPLACE_BATCH_PATH,
-                 MEDIAMARKT_S24FE_GTIN_BATCH_PATH,
-                 A37_MARKETPLACE_BATCH_PATH):
+                 MEDIAMARKT_S24FE_GTIN_BATCH_PATH):
         yield from json.loads(path.read_text())['products']
 
 

@@ -67,7 +67,11 @@ jobs:
       - name: Require both exact seller offers accepted
         if: ${{ (github.event_name == 'schedule' || inputs.publish) && steps.scoped_prices.outcome == 'success' }}
         id: verify
+        env:
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
         run: |
+          : "${SCRAPER_INGESTION_SECRET:?SCRAPER_INGESTION_SECRET is required}"
           python verify_mediamarkt_a37_two.py \
             "${{ runner.temp }}/mediamarkt-a37-two.json" \
             mediamarkt-a37-two-report.json

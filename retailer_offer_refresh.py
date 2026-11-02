@@ -577,7 +577,8 @@ class RetailerOfferRefresher:
                  mediamarkt_source=None, apple_store_source=None,
                  turk_telekom_source=None, pasaj_source=None, clock=time.monotonic,
                  hepsiburada_s25_fe_source=None, hepsiburada_apple_source=None,
-                 teknosa_reviewed_source=None, mediamarkt_marketplace_source=None):
+                 teknosa_reviewed_source=None, mediamarkt_marketplace_source=None,
+                 allow_a37_readonly=False):
         self._fetch = fetch or (session.get if session is not None else requests.get)
         self.public_sources = PublicRetailerSources(fetch=self._fetch)
         self.pazarama_source = PazaramaCategorySource(fetch=self._fetch)
@@ -607,6 +608,7 @@ class RetailerOfferRefresher:
         self._marketplace_preflight_file = os.environ.get('MEDIAMARKT_MARKETPLACE_VERIFIED_AUDIT_FILE')
         self._s24fe_preflight_file = os.environ.get('MEDIAMARKT_S24FE_VERIFIED_AUDIT_FILE')
         self._a37_preflight_file = os.environ.get('MEDIAMARKT_A37_VERIFIED_AUDIT_FILE')
+        self._allow_a37_readonly = allow_a37_readonly is True
         self._diagnostics = {}
         self._lock = Lock()
 
@@ -706,6 +708,11 @@ class RetailerOfferRefresher:
             with self._lock:
                 self._cache[source_url] = candidate
             return candidate
+        if source_url in A37_PROFILES and not self._allow_a37_readonly:
+            self._record_attempt(source_url, 'a37_requires_scoped_preflight')
+            with self._lock:
+                self._cache[source_url] = None
+            return None
         if source_url == HEPSIBURADA_S25_FE_256_URL:
             candidate, reason, status = self.hepsiburada_s25_fe_source.read_offer()
             self._record_attempt(source_url, reason, status)

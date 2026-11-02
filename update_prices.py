@@ -24,7 +24,7 @@ from fold8_ultra_preflight import (PROFILE as FOLD8_ULTRA_PROFILE,
 from mediamarkt_marketplace_source import (PROFILES as MEDIAMARKT_MARKETPLACE_PROFILES,
                                            ALL_PROFILES as ALL_MARKETPLACE_PROFILES,
                                            S24FE_PROFILES, S24FE_URL,
-                                           A37_PROFILES,
+                                           A37_PROFILES, scoped_a37_specs,
                                            reviewed_marketplace_offer)
 from mediamarkt_marketplace_preflight import (load_verified_offers as load_marketplace_offers,
                                               no_merchant_collision)
@@ -99,6 +99,12 @@ class PriceUpdater:
         if not isinstance(offer, dict) or not _safe_url(offer.get('url')):
             return False
         host = _safe_url(offer['url']).hostname
+        if offer['url'] in A37_PROFILES:
+            audit_file = os.environ.get('MEDIAMARKT_A37_VERIFIED_AUDIT_FILE')
+            verified = load_a37_offers(audit_file) if audit_file else None
+            if (not verified or offer['url'] not in verified
+                    or offer != verified[offer['url']]):
+                return False
         merchant = self.offer_matcher._standardize_merchant_name(str(offer.get('merchant', '')))
         if offer['url'] in ALL_MARKETPLACE_PROFILES:
             profile = ALL_MARKETPLACE_PROFILES[offer['url']]
@@ -369,6 +375,7 @@ class PriceUpdater:
             product = next((p for p in products if p.get('slug') == 'samsung-galaxy-a37-5g'), None)
             if (not product or product.get('id') != 278
                     or product.get('name') != 'Samsung Galaxy A37 5G'
+                    or scoped_a37_specs(product, self.get_expected_specs(product.get('attributes'))) is None
                     or any(not no_merchant_collision(product, profile, url)
                            for url, profile in A37_PROFILES.items())):
                 raise RuntimeError('A37 catalog identity or seller platform collision')
@@ -388,6 +395,16 @@ class PriceUpdater:
                 raise RuntimeError(
                     f"Published product {target_id} was not found in the catalog"
                 )
+
+        # This model is owned by the paired same-run A37 workflow. An ordinary
+        # full, stored-target or single-product job must never publish only one
+        # of its two selected marketplace sellers.
+        if not a37_preflight_only:
+            if any(p.get('id') == 278 or p.get('slug') == 'samsung-galaxy-a37-5g'
+                   for p in products) and (product_id is not None or product_slugs is not None):
+                raise RuntimeError('A37 offers require the exact paired preflight')
+            products = [p for p in products
+                        if p.get('id') != 278 and p.get('slug') != 'samsung-galaxy-a37-5g']
 
         if (product_id is None and product_slugs is None and not known_pdp_only
                 and hasattr(self.ingestion_client, 'get_public_price_priority')):
@@ -417,6 +434,15 @@ class PriceUpdater:
             name = p['name']
             expected_specs = with_reviewed_radio(p, self.get_expected_specs(p.get('attributes')))
             targets = daily_offer_targets(p, expected_specs)
+            if a37_preflight_only:
+                expected_specs = scoped_a37_specs(p, expected_specs)
+                if expected_specs is None:
+                    raise RuntimeError('A37 exact catalog variant changed')
+                targets = [{'merchant_name': 'MediaMarkt', 'source_url': url}
+                           for url in A37_PROFILES]
+            else:
+                targets = [row for row in targets
+                           if row['source_url'] not in A37_PROFILES]
             if xiaomi_preflight_only:
                 reviewed_url = next(url for url, profile in XIAOMI_17T_PREFLIGHT_URLS.items()
                                     if profile[1] == p['slug'])
