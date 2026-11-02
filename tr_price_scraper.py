@@ -382,6 +382,7 @@ class TRPriceScraper:
     @classmethod
     def _identity_words(cls, value):
         value = str(value or '').replace('+', ' plus ')
+        value = re.sub(r'\b(iphone)(?=\d)', r'\1 ', value, flags=re.I)
         value = re.sub(r'\b([45])\s*g\b', r'\1g', value, flags=re.I)
         value = re.sub(r'\b([a-z]*\d+)(fe|se|pro|plus|ultra|mini|max|lite|edge|e)\b', r'\1 \2', value, flags=re.I)
         return cls._normalize_words(value).split()
@@ -681,7 +682,7 @@ class TRPriceScraper:
             return False
         # iPhone retail variants are identified by exact model + storage;
         # omitted RAM is not made up, and explicit RAM conflicts still fail.
-        is_iphone = 'iphone' in self._normalize_words(product_name).split()
+        is_iphone = 'iphone' in self._identity_words(product_name)
         # The iPhone exception is mere RAM omission, never virtual/ambiguous RAM.
         small_unlabelled = any(int(value) <= 64 for value in re.findall(r'\b(\d+)\s*gb\b', title, re.I)) and ram is None
         if not is_iphone and (not expected_ram or ram != expected_ram):

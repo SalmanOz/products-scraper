@@ -84,14 +84,14 @@ class MediaMarktSourceTests(unittest.TestCase):
         reader = RetailerOfferRefresher(fetch=fetch)
         specs = {'ram_gb': 8, 'storage_gb': 128, 'network_generation': '5g'}
         targets = [{'source_url': url}]
-        offers = reader.refresh_existing_offer_targets('Apple iPhone 16e', targets, specs)
+        offers = reader.refresh_existing_offer_targets('Apple iPhone16e', targets, specs)
         self.assertEqual([(offer['merchant'], offer['price'], offer['url'])
                           for offer in offers], [('MediaMarkt', 54999, url)])
-        self.assertEqual(reader.target_report('Apple iPhone 16e', targets, specs)[0]['reason'],
+        self.assertEqual(reader.target_report('Apple iPhone16e', targets, specs)[0]['reason'],
                          'observed_exact_offer')
         for name, variant in (('Apple iPhone 16', specs),
-                              ('Apple iPhone 16e', {**specs, 'storage_gb': 256}),
-                              ('Apple iPhone 16e', {**specs, 'ram_gb': 6})):
+                              ('Apple iPhone16e', {**specs, 'storage_gb': 256}),
+                              ('Apple iPhone16e', {**specs, 'ram_gb': 6})):
             self.assertEqual(reader.refresh_existing_offer_targets(name, targets, variant), [])
 
     def test_first_party_cash_offer_and_negative_evidence(self):

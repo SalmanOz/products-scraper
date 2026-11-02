@@ -100,7 +100,7 @@ class ReviewedDailyTargetTests(unittest.TestCase):
                        if p['slug'] == 'apple-iphone-16e')
         self.assertEqual((profile['id'], profile['name'], profile['ram_gb'],
                           profile['storage_gb'], profile['network_generation']),
-                         (250, 'Apple iPhone 16e', 8, 128, '5g'))
+                         (250, 'Apple iPhone16e', 8, 128, '5g'))
         product = {key: profile[key] for key in ('id', 'slug', 'name')}
         specs = {key: profile[key] for key in ('ram_gb', 'storage_gb', 'network_generation')}
 
