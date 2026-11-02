@@ -1,0 +1,87 @@
+name: A56 Exact Manual Offer Coverage
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish one exact A56 offer only after this run passes its read-only audit'
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ inputs.publish && 'teknoskor-daily-data-sync' || 'teknoskor-a56-readonly-audit' }}
+  queue: max
+  cancel-in-progress: false
+
+jobs:
+  exact_a56:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Test exact one-off audit and writer gates
+        run: python -m unittest -q test_a56_manual_coverage test_mediamarkt_a56_readonly test_mediamarkt_marketplace_audit test_mediamarkt_source
+      - name: Start bounded browser GET service
+        run: |
+          docker run -d --name=a56-browser -p 8191:8191 -e LOG_LEVEL=info ghcr.io/flaresolverr/flaresolverr:latest
+          for attempt in {1..30}; do
+            if curl --fail --silent http://localhost:8191/ > /dev/null; then exit 0; fi
+            sleep 2
+          done
+          docker logs a56-browser
+          exit 1
+      - name: Read exact selected A56 PDP, legal seller and authenticated catalog without writes
+        id: audit
+        env:
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+        run: |
+          : "${SCRAPER_INGESTION_SECRET:?SCRAPER_INGESTION_SECRET is required}"
+          python a56_manual_coverage.py audit --audit-file "${{ runner.temp }}/a56-audit.json"
+      - name: Publish only the one audited A56 selected offer
+        if: ${{ inputs.publish && steps.audit.outcome == 'success' }}
+        env:
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+        run: |
+          : "${SCRAPER_INGESTION_SECRET:?SCRAPER_INGESTION_SECRET is required}"
+          python a56_manual_coverage.py publish \
+            --publish-exact-one \
+            --audit-file "${{ runner.temp }}/a56-audit.json" \
+            --output-file "${{ runner.temp }}/a56-publish.json"
+      - name: Summarize final A56 audit and publication outcome
+        if: always()
+        run: |
+          if test -f "${{ runner.temp }}/a56-audit.json"; then
+            python a56_manual_coverage.py summarize \
+              --publish-requested "${{ inputs.publish }}" \
+              --audit-file "${{ runner.temp }}/a56-audit.json" \
+              --publish-file "${{ runner.temp }}/a56-publish.json" \
+              --output-file "${{ runner.temp }}/a56-audit.md"
+            cat "${{ runner.temp }}/a56-audit.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'A56 denetim raporu oluşmadı; yayın sonucu için job adımlarını inceleyin.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload audit and optional publication evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a56-exact-manual-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/a56-audit.json
+            ${{ runner.temp }}/a56-audit.md
+            ${{ runner.temp }}/a56-publish.json
+          if-no-files-found: warn
+          retention-days: 30
