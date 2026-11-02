@@ -1,0 +1,27 @@
+{
+  "purpose": "Reviewed exact first-party MediaMarkt URL hints only. No prices or stock are retained; every read checks the selected live offer.",
+  "products": [
+    {
+      "id": 270,
+      "slug": "xiaomi-17t-pro",
+      "name": "Xiaomi 17T Pro",
+      "ram_gb": 12,
+      "storage_gb": 512,
+      "network_generation": "5g",
+      "targets": [
+        "https://www.mediamarkt.com.tr/tr/product/_xiaomi-17t-pro-12512gb-akilli-telefon-mor-1254681.html"
+      ]
+    },
+    {
+      "id": 295,
+      "slug": "xiaomi-17t",
+      "name": "Xiaomi 17T",
+      "ram_gb": 12,
+      "storage_gb": 256,
+      "network_generation": "5g",
+      "targets": [
+        "https://www.mediamarkt.com.tr/tr/product/_xiaomi-17t-12256-gb-akilli-telefon-beyaz-1254679.html"
+      ]
+    }
+  ]
+}
