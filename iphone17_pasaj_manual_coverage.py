@@ -304,6 +304,32 @@ def publish(report, *, client=None, source=None, now=None):
             'readback': 'same_four_sellers_and_exact_pasaj_price'}
 
 
+def _publication_confirmed(report, publication):
+    if (not isinstance(report, dict) or report.get('purpose') != PURPOSE
+            or report.get('writes') is not False
+            or report.get('status') != 'passed'
+            or report.get('catalog_error') is not None
+            or not isinstance(report.get('catalog_evidence'), dict)
+            or not isinstance(publication, dict)
+            or publication.get('status') != 'passed'
+            or type(publication.get('submitted')) is not int
+            or publication['submitted'] != 1
+            or type(publication.get('accepted')) is not int
+            or publication['accepted'] != 1
+            or publication.get('slug') != CATALOG['slug']
+            or publication.get('seller') != MERCHANT
+            or publication.get('source_url') != URL
+            or publication.get('readback') !=
+                'same_four_sellers_and_exact_pasaj_price'
+            or isinstance(publication.get('price'), bool)):
+        return False
+    try:
+        return (Decimal(str(publication['price'])) == PRICE and
+                Decimal(str(report['verified_offer']['price'])) == PRICE)
+    except (KeyError, TypeError, ValueError, InvalidOperation):
+        return False
+
+
 def summary(report, publication=None, publish_requested=False):
     offer = report.get('verified_offer') or {}
     attempt = report.get('source_attempt') or {}
@@ -312,10 +338,7 @@ def summary(report, publication=None, publish_requested=False):
         outcome = 'Yayın istenmedi; fiyat yazımı yok.'
     elif report.get('status') != 'passed' and publication is None:
         outcome = 'Denetim başarısız; yayın adımı çalışmadı.'
-    elif (isinstance(publication, dict) and
-          publication.get('readback') ==
-          'same_four_sellers_and_exact_pasaj_price' and
-          publication.get('accepted') == 1):
+    elif _publication_confirmed(report, publication):
         outcome = 'Bir Pasaj teklifi kabul edildi; dört satıcı readback doğrulandı.'
     else:
         outcome = 'Yayın sonucu belirsiz; ingestion yanıtını inceleyin.'

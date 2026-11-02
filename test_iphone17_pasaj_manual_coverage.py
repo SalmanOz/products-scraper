@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 import unittest
 
 from iphone17_pasaj_manual_coverage import (
-    CATALOG, MERCHANT, PRICE, TITLE, URL, audit, publish, verified_offer,
+    CATALOG, MERCHANT, PRICE, TITLE, URL, audit, publish, summary, verified_offer,
 )
 
 
@@ -208,6 +208,40 @@ class Iphone17PasajManualTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'readback_changed'):
             publish(report, client=client, source=source)
         self.assertEqual(len(client.writes), 1)
+
+    def test_summary_requires_exact_publication_and_passed_audit(self):
+        client, source = Client(), Source()
+        report = audit(client=client, source=source)
+        publication = publish(report, client=client, source=source)
+        self.assertIn('dört satıcı readback doğrulandı',
+                      summary(report, publication, publish_requested=True))
+        bad_publications = (
+            {**publication, 'status': 'failed'},
+            {**publication, 'submitted': 0},
+            {**publication, 'submitted': True},
+            {**publication, 'accepted': 0},
+            {**publication, 'accepted': True},
+            {**publication, 'slug': 'another-product'},
+            {**publication, 'seller': 'Another seller'},
+            {**publication, 'source_url': 'https://example.com/other'},
+            {**publication, 'price': 87000},
+            {**publication, 'price': True},
+            {**publication, 'readback': 'missing'},
+        )
+        for candidate in bad_publications:
+            with self.subTest(candidate=candidate):
+                rendered = summary(report, candidate, publish_requested=True)
+                self.assertIn('Yayın sonucu belirsiz', rendered)
+                self.assertNotIn('readback doğrulandı', rendered)
+        for changed_report in (
+            {**report, 'status': 'failed'},
+            {**report, 'catalog_evidence': None},
+            {**report, 'writes': True},
+        ):
+            with self.subTest(report=changed_report):
+                rendered = summary(changed_report, publication,
+                                   publish_requested=True)
+                self.assertNotIn('readback doğrulandı', rendered)
 
 
 if __name__ == '__main__':
