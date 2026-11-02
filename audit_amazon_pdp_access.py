@@ -85,7 +85,7 @@ def selected_facts(body):
 def run():
     report = {'purpose': 'read_only_amazon_exact_pdp_runner_access',
               'robots_status': 'unavailable', 'normal': None, 'browser': None,
-              'selected_facts': None}
+              'normal_selected_facts': None, 'browser_selected_facts': None}
     headers = {'User-Agent': BOT + '/1.0 (+https://teknoskor.com)',
                'Accept-Language': 'tr-TR,tr;q=0.9'}
     try:
@@ -135,10 +135,14 @@ def run():
             normal['redirect_status'] = response.status_code
             normal['final_url'] = response.url
             body = bounded_response(response, MAX_HTML)
-        if normal.get('redirect_status', normal['status']) == 200 and body:
-            report['selected_facts'] = selected_facts(body)
-            return report
-        if normal.get('redirect_status', normal['status']) != 403:
+        final_status = normal.get('redirect_status', normal['status'])
+        if final_status == 200 and body:
+            report['normal_selected_facts'] = selected_facts(body)
+            facts = report['normal_selected_facts']
+            if (facts['visible_price'] and facts['stock_label']
+                    and facts['structured_offers']):
+                return report
+        if final_status not in (200, 403):
             return report
         response = requests.post(SOLVER_URL, json={
             'cmd': 'request.get', 'url': PDP_URL, 'maxTimeout': 45000,
@@ -158,7 +162,7 @@ def run():
             return report
         html = solution.get('response')
         if isinstance(html, str) and len(html.encode('utf-8')) <= MAX_HTML:
-            report['selected_facts'] = selected_facts(html)
+            report['browser_selected_facts'] = selected_facts(html)
     except (requests.RequestException, ValueError, TypeError, UnicodeError) as error:
         report['error_class'] = type(error).__name__
     return report
