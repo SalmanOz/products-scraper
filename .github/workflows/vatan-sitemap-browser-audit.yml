@@ -19,7 +19,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
       - name: Test sitemap and exact offer safety
-        run: python -m unittest -q test_vatan_sitemap_source test_vatan_source_audit test_retailer_offer_refresh
+        run: python -m unittest -q test_vatan_sitemap_source test_vatan_source_audit test_vatan_sitemap_browser_diagnostic test_retailer_offer_refresh
       - name: Start read-only browser GET service
         run: |
           docker run -d --name=vatan-sitemap-browser -p 8191:8191 -e LOG_LEVEL=info ghcr.io/flaresolverr/flaresolverr:latest
