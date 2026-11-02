@@ -81,9 +81,30 @@ def _selected_offer(html, url):
         return None
     # The active storage radio and selected order's price list must agree with
     # the full variant title and cash button. This excludes adjacent variants.
-    capacities = [n for n in form[0].select('input[type="radio"][checked]')
-                  if re.fullmatch(r'\d{1,2}\s*(?:GB)?\s*/\s*\d{2,4}\s*GB', n.get('name', ''), re.I)]
-    if len(capacities) != 1 or capacities[0]['name'].replace(' ', '').casefold() not in title.replace(' ', '').casefold():
+    legacy_capacities = [n.get('name', '') for n in form[0].select('input[type="radio"][checked]')
+                         if re.fullmatch(r'\d{1,2}\s*(?:GB)?\s*/\s*\d{2,4}\s*GB', n.get('name', ''), re.I)]
+    capacity_selects = form[0].select('select[name="purchased_entity[0][attributes][attribute_capacity]"]')
+    if len(legacy_capacities) == 1 and not capacity_selects:
+        selected_capacity = legacy_capacities[0]
+    elif not legacy_capacities and len(capacity_selects) == 1:
+        # The current Drupal template exposes capacity in a selected option,
+        # while a separate checked price radio names the exact model+capacity.
+        # Both must agree with the selected product title before reading cash.
+        selected_options = capacity_selects[0].select('option[selected]')
+        selected_price_radios = form[0].select(
+            'input[type="radio"][name="purchased_entity[0][attributes][field_price]"][checked]')
+        if len(selected_options) != 1 or len(selected_price_radios) != 1:
+            return None
+        selected_capacity = selected_options[0].get_text(' ', strip=True)
+        price_radio_id = selected_price_radios[0].get('id', '')
+        price_labels = form[0].find_all('label', attrs={'for': price_radio_id}) if price_radio_id else []
+        if (len(price_labels) != 1 or not price_labels[0].get_text(' ', strip=True)
+                or not title.casefold().startswith(price_labels[0].get_text(' ', strip=True).casefold())):
+            return None
+    else:
+        return None
+    if (not re.fullmatch(r'\d{1,2}\s*(?:GB)?\s*/\s*\d{2,4}\s*GB', selected_capacity, re.I)
+            or selected_capacity.replace(' ', '').casefold() not in title.replace(' ', '').casefold()):
         return None
     price_list = [n.get('value') for n in form[0].select('input[name="price_list"][checked]')]
     if len(price_list) > 1 or (price_list and not re.fullmatch(r'\d{6,15}', price_list[0] or '')):

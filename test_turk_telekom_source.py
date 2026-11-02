@@ -105,6 +105,28 @@ class TurkTelekomSourceTests(unittest.TestCase):
         self.assertIsNone(_selected_offer(html.replace('33.499', '4.299 TL / Ay'), URLS[0]))
         self.assertIsNone(_selected_offer(html.replace(f'data-offer-id="{IDS[0]}"', 'data-offer-id="999"'), URLS[0]))
 
+    def test_current_capacity_select_and_price_radio_must_agree_on_variant(self):
+        html = page(URLS[1], TITLES[1], CAPACITIES[1], PRICES[1], IDS[1])
+        html = html.replace(
+            '<input type="radio" name="12/256GB" checked>',
+            '<select name="purchased_entity[0][attributes][attribute_capacity]">'
+            '<option value="100" selected>12/256GB</option>'
+            '<option value="101">12/512GB</option></select>'
+            '<input type="radio" id="selected-price-1" '
+            'name="purchased_entity[0][attributes][field_price]" checked>'
+            '<label for="selected-price-1">SAMSUNG GALAXY S26 12/256GB</label>',
+        )
+        self.assertEqual(_selected_offer(html, URLS[1])['price'], 75599)
+        self.assertIsNone(_selected_offer(
+            html.replace('<option value="100" selected>12/256GB</option>',
+                         '<option value="100" selected>12/512GB</option>'), URLS[1]))
+        self.assertIsNone(_selected_offer(
+            html.replace('<label for="selected-price-1">SAMSUNG GALAXY S26 12/256GB</label>',
+                         '<label for="selected-price-1">SAMSUNG GALAXY S26 12/512GB</label>'), URLS[1]))
+        self.assertIsNone(_selected_offer(
+            html.replace('<option value="101">12/512GB</option>',
+                         '<option value="101" selected>12/512GB</option>'), URLS[1]))
+
     def test_out_of_stock_or_disabled_cash_control_is_rejected(self):
         html = page(URLS[0], TITLES[0], CAPACITIES[0], PRICES[0], IDS[0])
         self.assertIsNone(_selected_offer(html + '<div class="alert-warning">Ürün stoklarımızda bulunmamaktadır.</div>', URLS[0]))

@@ -1,0 +1,44 @@
+name: Türk Telekom Catalog Coverage Read-only Audit
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Test selected capacity and catalog audit boundaries
+        run: python -m unittest -q test_turk_telekom_source test_turk_telekom_coverage
+      - name: Verify exact unpriced stock-card candidate and selected cash PDP
+        env:
+          TT_COVERAGE_AUDIT_OUTPUT_DIR: ${{ runner.temp }}
+        run: python audit_turk_telekom_coverage.py
+      - name: Summarize read-only coverage
+        if: always()
+        run: |
+          if test -f "${{ runner.temp }}/turk-telekom-coverage.md"; then
+            cat "${{ runner.temp }}/turk-telekom-coverage.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload read-only evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: turk-telekom-coverage-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/turk-telekom-coverage.json
+            ${{ runner.temp }}/turk-telekom-coverage.md
+          if-no-files-found: warn
+          retention-days: 14
