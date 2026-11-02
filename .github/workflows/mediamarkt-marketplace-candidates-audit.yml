@@ -8,6 +8,11 @@ on:
         required: false
         type: string
         default: '0'
+      model_offset:
+        description: 'Start at this public model facet offset; each run reads at most five model category pages'
+        required: false
+        type: string
+        default: '0'
 
 permissions:
   contents: read
@@ -45,8 +50,9 @@ jobs:
       - name: Audit unpriced catalog and selected marketplace PDPs without writes
         env:
           AUDIT_OFFSET: ${{ inputs.offset }}
+          MODEL_OFFSET: ${{ inputs.model_offset }}
           MEDIAMARKT_MARKETPLACE_CANDIDATES_DIR: ${{ runner.temp }}
-        run: python audit_mediamarkt_marketplace_candidates.py --offset "$AUDIT_OFFSET"
+        run: python audit_mediamarkt_marketplace_candidates.py --offset "$AUDIT_OFFSET" --model-offset "$MODEL_OFFSET"
       - name: Summarize read-only candidates
         if: always()
         run: |

@@ -13,7 +13,7 @@ import os
 from pathlib import Path
 import re
 from tempfile import gettempdir
-from urllib.parse import urljoin, urlparse
+from urllib.parse import quote, unquote, urljoin, urlparse
 
 from bs4 import BeautifulSoup
 import requests
@@ -24,11 +24,14 @@ from audit_mediamarkt_unpriced_coverage import (
 from mediamarkt_marketplace_audit import catalog_variant_matches, selected_marketplace_offer
 from mediamarkt_source import (BOT, MAX_HTML_BYTES, MAX_SOLVER_BYTES, SOLVER_URL,
                                MediaMarktSource, product_url)
-from vatan_sitemap_source import VatanSitemapSource
+from tr_price_scraper import TRPriceScraper
 
 
 MAX_PROBES = 12
 MAX_BROWSER_FAILURES = 2
+MAX_MODEL_FACETS = 5
+MAX_MODEL_FACET_OFFSET = 1000
+BASE_CATEGORY_URL = 'https://www.mediamarkt.com.tr/tr/category/android-telefonlar-675172.html'
 # Both URLs are visible filters on the public Android phone category. MediaMarkt
 # excludes search URLs in robots.txt, so category pages supply bounded hints.
 CATEGORY_HINT_URLS = (
@@ -39,33 +42,102 @@ OUTPUT_DIR = Path(os.environ.get('MEDIAMARKT_MARKETPLACE_CANDIDATES_DIR', gettem
 PURPOSE = 'read_only_mediamarkt_unpriced_marketplace_candidate_queue'
 
 
-def _category_hints(source):
-    """Read at most two robots-allowed category pages; URL hints are not offers."""
-    hints, status = set(), {}
-    for category_url in CATEGORY_HINT_URLS:
-        if source._rules is None or not source._rules.can_fetch(BOT, category_url):
-            status[category_url] = 'robots_disallowed'
+def _audit_variant_hint(url, row, specs):
+    """Allow missing URL RAM for an audit hint; the selected PDP must prove it."""
+    if not product_url(url) or not isinstance(specs, dict):
+        return False
+    slug = unquote(urlparse(url).path).lower().removesuffix('.html').strip('/')
+    title = slug.replace('-', ' ').replace('_', ' ')
+    matcher = TRPriceScraper()
+    storage = matcher._spec_int(specs.get('storage_gb'))
+    if (not storage or storage < 32 or
+            not matcher.is_strict_match(row['name'], title, specs) or
+            not re.search(rf'(?:^|[-_]){storage}(?:[-_]?gb)(?:[-_]|$)', slug)):
+        return False
+    expected_radio = specs.get('network_generation') or matcher._radio_generation(row['name'])
+    observed_radio = matcher._radio_generation(title)
+    return not (expected_radio and observed_radio and expected_radio != observed_radio)
+
+
+def _catalog_model_facets(body, unpriced_rows):
+    """Use only model names actually rendered in the public category facet."""
+    soup = BeautifulSoup(body, 'html.parser', from_encoding='utf-8')
+    matcher = TRPriceScraper()
+    names = set()
+    for field in soup.select('details[data-test="mms-facet-multiselect-model"] '
+                             'label[data-test="checkbox"] input[type="checkbox"][id$="-model"][name]'):
+        if field.get('id') != str(field.get('name')) + '-model':
             continue
-        try:
-            body, reason, _ = source._direct(category_url, MAX_HTML_BYTES, 'text/html')
-            if reason == 'http_403':
-                body, reason = _browser_category(source, category_url)
-            status[category_url] = reason
-            if reason not in {'ready', 'browser_ready'}:
-                continue
-            soup = BeautifulSoup(body, 'html.parser')
-            for anchor in soup.select('a[href]'):
+        label = field.find_parent('label')
+        displayed = ' '.join(label.get_text(' ', strip=True).split()) if label else ''
+        displayed = re.sub(r'\s*\(\s*\d+\s+Sonuç(?:lar)?\s*\)\s*$', '', displayed)
+        if (not 3 <= len(displayed) <= 80 or
+                not re.fullmatch(r'[\wÇĞİÖŞÜçğıöşü +.\-]+', displayed, re.U)):
+            continue
+        for row, specs in unpriced_rows:
+            brand = row['name'].split()[0]
+            titled = (displayed if displayed.casefold().startswith(brand.casefold() + ' ')
+                      else brand + ' ' + displayed)
+            # Facets may describe a parent family (e.g. Redmi Note 14),
+            # while the catalog has a Pro/4G child. This is only a category
+            # destination: the URL hint and selected PDP get exact checks.
+            full = matcher._identity_words(row['name'])
+            facet = matcher._identity_words(titled)
+            if (len(facet) >= 2 and any(any(char.isdigit() for char in token)
+                                       for token in facet) and
+                    full[:len(facet)] == facet):
+                names.add(displayed)
+                break
+    return sorted(names, key=str.casefold)
+
+
+def _read_category(source, category_url, allowed):
+    if category_url not in allowed:
+        return None, 'invalid_category'
+    if source._rules is None or not source._rules.can_fetch(BOT, category_url):
+        return None, 'robots_disallowed'
+    try:
+        body, reason, _ = source._direct(category_url, MAX_HTML_BYTES, 'text/html')
+        if reason == 'http_403':
+            body, reason = _browser_category(source, category_url, allowed)
+        return body, reason
+    except (requests.RequestException, OSError, TypeError, ValueError, AttributeError):
+        return None, 'transport_error'
+
+
+def _category_hints(source, unpriced_rows, model_offset):
+    """Read a bounded page of public model facets; all URLs remain hints."""
+    hints, status = set(), {}
+    fixed = CATEGORY_HINT_URLS if model_offset == 0 else ()
+    for category_url in fixed:
+        body, status[category_url] = _read_category(source, category_url,
+                                                    CATEGORY_HINT_URLS)
+        if status[category_url] in {'ready', 'browser_ready'}:
+            for anchor in BeautifulSoup(body, 'html.parser', from_encoding='utf-8').select('a[href]'):
                 url = urljoin(category_url, anchor['href'])
                 if product_url(url) and source._rules.can_fetch(BOT, url):
                     hints.add(url)
-        except (requests.RequestException, OSError, TypeError, ValueError, AttributeError):
-            status[category_url] = 'transport_error'
-    return hints, status
+    body, status[BASE_CATEGORY_URL] = _read_category(source, BASE_CATEGORY_URL,
+                                                    {BASE_CATEGORY_URL})
+    facets = _catalog_model_facets(body, unpriced_rows) if status[BASE_CATEGORY_URL] in {
+        'ready', 'browser_ready'} else []
+    chosen = facets[model_offset:model_offset + MAX_MODEL_FACETS]
+    facet_urls = {BASE_CATEGORY_URL + '?model=' + quote(name, safe=''): name
+                  for name in chosen}
+    for category_url in facet_urls:
+        body, status[category_url] = _read_category(source, category_url, facet_urls)
+        if status[category_url] not in {'ready', 'browser_ready'}:
+            continue
+        for anchor in BeautifulSoup(body, 'html.parser', from_encoding='utf-8').select('a[href]'):
+            url = urljoin(category_url, anchor['href'])
+            if product_url(url) and source._rules.can_fetch(BOT, url):
+                hints.add(url)
+    return hints, status, len(facets), chosen
 
 
-def _browser_category(source, category_url):
+def _browser_category(source, category_url, allowed=CATEGORY_HINT_URLS):
     """One browser GET after a 403; accept only this reviewed category URL."""
-    if (category_url not in CATEGORY_HINT_URLS or source._rules is None or
+    if (category_url not in allowed or source._rules is None or
             not source._rules.can_fetch(BOT, category_url)):
         return None, 'robots_disallowed_or_invalid_category'
     source._pace(browser=True)
@@ -98,7 +170,7 @@ def _browser_category(source, category_url):
         response.close()
 
 
-def _candidate_queue(rows, source):
+def _candidate_queue(rows, source, model_offset=0):
     """Find unpriced URL hints and remove ambiguous catalog mappings."""
     by_url = {}
     unpriced = 0
@@ -113,12 +185,12 @@ def _candidate_queue(rows, source):
             url = target.get('source_url') if isinstance(target, dict) else None
             if product_url(url):
                 by_url.setdefault(url, {})[row['id']] = (row, specs)
-    category_urls, category_status = _category_hints(source) if source._rules is not None else (
-        set(), {})
+    category_urls, category_status, facet_count, chosen_facets = (
+        _category_hints(source, unpriced_rows, model_offset)
+        if source._rules is not None else (set(), {}, 0, []))
     for url in category_urls:
-        path = urlparse(url).path
         for row, specs in unpriced_rows:
-            if VatanSitemapSource._variant_matches(path, row['name'], specs):
+            if _audit_variant_hint(url, row, specs):
                 by_url.setdefault(url, {})[row['id']] = (row, specs)
     unique, ambiguous = [], []
     for url, matches in sorted(by_url.items(), key=lambda item: (
@@ -130,7 +202,8 @@ def _candidate_queue(rows, source):
             ambiguous.append({'source_url': url,
                               'catalog_slugs': sorted({row['slug'] for row, _ in matches.values()}),
                               'reason': 'ambiguous_catalog_mapping'})
-    return unique, ambiguous, unpriced, len(category_urls), category_status
+    return (unique, ambiguous, unpriced, len(category_urls), category_status,
+            facet_count, chosen_facets)
 
 
 def _read_selected(source, url):
@@ -176,27 +249,33 @@ def _review(evidence, row, specs):
     return 'source_verified_pending_private_target_review'
 
 
-def run_audit(*, catalog_get=None, source=None, offset=0):
+def run_audit(*, catalog_get=None, source=None, offset=0, model_offset=0):
     """Produce one bounded page of source candidates; zero production writes."""
     if type(offset) is not int or offset < 0 or offset > 1000:
         raise ValueError('offset_must_be_0_to_1000')
+    if type(model_offset) is not int or not 0 <= model_offset <= MAX_MODEL_FACET_OFFSET:
+        raise ValueError('model_offset_must_be_0_to_1000')
     source = source or MediaMarktSource()
     report = {'purpose': PURPOSE, 'writes': False, 'status': 'failed',
               'checked_at': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
               'catalog_products': 0, 'unpriced_products': 0,
               'candidate_urls': 0, 'category_hint_urls': 0,
               'category_status': {}, 'ambiguous_urls': [], 'offset': offset,
+              'model_offset': model_offset, 'model_facets': 0,
+              'selected_model_facets': [],
               'probe_budget': MAX_PROBES, 'probed': 0, 'source_verified': 0,
               'candidates': [], 'source': {}}
     try:
         rows = _catalog(catalog_get or requests.get)
         report['catalog_products'] = len(rows)
-        unique, ambiguous, unpriced, category_count, category_status = _candidate_queue(
-            rows, source)
+        (unique, ambiguous, unpriced, category_count, category_status,
+         facet_count, chosen_facets) = _candidate_queue(rows, source, model_offset)
         report['unpriced_products'] = unpriced
         report['candidate_urls'] = len(unique)
         report['category_hint_urls'] = category_count
         report['category_status'] = category_status
+        report['model_facets'] = facet_count
+        report['selected_model_facets'] = chosen_facets
         report['ambiguous_urls'] = ambiguous
         if (source.report().get('sitemap_status') != 'ready' and
                 not any(status in {'ready', 'browser_ready'} for status in
@@ -243,6 +322,8 @@ def summary(report):
         f"unpriced {report['unpriced_products']}; unique sitemap/category hints "
         f"{report['candidate_urls']} (category URLs {report['category_hint_urls']}), "
         f"ambiguous {len(report['ambiguous_urls'])}; "
+        f"model facets {len(report['selected_model_facets'])}/{report['model_facets']} "
+        f"from offset {report['model_offset']}; "
         f"probed {report['probed']}/{report['probe_budget']} from offset "
         f"{report['offset']}; source verified {report['source_verified']}.",
         f"Source: robots {report['source'].get('robots_status', '?')}; "
@@ -271,8 +352,9 @@ def summary(report):
 def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument('--offset', type=int, default=0)
+    parser.add_argument('--model-offset', type=int, default=0)
     args = parser.parse_args(argv)
-    report = run_audit(offset=args.offset)
+    report = run_audit(offset=args.offset, model_offset=args.model_offset)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     (OUTPUT_DIR / 'mediamarkt-marketplace-candidates.json').write_text(
         json.dumps(report, ensure_ascii=False, indent=2) + '\n')

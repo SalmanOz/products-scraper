@@ -6,8 +6,9 @@ import unittest
 from unittest.mock import patch
 
 from audit_mediamarkt_marketplace_candidates import (
-    CATEGORY_HINT_URLS, MAX_PROBES, _browser_category, _read_selected, run_audit,
-    summary,
+    BASE_CATEGORY_URL, CATEGORY_HINT_URLS, MAX_MODEL_FACETS, MAX_PROBES,
+    _audit_variant_hint, _browser_category, _catalog_model_facets,
+    _read_selected, run_audit, summary,
 )
 from audit_mediamarkt_unpriced_coverage import CATALOG_URL
 
@@ -16,6 +17,8 @@ REDMI = ('https://www.mediamarkt.com.tr/tr/product/'
          '_xiaomi-redmi-note-15-pro-5g-8-gb-256-gb-akilli-telefon-buz-mavisi-169130258.html')
 POCO = ('https://www.mediamarkt.com.tr/tr/product/'
         '_poco-x6-pro-8-gb-256-gb-akilli-telefon-siyah-142988315.html')
+A36 = ('https://www.mediamarkt.com.tr/tr/product/'
+       '_samsung-galaxy-a36-5g-128-gb-akilli-telefon-siyah-123456789.html')
 
 
 def product(id, slug, name, *, price=None, radio='5g'):
@@ -94,7 +97,7 @@ class Source:
 
     def _direct(self, url, limit, accept):
         self.direct.append(url)
-        reason = (self.category_direct_reason if url in CATEGORY_HINT_URLS
+        reason = (self.category_direct_reason if url.startswith(BASE_CATEGORY_URL)
                   else self.direct_reason)
         body = self.category_pages.get(url, '<html></html>')
         return (body.encode() if reason == 'ready' else None,
@@ -165,7 +168,7 @@ class MarketplaceCandidateAuditTests(unittest.TestCase):
         self.assertEqual(report['candidate_urls'], 0)
         self.assertEqual(len(report['ambiguous_urls']), 1)
         self.assertEqual(report['probed'], 0)
-        self.assertEqual(source.direct, list(CATEGORY_HINT_URLS))
+        self.assertEqual(source.direct, [*CATEGORY_HINT_URLS, BASE_CATEGORY_URL])
 
     def test_offset_and_fixed_budget_never_probe_more_than_twelve(self):
         rows = [product(i, f'phone-{i}', f'Phone {i}') for i in range(20)]
@@ -178,7 +181,7 @@ class MarketplaceCandidateAuditTests(unittest.TestCase):
             report = run_audit(catalog_get=self.catalog_get(rows), source=source, offset=3)
         self.assertEqual(report['candidate_urls'], 20)
         self.assertEqual(report['probed'], MAX_PROBES)
-        self.assertEqual(len(source.direct), MAX_PROBES + len(CATEGORY_HINT_URLS))
+        self.assertEqual(len(source.direct), MAX_PROBES + len(CATEGORY_HINT_URLS) + 1)
         self.assertEqual(source.direct[:2], list(CATEGORY_HINT_URLS))
         self.assertEqual(report['source_verified'], 0)
 
@@ -210,7 +213,7 @@ class MarketplaceCandidateAuditTests(unittest.TestCase):
         with patch('audit_mediamarkt_marketplace_candidates.selected_marketplace_offer',
                    side_effect=lambda body, url: selected(url)):
             report = run_audit(catalog_get=self.catalog_get(rows), source=source)
-        self.assertEqual(source.category_browser, list(CATEGORY_HINT_URLS))
+        self.assertEqual(source.category_browser, [*CATEGORY_HINT_URLS, BASE_CATEGORY_URL])
         self.assertEqual(report['probed'], 2)
         self.assertEqual(report['source_verified'], 2)
         self.assertEqual(set(report['category_status'].values()), {'browser_ready'})
@@ -249,7 +252,7 @@ class MarketplaceCandidateAuditTests(unittest.TestCase):
         report = run_audit(catalog_get=self.catalog_get(rows), source=source)
         self.assertEqual(report['status'], 'failed')
         self.assertEqual(report['error'], 'mediamarkt_discovery_unavailable')
-        self.assertEqual(source.direct, list(CATEGORY_HINT_URLS))
+        self.assertEqual(source.direct, [*CATEGORY_HINT_URLS, BASE_CATEGORY_URL])
         self.assertEqual(report['probed'], 0)
         no_robots = Source(sitemap='robots_unavailable', robots='unavailable')
         report = run_audit(catalog_get=self.catalog_get(rows), source=no_robots)
@@ -257,6 +260,103 @@ class MarketplaceCandidateAuditTests(unittest.TestCase):
         self.assertEqual(no_robots.direct, [])
         with self.assertRaisesRegex(ValueError, 'offset'):
             run_audit(catalog_get=self.catalog_get(rows), source=source, offset=-1)
+        with self.assertRaisesRegex(ValueError, 'model_offset'):
+            run_audit(catalog_get=self.catalog_get(rows), source=source, model_offset=-1)
+
+    def test_public_model_facet_pages_are_bounded_and_only_selected_pdp_proves_ram(self):
+        rows = [product(277, 'samsung-galaxy-a36-5g', 'Samsung Galaxy A36 5G')]
+        rows[0]['attributes']['ram_gb'] = 6
+        rows[0]['attributes']['storage_gb'] = 128
+        facet_url = BASE_CATEGORY_URL + '?model=Galaxy%20A36'
+        root = ('<details data-test="mms-facet-multiselect-model">'
+                '<label data-test="checkbox"><input type="checkbox" id="Galaxy_A36-model" '
+                'name="Galaxy_A36">Galaxy A36 (4 Sonuçlar)</label>'
+                '<label data-test="checkbox"><input type="checkbox" id="Galaxy_A17-model" '
+                'name="Galaxy_A17">Galaxy A17 (9 Sonuçlar)</label>'
+                '</details>')
+        source = Source(category_pages={BASE_CATEGORY_URL: root,
+                                        facet_url: '<a href="' + A36 + '">A36</a>'})
+        offer = {**selected(REDMI), 'url': A36,
+                 'source_title': 'SAMSUNG Galaxy A36 5G 6 GB 128 GB Akıllı Telefon Siyah',
+                 'sku': '123456789', 'ram_gb': 6, 'storage_gb': 128}
+        with patch('audit_mediamarkt_marketplace_candidates.selected_marketplace_offer',
+                   return_value=offer):
+            report = run_audit(catalog_get=self.catalog_get(rows), source=source)
+        self.assertEqual(report['status'], 'completed')
+        self.assertEqual(report['model_facets'], 1)
+        self.assertEqual(report['selected_model_facets'], ['Galaxy A36'])
+        self.assertEqual(report['candidate_urls'], 1)
+        self.assertEqual(report['source_verified'], 1)
+        self.assertEqual(report['category_status'][facet_url], 'ready')
+        self.assertLessEqual(len(report['selected_model_facets']), MAX_MODEL_FACETS)
+        with patch('audit_mediamarkt_marketplace_candidates.selected_marketplace_offer',
+                   return_value={**offer, 'ram_gb': 8}):
+            wrong_ram = run_audit(catalog_get=self.catalog_get(rows), source=source)
+        self.assertEqual(wrong_ram['source_verified'], 0)
+        self.assertEqual(wrong_ram['candidates'][0]['review_status'], 'catalog_variant_mismatch')
+        later = run_audit(catalog_get=self.catalog_get(rows), source=source, model_offset=1)
+        self.assertEqual(later['selected_model_facets'], [])
+        self.assertEqual(later['probed'], 0)
+
+    def test_four_live_exact_variants_remain_hints_until_selected_radio_and_gtin_pass(self):
+        redmi = product(238, 'xiaomi-redmi-note-15-pro', 'Xiaomi Redmi Note 15 Pro')
+        poco = product(183, 'poco-x6-pro', 'POCO X6 Pro')
+        four = [
+            (POCO, poco, 'POCO X6 Pro 8 GB 256 GB Akıllı Telefon Siyah'),
+            (REDMI, redmi, 'XIAOMI Redmi Note 15 Pro 5G 8 GB 256 GB Akıllı Telefon Buz Mavisi'),
+            (REDMI.replace('buz-mavisi-169130258', 'siyah-169130256'), redmi,
+             'XIAOMI Redmi Note 15 Pro 5G 8 GB 256 GB Akıllı Telefon Siyah'),
+            (REDMI.replace('buz-mavisi-169130258', 'titanyum-gri-169130275'), redmi,
+             'XIAOMI Redmi Note 15 Pro 5G 8 GB 256 GB Akıllı Telefon Titanyum Gri'),
+        ]
+        from audit_mediamarkt_marketplace_candidates import _review
+        from audit_mediamarkt_unpriced_coverage import _specs
+        for url, row, title in four:
+            specs = _specs(row)
+            self.assertTrue(_audit_variant_hint(url, row, specs), url)
+            evidence = {**selected(REDMI), 'url': url, 'source_title': title}
+            self.assertEqual(_review(evidence, row, specs),
+                             'source_verified_pending_private_target_review')
+            self.assertEqual(_review({**evidence, 'network_generation': None}, row, specs),
+                             'catalog_radio_unproven_in_selected_pdp')
+            self.assertEqual(_review({**evidence, 'gtin13': None}, row, specs),
+                             'selected_gtin_missing')
+
+    def test_parent_model_facet_can_hint_child_without_numeric_model_conflation(self):
+        from audit_mediamarkt_unpriced_coverage import _specs
+        redmi = product(251, 'xiaomi-redmi-note-14-pro', 'Xiaomi Redmi Note 14 Pro')
+        a56 = product(242, 'samsung-galaxy-a56', 'Samsung Galaxy A56')
+        root = ('<details data-test="mms-facet-multiselect-model">'
+                '<label data-test="checkbox"><input type="checkbox" '
+                'id="XIAOMI_Redmi_Note_14-model" name="XIAOMI_Redmi_Note_14">'
+                'XIAOMI Redmi Note 14 (5 Sonuçlar)</label>'
+                '<label data-test="checkbox"><input type="checkbox" '
+                'id="Galaxy_A5-model" name="Galaxy_A5">Galaxy A5 (5 Sonuçlar)</label>'
+                '<label data-test="checkbox"><input type="checkbox" '
+                'id="Galaxy_A56-model" name="Wrong_name">Galaxy A56 (6 Sonuçlar)</label>'
+                '</details>')
+        self.assertEqual(_catalog_model_facets(root.encode(),
+            [(redmi, _specs(redmi)), (a56, _specs(a56))]), ['XIAOMI Redmi Note 14'])
+
+    def test_model_facet_offset_reads_at_most_five_pages_and_skips_fixed_repeat(self):
+        rows = [product(number, f'galaxy-a{number}', f'Samsung Galaxy A{number}')
+                for number in range(30, 37)]
+        root = '<details data-test="mms-facet-multiselect-model">' + ''.join(
+            f'<label data-test="checkbox"><input type="checkbox" '
+            f'id="Galaxy_A{number}-model" name="Galaxy_A{number}">'
+            f'Galaxy A{number} (4 Sonuçlar)</label>' for number in range(30, 37)
+        ) + '</details>'
+        source = Source(category_pages={BASE_CATEGORY_URL: root})
+        report = run_audit(catalog_get=self.catalog_get(rows), source=source,
+                           model_offset=1)
+        self.assertEqual(report['status'], 'completed')
+        self.assertEqual(report['model_facets'], 7)
+        self.assertEqual(report['selected_model_facets'],
+                         [f'Galaxy A{number}' for number in range(31, 36)])
+        self.assertEqual(source.direct, [BASE_CATEGORY_URL] + [
+            BASE_CATEGORY_URL + f'?model=Galaxy%20A{number}'
+            for number in range(31, 36)])
+        self.assertEqual(report['probed'], 0)
 
 
 if __name__ == '__main__':
