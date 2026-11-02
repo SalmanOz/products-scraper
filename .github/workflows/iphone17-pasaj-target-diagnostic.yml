@@ -1,0 +1,80 @@
+name: iPhone 17 Pasaj Target Read-only Diagnostic
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: teknoskor-iphone17-pasaj-target-diagnostic
+  cancel-in-progress: false
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Inspect only the stored iPhone 17 target identities
+        env:
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+        run: |
+          : "${SCRAPER_INGESTION_SECRET:?SCRAPER_INGESTION_SECRET is required}"
+          python - <<'PY'
+          import json
+          import os
+          from urllib.parse import urlparse
+
+          from iphone17_pasaj_manual_coverage import CATALOG, MERCHANT, URL
+          from offer_ingestion_client import OfferIngestionClient
+
+          client = OfferIngestionClient.from_env()
+          inspected = client.get_offer_target_inspection(CATALOG['id'])
+          raw = client.get_raw_seller_collision_proof(CATALOG['id'], MERCHANT, URL)
+          targets = inspected.get('offer_targets', [])
+          if not isinstance(targets, list):
+              raise ValueError('target_inspection_unavailable')
+          def safe_row(row):
+              source = row.get('source_url', '')
+              parsed = urlparse(source)
+              return {
+                  'platform': row.get('merchant_name'),
+                  'stored_seller': row.get('seller_name'),
+                  'exact_source': source == URL,
+                  'host': parsed.hostname,
+                  'path': parsed.path,
+                  'checked_at': row.get('checked_at'),
+              }
+          relevant = [safe_row(row) for row in targets if isinstance(row, dict)
+                      and (row.get('merchant_name') == 'Pasaj'
+                           or row.get('source_url') == URL)]
+          report = {
+              'purpose': 'read_only_iphone17_pasaj_target_diagnostic',
+              'writes': False,
+              'target_count': inspected.get('offer_targets_total'),
+              'invalid_count': inspected.get('offer_targets_invalid_count'),
+              'invalid_reasons': inspected.get('offer_targets_invalid_reasons'),
+              'duplicate_count': inspected.get('offer_targets_duplicate_count'),
+              'relevant_targets': relevant,
+              'raw_proof': {
+                  key: raw.get(key) for key in (
+                      'blocked', 'reasons', 'stored_rows_checked',
+                      'exact_seller_url_rows', 'proposed_seller_other_url_rows',
+                      'refresh_targets_total', 'refresh_targets_invalid_count',
+                  )
+              },
+          }
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as output:
+              output.write('### iPhone 17 Pasaj target diagnostic (GET only)\n\n')
+              output.write('```json\n' + json.dumps(report, ensure_ascii=False, indent=2)
+                           + '\n```\n')
+          PY
