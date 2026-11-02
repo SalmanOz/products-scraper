@@ -1,0 +1,97 @@
+name: Fold8 Ultra Two First-party Scoped Refresh
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Write only after this run verifies both exact selected cash offers'
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ inputs.publish && 'teknoskor-daily-data-sync' || 'teknoskor-fold8-ultra-preflight' }}
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Test exact readers, catalog gate, handoff and scoped writer
+        run: python -m unittest -q test_turk_telekom_source test_pasaj_source test_fold8_ultra_preflight_handoff test_reviewed_offer_targets test_retailer_offer_refresh test_price_refresh_orchestration
+      - name: Reverify catalog and both selected first-party offers without writes
+        env:
+          FOLD8_ULTRA_AUDIT_OUTPUT_DIR: ${{ runner.temp }}
+        run: python audit_fold8_ultra_two_merchants.py
+      - name: Publish only the two audited offers for one exact catalog SKU
+        if: ${{ inputs.publish }}
+        id: scoped_prices
+        env:
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+          FOLD8_ULTRA_VERIFIED_AUDIT_FILE: ${{ runner.temp }}/fold8-ultra-two-merchants.json
+        run: |
+          set -euo pipefail
+          : "${SCRAPER_INGESTION_SECRET:?SCRAPER_INGESTION_SECRET is required}"
+          python update_prices.py --slugs samsung-galaxy-z-fold8-ultra \
+            --known-pdp-only --report fold8-ultra-scoped-report.json
+      - name: Require two fully accepted first-party offers
+        if: ${{ inputs.publish && steps.scoped_prices.outcome == 'success' }}
+        id: verify
+        run: |
+          python verify_fold8_ultra_scoped_refresh.py \
+            "${{ runner.temp }}/fold8-ultra-two-merchants.json" \
+            fold8-ultra-scoped-report.json
+      - name: Reconcile scores after both accepted offers
+        if: ${{ inputs.publish && steps.verify.outcome == 'success' }}
+        env:
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+        run: python reconcile_scores.py
+      - name: Summarize audit and scoped refresh
+        if: always()
+        run: |
+          if test -f "${{ runner.temp }}/fold8-ultra-two-merchants.md"; then
+            cat "${{ runner.temp }}/fold8-ultra-two-merchants.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if test -f fold8-ultra-scoped-report.json; then
+            python - <<'PY'
+          import json, os
+          from pathlib import Path
+          report = json.loads(Path('fold8-ultra-scoped-report.json').read_text())
+          product = (report.get('products') or [{}])[0]
+          ingestion = report.get('ingestion') or {}
+          lines = ['## Fold8 Ultra single-SKU write',
+                   f"Status: {report.get('status')}; accepted {ingestion.get('accepted')}/2; "
+                   f"two merchants {report.get('coverage', {}).get('with_two_merchants')}."]
+          for row in product.get('source_attempts', []):
+              lines.append(f"- {row.get('merchant')}: {row.get('reason')} HTTP {row.get('http_status')}.")
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:
+              out.write('\n'.join(lines) + '\n')
+          PY
+          fi
+      - name: Upload audit and scoped-write evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fold8-ultra-scoped-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/fold8-ultra-two-merchants.json
+            ${{ runner.temp }}/fold8-ultra-two-merchants.md
+            fold8-ultra-scoped-report.json
+            score-reconciliation.json
+          if-no-files-found: warn
+          retention-days: 30

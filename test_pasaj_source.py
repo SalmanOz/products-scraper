@@ -4,7 +4,7 @@ import json
 import unittest
 
 from audit_pasaj_source import PROFILES as AUDIT_PROFILES, run_audit
-from pasaj_source import A26_6_128_URL, IPHONE16_128_URL, IPHONE17_256_URL, ROBOTS_URL, PasajSource, _selected_offer
+from pasaj_source import A26_6_128_URL, FOLD8_ULTRA_12_256_URL, IPHONE16_128_URL, IPHONE17_256_URL, ROBOTS_URL, PasajSource, _selected_offer
 from retailer_offer_refresh import RetailerOfferRefresher
 
 
@@ -36,7 +36,7 @@ def page(*, cash='86.999', seller='Turkcell Satış A.Ş.', price=86999,
                   f'data-stock-available="{color_stock}" data-at-basket="{color_at_basket}" '
                   f'data-seller-name="{color_seller}" '
                   f'data-price="{color_price}" data-device-product-uid="{color_uid}">'
-                  f'Beyaz</option></select>' if url == A26_6_128_URL else '')
+                  f'Beyaz</option></select>' if url in (A26_6_128_URL, FOLD8_ULTRA_12_256_URL) else '')
     return f'''<html><head><title>{title}</title><link rel="canonical" href="{canonical or url}">
     <script type="application/ld+json">{json.dumps(product)}</script></head><body>
     <h1>{title}</h1>
@@ -63,6 +63,17 @@ def a26_page(**changes):
     values = {'cash': '19.499', 'price': 19499, 'url': A26_6_128_URL,
               'title': 'Samsung Galaxy A26 5G 6 GB Ram 128 GB', 'brand': 'Samsung',
               'sku': 1159284, 'ram': '6 GB', 'storage': '128 GB', 'network': '5G'}
+    values.update(changes)
+    return page(**values)
+
+
+def fold8_ultra_page(**changes):
+    values = {'cash': '151.999', 'price': 151999,
+              'url': FOLD8_ULTRA_12_256_URL,
+              'title': 'Samsung Galaxy Z Fold8 Ultra 12GB 256GB',
+              'brand': 'Samsung', 'sku': 1181169, 'ram': '12 GB',
+              'storage': '256 GB', 'network': '5G',
+              'color_price': '151.999', 'color_uid': '1181169-1-1013789'}
     values.update(changes)
     return page(**values)
 
@@ -127,6 +138,19 @@ class PasajSourceTest(unittest.TestCase):
         for changes in cases:
             with self.subTest(changes=changes):
                 self.assertIsNone(_selected_offer(a26_page(**changes), A26_6_128_URL))
+
+    def test_fold8_ultra_exact_first_party_cash_and_fail_closed_variants(self):
+        offer = _selected_offer(fold8_ultra_page(), FOLD8_ULTRA_12_256_URL)
+        self.assertEqual((offer['merchant'], offer['price'], offer['availability']),
+                         ('Pasaj', 151999, 'in_stock'))
+        for changes in ({'ram': '16 GB'}, {'storage': '512 GB'},
+                        {'seller': 'Marketplace Mağazası'}, {'color_seller': 'Marketplace Mağazası'},
+                        {'color_stock': 'false'}, {'color_price': '141.999'},
+                        {'color_uid': '1181170-1-1013789'}, {'cash': '141.999'},
+                        {'button': 'Stokta Yok'}, {'disabled': 'disabled'}):
+            with self.subTest(changes=changes):
+                self.assertIsNone(_selected_offer(fold8_ultra_page(**changes),
+                                                   FOLD8_ULTRA_12_256_URL))
 
     def test_rejects_mismatched_or_conditional_evidence(self):
         cases = (

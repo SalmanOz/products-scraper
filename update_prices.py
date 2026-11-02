@@ -18,6 +18,9 @@ from reviewed_offer_targets import daily_offer_targets, with_reviewed_radio, PRO
 from vatan_sitemap_source import VatanSitemapSource
 from xiaomi_17t_preflight import PROFILES as XIAOMI_17T_PREFLIGHT_URLS
 from price_sync_priority import prioritize_unpriced_products
+from fold8_ultra_preflight import (PROFILE as FOLD8_ULTRA_PROFILE,
+                                   URLS as FOLD8_ULTRA_PREFLIGHT_URLS,
+                                   load_verified_offers as load_fold8_ultra_offers)
 
 load_dotenv()
 
@@ -276,6 +279,14 @@ class PriceUpdater:
     async def _run_update(self, product_id=None, phase2_backfill=False, *, dry_run=False,
                           product_slugs=None, known_pdp_only=False):
         xiaomi_preflight_only = bool(os.environ.get('XIAOMI_17T_VERIFIED_AUDIT_FILE'))
+        fold8_preflight_file = os.environ.get('FOLD8_ULTRA_VERIFIED_AUDIT_FILE')
+        fold8_preflight_only = bool(fold8_preflight_file)
+        if fold8_preflight_only:
+            if (product_id is not None or phase2_backfill or not known_pdp_only
+                    or product_slugs != [FOLD8_ULTRA_PROFILE[1]]):
+                raise RuntimeError('Fold8 preflight requires only the exact reviewed SKU and known PDPs')
+            if load_fold8_ultra_offers(fold8_preflight_file) is None:
+                raise RuntimeError('Fold8 two-retailer preflight invalid or stale')
         if xiaomi_preflight_only and (product_id is not None or phase2_backfill
                                       or not known_pdp_only or product_slugs is None
                                       or set(product_slugs) != {p[1] for p in XIAOMI_17T_PREFLIGHT_URLS.values()}):
@@ -345,6 +356,11 @@ class PriceUpdater:
                 targets = [row for row in targets if row['source_url'] == reviewed_url]
                 if len(targets) != 1:
                     raise RuntimeError('Exact Xiaomi MediaMarkt reviewed target missing for ' + p['slug'])
+            if fold8_preflight_only:
+                targets = [row for row in targets if row['source_url'] in FOLD8_ULTRA_PREFLIGHT_URLS]
+                if (len(targets) != 2
+                        or {row['source_url'] for row in targets} != set(FOLD8_ULTRA_PREFLIGHT_URLS)):
+                    raise RuntimeError('Both exact Fold8 reviewed targets are required')
             product_report = {'slug': p['slug'], 'targets': targets,
                               'purchasable_merchants': [], 'prepared_offers': [],
                               'rejected_live_observations': 0, 'discovered_destinations': 0}
@@ -459,6 +475,11 @@ class PriceUpdater:
                     ):
                         by_seller[merchant] = offer
                 offers = list(by_seller.values())
+                if fold8_preflight_only and (
+                    len(offers) != 2 or {offer.get('url') for offer in offers}
+                        != set(FOLD8_ULTRA_PREFLIGHT_URLS)
+                ):
+                    raise RuntimeError('Both Fold8 preflight observations must survive matching')
                 if offers:
                     observed_at = self.utc_timestamp()
                     checked_at = self.utc_timestamp()
@@ -544,6 +565,13 @@ class PriceUpdater:
                 if p['slug'] in PROTECTED_TWO_STORE_SLUGS and merchant_counts.get(p['slug'], 0) < 2],
         }
         self.last_report['ingestion'] = aggregate_result
+        if fold8_preflight_only and not dry_run and (
+            aggregate_result['accepted'] != 2
+            or aggregate_result['stale_ignored'] != 0
+            or aggregate_result['variant_rejected'] != 0
+            or aggregate_result['committed'] is not True
+        ):
+            raise RuntimeError('Fold8 scoped ingestion did not accept both exact offers')
         if changed_paths and not dry_run:
             submit_urls(changed_paths + ["/", "/products"])
 

@@ -17,6 +17,7 @@ TURK_TELEKOM_BATCH_PATH = Path(__file__).parent / 'offer_batches/turk-telekom-ex
 PASAJ_BATCH_PATH = Path(__file__).parent / 'offer_batches/pasaj-exact-2026-11-02.json'
 S25_FE_256_BATCH_PATH = Path(__file__).parent / 'offer_batches/s25-fe-256-exact-2026-11-02.json'
 XIAOMI_17T_BATCH_PATH = Path(__file__).parent / 'offer_batches/xiaomi-17t-first-party-exact-2026-11-02.json'
+FOLD8_ULTRA_BATCH_PATH = Path(__file__).parent / 'offer_batches/fold8-ultra-two-first-party-exact-2026-11-02.json'
 PROTECTED_TWO_STORE_SLUGS = frozenset({
     'tecno-camon-20-pro', 'tecno-camon-40', 'samsung-galaxy-a27-5g',
     'samsung-galaxy-a37-5g', 'samsung-galaxy-a57-5g',
@@ -29,7 +30,8 @@ def _profiles():
                  APPLE_STORE_BATCH_PATH, HEPSIBURADA_APPLE_BATCH_PATH,
                  TEKNOSA_FIRST_PARTY_BATCH_PATH,
                  TURK_TELEKOM_BATCH_PATH, PASAJ_BATCH_PATH,
-                 S25_FE_256_BATCH_PATH, XIAOMI_17T_BATCH_PATH):
+                 S25_FE_256_BATCH_PATH, XIAOMI_17T_BATCH_PATH,
+                 FOLD8_ULTRA_BATCH_PATH):
         yield from json.loads(path.read_text())['products']
 
 

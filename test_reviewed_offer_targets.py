@@ -6,7 +6,7 @@ from reviewed_offer_targets import (
     APPLE_STORE_BATCH_PATH, HEPSIBURADA_APPLE_BATCH_PATH, MEDIAMARKT_BATCH_PATH,
     TURK_TELEKOM_BATCH_PATH, TEKNOSA_FIRST_PARTY_BATCH_PATH,
     PASAJ_BATCH_PATH, URL_BATCH, VATAN_BATCH_PATH, S25_FE_256_BATCH_PATH,
-    XIAOMI_17T_BATCH_PATH,
+    XIAOMI_17T_BATCH_PATH, FOLD8_ULTRA_BATCH_PATH,
     daily_offer_targets, with_reviewed_radio,
 )
 from pasaj_source import A26_6_128_URL, IPHONE16_128_URL, IPHONE17_256_URL
@@ -64,7 +64,8 @@ class ReviewedDailyTargetTests(unittest.TestCase):
                               TEKNOSA_FIRST_PARTY_BATCH_PATH,
                               TURK_TELEKOM_BATCH_PATH,
                               PASAJ_BATCH_PATH,
-                              S25_FE_256_BATCH_PATH, XIAOMI_17T_BATCH_PATH])
+                              S25_FE_256_BATCH_PATH, XIAOMI_17T_BATCH_PATH,
+                              FOLD8_ULTRA_BATCH_PATH])
 
     def test_xiaomi_first_party_seeds_require_exact_catalog_identity_and_memory(self):
         profiles = json.loads(XIAOMI_17T_BATCH_PATH.read_text())['products']

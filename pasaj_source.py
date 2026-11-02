@@ -23,6 +23,8 @@ IPHONE16_128_URL = ('https://www.turkcell.com.tr/pasaj/cep-telefonu/'
                     'ios-telefonlar/apple-iphone-16/iphone-16-128-gb')
 A26_6_128_URL = ('https://www.turkcell.com.tr/pasaj/cep-telefonu/'
                  'android-telefonlar/samsung-galaxy-a26-5g-6-gb-ram-128-gb-hafiza-akilli-telefon')
+FOLD8_ULTRA_12_256_URL = ('https://www.turkcell.com.tr/pasaj/cep-telefonu/'
+                          'android-telefonlar/samsung-galaxy-z-fold8-ultra-12gb-256gb')
 REVIEWED = {
     IPHONE17_256_URL: {'title': 'iPhone 17 256 GB', 'brand': 'Apple',
                        'ram': '8 GB', 'storage': '256 GB'},
@@ -31,6 +33,9 @@ REVIEWED = {
     A26_6_128_URL: {'title': 'Samsung Galaxy A26 5G 6 GB Ram 128 GB',
                     'brand': 'Samsung', 'ram': '6 GB', 'storage': '128 GB',
                     'network': '5G', 'selected_color': True},
+    FOLD8_ULTRA_12_256_URL: {'title': 'Samsung Galaxy Z Fold8 Ultra 12GB 256GB',
+                             'brand': 'Samsung', 'ram': '12 GB', 'storage': '256 GB',
+                             'network': '5G', 'selected_color': True},
 }
 ROBOTS_URL = 'https://www.turkcell.com.tr/robots.txt'
 BOT = 'TeknoskorPriceBot'

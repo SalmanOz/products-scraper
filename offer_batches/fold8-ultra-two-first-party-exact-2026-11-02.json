@@ -1,0 +1,17 @@
+{
+  "purpose": "Reviewed exact Samsung Galaxy Z Fold8 Ultra 12/256 first-party PDP URL hints. No price or stock is stored; every run checks selected variant, cash price, seller, stock and purchase control.",
+  "products": [
+    {
+      "id": 293,
+      "slug": "samsung-galaxy-z-fold8-ultra",
+      "name": "Samsung Galaxy Z Fold8 Ultra",
+      "ram_gb": 12,
+      "storage_gb": 256,
+      "network_generation": "5g",
+      "targets": [
+        "https://emagaza.turktelekom.com.tr/tr/products/samsung/samsung-galaxy-z-fold8-ultra?v=2908",
+        "https://www.turkcell.com.tr/pasaj/cep-telefonu/android-telefonlar/samsung-galaxy-z-fold8-ultra-12gb-256gb"
+      ]
+    }
+  ]
+}

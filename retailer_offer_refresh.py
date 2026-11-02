@@ -11,6 +11,7 @@ from html import unescape
 import ipaddress
 import json
 import math
+import os
 import re
 import time
 import unicodedata
@@ -28,6 +29,7 @@ from mediamarkt_source import MediaMarktSource, product_url as mediamarkt_produc
 from apple_store_source import AppleStoreSource, reviewed_slug as apple_store_reviewed_slug
 from turk_telekom_source import TurkTelekomSource, product_url as turk_telekom_product_url
 from pasaj_source import PasajSource, product_url as pasaj_product_url
+from fold8_ultra_preflight import URLS as FOLD8_ULTRA_PREFLIGHT_URLS, load_verified_offers as load_fold8_ultra_offers
 from hepsiburada_s25_fe_source import (
     HepsiburadaS25FeSource, URL as HEPSIBURADA_S25_FE_256_URL,
 )
@@ -548,6 +550,7 @@ class RetailerOfferRefresher:
         self._transport_failures = {}
         self._transient_blocked_until = {}
         self._clock = clock
+        self._fold8_preflight_file = os.environ.get('FOLD8_ULTRA_VERIFIED_AUDIT_FILE')
         self._diagnostics = {}
         self._lock = Lock()
 
@@ -602,6 +605,15 @@ class RetailerOfferRefresher:
         with self._lock:
             if source_url in self._cache:
                 return self._cache[source_url]
+        if self._fold8_preflight_file and source_url in FOLD8_ULTRA_PREFLIGHT_URLS:
+            verified = load_fold8_ultra_offers(self._fold8_preflight_file)
+            candidate = verified.get(source_url) if verified else None
+            self._record_attempt(source_url,
+                                 'observed_exact_cash_offer_from_preflight' if candidate
+                                 else 'preflight_invalid_or_stale', 200 if candidate else None)
+            with self._lock:
+                self._cache[source_url] = candidate
+            return candidate
         if source_url == HEPSIBURADA_S25_FE_256_URL:
             candidate, reason, status = self.hepsiburada_s25_fe_source.read_offer()
             self._record_attempt(source_url, reason, status)

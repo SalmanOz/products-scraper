@@ -478,6 +478,15 @@ class TRPriceScraper:
         remaining = groups.sub(mask_group, title)
         if re.search(r'(?:gb|tb)\s*(?:ram)?\s*\+\s*' + amount, title, re.I):
             ambiguous = True
+        # Some first-party PDPs state a physical RAM/storage pair with both
+        # units but no RAM label (for example "12GB 256GB"). The small-first,
+        # large-second relationship is only useful when the rest of the title
+        # does not introduce an alternative or contradictory capacity.
+        for match in re.finditer(r'(?<![\w.,])([1-9]|1\d|2[0-4])\s*gb\s+(\d{2,4})\s*(gb|tb)(?!\w)', remaining, re.I):
+            first = int(match.group(1))
+            second = cls._spec_int(match.group(2) + match.group(3))
+            if second is not None and second >= 128 and second >= first * 4:
+                ram.add(first); storage.add(second)
         for match in re.finditer(rf'(?:({capacity})\s*ram\b|\bram\s*:?\s*({capacity}))', remaining, re.I):
             ram.add(cls._spec_int(match.group(1) or match.group(2)))
         for match in re.finditer(rf'(?:({capacity})\s*(?:rom|depolama|haf[ıi]za)\b|\b(?:rom|depolama|haf[ıi]za)\s*:?\s*({capacity}))', remaining, re.I):
