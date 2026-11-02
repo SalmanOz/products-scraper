@@ -98,6 +98,7 @@ class PasajSourceTest(unittest.TestCase):
         offer = _selected_offer(page(), IPHONE17_256_URL)
         self.assertEqual((offer['merchant'], offer['price'], offer['currency'],
                           offer['availability']), ('Pasaj', 86999, 'TRY', 'in_stock'))
+        self.assertIsNone(_selected_offer(page(sku=1175750), IPHONE17_256_URL))
 
     def test_iphone16_exact_faq_ram_cash_and_stock(self):
         offer = _selected_offer(iphone16_page(), IPHONE16_128_URL)

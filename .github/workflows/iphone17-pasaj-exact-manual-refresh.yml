@@ -1,0 +1,79 @@
+name: iPhone 17 Pasaj Exact Manual Refresh
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Refresh only the reviewed iPhone 17 Pasaj cash offer after this run passes its audit'
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ inputs.publish && 'teknoskor-daily-data-sync' || 'teknoskor-iphone17-pasaj-readonly-audit' }}
+  queue: max
+  cancel-in-progress: false
+
+jobs:
+  exact_pasaj:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Test Pasaj cash reader and single-offer gates
+        run: python -m unittest -q test_pasaj_source test_iphone17_pasaj_manual_coverage test_price_refresh_orchestration
+      - name: Read exact Pasaj cash PDP and authenticated 4-seller baseline without writes
+        id: audit
+        env:
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+        run: |
+          : "${SCRAPER_INGESTION_SECRET:?SCRAPER_INGESTION_SECRET is required}"
+          python iphone17_pasaj_manual_coverage.py audit \
+            --audit-file "${{ runner.temp }}/iphone17-pasaj-audit.json"
+      - name: Refresh only the audited Pasaj seller once
+        if: ${{ inputs.publish && steps.audit.outcome == 'success' }}
+        env:
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+        run: |
+          : "${SCRAPER_INGESTION_SECRET:?SCRAPER_INGESTION_SECRET is required}"
+          python iphone17_pasaj_manual_coverage.py publish \
+            --publish-exact-one \
+            --audit-file "${{ runner.temp }}/iphone17-pasaj-audit.json" \
+            --output-file "${{ runner.temp }}/iphone17-pasaj-publish.json"
+      - name: Summarize exact Pasaj audit and optional refresh
+        if: always()
+        run: |
+          if test -f "${{ runner.temp }}/iphone17-pasaj-audit.json"; then
+            python iphone17_pasaj_manual_coverage.py summarize \
+              --publish-requested "${{ inputs.publish }}" \
+              --audit-file "${{ runner.temp }}/iphone17-pasaj-audit.json" \
+              --publish-file "${{ runner.temp }}/iphone17-pasaj-publish.json" \
+              --output-file "${{ runner.temp }}/iphone17-pasaj-audit.md"
+            cat "${{ runner.temp }}/iphone17-pasaj-audit.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Pasaj audit raporu oluşmadı; fiyat yenilemesi çalışmadı.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload read-only evidence and optional refresh result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: iphone17-pasaj-exact-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/iphone17-pasaj-audit.json
+            ${{ runner.temp }}/iphone17-pasaj-audit.md
+            ${{ runner.temp }}/iphone17-pasaj-publish.json
+          if-no-files-found: warn
+          retention-days: 30

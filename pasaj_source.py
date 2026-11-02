@@ -27,7 +27,7 @@ FOLD8_ULTRA_12_256_URL = ('https://www.turkcell.com.tr/pasaj/cep-telefonu/'
                           'android-telefonlar/samsung-galaxy-z-fold8-ultra-12gb-256gb')
 REVIEWED = {
     IPHONE17_256_URL: {'title': 'iPhone 17 256 GB', 'brand': 'Apple',
-                       'ram': '8 GB', 'storage': '256 GB'},
+                       'ram': '8 GB', 'storage': '256 GB', 'sku': '1175749'},
     IPHONE16_128_URL: {'title': 'iPhone 16 128 GB', 'brand': 'Apple',
                        'ram': '8 GB', 'storage': '128 GB'},
     A26_6_128_URL: {'title': 'Samsung Galaxy A26 5G 6 GB Ram 128 GB',
@@ -126,6 +126,7 @@ def _selected_offer(html, url):
     product = products[0]
     if (product.get('name') != headings[0] or product.get('url') != url or
             not re.fullmatch(r'[1-9]\d{3,10}', str(product.get('sku', ''))) or
+            ('sku' in reviewed and str(product.get('sku')) != reviewed['sku']) or
             product.get('brand') != {'@type': 'Brand', 'name': reviewed['brand']}):
         return None
     aggregate = product.get('offers')
