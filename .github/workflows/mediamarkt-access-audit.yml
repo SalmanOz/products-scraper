@@ -1,0 +1,40 @@
+name: MediaMarkt Public PDP Access Audit
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Probe robots, advertised sitemaps, and three public PDPs
+        env:
+          MEDIAMARKT_AUDIT_OUTPUT_DIR: ${{ runner.temp }}
+        run: python audit_mediamarkt_access.py
+      - name: Publish read-only summary
+        if: always()
+        run: |
+          if test -f "${{ runner.temp }}/mediamarkt-access.md"; then
+            cat "${{ runner.temp }}/mediamarkt-access.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload read-only evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mediamarkt-access-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/mediamarkt-access.json
+            ${{ runner.temp }}/mediamarkt-access.md
+          if-no-files-found: warn
+          retention-days: 30
