@@ -1,0 +1,41 @@
+{
+  "purpose": "Four reviewed Apple Store Türkiye exact variant URL hints. Prices and stock are never retained; every run rechecks robots, selected Product/Offer, live cash price, and active bag control.",
+  "products": [
+    {
+      "id": 297,
+      "slug": "apple-iphone-18-pro-max",
+      "name": "Apple iPhone 18 Pro Max",
+      "ram_gb": 12,
+      "storage_gb": 256,
+      "network_generation": "5g",
+      "targets": ["https://www.apple.com/tr/shop/buy-iphone/iphone-18-pro/6.9-in%C3%A7-ekran-256gb-siyah"]
+    },
+    {
+      "id": 296,
+      "slug": "apple-iphone-18-pro",
+      "name": "Apple iPhone 18 Pro",
+      "ram_gb": 12,
+      "storage_gb": 256,
+      "network_generation": "5g",
+      "targets": ["https://www.apple.com/tr/shop/buy-iphone/iphone-18-pro/6.3-in%C3%A7-ekran-256gb-siyah"]
+    },
+    {
+      "id": 248,
+      "slug": "apple-iphone-17e",
+      "name": "Apple iPhone 17e",
+      "ram_gb": 8,
+      "storage_gb": 256,
+      "network_generation": "5g",
+      "targets": ["https://www.apple.com/tr/shop/buy-iphone/iphone-17e/6.1-in%C3%A7-ekran-256gb-siyah"]
+    },
+    {
+      "id": 235,
+      "slug": "apple-iphone-17",
+      "name": "Apple iPhone 17",
+      "ram_gb": 8,
+      "storage_gb": 256,
+      "network_generation": "5g",
+      "targets": ["https://www.apple.com/tr/shop/buy-iphone/iphone-17/6.3-in%C3%A7-ekran-256gb-siyah"]
+    }
+  ]
+}
