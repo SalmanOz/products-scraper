@@ -13,7 +13,7 @@ from indexnow import submit_urls
 from offer_ingestion_client import OfferIngestionClient
 from price_sanity import filter_price_outliers
 from retailer_offer_refresh import ALLOWED_HOSTS, RetailerOfferRefresher, _safe_url
-from reviewed_offer_targets import daily_offer_targets, PROTECTED_TWO_STORE_SLUGS
+from reviewed_offer_targets import daily_offer_targets, with_reviewed_radio, PROTECTED_TWO_STORE_SLUGS
 
 load_dotenv()
 
@@ -306,7 +306,7 @@ class PriceUpdater:
         merchant_counts = {}
         for processed_count, p in enumerate(products, start=1):
             name = p['name']
-            expected_specs = self.get_expected_specs(p.get('attributes'))
+            expected_specs = with_reviewed_radio(p, self.get_expected_specs(p.get('attributes')))
             targets = daily_offer_targets(p, expected_specs)
             product_report = {'slug': p['slug'], 'targets': targets,
                               'purchasable_merchants': [], 'prepared_offers': [],

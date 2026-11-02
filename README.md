@@ -22,6 +22,17 @@ doğrulanamıyorsa bir tahmin üretilmez. Ön sipariş ve bilinmeyen stok, satı
 alınabilir mağaza kapsamına sayılmaz. Aynı alan adının farklı satıcı adlarıyla
 iki mağaza gibi sayılması engellenir.
 
+Katalogda radyo nesli alanı eksikse yalnız incelenmiş sekiz modelin aynı
+ID/ad/fiziksel RAM/depolama kimliğiyle eşleşen kayıtları için gözden geçirilmiş
+4G/5G profili kullanılır. Katalogda açıkça farklı radyo bilgisi varsa bu profil
+onu değiştirmez ve URL tohumu devre dışı kalır. Mağaza sayfasındaki model ve
+varyant doğrulaması yine zorunludur.
+
+Doğrudan ürün sayfası okuması her çağrıda en fazla 12 farklı URL ile sınırlıdır.
+Bir mağazanın çok sayıda renk bağlantısı diğer mağazaları bütçeden düşürmez:
+önce her mağazadan bir bağlantı, sonra sırayla ek renkler denenir. Bütçe dışında
+kalan güvenli URL'ler günlük raporda `target_budget_skipped` olarak görünür.
+
 403/429/challenge cevabında o mağaza için aynı çalışmada devre kesici açılır;
 PDP okuyucu engel çözmez veya eski gözlemi tazelemez. Geçici okuma hatası mevcut
 teklifleri silmez, fakat canlı sitenin 72 saatlik tazelik sınırını da uzatmaz.

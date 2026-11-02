@@ -144,6 +144,21 @@ class PriceRefreshOrchestrationTests(unittest.TestCase):
         self.assertTrue(all(row["source_title"] == TITLE for row in rows))
         self.assertTrue(all(row["checked_at"] == PDP_OBSERVED_AT for row in rows))
 
+    def test_reviewed_4g_identity_retains_known_urls_when_5g_field_is_absent(self):
+        phone = {
+            'id': 267, 'slug': 'tecno-camon-40', 'name': 'Tecno Camon 40',
+            'attributes': {'ram_gb': 8, 'storage_gb': 256,
+                           'Connectivity': {'4G LTE': 'B1 (2100), B3 (1800)'}},
+            'offer_targets': [],
+        }
+        self.assertNotIn('network_generation', PriceUpdater.get_expected_specs(phone['attributes']))
+        refresher = FakeRefresher()
+        updater = PriceUpdater(FakeIngestionClient([phone]), FakeDiscovery(), refresher)
+        with self.assertRaisesRegex(RuntimeError, 'two live verified merchants'):
+            asyncio.run(updater.run_update(dry_run=True, known_pdp_only=True))
+        self.assertEqual(refresher.calls[0][2]['network_generation'], '4g')
+        self.assertEqual(len(refresher.calls[0][1]), 3)
+
     def test_fewer_refreshed_merchants_fall_back_to_discovery(self):
         updater, client, _refresher, discovery = self.updater(
             [offer(0), offer(1)], [offer(2, observed=False)],

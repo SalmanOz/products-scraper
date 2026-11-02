@@ -339,6 +339,8 @@ def _public_retailer_product(soup, product, offer, url, price, availability):
 
 
 class RetailerOfferRefresher:
+    MAX_TARGETS_PER_REFRESH = 12
+
     def __init__(self, session=None, fetch=None):
         self._fetch = fetch or (session.get if session is not None else requests.get)
         self.public_sources = PublicRetailerSources(fetch=self._fetch)
@@ -359,8 +361,18 @@ class RetailerOfferRefresher:
 
     def target_report(self, product_name, targets, expected_specs):
         rows = []
-        urls = [t.get('source_url') if isinstance(t, dict) else t for t in targets[:24]]
-        for url in dict.fromkeys(u for u in urls if _safe_url(u)):
+        if not isinstance(targets, (list, tuple)):
+            return rows
+        urls = [t.get('source_url') if isinstance(t, dict) else t for t in targets]
+        unique = list(dict.fromkeys(u for u in urls if _safe_url(u)))
+        # A later merchant may have been attempted before earlier extra colors.
+        # Keep those observations visible even when the report is capped.
+        with self._lock:
+            attempted = [u for u in unique if self._diagnostics.get(u, {}).get('reason')
+                         not in (None, 'target_budget_skipped')]
+        attempted_urls = set(attempted)
+        visible = (attempted + [u for u in unique if u not in attempted_urls])[:24]
+        for url in visible:
             with self._lock:
                 detail = dict(self._diagnostics.get(url, {'reason': 'not_attempted', 'http_status': None}))
                 offer = self._cache.get(url)
@@ -459,17 +471,50 @@ class RetailerOfferRefresher:
         return candidate
 
     def refresh_existing_offer_targets(self, product_name, targets, expected_specs):
-        urls = []
         if not isinstance(targets, (list, tuple)):
             return []
-        for target in (targets or [])[:12]:
+        by_merchant = {}
+        seen = set()
+        for target in targets:
             url = target.get('source_url') if isinstance(target, dict) else target
-            if _safe_url(url) and url not in urls:
-                urls.append(url)
+            parsed = _safe_url(url)
+            if parsed and url not in seen:
+                seen.add(url)
+                by_merchant.setdefault(ALLOWED_HOSTS[parsed.hostname], []).append(url)
+        # Search results often contain many colors from one retailer before the
+        # next retailer. Spend the bounded PDP budget across distinct merchants
+        # first, then try additional colors from each merchant in source order.
+        urls = []
+        for index in range(self.MAX_TARGETS_PER_REFRESH):
+            for bucket in by_merchant.values():
+                if index < len(bucket):
+                    urls.append(bucket[index])
+                    if len(urls) == self.MAX_TARGETS_PER_REFRESH:
+                        break
+            if len(urls) == self.MAX_TARGETS_PER_REFRESH:
+                break
         if not urls:
             return []
+        selected = set(urls)
+        with self._lock:
+            for bucket in by_merchant.values():
+                for url in bucket:
+                    if url not in selected and url not in self._diagnostics:
+                        self._diagnostics[url] = {'reason': 'target_budget_skipped', 'http_status': None}
+        selected_by_merchant = {}
+        for url in urls:
+            merchant = ALLOWED_HOSTS[_safe_url(url).hostname]
+            selected_by_merchant.setdefault(merchant, []).append(url)
+
+        def fetch_merchant(merchant_urls):
+            # A 403/429 from the first PDP must open the circuit before another
+            # request to that retailer starts. Other retailers remain parallel.
+            return [(url, self._fetch_target(url)) for url in merchant_urls]
+
         with ThreadPoolExecutor(max_workers=4) as executor:
-            candidates = list(executor.map(self._fetch_target, urls))
+            fetched = dict(item for group in executor.map(
+                fetch_merchant, selected_by_merchant.values()) for item in group)
+        candidates = [fetched[url] for url in urls]
         # The cached observation is rechecked for every requested catalog model;
         # a base S26 cache hit cannot establish a Plus profile.
         return [dict(offer) for offer in candidates if offer

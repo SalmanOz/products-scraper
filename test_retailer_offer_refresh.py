@@ -340,6 +340,44 @@ class RetailerRefreshTests(unittest.TestCase):
         self.assertEqual(state['calls'], 12)
         self.assertLessEqual(state['max'], 4)
 
+    def test_target_budget_reaches_later_distinct_merchants(self):
+        calls = []
+        lock = Lock()
+        def fetch(url, **kwargs):
+            with lock:
+                calls.append(url)
+            return Response(page(product_schema(url)), url=url)
+        idefix = [f'https://www.idefix.com/samsung-galaxy-s25-12gb-128gb-p-{i}'
+                  for i in range(30)]
+        teknosa = 'https://www.teknosa.com/samsung-galaxy-s25-12gb-128gb-p-1'
+        n11 = 'https://www.n11.com/samsung-galaxy-s25-12gb-128gb-p-1'
+        targets = idefix + [teknosa, n11, idefix[0]]
+        reader = RetailerOfferRefresher(fetch=fetch)
+        offers = reader.refresh_existing_offer_targets('Samsung Galaxy S25', targets, SPECS)
+        self.assertEqual(len(calls), 12)
+        self.assertEqual(set(calls), set(idefix[:10]) | {teknosa, n11})
+        self.assertEqual({row['merchant'] for row in offers}, {'idefix', 'Teknosa', 'n11'})
+        report = reader.target_report('Samsung Galaxy S25', targets, SPECS)
+        self.assertIn(n11, [row['source_url'] for row in report])
+        self.assertIn(teknosa, [row['source_url'] for row in report])
+        self.assertEqual(next(row['reason'] for row in report if row['source_url'] == idefix[10]),
+                         'target_budget_skipped')
+
+    def test_access_denial_stops_queued_urls_on_the_same_retailer(self):
+        calls = []
+        def fetch(url, **kwargs):
+            calls.append(url)
+            return Response(status=403, url=url)
+        targets = [f'https://www.idefix.com/samsung-galaxy-s25-12gb-128gb-p-{i}'
+                   for i in range(8)]
+        reader = RetailerOfferRefresher(fetch=fetch)
+        self.assertEqual(reader.refresh_existing_offer_targets('Samsung Galaxy S25', targets, SPECS), [])
+        self.assertEqual(calls, targets[:1])
+        reasons = {row['source_url']: row['reason'] for row in reader.target_report(
+            'Samsung Galaxy S25', targets, SPECS)}
+        self.assertEqual(reasons[targets[0]], 'access_denied')
+        self.assertEqual({reasons[url] for url in targets[1:]}, {'host_circuit_open'})
+
 
 if __name__ == '__main__':
     unittest.main()

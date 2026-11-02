@@ -15,6 +15,28 @@ PROTECTED_TWO_STORE_SLUGS = frozenset({
 })
 
 
+def with_reviewed_radio(product, expected_specs):
+    """Fill a missing radio generation only for an exact reviewed catalog SKU.
+
+    Some verified 4G models list LTE bands but no explicit negative 5G field.
+    The reviewed URL batch records their radio identity. A conflicting catalog
+    value always wins and prevents that batch's URLs from being used.
+    """
+    specs = dict(expected_specs)
+    if specs.get('network_generation') is not None:
+        return specs
+    for profile in json.loads(URL_BATCH.read_text())['products']:
+        if (profile.get('id') == product.get('id')
+                and profile.get('slug') == product.get('slug')
+                and profile.get('name') == product.get('name')
+                and all(TRPriceScraper._spec_int(specs.get(key)) == profile.get(key)
+                        for key in ('ram_gb', 'storage_gb'))
+                and profile.get('network_generation') in {'4g', '5g'}):
+            specs['network_generation'] = profile['network_generation']
+            break
+    return specs
+
+
 def daily_offer_targets(product, expected_specs):
     """Retain reviewed URLs after offers expire; validate the current SKU again.
 
