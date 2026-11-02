@@ -7,7 +7,7 @@ from reviewed_offer_targets import (
     PASAJ_BATCH_PATH, URL_BATCH, VATAN_BATCH_PATH, S25_FE_256_BATCH_PATH,
     daily_offer_targets, with_reviewed_radio,
 )
-from pasaj_source import IPHONE16_128_URL, IPHONE17_256_URL
+from pasaj_source import A26_6_128_URL, IPHONE16_128_URL, IPHONE17_256_URL
 
 
 class ReviewedDailyTargetTests(unittest.TestCase):
@@ -100,6 +100,7 @@ class ReviewedDailyTargetTests(unittest.TestCase):
                           for profile in profiles}, {
             'apple-iphone-17': (235, 8, 256, [IPHONE17_256_URL]),
             'apple-iphone-16': (23, 8, 128, [IPHONE16_128_URL]),
+            'samsung-galaxy-a26-5g': (265, 6, 128, [A26_6_128_URL]),
         })
 
         def pasaj_targets(item, attributes):

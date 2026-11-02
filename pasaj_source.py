@@ -21,9 +21,16 @@ IPHONE17_256_URL = ('https://www.turkcell.com.tr/pasaj/cep-telefonu/'
                     'ios-telefonlar/apple-iphone-17/iphone-17-256-gb')
 IPHONE16_128_URL = ('https://www.turkcell.com.tr/pasaj/cep-telefonu/'
                     'ios-telefonlar/apple-iphone-16/iphone-16-128-gb')
+A26_6_128_URL = ('https://www.turkcell.com.tr/pasaj/cep-telefonu/'
+                 'android-telefonlar/samsung-galaxy-a26-5g-6-gb-ram-128-gb-hafiza-akilli-telefon')
 REVIEWED = {
-    IPHONE17_256_URL: {'title': 'iPhone 17 256 GB', 'ram': '8 GB', 'storage': '256 GB'},
-    IPHONE16_128_URL: {'title': 'iPhone 16 128 GB', 'ram': '8 GB', 'storage': '128 GB'},
+    IPHONE17_256_URL: {'title': 'iPhone 17 256 GB', 'brand': 'Apple',
+                       'ram': '8 GB', 'storage': '256 GB'},
+    IPHONE16_128_URL: {'title': 'iPhone 16 128 GB', 'brand': 'Apple',
+                       'ram': '8 GB', 'storage': '128 GB'},
+    A26_6_128_URL: {'title': 'Samsung Galaxy A26 5G 6 GB Ram 128 GB',
+                    'brand': 'Samsung', 'ram': '6 GB', 'storage': '128 GB',
+                    'network': '5G', 'selected_color': True},
 }
 ROBOTS_URL = 'https://www.turkcell.com.tr/robots.txt'
 BOT = 'TeknoskorPriceBot'
@@ -96,8 +103,10 @@ def _selected_offer(html, url):
             (url == IPHONE16_128_URL and (
                 not _iphone16_ram_in_exact_faq(soup) or
                 _feature(soup, 'Ram (bellek) Kapasitesi') not in (None, reviewed['ram']))) or
-            (url == IPHONE17_256_URL and
-             _feature(soup, 'Ram (bellek) Kapasitesi') != reviewed['ram'])):
+            (url != IPHONE16_128_URL and
+             _feature(soup, 'Ram (bellek) Kapasitesi') != reviewed['ram']) or
+            ('network' in reviewed and
+             _feature(soup, 'Hücresel Plan') != reviewed['network'])):
         return None
     products = []
     for script in soup.select('script[type="application/ld+json"]'):
@@ -112,7 +121,7 @@ def _selected_offer(html, url):
     product = products[0]
     if (product.get('name') != headings[0] or product.get('url') != url or
             not re.fullmatch(r'[1-9]\d{3,10}', str(product.get('sku', ''))) or
-            product.get('brand') != {'@type': 'Brand', 'name': 'Apple'}):
+            product.get('brand') != {'@type': 'Brand', 'name': reviewed['brand']}):
         return None
     aggregate = product.get('offers')
     if not isinstance(aggregate, dict) or aggregate.get('@type') != 'AggregateOffer':
@@ -155,6 +164,15 @@ def _selected_offer(html, url):
             buttons[0].get_text(' ', strip=True) != 'Sepete Ekle' or
             buttons[0].get('id') != 'p-' + str(product['sku'])):
         return None
+    if reviewed.get('selected_color'):
+        colors = form.select('select.m-select-color option[selected]') if form else []
+        if (len(colors) != 1 or colors[0].get('data-stock-available') != 'true' or
+                colors[0].get('data-at-basket') != 'false' or
+                colors[0].get('data-seller-name') != SELLER or
+                _cash_text(colors[0].get('data-price', '')) != price or
+                not re.fullmatch(re.escape(str(product['sku'])) + r'-\d+-\d+',
+                                 colors[0].get('data-device-product-uid', ''))):
+            return None
     return {'merchant': 'Pasaj', 'price': float(price), 'currency': 'TRY',
             'availability': 'in_stock', 'source_title': headings[0], 'url': url,
             'observed_at': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')}
@@ -207,27 +225,26 @@ class PasajSource:
         finally:
             response.close()
 
-    def _ensure_robots(self):
-        if self._rules is not None:
-            return
-        body, reason, _ = self._request(ROBOTS_URL, MAX_ROBOTS_BYTES)
-        if reason != 'ok' or not re.search(r'^\s*User-agent\s*:', body, re.I | re.M):
-            self._robots_status = reason if reason != 'ok' else 'invalid_robots'
-            raise ValueError('robots_unavailable')
-        rules = RobotFileParser()
-        rules.parse(body.splitlines())
-        if not rules.can_fetch(BOT, IPHONE17_256_URL):
+    def _ensure_robots(self, url):
+        if self._rules is None:
+            body, reason, _ = self._request(ROBOTS_URL, MAX_ROBOTS_BYTES)
+            if reason != 'ok' or not re.search(r'^\s*User-agent\s*:', body, re.I | re.M):
+                self._robots_status = reason if reason != 'ok' else 'invalid_robots'
+                raise ValueError('robots_unavailable')
+            rules = RobotFileParser()
+            rules.parse(body.splitlines())
+            delay = float(rules.crawl_delay(BOT) or 0)
+            rate = rules.request_rate(BOT)
+            if rate:
+                delay = max(delay, rate.seconds / max(1, rate.requests))
+            if delay > 30:
+                self._robots_status = 'crawl_delay_exceeds_budget'
+                raise ValueError('crawl_delay_exceeds_budget')
+            self._delay = max(0.5, delay)
+            self._rules = rules
+        if not self._rules.can_fetch(BOT, url):
             self._robots_status = 'pdp_disallowed'
             raise ValueError('robots_disallowed')
-        delay = float(rules.crawl_delay(BOT) or 0)
-        rate = rules.request_rate(BOT)
-        if rate:
-            delay = max(delay, rate.seconds / max(1, rate.requests))
-        if delay > 30:
-            self._robots_status = 'crawl_delay_exceeds_budget'
-            raise ValueError('crawl_delay_exceeds_budget')
-        self._delay = max(0.5, delay)
-        self._rules = rules
         self._robots_status = 'allowed'
 
     def read_offer(self, url):
@@ -235,9 +252,7 @@ class PasajSource:
             return None, 'unreviewed_pasaj_pdp', None
         with self._lock:
             try:
-                self._ensure_robots()
-                if not self._rules.can_fetch(BOT, url):
-                    return None, 'robots_disallowed', None
+                self._ensure_robots(url)
                 if self._pdp_requests >= MAX_PDP_REQUESTS:
                     return None, 'pdp_budget_exhausted', None
                 self._pdp_requests += 1

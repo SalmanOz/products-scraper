@@ -1,5 +1,5 @@
 {
-  "purpose": "Live-verified Turkcell Pasaj exact iPhone PDP URL hints. No price or stock is stored; every run rechecks robots, variant specifications, seller, selected cash price, stock and purchase control.",
+  "purpose": "Live-verified exact Turkcell Pasaj PDP URL hints. No price or stock is stored; every run rechecks robots, variant specifications, seller, selected cash price, stock and purchase control.",
   "products": [
     {
       "id": 235,
@@ -18,6 +18,15 @@
       "storage_gb": 128,
       "network_generation": "5g",
       "targets": ["https://www.turkcell.com.tr/pasaj/cep-telefonu/ios-telefonlar/apple-iphone-16/iphone-16-128-gb"]
+    },
+    {
+      "id": 265,
+      "slug": "samsung-galaxy-a26-5g",
+      "name": "Samsung Galaxy A26 5G",
+      "ram_gb": 6,
+      "storage_gb": 128,
+      "network_generation": "5g",
+      "targets": ["https://www.turkcell.com.tr/pasaj/cep-telefonu/android-telefonlar/samsung-galaxy-a26-5g-6-gb-ram-128-gb-hafiza-akilli-telefon"]
     }
   ]
 }

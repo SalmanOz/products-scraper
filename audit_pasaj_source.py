@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from tempfile import gettempdir
 
-from pasaj_source import IPHONE16_128_URL, IPHONE17_256_URL, PasajSource
+from pasaj_source import A26_6_128_URL, IPHONE16_128_URL, IPHONE17_256_URL, PasajSource
 from retailer_offer_refresh import RetailerOfferRefresher
 
 
@@ -16,6 +16,8 @@ PROFILES = (
      'network_generation': '5g', 'url': IPHONE17_256_URL},
     {'name': 'Apple iPhone 16', 'ram_gb': 8, 'storage_gb': 128,
      'network_generation': '5g', 'url': IPHONE16_128_URL},
+    {'name': 'Samsung Galaxy A26 5G', 'ram_gb': 6, 'storage_gb': 128,
+     'network_generation': '5g', 'url': A26_6_128_URL},
 )
 
 
@@ -49,7 +51,7 @@ def format_summary(report):
             lines.append(f"- {row['name']}: {attempt['reason']} (HTTP {attempt['http_status']}).")
         for offer in row['verified_offers']:
             lines.append(f"  {offer['price']:,.2f} TRY, {offer['availability']}, {offer['observed_at']}.")
-    lines.append('Read-only: two reviewed PDPs; no secrets, catalog calls or price writes.')
+    lines.append('Read-only: three reviewed PDPs; no secrets, catalog calls or price writes.')
     return '\n'.join(lines) + '\n'
 
 

@@ -83,7 +83,8 @@ jobs:
               for merchant in ('Apple Store', 'MediaMarkt', 'Vatan Bilgisayar', 'Türk Telekom eMağaza', 'Pasaj'):
                   attempts = [row for product in report.get('products', [])
                               for row in product.get('source_attempts', [])
-                              if row.get('merchant') == merchant]
+                              if row.get('merchant') == merchant
+                              and (merchant != 'Pasaj' or row.get('reason') != 'unreviewed_pasaj_pdp')]
                   accepted = sum(row.get('reason') in ('observed_exact_offer', 'observed_exact_cash_offer') for row in attempts)
                   lines.append(f'- {merchant}: {accepted}/{len(attempts)} exact live PDP observations.')
               with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:
