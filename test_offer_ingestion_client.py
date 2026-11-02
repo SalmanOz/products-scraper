@@ -127,7 +127,9 @@ def test_catalog_is_read_without_mysql():
                             "name": "Example Phone",
                             "slug": "example-phone",
                             "attributes": {"ram_gb": 8},
+                            "offer_targets_truncated": False,
                             "offer_targets": [{"merchant_name": "n11", "source_url": "https://www.n11.com/urun/phone",
+                                               "seller_name": "N11 Store",
                                                "checked_at": "2026-01-01T00:00:00Z", "price": 1, "source_title": "Do not reuse"}],
                         }
                     ],
@@ -173,8 +175,39 @@ def test_catalog_is_read_without_mysql():
     )
     assert all(call[2]['params']['include_offer_targets'] == '1' for call in session.calls)
     assert products[1]['offer_targets'] == []
+    assert products[0]['offer_targets_truncated'] is False
+    assert products[1]['offer_targets_truncated'] is None
     assert products[0]['offer_targets'] == [{"merchant_name": "n11", "source_url": "https://www.n11.com/urun/phone",
+                                             "seller_name": "N11 Store",
                                              "checked_at": "2026-01-01T00:00:00Z"}]
+
+
+def test_catalog_target_completeness_must_be_boolean_and_survive_local_filtering():
+    def read_product(targets, flag):
+        session = FakeSession([FakeResponse(200, {
+            'products': [{'id': 42, 'name': 'Example Phone',
+                          'slug': 'example-phone', 'attributes': {},
+                          'offer_targets': targets,
+                          'offer_targets_truncated': flag}],
+            'hasMore': False,
+        })])
+        client = OfferIngestionClient('https://teknoskor.com', TEST_SECRET,
+                                      session=session, sleep=lambda _seconds: None)
+        return client.get_published_products()[0]
+
+    for invalid in (None, 0, 'false'):
+        try:
+            read_product([], invalid)
+        except IngestionClientError as error:
+            assert 'target completeness' in str(error)
+        else:
+            assert False, f'invalid completeness {invalid!r} was accepted'
+    targets = [{'merchant_name': 'MediaMarkt',
+                'source_url': f'https://www.mediamarkt.com.tr/tr/product/_phone-{i}.html'}
+               for i in range(13)]
+    product = read_product(targets, False)
+    assert len(product['offer_targets']) == 12
+    assert product['offer_targets_truncated'] is True
 
 
 def test_ingestion_batches_at_500_and_sends_bearer_token():
@@ -728,6 +761,7 @@ def test_refreshed_stock_and_actual_fetch_time_are_not_rewritten_as_new_unknown_
 if __name__ == "__main__":
     test_refreshed_stock_and_actual_fetch_time_are_not_rewritten_as_new_unknown_evidence()
     test_catalog_is_read_without_mysql()
+    test_catalog_target_completeness_must_be_boolean_and_survive_local_filtering()
     test_ingestion_batches_at_500_and_sends_bearer_token()
     test_committed_503_retries_until_scores_are_recalculated()
     test_committed_503_fails_when_scores_never_recalculate()

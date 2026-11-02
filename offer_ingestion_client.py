@@ -230,6 +230,16 @@ class OfferIngestionClient:
 
                 attributes = raw_product.get("attributes")
                 targets = raw_product.get("offer_targets")
+                truncated = raw_product.get("offer_targets_truncated")
+                if ("offer_targets_truncated" in raw_product and
+                        type(truncated) is not bool):
+                    raise IngestionClientError(
+                        f"Catalog product {product_id} has invalid target completeness"
+                    )
+                if truncated is not None and not isinstance(targets, list):
+                    raise IngestionClientError(
+                        f"Catalog product {product_id} has invalid offer targets"
+                    )
                 targets = targets if isinstance(targets, list) else []
                 # Refresh hints, not reusable prices or SKU proof. The fetcher
                 # validates each destination again before making a request.
@@ -237,11 +247,16 @@ class OfferIngestionClient:
                     {key: target.get(key) for key in (
                         "merchant_name", "source_url", "checked_at",
                     )}
+                    | ({"seller_name": target["seller_name"]}
+                       if "seller_name" in target else {})
                     for target in targets[:12]
                     if isinstance(target, dict)
                     and isinstance(target.get("source_url"), str)
                     and len(target["source_url"]) <= 1000
                 ]
+                # Filtering or the local cap can only make completeness worse.
+                if len(offer_targets) != len(targets):
+                    truncated = True
                 products.append(
                     {
                         "id": product_id,
@@ -251,6 +266,7 @@ class OfferIngestionClient:
                             attributes if isinstance(attributes, dict) else {}
                         ),
                         "offer_targets": offer_targets,
+                        "offer_targets_truncated": truncated,
                     }
                 )
                 seen_ids.add(product_id)
