@@ -15,6 +15,9 @@ from vatan_reviewed_source import VatanReviewedSource
 
 PRODUCT = {'id': 286, 'slug': 'vivo-x300', 'name': 'vivo X300',
            'ram_gb': 16, 'storage_gb': 512, 'network_generation': '5g'}
+PROFILE = PRODUCT
+SPECS = {key: PRODUCT[key] for key in ('ram_gb', 'storage_gb', 'network_generation')}
+URL = VIVO_X300_VATAN_PDP
 SELECTED_H1 = 'Vivo X300 16/512GB Akıllı Telefon Pembe'
 MAX_OBSERVATION_AGE_SECONDS = 300
 OUT = Path(os.environ.get('VATAN_VIVO_AUDIT_OUTPUT_DIR', gettempdir()))
@@ -31,9 +34,27 @@ def _fresh(observed_at, now):
         return False
 
 
+def exact_catalog_product(products):
+    if not isinstance(products, list) or len(products) > 1000:
+        return None
+    matches = [product for product in products
+               if isinstance(product, dict) and product.get('id') == PRODUCT['id']]
+    if len(matches) != 1:
+        return None
+    product = matches[0]
+    specs = PriceUpdater.get_expected_specs(product.get('attributes'))
+    matcher = TRPriceScraper()
+    if (product.get('slug') != PRODUCT['slug']
+            or product.get('name') != PRODUCT['name']
+            or any(matcher._spec_int(specs.get(key)) != PRODUCT[key]
+                   for key in ('ram_gb', 'storage_gb'))
+            or specs.get('network_generation') != '5g'):
+        return None
+    return product
+
+
 def run_audit(reader=None, catalog_client=None, now=None):
-    now = now or datetime.now(timezone.utc)
-    if now.tzinfo is None:
+    if now is not None and now.tzinfo is None:
         raise ValueError('now must include timezone')
     reader = reader or RetailerOfferRefresher(vatan_source=VatanReviewedSource(
         additional_reviewed_urls=(VIVO_X300_VATAN_PDP,)))
@@ -44,28 +65,22 @@ def run_audit(reader=None, catalog_client=None, now=None):
             raise ValueError('invalid_catalog_snapshot')
     except Exception as error:
         catalog, catalog_status = [], 'unavailable_' + type(error).__name__
-    matches = [product for product in catalog
-               if isinstance(product, dict) and product.get('id') == PRODUCT['id']]
-    product = matches[0] if len(matches) == 1 else None
+    product = exact_catalog_product(catalog)
+    catalog_confirmed = product is not None
     specs = PriceUpdater.get_expected_specs(product.get('attributes')) if product else {}
-    matcher = TRPriceScraper()
-    catalog_confirmed = bool(product and product.get('slug') == PRODUCT['slug']
-                             and product.get('name') == PRODUCT['name']
-                             and all(matcher._spec_int(specs.get(key)) == PRODUCT[key]
-                                     for key in ('ram_gb', 'storage_gb'))
-                             and specs.get('network_generation') == '5g')
-    expected_specs = {key: PRODUCT[key] for key in
-                      ('ram_gb', 'storage_gb', 'network_generation')}
     targets = [{'source_url': VIVO_X300_VATAN_PDP}]
-    offers = reader.refresh_existing_offer_targets(PRODUCT['name'], targets, expected_specs)
-    attempts = reader.target_report(PRODUCT['name'], targets, expected_specs)
+    offers = reader.refresh_existing_offer_targets(PRODUCT['name'], targets, SPECS)
+    attempts = reader.target_report(PRODUCT['name'], targets, SPECS)
     source = reader.vatan_reviewed_source.report()
+    checked_at = now or datetime.now(timezone.utc)
     attempt_confirmed = (len(attempts) == 1
                          and attempts[0].get('source_url') == VIVO_X300_VATAN_PDP
+                         and attempts[0].get('merchant') == 'Vatan Bilgisayar'
                          and attempts[0].get('reason') == 'observed_exact_offer'
                          and attempts[0].get('http_status') == 200)
     offer_confirmed = (len(offers) == 1
                        and offers[0].get('merchant') == 'Vatan Bilgisayar'
+                       and offers[0].get('selected_vatan_variant_verified') is True
                        and offers[0].get('source_title') == SELECTED_H1
                        and offers[0].get('url') == VIVO_X300_VATAN_PDP
                        and offers[0].get('currency') == 'TRY'
@@ -73,13 +88,15 @@ def run_audit(reader=None, catalog_client=None, now=None):
                        and isinstance(offers[0].get('price'), (int, float))
                        and not isinstance(offers[0].get('price'), bool)
                        and 0 < offers[0]['price'] <= 5_000_000
-                       and _fresh(offers[0].get('observed_at'), now))
+                       and _fresh(offers[0].get('observed_at'), checked_at))
     status = ('passed' if catalog_confirmed and attempt_confirmed and offer_confirmed
               and source.get('robots_status') == 'ready' else 'partial')
     return {'purpose': 'read_only_vatan_vivo_exact_selected_pdp_proof',
-            'checked_at': now.isoformat().replace('+00:00', 'Z'),
+            'checked_at': checked_at.isoformat().replace('+00:00', 'Z'),
             'status': status, 'catalog_status': catalog_status,
             'catalog_confirmed': catalog_confirmed,
+            'catalog_variant': {'id': PRODUCT['id'], 'slug': PRODUCT['slug'],
+                                'name': PRODUCT['name'], 'specs': SPECS},
             'catalog_observed': ({'id': product.get('id'), 'slug': product.get('slug'),
                                   'name': product.get('name'), 'specs': specs} if product else None),
             'product_id': PRODUCT['id'], 'url': VIVO_X300_VATAN_PDP,
@@ -87,7 +104,8 @@ def run_audit(reader=None, catalog_client=None, now=None):
             'offer_confirmed': offer_confirmed,
             'offer': ({key: offers[0].get(key) for key in
                        ('merchant', 'price', 'currency', 'availability',
-                        'source_title', 'url', 'observed_at')} if offer_confirmed else None),
+                        'source_title', 'url', 'observed_at',
+                        'selected_vatan_variant_verified')} if offer_confirmed else None),
             'vatan_source': source, 'writes': False}
 
 
