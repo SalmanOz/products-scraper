@@ -1,0 +1,87 @@
+name: Galaxy A55 Two Seller Exact Manual Offer Coverage
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish two exact Galaxy A55 seller offers once, only after this run passes its read-only audit'
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ inputs.publish && 'teknoskor-daily-data-sync' || 'teknoskor-a55-two-seller-readonly-audit' }}
+  queue: max
+  cancel-in-progress: false
+
+jobs:
+  exact_two:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Test exact two-offer audit and publication gates
+        run: python -m unittest -q test_a55_exact_manual_coverage test_raw_seller_collision_proof test_redmi_target_diagnostics_contract test_coverage_two_marketplace test_mediamarkt_marketplace_audit test_mediamarkt_source
+      - name: Start bounded browser GET service
+        run: |
+          docker run -d --name=a55-two-seller-browser -p 8191:8191 -e LOG_LEVEL=info ghcr.io/flaresolverr/flaresolverr:latest
+          for attempt in {1..30}; do
+            if curl --fail --silent http://localhost:8191/ > /dev/null; then exit 0; fi
+            sleep 2
+          done
+          docker logs a55-two-seller-browser
+          exit 1
+      - name: Read two exact A55 PDPs, legal sellers and authenticated catalog without writes
+        id: audit
+        env:
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+        run: |
+          : "${SCRAPER_INGESTION_SECRET:?SCRAPER_INGESTION_SECRET is required}"
+          python a55_exact_manual_coverage.py audit --audit-file "${{ runner.temp }}/a55-two-seller-audit.json"
+      - name: Publish only the two audited selected offers
+        if: ${{ inputs.publish && steps.audit.outcome == 'success' }}
+        env:
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+        run: |
+          : "${SCRAPER_INGESTION_SECRET:?SCRAPER_INGESTION_SECRET is required}"
+          python a55_exact_manual_coverage.py publish \
+            --publish-exact-two \
+            --audit-file "${{ runner.temp }}/a55-two-seller-audit.json" \
+            --output-file "${{ runner.temp }}/a55-two-seller-publish.json"
+      - name: Summarize final audit and publication outcome
+        if: always()
+        run: |
+          if test -f "${{ runner.temp }}/a55-two-seller-audit.json"; then
+            python a55_exact_manual_coverage.py summarize \
+              --publish-requested "${{ inputs.publish }}" \
+              --audit-file "${{ runner.temp }}/a55-two-seller-audit.json" \
+              --publish-file "${{ runner.temp }}/a55-two-seller-publish.json" \
+              --output-file "${{ runner.temp }}/a55-two-seller-audit.md"
+            cat "${{ runner.temp }}/a55-two-seller-audit.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'A55 denetim raporu oluşmadı; yayın sonucu için job adımlarını inceleyin.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload audit and optional publication evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a55-two-seller-exact-manual-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/a55-two-seller-audit.json
+            ${{ runner.temp }}/a55-two-seller-audit.md
+            ${{ runner.temp }}/a55-two-seller-publish.json
+          if-no-files-found: warn
+          retention-days: 30
