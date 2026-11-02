@@ -490,6 +490,46 @@ class RetailerRefreshTests(unittest.TestCase):
         self.assertEqual(reasons[targets[0]], 'access_denied')
         self.assertEqual({reasons[url] for url in targets[1:]}, {'host_circuit_open'})
 
+    def test_unreviewed_vatan_denial_does_not_block_reviewed_exact_pdp(self):
+        unreviewed = 'https://www.vatanbilgisayar.com/iphone-17-256-gb-akilli-telefon-sis-mavisi.html'
+        html = vatan_variant_page(vatan_variant_schema())
+        calls = []
+
+        class ReviewedVatan:
+            @staticmethod
+            def is_reviewed(url):
+                return url == VATAN_URL
+
+            @staticmethod
+            def prepare(url):
+                self.assertEqual(url, VATAN_URL)
+                return True, 'ready'
+
+            @staticmethod
+            def browser_get(url):
+                self.assertEqual(url, VATAN_URL)
+                return html, 'browser_html_ready'
+
+        def fetch(url, **_kwargs):
+            calls.append(url)
+            return Response(status=403, url=url)
+
+        reader = RetailerOfferRefresher(fetch=fetch, vatan_source=ReviewedVatan())
+        offers = reader.refresh_existing_offer_targets(
+            'Apple iPhone 17', [unreviewed, VATAN_URL],
+            {'ram_gb': 8, 'storage_gb': 256, 'network_generation': '5g'},
+        )
+        self.assertEqual(calls, [unreviewed, VATAN_URL])
+        self.assertEqual(len(offers), 1)
+        self.assertEqual(offers[0]['merchant'], 'Vatan Bilgisayar')
+        self.assertEqual(offers[0]['price'], 89999)
+        reasons = {row['source_url']: row['reason'] for row in reader.target_report(
+            'Apple iPhone 17', [unreviewed, VATAN_URL],
+            {'ram_gb': 8, 'storage_gb': 256, 'network_generation': '5g'},
+        )}
+        self.assertEqual(reasons[unreviewed], 'access_denied')
+        self.assertEqual(reasons[VATAN_URL], 'observed_exact_offer')
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -601,7 +601,10 @@ class RetailerOfferRefresher:
                     break
             with self._lock:
                 blocked = parsed.hostname.removeprefix('www.') in self._blocked_hosts
-            if blocked:
+            # Generic discovery URLs can trip the retailer-wide circuit after
+            # a 403. Reviewed Vatan PDPs have their own exact-URL robots gate
+            # and bounded browser fallback, so keep those six independent.
+            if blocked and not reviewed_vatan:
                 self._record_attempt(source_url, 'host_circuit_open')
                 break
             try:
