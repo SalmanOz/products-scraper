@@ -27,7 +27,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
       - name: Test reviewed sources and offer validation
-        run: python -m unittest -q test_apple_store_source test_mediamarkt_source test_vatan_reviewed_source test_turk_telekom_source test_pasaj_source test_s25_fe_hepsiburada_audit test_hepsiburada_apple_audit test_iphone16e_mediamarkt_audit test_teknosa_reviewed_source test_retailer_offer_refresh test_reviewed_offer_targets test_price_refresh_orchestration
+        run: python -m unittest -q test_apple_store_source test_mediamarkt_source test_vatan_reviewed_source test_turk_telekom_source test_pasaj_source test_s25_fe_hepsiburada_audit test_hepsiburada_apple_audit test_iphone16e_mediamarkt_audit test_teknosa_reviewed_source test_teknosa_preflight_handoff test_retailer_offer_refresh test_reviewed_offer_targets test_price_refresh_orchestration
       - name: Start bounded browser GET service
         run: |
           docker run -d --name=reviewed-retailer-browser -p 8191:8191 -e LOG_LEVEL=info ghcr.io/flaresolverr/flaresolverr:latest

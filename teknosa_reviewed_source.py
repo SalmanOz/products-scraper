@@ -9,10 +9,12 @@ agree on Teknosa and the same SKU. No offer is persisted by this module.
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 from urllib.robotparser import RobotFileParser
 
 from bs4 import BeautifulSoup
@@ -31,6 +33,7 @@ NAME = 'Apple iPhone 17e'
 SPECS = {'ram_gb': 8, 'storage_gb': 256, 'network_generation': '5g'}
 MAX_ROBOTS_BYTES = 64 * 1024
 MAX_HTML_BYTES = 5 * 1024 * 1024
+MAX_PREFLIGHT_AGE_SECONDS = 10 * 60
 
 
 def _amount(value):
@@ -144,14 +147,65 @@ def parse_exact_first_party_offer(html: str, final_url: str = URL):
 class TeknosaReviewedSource:
     """A two-browser-read budget: robots, then only the exact reviewed PDP."""
 
-    def __init__(self, get=None, post=None, sleep=time.sleep):
+    def __init__(self, get=None, post=None, sleep=time.sleep,
+                 audit_file=None, now=None):
         self._get = get or requests.get
         self._post = post or requests.post
         self._sleep = sleep
+        self._audit_file = (audit_file if audit_file is not None else
+                            os.environ.get('TEKNOSA_VERIFIED_AUDIT_FILE'))
+        self._now = now or (lambda: datetime.now(timezone.utc))
+
+    def _preflight_offer(self):
+        """Reuse only a fresh, exact observation from this runner's preflight."""
+        try:
+            report = json.loads(Path(self._audit_file).read_text())
+            if (not isinstance(report, dict)
+                    or report.get('purpose') != 'read_only_exact_first_party_teknosa_offer'
+                    or report.get('verified') is not True
+                    or report.get('writes') is not False
+                    or report.get('reason') != 'observed_exact_first_party_cash_offer'
+                    or report.get('http_status') != 200
+                    or report.get('catalog_id') != 248
+                    or report.get('slug') != 'apple-iphone-17e'
+                    or report.get('name') != NAME
+                    or report.get('specs') != SPECS
+                    or report.get('retailer_product_id') != PRODUCT_ID
+                    or report.get('url') != URL):
+                return None
+            offer = report.get('offer')
+            if (not isinstance(offer, dict)
+                    or offer.get('merchant') != 'Teknosa'
+                    or _amount(offer.get('price')) is None
+                    or offer.get('currency') != 'TRY'
+                    or offer.get('availability') != 'in_stock'
+                    or offer.get('url') != URL):
+                return None
+            title = offer.get('source_title')
+            if (not isinstance(title, str)
+                    or not TRPriceScraper().is_strict_match(NAME, title, SPECS)
+                    or not re.search(r'\bBeyaz\b', title, re.I)
+                    or re.search(r'outlet|teşhir|teshir|yenilen|ikinci el', title, re.I)):
+                return None
+            checked = datetime.fromisoformat(report['checked_at'].replace('Z', '+00:00'))
+            observed = datetime.fromisoformat(offer['observed_at'].replace('Z', '+00:00'))
+            now = self._now()
+            if (checked.tzinfo is None or observed.tzinfo is None or now.tzinfo is None
+                    or not -60 <= (now - checked).total_seconds() <= MAX_PREFLIGHT_AGE_SECONDS
+                    or not -60 <= (now - observed).total_seconds() <= MAX_PREFLIGHT_AGE_SECONDS
+                    or not -60 <= (checked - observed).total_seconds() <= MAX_PREFLIGHT_AGE_SECONDS):
+                return None
+            return offer
+        except (OSError, ValueError, TypeError, KeyError, AttributeError):
+            return None
 
     def read_offer(self, url=URL):
         if url != URL:
             return None, 'unreviewed_pdp', None
+        if self._audit_file:
+            offer = self._preflight_offer()
+            return (offer, 'observed_exact_first_party_cash_offer_from_preflight', 200) if offer else (
+                None, 'preflight_invalid_or_stale', None)
         # Reuse the proven bounded GET transport; it never writes or follows
         # changed URLs. One instance keeps its two browser requests isolated.
         transport = HepsiburadaS25FeSource(

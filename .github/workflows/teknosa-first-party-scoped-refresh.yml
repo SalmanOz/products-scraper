@@ -31,7 +31,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
       - name: Test exact seller, catalog identity, and offer routing
-        run: python -m unittest -q test_teknosa_reviewed_source test_reviewed_offer_targets test_retailer_offer_refresh test_price_refresh_orchestration
+        run: python -m unittest -q test_teknosa_reviewed_source test_teknosa_preflight_handoff test_reviewed_offer_targets test_retailer_offer_refresh test_price_refresh_orchestration
       - name: Start bounded browser GET service
         run: |
           docker run -d --name=teknosa-scoped-browser -p 8191:8191 -e LOG_LEVEL=info ghcr.io/flaresolverr/flaresolverr:latest
@@ -51,11 +51,18 @@ jobs:
         env:
           TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
           SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+          TEKNOSA_VERIFIED_AUDIT_FILE: ${{ runner.temp }}/teknosa-first-party-audit.json
         run: |
           set -euo pipefail
           : "${SCRAPER_INGESTION_SECRET:?SCRAPER_INGESTION_SECRET is required}"
           python update_prices.py --slugs apple-iphone-17e \
             --known-pdp-only --report teknosa-first-party-scoped-report.json
+      - name: Require exact Teknosa offer in committed refresh
+        if: ${{ inputs.publish && steps.scoped_prices.outcome == 'success' }}
+        run: |
+          python verify_teknosa_scoped_refresh.py \
+            "${{ runner.temp }}/teknosa-first-party-audit.json" \
+            teknosa-first-party-scoped-report.json
       - name: Reconcile scores after committed offers
         if: ${{ always() && !cancelled() && (steps.scoped_prices.outcome == 'success' || steps.scoped_prices.outcome == 'failure') }}
         env:

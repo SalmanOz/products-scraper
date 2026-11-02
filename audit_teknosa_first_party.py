@@ -21,7 +21,8 @@ def run_audit(source=None):
         'specs': SPECS, 'retailer_product_id': PRODUCT_ID, 'url': URL,
         'reason': reason, 'http_status': status, 'verified': offer is not None,
         'offer': {key: offer.get(key) for key in
-                  ('merchant', 'price', 'currency', 'availability', 'source_title', 'url')}
+                  ('merchant', 'price', 'currency', 'availability', 'source_title',
+                   'url', 'observed_at')}
                  if offer else None,
         'writes': False,
     }
