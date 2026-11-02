@@ -39,13 +39,22 @@ def readback(client, record):
         raise ScopedRefreshError('oppo_price_readback_missing')
     row = rows[0]
     lowest = row.get('matchedLowestPrice')
+    matched = row.get('matchedOffers')
+    exact = ([offer for offer in matched if isinstance(offer, dict)
+              and offer.get('source_url') == URL]
+             if isinstance(matched, list) else [])
     if (not isinstance(row.get('matchedMerchants'), int)
             or row['matchedMerchants'] < 1
             or not isinstance(lowest, (int, float)) or isinstance(lowest, bool)
-            or not 0 < lowest <= record['price']):
+            or not 0 < lowest <= record['price']
+            or len(exact) != 1
+            or exact[0].get('merchant_name') != 'Vatan Bilgisayar'
+            or not isinstance(exact[0].get('price'), (int, float))
+            or isinstance(exact[0]['price'], bool)
+            or exact[0]['price'] != record['price']):
         raise ScopedRefreshError('oppo_offer_not_commercially_visible')
     return {'exact_target_stored': True, 'matched_merchants': row['matchedMerchants'],
-            'matched_lowest_price': lowest}
+            'matched_lowest_price': lowest, 'exact_offer_price': exact[0]['price']}
 
 
 def prepare(audit_file, *, client=None, updater=None, now=None):
@@ -121,6 +130,7 @@ def main(argv=None):
         lines.append(f"Accepted: {report['ingestion']['accepted']}/1.")
     if 'readback' in report:
         lines.append(f"Commercial readback: {report['readback']['matched_merchants']} merchant; "
+                     f"exact Vatan {report['readback']['exact_offer_price']} TRY; "
                      f"lowest {report['readback']['matched_lowest_price']} TRY.")
     if 'reason' in report:
         lines.append('Reason: ' + report['reason'])

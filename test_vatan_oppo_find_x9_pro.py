@@ -63,6 +63,8 @@ class Client:
         self.coverage = coverage if coverage is not None else {
             'slug': PROFILE['slug'], 'matchedMerchants': 1,
             'matchedLowestPrice': 104999,
+            'matchedOffers': [{'merchant_name': 'Vatan Bilgisayar',
+                               'source_url': URL, 'price': 104999}],
         }
         self.submitted = []
 
@@ -155,6 +157,7 @@ class OppoScopedTests(unittest.TestCase):
         self.assertEqual(result['accepted'], 1)
         self.assertEqual(client.submitted, [[posted]])
         self.assertEqual(readback['matched_lowest_price'], 104999)
+        self.assertEqual(readback['exact_offer_price'], posted['price'])
 
     def test_writer_rejects_ingestion_and_readback_failure(self):
         for response in ({'committed': True, 'accepted': 0, 'stale_ignored': 1,
@@ -168,6 +171,22 @@ class OppoScopedTests(unittest.TestCase):
             publish(self.path, client=Client(coverage={
                 'slug': PROFILE['slug'], 'matchedMerchants': 0,
                 'matchedLowestPrice': None}), updater=Updater(), now=NOW)
+        base = Client().coverage
+        for changed in (
+            {'matchedOffers': []},
+            {'matchedOffers': [{'merchant_name': 'Other', 'source_url': URL,
+                                'price': 104999}]},
+            {'matchedOffers': [{'merchant_name': 'Vatan Bilgisayar',
+                                'source_url': URL.replace('16-512', '8-256'),
+                                'price': 104999}]},
+            {'matchedOffers': [{'merchant_name': 'Vatan Bilgisayar',
+                                'source_url': URL, 'price': 75999}]},
+            {'matchedOffers': base['matchedOffers'] * 2},
+        ):
+            with self.subTest(changed=changed), self.assertRaisesRegex(
+                    ScopedRefreshError, 'commercially_visible'):
+                publish(self.path, client=Client(coverage={**base, **changed}),
+                        updater=Updater(), now=NOW)
         products = Catalog().products
         products[0] = {**products[0], 'attributes': {'ram_gb': 8,
                                                       'storage_gb': 512,

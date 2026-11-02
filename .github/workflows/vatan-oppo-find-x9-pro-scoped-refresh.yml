@@ -1,6 +1,8 @@
 name: OPPO Find X9 Pro Vatan Scoped Offer Refresh
 
 on:
+  schedule:
+    - cron: '0 5 * * *'
   workflow_dispatch:
     inputs:
       publish:
@@ -13,7 +15,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ inputs.publish && 'teknoskor-daily-data-sync' || 'teknoskor-oppo-vatan-preflight' }}
+  group: ${{ (github.event_name == 'schedule' || inputs.publish) && 'teknoskor-daily-data-sync' || 'teknoskor-oppo-vatan-preflight' }}
   cancel-in-progress: false
 
 jobs:
@@ -47,7 +49,7 @@ jobs:
           TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
           SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
         run: python audit_vatan_oppo_find_x9_pro.py
-      - name: Validate same-run OPPO payload and optionally write
+      - name: Validate same-run OPPO payload and write on schedule or explicit publish
         id: scoped_prices
         env:
           VATAN_OPPO_REFRESH_OUTPUT_DIR: ${{ runner.temp }}
@@ -56,13 +58,13 @@ jobs:
         run: |
           set -euo pipefail
           : "${SCRAPER_INGESTION_SECRET:?SCRAPER_INGESTION_SECRET is required}"
-          if [ "${{ inputs.publish }}" = "true" ]; then
+          if [ "$GITHUB_EVENT_NAME" = "schedule" ] || [ "${{ inputs.publish }}" = "true" ]; then
             python refresh_vatan_oppo_find_x9_pro.py --audit-file "${{ runner.temp }}/vatan-oppo-find-x9-pro-audit.json" --publish
           else
             python refresh_vatan_oppo_find_x9_pro.py --audit-file "${{ runner.temp }}/vatan-oppo-find-x9-pro-audit.json"
           fi
       - name: Reconcile scores after committed offer
-        if: ${{ inputs.publish && always() && !cancelled() && (steps.scoped_prices.outcome == 'success' || steps.scoped_prices.outcome == 'failure') }}
+        if: ${{ (github.event_name == 'schedule' || inputs.publish) && always() && !cancelled() && (steps.scoped_prices.outcome == 'success' || steps.scoped_prices.outcome == 'failure') }}
         env:
           TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
           SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
