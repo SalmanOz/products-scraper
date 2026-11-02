@@ -27,6 +27,7 @@ from vatan_reviewed_source import VatanReviewedSource
 from mediamarkt_source import MediaMarktSource, product_url as mediamarkt_product_url
 from apple_store_source import AppleStoreSource, reviewed_slug as apple_store_reviewed_slug
 from turk_telekom_source import TurkTelekomSource, product_url as turk_telekom_product_url
+from pasaj_source import PasajSource, product_url as pasaj_product_url
 
 
 _MERCHANT_DOMAINS = {
@@ -515,7 +516,7 @@ class RetailerOfferRefresher:
 
     def __init__(self, session=None, fetch=None, vatan_source=None,
                  mediamarkt_source=None, apple_store_source=None,
-                 turk_telekom_source=None, clock=time.monotonic):
+                 turk_telekom_source=None, pasaj_source=None, clock=time.monotonic):
         self._fetch = fetch or (session.get if session is not None else requests.get)
         self.public_sources = PublicRetailerSources(fetch=self._fetch)
         self.pazarama_source = PazaramaCategorySource(fetch=self._fetch)
@@ -523,6 +524,7 @@ class RetailerOfferRefresher:
         self.mediamarkt_source = mediamarkt_source or MediaMarktSource(get=self._fetch)
         self.apple_store_source = apple_store_source or AppleStoreSource(get=self._fetch)
         self.turk_telekom_source = turk_telekom_source or TurkTelekomSource(get=self._fetch)
+        self.pasaj_source = pasaj_source or PasajSource(get=self._fetch)
         self._scraper = TRPriceScraper()
         self._cache = {}
         self._blocked_hosts = set()
@@ -603,6 +605,15 @@ class RetailerOfferRefresher:
             return candidate
         if parsed.hostname == 'emagaza.turktelekom.com.tr':
             candidate, reason, status = self.turk_telekom_source.read_offer(source_url)
+            self._record_attempt(source_url, reason, status)
+            with self._lock:
+                self._cache[source_url] = candidate
+            return candidate
+        if parsed.hostname.removeprefix('www.') == 'turkcell.com.tr':
+            if pasaj_product_url(source_url):
+                candidate, reason, status = self.pasaj_source.read_offer(source_url)
+            else:
+                candidate, reason, status = None, 'unreviewed_pasaj_pdp', None
             self._record_attempt(source_url, reason, status)
             with self._lock:
                 self._cache[source_url] = candidate

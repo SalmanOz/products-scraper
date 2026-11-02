@@ -1,0 +1,44 @@
+name: Turkcell Pasaj Public PDP Source Audit
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Test exact cash source
+        run: python -m unittest -q test_pasaj_source
+      - name: Probe reviewed public PDP
+        env:
+          PASAJ_AUDIT_OUTPUT_DIR: ${{ runner.temp }}
+        run: python audit_pasaj_source.py
+      - name: Publish audit evidence
+        if: always()
+        run: |
+          if test -f "${{ runner.temp }}/pasaj-source-audit.md"; then
+            cat "${{ runner.temp }}/pasaj-source-audit.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Pasaj audit exited before writing a report.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload read-only evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pasaj-source-audit-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/pasaj-source-audit.json
+            ${{ runner.temp }}/pasaj-source-audit.md
+          if-no-files-found: warn
+          retention-days: 30
