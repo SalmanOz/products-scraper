@@ -1,0 +1,48 @@
+name: Samsung S25 FE 8 256 Hepsiburada Read-only PDP Audit
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: teknoskor-s25-fe-hepsiburada-readonly-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Test selected buy box and robots denial contracts
+        run: python -m unittest -q test_s25_fe_hepsiburada_audit
+      - name: Probe one exact public PDP without writes
+        env:
+          S25_FE_HEPSIBURADA_AUDIT_OUTPUT_DIR: ${{ runner.temp }}
+        run: python audit_s25_fe_hepsiburada.py
+      - name: Publish read-only result
+        if: always()
+        run: |
+          if test -f "${{ runner.temp }}/s25-fe-hepsiburada-audit.md"; then
+            cat "${{ runner.temp }}/s25-fe-hepsiburada-audit.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload read-only evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s25-fe-hepsiburada-audit-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/s25-fe-hepsiburada-audit.json
+            ${{ runner.temp }}/s25-fe-hepsiburada-audit.md
+          if-no-files-found: warn
+          retention-days: 14
