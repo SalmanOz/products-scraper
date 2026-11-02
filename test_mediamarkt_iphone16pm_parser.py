@@ -105,6 +105,11 @@ class Iphone16PMParserTests(unittest.TestCase):
         data = iphone_fixture()
         self.assertIsNone(selected_marketplace_offer(
             iphone_html(data, new_delivery=False), URL, **OPTIONS))
+        unrelated_delivery = deepcopy(data)
+        unrelated_delivery['stock'] = 'Adrese teslimata uygun.'
+        unrelated_delivery['stock_test'] = 'mms-cofr-delivery_AVAILABLE'
+        self.assertIsNone(selected_marketplace_offer(
+            iphone_html(unrelated_delivery, new_delivery=False), URL, **OPTIONS))
         self.assertIsNone(selected_marketplace_offer(
             iphone_html(data).replace('branded-price-decimal-value">05',
                                       'branded-price-decimal-value">06'),

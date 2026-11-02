@@ -355,13 +355,17 @@ def selected_marketplace_offer(html, final_url, *,
 
     visible_price = _one(soup.select('[data-test="cofr-price mms-branded-price"]'))
     visible_stock = _one(soup.select('[data-test="mms-pdp-details-availability"]'))
-    delivery = (visible_stock.select('[data-test="mms-cofr-delivery_AVAILABLE"]')
-                if visible_stock else [])
-    if allow_delivery_card and not delivery:
+    if allow_delivery_card:
+        # A shared availability section may describe a cheaper refurbished
+        # alternative. For condition-selector PDPs, only the checked card can
+        # prove that the selected new offer is deliverable.
         chosen = soup.select('input[name="pdp-condition-selector"][checked]')
         chosen_card = chosen[0].find_parent('li') if len(chosen) == 1 else None
         delivery = (chosen_card.select('[data-test="mms-cofr-delivery_AVAILABLE"]')
                     if chosen_card else [])
+    else:
+        delivery = (visible_stock.select('[data-test="mms-cofr-delivery_AVAILABLE"]')
+                    if visible_stock else [])
     if (visible_price is None or visible_stock is None or
             _PROMOTION.search(visible_price.get_text(' ', strip=True)) or
             not any('Adrese teslimata uygun.' in row.get_text(' ', strip=True)
