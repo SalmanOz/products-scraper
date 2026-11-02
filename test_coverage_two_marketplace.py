@@ -114,14 +114,19 @@ class CoverageTwoMarketplaceTests(unittest.TestCase):
                 self.assertEqual(source.direct, list(PROFILES))
                 self.assertEqual(client.writes, [])
 
-    def test_priced_catalog_stops_before_pdp_but_collision_still_reads_both(self):
+    def test_priced_catalog_and_collision_still_read_both_pdp(self):
         client = Client()
         first_url = list(PROFILES)[0]
         first = PROFILES[first_url]
         client.prices[first['id']] = (first['slug'], True)
         report, _, source = self.audited(client=client)
         self.assertEqual(report['status'], 'failed')
-        self.assertEqual(source.direct, [])
+        self.assertEqual(source.direct, list(PROFILES))
+        self.assertEqual([row['status'] for row in report['rows']],
+                         ['failed', 'passed'])
+        self.assertEqual(report['rows'][0]['catalog_evidence']['public_price_status'],
+                         {'slug': first['slug'], 'priced': True})
+        self.assertTrue(all(row['verified_offer'] for row in report['rows']))
         client.prices[first['id']] = (first['slug'], False)
         client.rows[0]['offer_targets'] = [
             {'merchant_name': first['seller_name'],
@@ -135,6 +140,57 @@ class CoverageTwoMarketplaceTests(unittest.TestCase):
         self.assertEqual(collision['targets'][0]['source_url'],
                          'https://www.hepsiburada.com/other')
         self.assertIn('seller_name_on_other_url_or_platform', collision['reasons'])
+        self.assertEqual(client.writes, [])
+
+    def test_catalog_radio_mismatch_is_reported_after_both_pdp_reads(self):
+        client = Client()
+        client.rows[1]['attributes']['Connectivity'] = {'5G': True}
+        report, client, source = self.audited(client=client)
+        self.assertEqual(report['status'], 'failed')
+        self.assertEqual(source.direct, list(PROFILES))
+        self.assertEqual([row['status'] for row in report['rows']],
+                         ['passed', 'failed'])
+        self.assertEqual(report['rows'][1]['catalog_evidence']['observed_specs'],
+                         {'ram_gb': 8, 'storage_gb': 256,
+                          'network_generation': '5g'})
+        self.assertIn('catalog_variant_changed', report['rows'][1]['errors'])
+        self.assertTrue(all(row['verified_offer'] for row in report['rows']))
+        self.assertEqual(client.writes, [])
+
+    def test_unavailable_catalog_still_reads_both_pdp_and_fails_closed(self):
+        class BrokenClient(Client):
+            def get_published_products(self):
+                raise RuntimeError('private catalog unavailable')
+
+        client = BrokenClient()
+        report, client, source = self.audited(client=client)
+        self.assertEqual(report['status'], 'failed')
+        self.assertEqual(source.direct, list(PROFILES))
+        self.assertEqual(len(report['rows']), 2)
+        self.assertTrue(all(row['verified_offer'] for row in report['rows']))
+        self.assertTrue(all(row['status'] == 'failed' for row in report['rows']))
+        self.assertTrue(all(report['catalog_collisions'][row['product']['slug']]
+                            ['blocked'] for row in report['rows']))
+        self.assertEqual(client.writes, [])
+
+    def test_first_pdp_failure_does_not_skip_second(self):
+        first_url = list(PROFILES)[0]
+
+        class OneFailedSource(Source):
+            def _direct(self, url, limit, accept):
+                self.direct.append(url)
+                if url == first_url:
+                    raise RuntimeError('temporary fetch failure')
+                return b'<html></html>', 'ready', 200
+
+        report, client, source = self.audited(source=OneFailedSource())
+        self.assertEqual(report['status'], 'failed')
+        self.assertEqual(source.direct, list(PROFILES))
+        self.assertEqual([row['status'] for row in report['rows']],
+                         ['failed', 'passed'])
+        self.assertEqual(report['rows'][0]['source_attempt']['reason'],
+                         'source_unavailable')
+        self.assertIsNotNone(report['rows'][1]['verified_offer'])
         self.assertEqual(client.writes, [])
 
     def test_full_private_target_page_is_reported_after_both_live_reads(self):

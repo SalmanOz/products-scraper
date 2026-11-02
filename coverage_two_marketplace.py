@@ -43,36 +43,69 @@ PURPOSE = 'read_only_mediamarkt_two_unpriced_selected_marketplace_offers'
 
 
 def _catalog_rows(client):
-    products = client.get_published_products()
-    prices = client.get_public_price_priority()
-    if not isinstance(products, list) or not isinstance(prices, dict):
-        raise ValueError('catalog_unavailable')
+    errors = []
+    try:
+        products = client.get_published_products()
+        if not isinstance(products, list):
+            raise ValueError('invalid_private_catalog')
+    except Exception as error:
+        products = []
+        errors.append('private_catalog_' + type(error).__name__)
+    try:
+        prices = client.get_public_price_priority()
+        if not isinstance(prices, dict):
+            raise ValueError('invalid_public_price_snapshot')
+    except Exception as error:
+        prices = {}
+        errors.append('public_price_snapshot_' + type(error).__name__)
     selected = {}
     for url, profile in PROFILES.items():
         rows = [row for row in products if isinstance(row, dict)
                 and row.get('id') == profile['id']]
-        if len(rows) != 1:
-            raise ValueError('catalog_identity_missing')
-        product = rows[0]
-        if (product.get('slug') != profile['slug']
-                or product.get('name') != profile['name']
-                or not isinstance(product.get('attributes'), dict)
-                or not isinstance(product.get('offer_targets'), list)):
-            raise ValueError('catalog_identity_changed')
-        specs = PriceUpdater.get_expected_specs(product['attributes'])
-        if (specs.get('ram_gb') != profile['ram_gb']
-                or specs.get('storage_gb') != profile['storage_gb']
-                or specs.get('network_generation') not in
-                    (None, profile['network_generation'])
-                or prices.get(profile['id']) != (profile['slug'], False)):
-            raise ValueError('catalog_variant_or_unpriced_status_changed')
-        selected[url] = product
-    return selected
+        product = rows[0] if len(rows) == 1 else None
+        attributes = product.get('attributes') if product else None
+        specs = PriceUpdater.get_expected_specs(attributes)
+        price_status = prices.get(profile['id'])
+        identity_exact = bool(product and product.get('slug') == profile['slug']
+                              and product.get('name') == profile['name'])
+        variant_exact = bool(isinstance(attributes, dict)
+                             and specs.get('ram_gb') == profile['ram_gb']
+                             and specs.get('storage_gb') == profile['storage_gb']
+                             and specs.get('network_generation') in
+                             (None, profile['network_generation']))
+        unpriced_exact = price_status == (profile['slug'], False)
+        reasons = []
+        if not identity_exact:
+            reasons.append('catalog_identity_missing_or_changed')
+        if not variant_exact:
+            reasons.append('catalog_variant_changed')
+        if not unpriced_exact:
+            reasons.append('catalog_unpriced_status_changed_or_unavailable')
+        selected[url] = {
+            'product': product,
+            'evidence': {
+                'exact': not reasons, 'reasons': reasons,
+                'observed_id': product.get('id') if product else None,
+                'observed_slug': product.get('slug') if product else None,
+                'observed_name': product.get('name') if product else None,
+                'observed_specs': {key: specs.get(key) for key in
+                                   ('ram_gb', 'storage_gb', 'network_generation')},
+                'public_price_status': {
+                    'slug': price_status[0], 'priced': price_status[1]
+                } if isinstance(price_status, tuple) and len(price_status) == 2
+                else None,
+                'matching_id_rows': len(rows),
+            },
+        }
+    return selected, errors
 
 
 def _collision_evidence(product, profile, url):
     """Explain the unchanged fail-closed seller/platform and target-cap gate."""
-    targets = product['offer_targets']
+    targets = product.get('offer_targets') if isinstance(product, dict) else None
+    if not isinstance(targets, list):
+        return {'blocked': True, 'reasons': ['offer_targets_unavailable'],
+                'target_count': None, 'targets': []}
     seller_targets = [row for row in targets
                       if isinstance(row, dict) and
                       str(row.get('merchant_name', '')).strip().casefold() ==
@@ -82,12 +115,14 @@ def _collision_evidence(product, profile, url):
         reasons.append('target_page_full')
     if any(not isinstance(row, dict) for row in targets):
         reasons.append('invalid_target_row')
+    if any(not isinstance(row.get('source_url'), str) for row in seller_targets):
+        reasons.append('invalid_seller_target_url')
     if any(row.get('source_url') != url or
            urlparse(str(row.get('source_url') or '')).hostname !=
            'www.mediamarkt.com.tr' for row in seller_targets):
         reasons.append('seller_name_on_other_url_or_platform')
     return {
-        'blocked': not no_merchant_collision(product, profile, url),
+        'blocked': bool(reasons) or not no_merchant_collision(product, profile, url),
         'reasons': reasons,
         'target_count': len(targets),
         'targets': [{key: row.get(key) for key in
@@ -159,7 +194,8 @@ def _read_selected(source, url):
         return offer, {'source_url': url,
                        'reason': 'observed_exact_new_marketplace_offer',
                        'http_status': 200}
-    except (requests.RequestException, OSError, TypeError, ValueError, AttributeError):
+    except (requests.RequestException, OSError, TypeError, ValueError,
+            AttributeError, RuntimeError, KeyError, IndexError):
         return None, {'source_url': url, 'reason': 'source_unavailable',
                       'http_status': None}
 
@@ -169,35 +205,46 @@ def audit(*, client=None, source=None):
     source = source or MediaMarktSource()
     report = {'purpose': PURPOSE, 'writes': False, 'status': 'failed',
               'checked_at': None, 'robots_status': None, 'source': None,
-              'rows': [], 'catalog_collisions': {}}
+              'rows': [], 'catalog_collisions': {}, 'catalog_errors': []}
     try:
-        catalog = _catalog_rows(client)
+        catalog, report['catalog_errors'] = _catalog_rows(client)
         for url, profile in PROFILES.items():
-            collision = _collision_evidence(catalog[url], profile, url)
+            catalog_row = catalog[url]
+            collision = _collision_evidence(catalog_row['product'], profile, url)
             report['catalog_collisions'][profile['slug']] = collision
             offer, attempt = _read_selected(source, url)
             verified = offer if _offer_matches(offer, url, profile) else None
+            row_errors = list(catalog_row['evidence']['reasons'])
+            if collision['blocked']:
+                row_errors.append('merchant_name_cross_platform_collision')
+            if verified is None:
+                row_errors.append('selected_offer_or_variant_not_verified')
             report['rows'].append({
                 'url': url,
                 'product': {'id': profile['id'], 'slug': profile['slug'],
                             'name': profile['name'], 'expected_specs': {
                                 key: profile[key] for key in
                                 ('ram_gb', 'storage_gb', 'network_generation')}},
-                'catalog_reason': 'catalog_exact_unpriced',
+                'catalog_evidence': catalog_row['evidence'],
                 'merchant_collision': collision['blocked'],
                 'source_attempt': attempt, 'verified_offer': verified,
+                'status': 'failed' if row_errors else 'passed',
+                'errors': row_errors,
             })
         report['robots_status'] = source.report().get('robots_status')
         if len(report['rows']) != 2:
             raise ValueError('robots_or_scope_changed')
         errors = []
+        errors.extend(report['catalog_errors'])
         if report['robots_status'] != 'ready':
             errors.append('robots_unavailable')
+        if any(not row['catalog_evidence']['exact'] for row in report['rows']):
+            errors.append('catalog_identity_variant_or_unpriced_status_changed')
         if any(row['merchant_collision'] for row in report['rows']):
             errors.append('merchant_name_cross_platform_collision')
         if any(row['verified_offer'] is None for row in report['rows']):
             errors.append('selected_offer_or_variant_not_verified')
-        if errors:
+        if errors or any(row['status'] != 'passed' for row in report['rows']):
             raise ValueError(','.join(errors))
         report['status'] = 'passed'
     except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError) as error:
@@ -214,16 +261,25 @@ def summary(report):
     for row in report['rows']:
         offer = row.get('verified_offer') or {}
         attempt = row.get('source_attempt') or {}
-        lines.append(f"- {row['product']['slug']}: {attempt.get('reason')} "
+        catalog = row.get('catalog_evidence') or {}
+        lines.append(f"- {row['product']['slug']} [{row.get('status')}]: "
+                     f"{attempt.get('reason')} "
                      f"HTTP {attempt.get('http_status')}; "
                      f"{offer.get('seller_name') or '?'} "
                      f"{offer.get('price') or '?'} TRY, "
                      f"SKU {offer.get('sku') or '?'}, GTIN {offer.get('gtin13') or '?'}, "
                      f"{offer.get('availability') or '?'}.")
+        specs = catalog.get('observed_specs') or {}
+        price_status = catalog.get('public_price_status') or {}
+        lines.append(f"  Katalog: id {catalog.get('observed_id')}, "
+                     f"ad {catalog.get('observed_name')}, "
+                     f"RAM {specs.get('ram_gb')}, depolama {specs.get('storage_gb')}, "
+                     f"şebeke {specs.get('network_generation')}; "
+                     f"fiyatlı {price_status.get('priced')}; "
+                     f"{', '.join(catalog.get('reasons', [])) or 'exact_unpriced'}.")
         collision = report['catalog_collisions'].get(row['product']['slug']) or {}
-        if collision.get('blocked'):
-            lines.append(f"  Katalog hedefleri {collision.get('target_count')}/12; "
-                         f"çakışma {', '.join(collision.get('reasons', [])) or 'unknown'}.")
+        lines.append(f"  Katalog hedefleri {collision.get('target_count')}/12; "
+                     f"çakışma {', '.join(collision.get('reasons', [])) or 'yok'}.")
     if report.get('error'):
         lines.append('Hata: ' + report['error'])
     lines.append('Katalog, fiyat, skor veya arama dizini yazımı yok.')
