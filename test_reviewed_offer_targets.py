@@ -6,6 +6,7 @@ from reviewed_offer_targets import (
     APPLE_STORE_BATCH_PATH, HEPSIBURADA_APPLE_BATCH_PATH, MEDIAMARKT_BATCH_PATH,
     TURK_TELEKOM_BATCH_PATH, TEKNOSA_FIRST_PARTY_BATCH_PATH,
     PASAJ_BATCH_PATH, URL_BATCH, VATAN_BATCH_PATH, S25_FE_256_BATCH_PATH,
+    XIAOMI_17T_BATCH_PATH,
     daily_offer_targets, with_reviewed_radio,
 )
 from pasaj_source import A26_6_128_URL, IPHONE16_128_URL, IPHONE17_256_URL
@@ -63,7 +64,29 @@ class ReviewedDailyTargetTests(unittest.TestCase):
                               TEKNOSA_FIRST_PARTY_BATCH_PATH,
                               TURK_TELEKOM_BATCH_PATH,
                               PASAJ_BATCH_PATH,
-                              S25_FE_256_BATCH_PATH])
+                              S25_FE_256_BATCH_PATH, XIAOMI_17T_BATCH_PATH])
+
+    def test_xiaomi_first_party_seeds_require_exact_catalog_identity_and_memory(self):
+        profiles = json.loads(XIAOMI_17T_BATCH_PATH.read_text())['products']
+        self.assertEqual({p['slug']: (p['id'], p['ram_gb'], p['storage_gb'])
+                          for p in profiles}, {
+            'xiaomi-17t-pro': (270, 12, 512), 'xiaomi-17t': (295, 12, 256),
+        })
+        for profile in profiles:
+            product = {key: profile[key] for key in ('id', 'slug', 'name')}
+            specs = {key: profile[key] for key in
+                     ('ram_gb', 'storage_gb', 'network_generation')}
+            exact = daily_offer_targets(product, specs)
+            self.assertEqual([row['source_url'] for row in exact
+                              if row['merchant_name'] == 'MediaMarkt'], profile['targets'])
+            for key, wrong in (('id', 0), ('slug', 'xiaomi-17t-wrong'),
+                               ('name', 'Xiaomi 17T Pro' if profile['slug'] == 'xiaomi-17t'
+                                else 'Xiaomi 17T')):
+                self.assertEqual(daily_offer_targets({**product, key: wrong}, specs), [])
+            for key, wrong in (('ram_gb', 8),
+                               ('storage_gb', 256 if profile['storage_gb'] == 512 else 512),
+                               ('network_generation', '4g')):
+                self.assertEqual(daily_offer_targets(product, {**specs, key: wrong}), [])
 
     def test_new_s25_fe_variant_requires_exact_slug_name_memory_and_radio(self):
         profile = json.loads(S25_FE_256_BATCH_PATH.read_text())['products'][0]

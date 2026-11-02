@@ -1,0 +1,97 @@
+name: Xiaomi 17T First-party Scoped Price Refresh
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Write only after this run reverifies both selected first-party offers'
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ inputs.publish && 'teknoskor-daily-data-sync' || 'teknoskor-xiaomi-17t-preflight' }}
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Test strict first-party reader, catalog identity, and scoped routing
+        run: python -m unittest -q test_mediamarkt_source test_retailer_offer_refresh test_reviewed_offer_targets test_xiaomi_17t_first_party_audit test_price_refresh_orchestration
+      - name: Start bounded browser GET service
+        run: |
+          docker run -d --name=xiaomi-17t-scoped-browser -p 8191:8191 -e LOG_LEVEL=info ghcr.io/flaresolverr/flaresolverr:latest
+          for attempt in {1..30}; do
+            if curl --fail --silent http://localhost:8191/ > /dev/null; then exit 0; fi
+            sleep 2
+          done
+          docker logs xiaomi-17t-scoped-browser
+          exit 1
+      - name: Reverify both catalog variants and selected offers without writes
+        env:
+          XIAOMI_17T_AUDIT_OUTPUT_DIR: ${{ runner.temp }}
+        run: python audit_xiaomi_17t_first_party.py
+      - name: Refresh only the two reviewed Xiaomi SKUs
+        if: ${{ inputs.publish }}
+        id: scoped_prices
+        env:
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+        run: |
+          set -euo pipefail
+          : "${SCRAPER_INGESTION_SECRET:?SCRAPER_INGESTION_SECRET is required}"
+          python update_prices.py --slugs xiaomi-17t-pro,xiaomi-17t \
+            --known-pdp-only --report xiaomi-17t-scoped-report.json
+      - name: Reconcile scores after committed offers
+        if: ${{ always() && !cancelled() && (steps.scoped_prices.outcome == 'success' || steps.scoped_prices.outcome == 'failure') }}
+        env:
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+        run: python reconcile_scores.py
+      - name: Summarize audit and scoped refresh
+        if: always()
+        run: |
+          if test -f "${{ runner.temp }}/xiaomi-17t-first-party.md"; then
+            cat "${{ runner.temp }}/xiaomi-17t-first-party.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if test -f xiaomi-17t-scoped-report.json; then
+            python - <<'PY'
+          import json, os
+          from pathlib import Path
+          report = json.loads(Path('xiaomi-17t-scoped-report.json').read_text())
+          coverage = report.get('coverage', {})
+          lines = ['## Reviewed Xiaomi 17T SKU refresh',
+                   f"Status: {report.get('status')}; verified offer on {coverage.get('with_purchasable_offer', 0)}/{coverage.get('products', 0)} models."]
+          for product in report.get('products', []):
+              rows = [row for row in product.get('source_attempts', []) if row.get('merchant') == 'MediaMarkt']
+              lines.append(f"- {product['slug']}: " + ', '.join(f"{row.get('reason')} HTTP {row.get('http_status')}" for row in rows))
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:
+              out.write('\n'.join(lines) + '\n')
+          PY
+          fi
+      - name: Upload audit and price evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xiaomi-17t-scoped-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/xiaomi-17t-first-party.json
+            ${{ runner.temp }}/xiaomi-17t-first-party.md
+            xiaomi-17t-scoped-report.json
+            score-reconciliation.json
+          if-no-files-found: warn
+          retention-days: 30
