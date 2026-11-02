@@ -96,6 +96,26 @@ class VatanSitemapSourceTests(unittest.TestCase):
                 }), [])
                 self.assertEqual(fetch.calls, [ROBOTS_URL])
 
+    def test_reports_exact_failed_stage_and_http_status(self):
+        cases = (
+            ({ROBOTS_URL: Response(ROBOTS_URL, b'blocked', status=403)},
+             'robots_http_403', 'robots', 403),
+            ({ROBOTS_URL: ROBOTS,
+              SITEMAP_URL: Response(SITEMAP_URL, b'blocked', status=429)},
+             'sitemap_http_429', 'sitemap', 429),
+            ({ROBOTS_URL: Response('https://other.example/robots.txt', ROBOTS)},
+             'robots_unexpected_final_url', 'robots', 200),
+        )
+        for pages, status, stage, http_status in cases:
+            with self.subTest(status=status):
+                source = VatanSitemapSource(fetch=Fetch(pages))
+                self.assertEqual(source.discover('Xiaomi 17T', {
+                    'ram_gb': 12, 'storage_gb': 256,
+                }), [])
+                self.assertEqual(source.report()['status'], status)
+                self.assertEqual(source.report()['failed_stage'], stage)
+                self.assertEqual(source.report()['http_status'], http_status)
+
     def test_oversized_or_unsafe_sitemap_fails_closed(self):
         oversized = Response(SITEMAP_URL, b'<urlset/>', content_length=4 * 1024 * 1024)
         unsafe = b'<!DOCTYPE urlset [<!ENTITY x "bad">]><urlset>&x;</urlset>'

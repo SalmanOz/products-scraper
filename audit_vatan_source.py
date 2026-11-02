@@ -7,6 +7,7 @@ ingestion endpoint, or saved price is used.
 
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import gettempdir
 
@@ -37,12 +38,12 @@ def run_audit(source=None, refresher=None):
         row = {'slug': profile['slug'], 'name': profile['name'], 'expected_specs': specs,
                'candidate_urls': [], 'source_attempts': [], 'verified_offers': []}
         products.append(row)
+        targets = []
         try:
             targets = source.discover(profile['name'], specs)
             row['candidate_urls'] = [target['source_url'] for target in targets]
             if targets:
                 offers = refresher.refresh_existing_offer_targets(profile['name'], targets, specs)
-                row['source_attempts'] = refresher.target_report(profile['name'], targets, specs)
                 row['verified_offers'] = [
                     {key: offer[key] for key in ('merchant', 'price', 'currency',
                                                   'availability', 'source_title', 'url', 'observed_at')}
@@ -54,10 +55,15 @@ def run_audit(source=None, refresher=None):
             # Keep the user-facing artifact even when a source fails. Exception
             # types are sufficient diagnostics; response bodies never belong here.
             row['error'] = type(error).__name__
+        finally:
+            if targets:
+                row['source_attempts'] = refresher.target_report(profile['name'], targets, specs)
         row['status'] = ('verified' if row['verified_offers'] else
                          'no_sitemap_candidate' if not row['candidate_urls'] else 'no_exact_offer')
     verified = sum(row['status'] == 'verified' for row in products)
-    return {'purpose': 'read_only_runner_access_probe', 'status':
+    return {'purpose': 'read_only_runner_access_probe',
+            'checked_at': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
+            'status':
             'passed' if verified == len(PROFILES) else 'partial' if verified else 'failed',
             'verified_products': verified, 'required_products': len(PROFILES),
             'sitemap': source.report(), 'products': products}

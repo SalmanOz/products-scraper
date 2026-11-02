@@ -37,8 +37,13 @@ class VatanSitemapSource:
         self._urls = []
         self._rules = None
         self._status = 'not_loaded'
+        self._failed_stage = None
+        self._http_status = None
 
     def _read(self, url, limit):
+        stage = 'robots' if url == ROBOTS_URL else 'sitemap'
+        self._failed_stage = stage
+        self._http_status = None
         response = self._fetch(
             url, timeout=(5, 15), allow_redirects=False, stream=True,
             headers={
@@ -48,8 +53,11 @@ class VatanSitemapSource:
             },
         )
         try:
-            if response.status_code != 200 or response.url != url:
-                raise ValueError('unavailable_or_redirected')
+            self._http_status = response.status_code
+            if response.status_code != 200:
+                raise ValueError(f'{stage}_http_{response.status_code}')
+            if response.url != url:
+                raise ValueError(f'{stage}_unexpected_final_url')
             size = str(response.headers.get('Content-Length') or '')
             if size.isdigit() and int(size) > limit:
                 raise ValueError('oversized_response')
@@ -124,6 +132,7 @@ class VatanSitemapSource:
                     urls.append(url)
             self._urls = list(dict.fromkeys(urls))
             self._status = 'ready'
+            self._failed_stage = None
         except (requests.RequestException, UnicodeError, ET.ParseError, ValueError, AttributeError) as error:
             self._urls = []
             self._status = str(error) if isinstance(error, ValueError) else type(error).__name__
@@ -175,4 +184,6 @@ class VatanSitemapSource:
 
     def report(self):
         return {'status': self._status, 'eligible_urls': len(self._urls),
-                'robots_url': ROBOTS_URL, 'sitemap_url': SITEMAP_URL}
+                'robots_url': ROBOTS_URL, 'sitemap_url': SITEMAP_URL,
+                'failed_stage': self._failed_stage,
+                'http_status': self._http_status if self._failed_stage else None}
