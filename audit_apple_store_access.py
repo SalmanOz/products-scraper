@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import time
 from pathlib import Path
 from tempfile import gettempdir
 from urllib.parse import unquote, urlparse
@@ -14,7 +15,16 @@ import requests
 
 BOT = 'TeknoskorPriceBot'
 ROBOTS_URL = 'https://www.apple.com/robots.txt'
-PDP_URL = 'https://www.apple.com/tr/shop/buy-iphone/iphone-17/6.3-in%C3%A7-ekran-256gb-siyah'
+PDP_URLS = {
+    'apple-iphone-18-pro-max': ('https://www.apple.com/tr/shop/buy-iphone/iphone-18-pro/'
+                                '6.9-in%C3%A7-ekran-256gb-siyah'),
+    'apple-iphone-18-pro': ('https://www.apple.com/tr/shop/buy-iphone/iphone-18-pro/'
+                            '6.3-in%C3%A7-ekran-256gb-siyah'),
+    'apple-iphone-17e': ('https://www.apple.com/tr/shop/buy-iphone/iphone-17e/'
+                         '6.1-in%C3%A7-ekran-256gb-siyah'),
+    'apple-iphone-17': ('https://www.apple.com/tr/shop/buy-iphone/iphone-17/'
+                        '6.3-in%C3%A7-ekran-256gb-siyah'),
+}
 SOLVER_URL = 'http://localhost:8191/v1'
 MAX_ROBOTS = 64 * 1024
 MAX_HTML = 1024 * 1024
@@ -22,16 +32,16 @@ MAX_SOLVER = 3 * 1024 * 1024
 OUT = Path(os.environ.get('APPLE_STORE_AUDIT_OUTPUT_DIR', gettempdir()))
 
 
-def exact_url(url):
+def exact_url(url, expected):
     if not isinstance(url, str) or re.search(r'[\x00-\x20\\]', url):
         return False
     try:
         parsed = urlparse(url)
-        expected = urlparse(PDP_URL)
-        return (parsed.scheme == expected.scheme and parsed.hostname == expected.hostname
+        target = urlparse(expected)
+        return (parsed.scheme == target.scheme and parsed.hostname == target.hostname
                 and parsed.username is None and parsed.password is None
                 and parsed.port in (None, 443) and not parsed.query and not parsed.fragment
-                and unquote(parsed.path) == unquote(expected.path))
+                and unquote(parsed.path) == unquote(target.path))
     except (TypeError, ValueError):
         return False
 
@@ -51,7 +61,7 @@ def bounded(response, limit):
         response.close()
 
 
-def facts(body):
+def facts(body, expected):
     soup = BeautifulSoup(body, 'html.parser')
     products = []
     for script in soup.select('script[type="application/ld+json"]'):
@@ -62,7 +72,7 @@ def facts(body):
         for item in value if isinstance(value, list) else [value]:
             if isinstance(item, dict) and item.get('@type') == 'Product':
                 offer = item.get('offers')
-                if (exact_url(item.get('url')) and isinstance(offer, list)
+                if (exact_url(item.get('url'), expected) and isinstance(offer, list)
                         and len(offer) == 1 and isinstance(offer[0], dict)):
                     products.append({
                         'name': item.get('name'), 'url_matches_selected': True,
@@ -89,9 +99,8 @@ def facts(body):
 
 
 def run():
-    result = {'purpose': 'read_only_apple_store_selected_iphone_runner_access',
-              'robots_status': 'unavailable', 'normal': None, 'browser': None,
-              'normal_facts': None, 'browser_facts': None}
+    result = {'purpose': 'read_only_apple_store_four_selected_iphone_runner_access',
+              'robots_status': 'unavailable', 'products': {}}
     headers = {'User-Agent': BOT + '/1.0 (+https://teknoskor.com)',
                'Accept-Language': 'tr-TR,tr;q=0.9'}
     try:
@@ -109,43 +118,43 @@ def run():
             return result
         rules = RobotFileParser()
         rules.parse(text.splitlines())
-        if not rules.can_fetch(BOT, PDP_URL):
-            result['robots_status'] = 'pdp_disallowed'
-            return result
         delay = float(rules.crawl_delay(BOT) or 0)
-        if delay > 30:
-            result['robots_status'] = 'delay_exceeds_budget'
+        if delay > 30 or not all(rules.can_fetch(BOT, url) for url in PDP_URLS.values()):
+            result['robots_status'] = 'pdp_disallowed_or_delay_exceeds_budget'
             return result
         result['robots_status'] = 'ready'
-        response = requests.get(PDP_URL, timeout=(5, 25), stream=True,
-                                allow_redirects=False, headers={**headers, 'Accept': 'text/html'})
-        result['normal'] = {'status': response.status_code, 'final_url': response.url}
-        status = response.status_code
-        html = bounded(response, MAX_HTML)
-        if status == 200 and exact_url(result['normal']['final_url']) and html:
-            result['normal_facts'] = facts(html)
-        if delay:
-            import time
-            time.sleep(delay)
-        response = requests.post(SOLVER_URL, json={
-            'cmd': 'request.get', 'url': PDP_URL, 'maxTimeout': 45000,
-        }, timeout=60, stream=True)
-        result['browser'] = {'service_http': response.status_code}
-        status = response.status_code
-        raw = bounded(response, MAX_SOLVER)
-        if status != 200 or raw is None:
-            return result
-        payload = json.loads(raw)
-        solution = payload.get('solution') if isinstance(payload, dict) else None
-        if not isinstance(solution, dict):
-            return result
-        result['browser'].update(site_http=solution.get('status'),
-                                 final_url=solution.get('url'))
-        if solution.get('status') != 200 or not exact_url(solution.get('url')):
-            return result
-        html = solution.get('response')
-        if isinstance(html, str) and len(html.encode('utf-8')) <= MAX_HTML:
-            result['browser_facts'] = facts(html)
+        for slug, url in PDP_URLS.items():
+            row = {'url': url, 'normal': None, 'browser': None,
+                   'normal_facts': None, 'browser_facts': None}
+            result['products'][slug] = row
+            response = requests.get(url, timeout=(5, 25), stream=True,
+                                    allow_redirects=False,
+                                    headers={**headers, 'Accept': 'text/html'})
+            row['normal'] = {'status': response.status_code, 'final_url': response.url}
+            status = response.status_code
+            html = bounded(response, MAX_HTML)
+            if status == 200 and exact_url(row['normal']['final_url'], url) and html:
+                row['normal_facts'] = facts(html, url)
+            if delay:
+                time.sleep(delay)
+            response = requests.post(SOLVER_URL, json={
+                'cmd': 'request.get', 'url': url, 'maxTimeout': 45000,
+            }, timeout=60, stream=True)
+            row['browser'] = {'service_http': response.status_code}
+            status = response.status_code
+            raw = bounded(response, MAX_SOLVER)
+            if status == 200 and raw is not None:
+                payload = json.loads(raw)
+                solution = payload.get('solution') if isinstance(payload, dict) else None
+                if isinstance(solution, dict):
+                    row['browser'].update(site_http=solution.get('status'),
+                                          final_url=solution.get('url'))
+                    if solution.get('status') == 200 and exact_url(solution.get('url'), url):
+                        html = solution.get('response')
+                        if isinstance(html, str) and len(html.encode('utf-8')) <= MAX_HTML:
+                            row['browser_facts'] = facts(html, url)
+            if delay:
+                time.sleep(delay)
     except (requests.RequestException, ValueError, TypeError, UnicodeError) as error:
         result['error_class'] = type(error).__name__
     return result
