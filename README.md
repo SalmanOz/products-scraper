@@ -314,8 +314,10 @@ Salt-okunur audit modlarına hiçbir puan/teklif yazma adımı eklenmemiştir.
 Bu işlem yalnız sunucudaki mevcut kanıtlardan tüm katalog yüzdeliğini tek
 transaction içinde yeniden hesaplar. Mağazayı taramaz, fiyat veya gözlem tarihini
 yenilemez. 72 saat, iki farklı güncel mağaza, varyant/para birimi/stok kontrolleri
-ve doğrulanmış teknik puan gereklilikleri aynıdır. İkinci kaynak bulunamayan model
-puan alamaz; bu açığı gidermiş gibi raporlanmaz. Sonuç `score-reconciliation.json`
+ve doğrulanmış teknik puan gereklilikleri tam Teknoskor için aynıdır. İkinci kaynak
+bulunamayan model doğrulanmış tam Teknoskor alamaz; eşleşen tek mağaza teklifi
+varsa ayrı geçici puan alabilir. Bu durum iki mağaza açığını gidermiş gibi
+raporlanmaz. Sonuç `score-reconciliation.json`
 çıktısındadır; HTTP/hesaplama hatası iş akışını başarısız bırakır.
 
 Dağıtım sırası: önce products deposundaki `/api/ingestion/scoring/reconcile`
