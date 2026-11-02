@@ -247,6 +247,17 @@ class RetailerRefreshTests(unittest.TestCase):
         self.assertEqual(self.refresh(schema, response=Response(html))[0], [])
         schema['offers']['price'] = '17000'
         self.assertEqual(self.refresh(schema, response=Response(page(schema) + '<main>Sepette 15.470 TL</main>'))[0][0]['price'], 17000)
+        # idefix labels the JSON-LD Offer.price with "Sepette İndirim" and
+        # exposes the ordinary 39.499 TL separately as ListPrice. A basket
+        # promotion must not become the unconditional cash offer.
+        idefix = product_schema()
+        idefix['offers']['price'] = '37919.04'
+        idefix['offers']['priceSpecification'] = {
+            '@type': 'UnitPriceSpecification', 'priceCurrency': 'TRY',
+            'price': 39499, 'priceType': 'https://schema.org/ListPrice',
+        }
+        html = page(idefix) + '<main>Sepette İndirim 37.919,04 TL 39.499,00 TL Sepete Ekle</main>'
+        self.assertEqual(self.refresh(idefix, response=Response(html))[0], [])
         for condition in [{'name': 'Kuponla fiyat'}, {'validForMemberTier': 'Premium'},
                           {'eligibleCustomerType': 'Member'}, {'eligibleTransactionVolume': {'price': '1000'}}]:
             row = product_schema()

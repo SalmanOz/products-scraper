@@ -170,7 +170,7 @@ def _is_conditional_price(soup, offer, price):
         return ''.join(c for c in unicodedata.normalize('NFKD', value)
                        if not unicodedata.combining(c)).lower().replace('ı', 'i')
     label = fold(str(offer.get('name', '')) + ' ' + str(offer.get('description', '')))
-    condition = r'(?:sepette|sepete\s+ozel|kuponla|uyelere\s+ozel|premium[\s\x27’]*a?\s+ozel)'
+    condition = r'(?:sepette(?:\s+indirim)?|sepete\s+ozel|kuponla|uyelere\s+ozel|premium[\s\x27’]*a?\s+ozel)'
     if re.search(condition, label):
         return True
     # Visible conditional prices are denial evidence even if JSON-LD silently
