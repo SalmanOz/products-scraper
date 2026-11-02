@@ -7,6 +7,7 @@ import unittest
 from iphone17_pasaj_manual_coverage import (
     CATALOG, MERCHANT, PRICE, TITLE, URL, audit, publish, summary, verified_offer,
 )
+from offer_ingestion_client import IngestionClientError, TARGET_INVALID_REASONS
 
 
 NOW = datetime.now(timezone.utc)
@@ -69,6 +70,13 @@ class Client:
                     'stale_ignored': 0, 'variant_rejected': 0}
         self.snapshot = 'a' * 64
         self.after_write_change = False
+        self.complete_failure = False
+        self.invalid_count = 0
+        self.duplicate_count = 0
+        self.invalid_reasons = {key: 0 for key in TARGET_INVALID_REASONS}
+        self.inspection_overrides = {}
+        self.raw_overrides = {}
+        self.raw_failure = False
 
     def get_published_products(self):
         return [deepcopy(self.product)]
@@ -77,11 +85,44 @@ class Client:
         return {CATALOG['id']: (CATALOG['slug'], True)}
 
     def get_complete_offer_targets(self, _id):
+        if self.complete_failure:
+            raise IngestionClientError('Complete target source has invalid rows')
         return {'id': CATALOG['id'], 'slug': CATALOG['slug'],
                 'name': CATALOG['name'], 'offer_targets': deepcopy(self.targets),
                 'offer_targets_total': len(self.targets),
                 'offer_targets_truncated': False,
                 'offer_targets_snapshot': self.snapshot}
+
+    def get_offer_target_inspection(self, _id):
+        return {'id': CATALOG['id'], 'slug': CATALOG['slug'],
+                'name': CATALOG['name'],
+                'attributes': deepcopy(self.product['attributes']),
+                'offer_targets': deepcopy(self.targets),
+                'offer_targets_total': len(self.targets),
+                'offer_targets_invalid_count': self.invalid_count,
+                'offer_targets_duplicate_count': self.duplicate_count,
+                'offer_targets_invalid_reasons': deepcopy(self.invalid_reasons),
+                'offer_targets_truncated': bool(self.invalid_count or self.duplicate_count),
+                'offer_targets_snapshot': self.snapshot,
+                **deepcopy(self.inspection_overrides)}
+
+    def get_raw_seller_collision_proof(self, product_id, seller, url):
+        if self.raw_failure:
+            raise IngestionClientError('Raw seller proof unavailable')
+        assert (product_id, seller, url) == (CATALOG['id'], MERCHANT, URL)
+        return {'purpose': 'read_only_raw_seller_collision_proof',
+                'writes': False, 'product_id': product_id,
+                'complete': True, 'blocked': False, 'reasons': [],
+                'stored_rows_checked': len(self.targets) + self.invalid_count,
+                'unknown_seller_rows': 0, 'invalid_row_identity_rows': 0,
+                'invalid_url_rows': 0, 'proposed_seller_other_url_rows': 0,
+                'exact_seller_url_rows': 1,
+                'refresh_targets_total': len(self.targets),
+                'refresh_targets_invalid_count': self.invalid_count,
+                'refresh_targets_duplicate_count': self.duplicate_count,
+                'refresh_targets_invalid_reasons': deepcopy(self.invalid_reasons),
+                'refresh_targets_snapshot': self.snapshot,
+                **deepcopy(self.raw_overrides)}
 
     def get_offer_identity_readiness(self):
         return {'evidenceVersion': 'product-offer-match-v1',
@@ -109,6 +150,15 @@ class Client:
 
 
 class Iphone17PasajManualTests(unittest.TestCase):
+    @staticmethod
+    def historical_row_client(reason='unsupported_host'):
+        client = Client()
+        client.complete_failure = True
+        client.invalid_count = 1
+        client.invalid_reasons[reason] = 1
+        client.product['offer_targets_truncated'] = True
+        return client
+
     def test_default_audit_reads_one_exact_pdp_and_four_seller_baseline(self):
         client, source = Client(), Source()
         report = audit(client=client, source=source)
@@ -119,6 +169,69 @@ class Iphone17PasajManualTests(unittest.TestCase):
         self.assertEqual(len(report['catalog_evidence']['other_offers']), 3)
         self.assertTrue(report['catalog_evidence']['pasaj_current'])
         self.assertEqual(client.writes, [])
+
+    def test_safe_historical_row_uses_one_page_and_independent_raw_proof(self):
+        for reason in ('unsupported_host', 'retailer_query_restricted'):
+            with self.subTest(reason=reason):
+                client = self.historical_row_client(reason)
+                source = Source()
+                report = audit(client=client, source=source)
+                self.assertEqual(report['status'], 'passed', report['catalog_error'])
+                proof = report['catalog_evidence']
+                self.assertEqual(proof['target_mode'], 'single_page_raw_proven')
+                self.assertEqual((proof['target_count'], proof['invalid_count']), (4, 1))
+                self.assertEqual(proof['raw_seller_proof']['exact_seller_url_rows'], 1)
+                self.assertEqual(client.writes, [])
+                result = publish(report, client=client, source=source)
+                self.assertEqual(result['accepted'], 1)
+                self.assertEqual(len(client.writes), 1)
+
+    def test_fallback_rejects_unsafe_or_incomplete_historical_rows(self):
+        changes = (
+            lambda c: c.invalid_reasons.update(
+                unsupported_host=0, malformed_url=1),
+            lambda c: setattr(c, 'duplicate_count', 1),
+            lambda c: c.inspection_overrides.update(
+                offer_targets_snapshot='b' * 64),
+            lambda c: c.inspection_overrides.update(
+                offer_targets_total=13),
+            lambda c: c.inspection_overrides.update(
+                offer_targets=[*c.targets, c.targets[0]]),
+            lambda c: c.raw_overrides.update(unknown_seller_rows=1),
+            lambda c: c.raw_overrides.update(invalid_row_identity_rows=1),
+            lambda c: c.raw_overrides.update(invalid_url_rows=1),
+            lambda c: c.raw_overrides.update(exact_seller_url_rows=0),
+            lambda c: c.raw_overrides.update(proposed_seller_other_url_rows=1),
+            lambda c: c.raw_overrides.update(refresh_targets_snapshot='b' * 64),
+            lambda c: c.raw_overrides.update(stored_rows_checked=6),
+            lambda c: setattr(c, 'raw_failure', True),
+        )
+        for change in changes:
+            with self.subTest(change=str(change)):
+                client = self.historical_row_client()
+                source = Source()
+                change(client)
+                report = audit(client=client, source=source)
+                self.assertEqual(report['status'], 'failed')
+                self.assertEqual(source.reads, [])
+                self.assertEqual(client.writes, [])
+
+    def test_fallback_rejects_pasaj_or_same_url_collision(self):
+        for change in ('pasaj_other_url', 'other_seller_same_url'):
+            with self.subTest(change=change):
+                client = self.historical_row_client()
+                if change == 'pasaj_other_url':
+                    client.targets.append({'merchant_name': MERCHANT,
+                                           'source_url': URL + '?other=1',
+                                           'checked_at': NOW.isoformat()})
+                else:
+                    client.targets.append({'merchant_name': 'Another Store',
+                                           'source_url': URL,
+                                           'checked_at': NOW.isoformat()})
+                client.product['offer_targets'] = deepcopy(client.targets)
+                report = audit(client=client, source=Source())
+                self.assertEqual(report['status'], 'failed')
+                self.assertEqual(client.writes, [])
 
     def test_same_price_new_observation_refreshes_only_existing_pasaj_row(self):
         client, source = Client(), Source()

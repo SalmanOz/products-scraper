@@ -13,7 +13,9 @@ import os
 from pathlib import Path
 import re
 
-from offer_ingestion_client import OfferIngestionClient
+from offer_ingestion_client import (
+    IngestionClientError, OfferIngestionClient, TARGET_INVALID_REASONS,
+)
 from pasaj_source import IPHONE17_256_URL, PasajSource
 from reviewed_offer_targets import with_reviewed_radio
 from update_prices import PriceUpdater
@@ -99,6 +101,74 @@ def _identity_rows(identity, now):
             'lowest_price': str(lowest)}
 
 
+def _complete_targets(client, product, first_targets):
+    """Use one inspected page only when independent raw rows prove it complete."""
+    try:
+        complete = client.get_complete_offer_targets(CATALOG['id'])
+    except IngestionClientError:
+        inspected = _read('target_inspection_get_failed',
+                          lambda: client.get_offer_target_inspection(CATALOG['id']))
+        raw = _read('raw_seller_proof_get_failed',
+                    lambda: client.get_raw_seller_collision_proof(
+                        CATALOG['id'], MERCHANT, URL))
+        total = inspected.get('offer_targets_total')
+        invalid = inspected.get('offer_targets_invalid_count')
+        duplicate = inspected.get('offer_targets_duplicate_count')
+        reasons = inspected.get('offer_targets_invalid_reasons')
+        targets = inspected.get('offer_targets')
+        snapshot = inspected.get('offer_targets_snapshot')
+        if (any(inspected.get(key) != product.get(key)
+                for key in ('id', 'slug', 'name', 'attributes'))
+                or type(total) is not int or not 4 <= total <= 12
+                or type(invalid) is not int or invalid <= 0
+                or duplicate != 0
+                or not isinstance(targets, list) or len(targets) != total
+                or first_targets != targets
+                or product.get('offer_targets_truncated') is not True
+                or inspected.get('offer_targets_truncated') is not True
+                or not isinstance(snapshot, str)
+                or re.fullmatch(r'[0-9a-f]{64}', snapshot) is None
+                or not isinstance(reasons, dict)
+                or set(reasons) != set(TARGET_INVALID_REASONS)
+                or any(type(reasons[key]) is not int or reasons[key] < 0
+                       for key in TARGET_INVALID_REASONS)
+                or sum(reasons.values()) != invalid):
+            raise ValueError('single_page_target_identity_or_count_changed')
+        if invalid != (reasons['unsupported_host'] +
+                       reasons['retailer_query_restricted']):
+            raise ValueError('single_page_target_rejection_reason_unsafe')
+        if (raw.get('purpose') != 'read_only_raw_seller_collision_proof'
+                or raw.get('writes') is not False
+                or raw.get('product_id') != CATALOG['id']
+                or raw.get('complete') is not True
+                or raw.get('blocked') is not False
+                or raw.get('reasons') != []
+                or raw.get('stored_rows_checked') != total + invalid
+                or raw.get('unknown_seller_rows') != 0
+                or raw.get('invalid_row_identity_rows') != 0
+                or raw.get('invalid_url_rows') != 0
+                or raw.get('proposed_seller_other_url_rows') != 0
+                or raw.get('exact_seller_url_rows') != 1
+                or raw.get('refresh_targets_total') != total
+                or raw.get('refresh_targets_invalid_count') != invalid
+                or raw.get('refresh_targets_duplicate_count') != 0
+                or raw.get('refresh_targets_invalid_reasons') != reasons
+                or raw.get('refresh_targets_snapshot') != snapshot):
+            raise ValueError('single_page_raw_seller_or_target_proof_changed')
+        return ({'id': inspected['id'], 'slug': inspected['slug'],
+                 'name': inspected['name'], 'offer_targets': targets,
+                 'offer_targets_total': total,
+                 'offer_targets_snapshot': snapshot,
+                 'offer_targets_truncated': False},
+                {'target_mode': 'single_page_raw_proven',
+                 'invalid_count': invalid, 'invalid_reasons': reasons,
+                 'raw_seller_proof': raw})
+    except Exception:
+        raise CatalogStageError('complete_targets_get_failed') from None
+    return complete, {'target_mode': 'complete_reader', 'invalid_count': 0,
+                      'invalid_reasons': None, 'raw_seller_proof': None}
+
+
 def _catalog(client):
     products = _read('catalog_get_failed', client.get_published_products)
     prices = _read('public_status_get_failed', client.get_public_price_priority)
@@ -120,8 +190,7 @@ def _catalog(client):
     first_targets = product.get('offer_targets')
     if not isinstance(first_targets, list):
         raise ValueError('catalog_targets_unavailable')
-    complete = _read('complete_targets_get_failed',
-                     lambda: client.get_complete_offer_targets(CATALOG['id']))
+    complete, target_proof = _complete_targets(client, product, first_targets)
     targets = complete.get('offer_targets') if isinstance(complete, dict) else None
     total = complete.get('offer_targets_total') if isinstance(complete, dict) else None
     snapshot = complete.get('offer_targets_snapshot') if isinstance(complete, dict) else None
@@ -135,7 +204,8 @@ def _catalog(client):
             re.fullmatch(r'[0-9a-f]{64}', snapshot) is None or
             targets[:len(first_targets)] != first_targets or
             len(first_targets) != min(total, 12) or
-            product.get('offer_targets_truncated') is not (total > 12)):
+            (target_proof['target_mode'] == 'complete_reader' and
+             product.get('offer_targets_truncated') is not (total > 12))):
         raise ValueError('complete_target_snapshot_changed')
     pasaj = [row for row in targets if isinstance(row, dict) and
              str(row.get('merchant_name') or '').strip().casefold() ==
@@ -157,7 +227,7 @@ def _catalog(client):
     commercial = _identity_rows(identity, now)
     return product, {'target_count': total, 'target_snapshot': snapshot,
                      'prior_pasaj_checked_at': prior_checked.isoformat(),
-                     **commercial}
+                     **target_proof, **commercial}
 
 
 def _exact_offer(offer, now=None):
