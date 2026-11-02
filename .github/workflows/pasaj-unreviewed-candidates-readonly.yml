@@ -1,0 +1,60 @@
+name: Pasaj Clean PDP Candidates Read-only Audit
+
+on:
+  workflow_dispatch:
+    inputs:
+      offset:
+        description: 'Zero-based offset into clean unpriced Pasaj PDP hints (six per run)'
+        type: number
+        required: true
+        default: 0
+
+permissions:
+  contents: read
+
+concurrency:
+  group: teknoskor-pasaj-candidate-readonly
+  queue: max
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Test clean URL, selected cash, robots and request bounds
+        run: python -m unittest -q test_pasaj_unreviewed_candidates test_pasaj_source
+      - name: Read six clean unpriced Pasaj PDP hints without writes
+        env:
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+          PASAJ_CANDIDATE_AUDIT_OUTPUT_DIR: ${{ runner.temp }}
+          PASAJ_CANDIDATE_OFFSET: ${{ inputs.offset }}
+        run: |
+          : "${SCRAPER_INGESTION_SECRET:?SCRAPER_INGESTION_SECRET is required}"
+          python audit_pasaj_unreviewed_candidates.py --offset "$PASAJ_CANDIDATE_OFFSET"
+      - name: Summarize read-only evidence
+        if: always()
+        run: |
+          if test -f "${{ runner.temp }}/pasaj-candidates.md"; then
+            cat "${{ runner.temp }}/pasaj-candidates.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload read-only evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pasaj-clean-candidates-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/pasaj-candidates.json
+            ${{ runner.temp }}/pasaj-candidates.md
+          if-no-files-found: warn
+          retention-days: 14
