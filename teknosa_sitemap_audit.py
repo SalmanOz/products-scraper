@@ -24,7 +24,7 @@ NS = '{http://www.sitemaps.org/schemas/sitemap/0.9}'
 MAX_ROBOTS_BYTES = 64 * 1024
 MAX_INDEX_BYTES = 128 * 1024
 MAX_PRODUCT_BYTES = 10 * 1024 * 1024
-MAX_SOLVER_BYTES = 15 * 1024 * 1024
+MAX_SOLVER_BYTES = 32 * 1024 * 1024
 MAX_URLS = 20_000
 MAX_BROWSER_REQUESTS = 3
 MAX_CANDIDATES_PER_MODEL = 4
@@ -52,25 +52,32 @@ def _safe_exact_url(url):
         return False
 
 
-def _xml_root(raw, expected_tag, maximum):
-    if (not isinstance(raw, bytes) or len(raw) > maximum
+def _xml_root(raw, expected_tag, maximum, metrics=None):
+    if (not isinstance(raw, bytes) or len(raw) > MAX_SOLVER_BYTES
             or b'<!DOCTYPE' in raw.upper() or b'<!ENTITY' in raw.upper()):
         raise ValueError('unsafe_or_oversized_xml')
+    wrapper = 'raw_xml'
     if re.match(rb'\s*<html\b', raw, re.I):
-        # Chromium's XML viewer wraps small XML documents in a hidden source
-        # node. Read that exact node only; discard the rendered tree and CSS.
-        soup = BeautifulSoup(raw, 'html.parser')
-        source = soup.select('div#webkit-xml-viewer-source-xml')
-        if (len(source) != 1 or len(source[0].find_all(recursive=False)) != 1
-                or source[0].find(['script', 'iframe', 'form']) is not None):
+        # Chromium may render XML twice: once in its hidden source node and
+        # again as a pretty tree. Extract only the source bytes without
+        # constructing a large HTML DOM or trusting the pretty tree.
+        source_tags = list(re.finditer(
+            rb'<div\b[^>]*\bid=["\']webkit-xml-viewer-source-xml["\'][^>]*>', raw, re.I))
+        if len(source_tags) != 1:
             raise ValueError('invalid_browser_xml_viewer')
-        node = source[0].find(recursive=False)
-        if node.name != expected_tag:
-            raise ValueError('unexpected_xml_root')
-        raw = str(node).encode('utf-8')
+        start = source_tags[0].end()
+        end = raw.find(b'</div>', start)
+        if end < 0:
+            raise ValueError('invalid_browser_xml_viewer')
+        raw = raw[start:end].strip()
+        wrapper = 'chromium_xml_viewer'
+    if len(raw) > maximum:
+        raise ValueError('extracted_xml_oversized')
     root = ET.fromstring(raw)
     if root.tag != NS + expected_tag:
         raise ValueError('unexpected_xml_root')
+    if metrics is not None:
+        metrics.update({'wrapper': wrapper, 'xml_bytes': len(raw)})
     return root
 
 
@@ -134,6 +141,7 @@ class TeknosaSitemapAudit:
         self._browser_requests = 0
         self._transports = {}
         self._direct_statuses = {}
+        self._solver_diagnostics = {}
 
     def _read(self, url, maximum, accept, *, rules=None):
         if not _safe_exact_url(url) or (rules is not None and not rules.can_fetch(BOT, url)):
@@ -169,12 +177,18 @@ class TeknosaSitemapAudit:
         response = self._post(SOLVER_URL, json={
             'cmd': 'request.get', 'url': url, 'maxTimeout': 45000,
         }, timeout=65, stream=True)
+        diagnostic = {'http_status': response.status_code,
+                      'declared_bytes': response.headers.get('Content-Length'),
+                      'received_bytes': 0, 'solution_status': None,
+                      'response_utf8_bytes': None, 'response_kind': None}
+        self._solver_diagnostics[url] = diagnostic
         try:
             if response.status_code != 200:
                 raise ValueError(f'solver_http_{response.status_code}')
             body = bytearray()
             for chunk in response.iter_content(chunk_size=64 * 1024):
                 body.extend(chunk)
+                diagnostic['received_bytes'] = len(body)
                 if len(body) > MAX_SOLVER_BYTES:
                     raise ValueError('solver_oversized')
         finally:
@@ -188,13 +202,26 @@ class TeknosaSitemapAudit:
             raise ValueError('solver_unavailable')
         if solution.get('url') != url:
             raise ValueError('browser_changed_url')
+        diagnostic['solution_status'] = solution.get('status')
         if solution.get('status') != 200:
             raise ValueError(f"browser_site_http_{solution.get('status')}")
         text = solution.get('response')
-        if not isinstance(text, str) or len(text.encode('utf-8')) > maximum:
+        if not isinstance(text, str):
+            raise ValueError('browser_oversized_or_invalid_body')
+        raw = text.encode('utf-8')
+        diagnostic['response_utf8_bytes'] = len(raw)
+        prefix = raw.lstrip()[:4096].lower()
+        diagnostic['response_kind'] = (
+            'xml' if prefix.startswith((b'<?xml', b'<sitemapindex', b'<urlset'))
+            else 'chromium_xml_viewer' if prefix.startswith(b'<html') and
+                 b'webkit-xml-viewer-source-xml' in prefix
+            else 'html' if prefix.startswith(b'<html') else 'other'
+        )
+        if len(raw) > (MAX_SOLVER_BYTES if diagnostic['response_kind'] ==
+                       'chromium_xml_viewer' else maximum):
             raise ValueError('browser_oversized_or_invalid_body')
         self._transports[url] = 'browser'
-        return text.encode('utf-8')
+        return raw
 
     def run(self):
         report = {'purpose': 'read_only_teknosa_sitemap_access_and_exact_url_hints',
@@ -202,7 +229,9 @@ class TeknosaSitemapAudit:
                   'index_url': INDEX_URL, 'product_sitemap_url': None,
                   'product_url_count': 0, 'candidate_urls': {},
                   'direct_http_statuses': self._direct_statuses,
-                  'transports': self._transports, 'browser_requests': 0}
+                  'transports': self._transports,
+                  'solver_diagnostics': self._solver_diagnostics,
+                  'xml_diagnostics': {}, 'browser_requests': 0}
         try:
             raw_robots = self._read(ROBOTS_URL, MAX_ROBOTS_BYTES, 'text/plain')
             robots = _robots_text(raw_robots)
@@ -226,7 +255,8 @@ class TeknosaSitemapAudit:
             report['stage'] = 'index'
             raw_index = self._read(INDEX_URL, MAX_INDEX_BYTES,
                                    'application/xml,text/xml', rules=rules)
-            index = _xml_root(raw_index, 'sitemapindex', MAX_INDEX_BYTES)
+            index = _xml_root(raw_index, 'sitemapindex', MAX_INDEX_BYTES,
+                              report['xml_diagnostics'].setdefault(INDEX_URL, {}))
             if len(index) > 100:
                 raise ValueError('too_many_sitemaps')
             child_url = _product_sitemap(index)
@@ -238,7 +268,8 @@ class TeknosaSitemapAudit:
             report['stage'] = 'product_sitemap'
             raw_product = self._read(child_url, MAX_PRODUCT_BYTES,
                                      'application/xml,text/xml', rules=rules)
-            root = _xml_root(raw_product, 'urlset', MAX_PRODUCT_BYTES)
+            root = _xml_root(raw_product, 'urlset', MAX_PRODUCT_BYTES,
+                             report['xml_diagnostics'].setdefault(child_url, {}))
             count, candidates = _product_candidates(root, rules)
             report['product_url_count'] = count
             report['candidate_urls'] = candidates

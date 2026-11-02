@@ -22,6 +22,13 @@ def main():
              f"Status: {report['status']}; stage: {report['stage']}; "
              f"error: {report.get('error')}; product URLs: {report['product_url_count']}; "
              f"browser requests: {report['browser_requests']}."]
+    for url, detail in report['solver_diagnostics'].items():
+        xml = report['xml_diagnostics'].get(url, {})
+        lines.append(f"- {url.rsplit('/', 1)[-1]}: solver bytes "
+                     f"{detail.get('received_bytes')}, response kind "
+                     f"{detail.get('response_kind')}, response UTF-8 bytes "
+                     f"{detail.get('response_utf8_bytes')}, extracted XML bytes "
+                     f"{xml.get('xml_bytes')}.")
     for key, urls in report['candidate_urls'].items():
         lines.append(f'- {key}: {len(urls)} exact-pattern URL hints (up to 4 shown).')
     lines.append('URL hints only. No selected seller, stock, cash-price or catalog writes.')

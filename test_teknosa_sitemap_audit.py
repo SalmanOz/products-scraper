@@ -95,6 +95,28 @@ class TeknosaSitemapAuditTests(unittest.TestCase):
                                  ('direct', INDEX_URL), ('browser', INDEX_URL),
                                  ('direct', CHILD), ('browser', CHILD)])
 
+    def test_double_rendered_xml_can_exceed_15_mib_without_relaxing_xml_limit(self):
+        # FlareSolverr serializes the browser's XML viewer as JSON. The pretty
+        # tree can duplicate the original XML; only source XML may be parsed.
+        viewer = ('<html><body><div id="webkit-xml-viewer-source-xml">'
+                  + PRODUCT + '</div><div class="pretty-print">'
+                  + ('x' * (16 * 1024 * 1024)) + '</div></body></html>')
+        payload = {ROBOTS_URL: ROBOTS, INDEX_URL: INDEX}
+        def get(url, **kwargs):
+            return Response(url, 403 if url == CHILD else 200,
+                            'denied' if url == CHILD else payload[url])
+        def post(url, *, json, **kwargs):
+            body = __import__('json').dumps({'status': 'ok', 'solution': {
+                'status': 200, 'url': CHILD, 'response': viewer,
+            }})
+            return Response(url, 200, body)
+        report = TeknosaSitemapAudit(get=get, post=post, sleep=lambda _: None).run()
+        self.assertEqual(report['status'], 'completed')
+        diagnostic = report['solver_diagnostics'][CHILD]
+        self.assertGreater(diagnostic['received_bytes'], 15 * 1024 * 1024)
+        self.assertEqual(diagnostic['response_kind'], 'chromium_xml_viewer')
+        self.assertLess(report['xml_diagnostics'][CHILD]['xml_bytes'], MAX_PRODUCT_BYTES)
+
     def test_robots_or_xml_drift_stops_before_product_sitemap(self):
         cases = [
             ({ROBOTS_URL: ROBOTS.replace('Disallow: /sepet', 'Disallow: /')},
