@@ -12,6 +12,7 @@ URL_BATCH = Path(__file__).parent / 'offer_batches/budget-eight-2026-10-25.json'
 MEDIAMARKT_BATCH_PATH = Path(__file__).parent / 'offer_batches/mediamarkt-exact-2026-11-02.json'
 APPLE_STORE_BATCH_PATH = Path(__file__).parent / 'offer_batches/apple-store-exact-2026-11-02.json'
 TURK_TELEKOM_BATCH_PATH = Path(__file__).parent / 'offer_batches/turk-telekom-exact-2026-11-02.json'
+PASAJ_BATCH_PATH = Path(__file__).parent / 'offer_batches/pasaj-exact-2026-11-02.json'
 S25_FE_256_BATCH_PATH = Path(__file__).parent / 'offer_batches/s25-fe-256-exact-2026-11-02.json'
 S25_FE_256_SLUG = 'samsung-galaxy-s25-fe-256gb'
 PROTECTED_TWO_STORE_SLUGS = frozenset({
@@ -23,7 +24,7 @@ PROTECTED_TWO_STORE_SLUGS = frozenset({
 
 def _profiles():
     for path in (URL_BATCH, VATAN_BATCH_PATH, MEDIAMARKT_BATCH_PATH,
-                 APPLE_STORE_BATCH_PATH, TURK_TELEKOM_BATCH_PATH,
+                 APPLE_STORE_BATCH_PATH, TURK_TELEKOM_BATCH_PATH, PASAJ_BATCH_PATH,
                  S25_FE_256_BATCH_PATH):
         yield from json.loads(path.read_text())['products']
 

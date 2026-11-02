@@ -4,9 +4,10 @@ import unittest
 
 from reviewed_offer_targets import (
     APPLE_STORE_BATCH_PATH, MEDIAMARKT_BATCH_PATH, TURK_TELEKOM_BATCH_PATH,
-    URL_BATCH, VATAN_BATCH_PATH, S25_FE_256_BATCH_PATH,
+    PASAJ_BATCH_PATH, URL_BATCH, VATAN_BATCH_PATH, S25_FE_256_BATCH_PATH,
     daily_offer_targets, with_reviewed_radio,
 )
+from pasaj_source import IPHONE17_256_URL
 
 
 class ReviewedDailyTargetTests(unittest.TestCase):
@@ -58,6 +59,7 @@ class ReviewedDailyTargetTests(unittest.TestCase):
             self.assertEqual([call.args[0] for call in read.call_args_list],
                              [URL_BATCH, VATAN_BATCH_PATH, MEDIAMARKT_BATCH_PATH,
                               APPLE_STORE_BATCH_PATH, TURK_TELEKOM_BATCH_PATH,
+                              PASAJ_BATCH_PATH,
                               S25_FE_256_BATCH_PATH])
 
     def test_new_s25_fe_variant_requires_exact_slug_name_memory_and_radio(self):
@@ -89,7 +91,33 @@ class ReviewedDailyTargetTests(unittest.TestCase):
         product = {key: profile[key] for key in ('id', 'slug', 'name')}
         specs = {key: profile[key] for key in ('ram_gb', 'storage_gb', 'network_generation')}
         self.assertEqual({row['merchant_name'] for row in daily_offer_targets(product, specs)},
-                         {'Vatan Bilgisayar', 'MediaMarkt', 'Apple Store'})
+                         {'Vatan Bilgisayar', 'MediaMarkt', 'Apple Store', 'Pasaj'})
+
+    def test_pasaj_seed_requires_exact_catalog_identity_and_variant(self):
+        profiles = json.loads(PASAJ_BATCH_PATH.read_text())['products']
+        self.assertEqual(len(profiles), 1)
+        profile = profiles[0]
+        self.assertEqual({key: profile[key] for key in
+                          ('id', 'slug', 'name', 'ram_gb', 'storage_gb', 'network_generation')},
+                         {'id': 235, 'slug': 'apple-iphone-17', 'name': 'Apple iPhone 17',
+                          'ram_gb': 8, 'storage_gb': 256, 'network_generation': '5g'})
+        self.assertEqual(profile['targets'], [IPHONE17_256_URL])
+        product = {key: profile[key] for key in ('id', 'slug', 'name')}
+        specs = {key: profile[key] for key in ('ram_gb', 'storage_gb', 'network_generation')}
+
+        def pasaj_targets(item, attributes):
+            return [row for row in daily_offer_targets(item, attributes)
+                    if row['merchant_name'] == 'Pasaj']
+
+        self.assertEqual(pasaj_targets(product, specs),
+                         [{'merchant_name': 'Pasaj', 'source_url': IPHONE17_256_URL}])
+        self.assertEqual(with_reviewed_radio(product, {'ram_gb': 8, 'storage_gb': 256}), specs)
+        for key, wrong in (('id', 999), ('slug', 'apple-iphone-17e'),
+                           ('name', 'Apple iPhone 17 Pro')):
+            self.assertEqual(pasaj_targets({**product, key: wrong}, specs), [])
+        for key, wrong in (('ram_gb', 12), ('storage_gb', 512),
+                           ('network_generation', '4g')):
+            self.assertEqual(pasaj_targets(product, {**specs, key: wrong}), [])
 
     def test_four_apple_store_seeds_require_exact_catalog_identity(self):
         for profile in json.loads(APPLE_STORE_BATCH_PATH.read_text())['products']:
