@@ -1,0 +1,45 @@
+name: Apple Store Exact Variant Access Audit
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install requests beautifulsoup4
+      - run: python -m py_compile audit_apple_store_access.py
+      - name: Start bounded read-only browser GET service
+        run: |
+          docker run -d --name=apple-store-audit-browser -p 8191:8191 -e LOG_LEVEL=info ghcr.io/flaresolverr/flaresolverr:latest
+          for attempt in {1..30}; do
+            if curl --fail --silent http://localhost:8191/ > /dev/null; then exit 0; fi
+            sleep 2
+          done
+          docker logs apple-store-audit-browser
+          exit 1
+      - name: Probe robots and selected Apple Store variant without writes
+        env:
+          APPLE_STORE_AUDIT_OUTPUT_DIR: ${{ runner.temp }}
+        run: python audit_apple_store_access.py
+      - name: Publish compact result
+        if: always()
+        run: |
+          if test -f "${{ runner.temp }}/apple-store-access.json"; then
+            cat "${{ runner.temp }}/apple-store-access.json" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: apple-store-access-${{ github.run_id }}
+          path: ${{ runner.temp }}/apple-store-access.json
+          if-no-files-found: warn
+          retention-days: 14
