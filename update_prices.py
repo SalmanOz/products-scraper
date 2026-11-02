@@ -21,6 +21,10 @@ from price_sync_priority import prioritize_unpriced_products
 from fold8_ultra_preflight import (PROFILE as FOLD8_ULTRA_PROFILE,
                                    URLS as FOLD8_ULTRA_PREFLIGHT_URLS,
                                    load_verified_offers as load_fold8_ultra_offers)
+from mediamarkt_marketplace_source import (PROFILES as MEDIAMARKT_MARKETPLACE_PROFILES,
+                                           reviewed_marketplace_offer)
+from mediamarkt_marketplace_preflight import (load_verified_offers as load_marketplace_offers,
+                                              no_merchant_collision)
 
 load_dotenv()
 
@@ -91,11 +95,17 @@ class PriceUpdater:
             return False
         host = _safe_url(offer['url']).hostname
         merchant = self.offer_matcher._standardize_merchant_name(str(offer.get('merchant', '')))
-        expected_merchant = self.offer_matcher._standardize_merchant_name(ALLOWED_HOSTS[host])
-        if not merchant or merchant.casefold() != expected_merchant.casefold():
-            return False
-        if not self.offer_matcher.has_observed_offer_evidence(product['name'], offer, expected_specs):
-            return False
+        if offer['url'] in MEDIAMARKT_MARKETPLACE_PROFILES:
+            profile = MEDIAMARKT_MARKETPLACE_PROFILES[offer['url']]
+            if (not reviewed_marketplace_offer(offer, product['name'], expected_specs, product)
+                    or not no_merchant_collision(product, profile, offer['url'])):
+                return False
+        else:
+            expected_merchant = self.offer_matcher._standardize_merchant_name(ALLOWED_HOSTS[host])
+            if not merchant or merchant.casefold() != expected_merchant.casefold():
+                return False
+            if not self.offer_matcher.has_observed_offer_evidence(product['name'], offer, expected_specs):
+                return False
         if offer.get('availability') not in PURCHASABLE | {'out_of_stock', 'preorder'}:
             return False
         if isinstance(offer.get('price'), bool):
@@ -281,6 +291,16 @@ class PriceUpdater:
         xiaomi_preflight_only = bool(os.environ.get('XIAOMI_17T_VERIFIED_AUDIT_FILE'))
         fold8_preflight_file = os.environ.get('FOLD8_ULTRA_VERIFIED_AUDIT_FILE')
         fold8_preflight_only = bool(fold8_preflight_file)
+        marketplace_preflight_file = os.environ.get('MEDIAMARKT_MARKETPLACE_VERIFIED_AUDIT_FILE')
+        marketplace_preflight_only = bool(marketplace_preflight_file)
+        if marketplace_preflight_only:
+            reviewed_slugs = {profile['slug'] for profile in MEDIAMARKT_MARKETPLACE_PROFILES.values()}
+            if (product_id is not None or phase2_backfill or not known_pdp_only
+                    or product_slugs is None or len(product_slugs) != len(reviewed_slugs)
+                    or set(product_slugs) != reviewed_slugs):
+                raise RuntimeError('Marketplace preflight requires only two reviewed SKUs and known PDPs')
+            if load_marketplace_offers(marketplace_preflight_file) is None:
+                raise RuntimeError('Marketplace two-offer preflight invalid or stale')
         if fold8_preflight_only:
             if (product_id is not None or phase2_backfill or not known_pdp_only
                     or product_slugs != [FOLD8_ULTRA_PROFILE[1]]):
@@ -305,6 +325,14 @@ class PriceUpdater:
             if set(product_slugs) - available:
                 raise RuntimeError('Requested product slug was not found in the catalog')
             products = [p for p in products if p['slug'] in product_slugs]
+        if marketplace_preflight_only:
+            by_slug = {p['slug']: p for p in products}
+            for url, profile in MEDIAMARKT_MARKETPLACE_PROFILES.items():
+                product = by_slug.get(profile['slug'])
+                if (not product or product.get('id') != profile['id']
+                        or product.get('name') != profile['name']
+                        or not no_merchant_collision(product, profile, url)):
+                    raise RuntimeError('Marketplace catalog identity or seller platform collision')
         if product_id is not None:
             try:
                 target_id = int(product_id)
@@ -361,6 +389,12 @@ class PriceUpdater:
                 if (len(targets) != 2
                         or {row['source_url'] for row in targets} != set(FOLD8_ULTRA_PREFLIGHT_URLS)):
                     raise RuntimeError('Both exact Fold8 reviewed targets are required')
+            if marketplace_preflight_only:
+                reviewed_url = next(url for url, profile in MEDIAMARKT_MARKETPLACE_PROFILES.items()
+                                    if profile['slug'] == p['slug'])
+                targets = [row for row in targets if row['source_url'] == reviewed_url]
+                if len(targets) != 1:
+                    raise RuntimeError('Exact marketplace reviewed target missing for ' + p['slug'])
             product_report = {'slug': p['slug'], 'targets': targets,
                               'purchasable_merchants': [], 'prepared_offers': [],
                               'rejected_live_observations': 0, 'discovered_destinations': 0}
@@ -480,6 +514,11 @@ class PriceUpdater:
                         != set(FOLD8_ULTRA_PREFLIGHT_URLS)
                 ):
                     raise RuntimeError('Both Fold8 preflight observations must survive matching')
+                if marketplace_preflight_only and (
+                    len(offers) != 1 or offers[0].get('url') not in MEDIAMARKT_MARKETPLACE_PROFILES
+                    or MEDIAMARKT_MARKETPLACE_PROFILES[offers[0]['url']]['slug'] != p['slug']
+                ):
+                    raise RuntimeError('Exact marketplace preflight observation must survive matching')
                 if offers:
                     observed_at = self.utc_timestamp()
                     checked_at = self.utc_timestamp()
@@ -572,6 +611,13 @@ class PriceUpdater:
             or aggregate_result['committed'] is not True
         ):
             raise RuntimeError('Fold8 scoped ingestion did not accept both exact offers')
+        if marketplace_preflight_only and not dry_run and (
+            aggregate_result['accepted'] != len(MEDIAMARKT_MARKETPLACE_PROFILES)
+            or aggregate_result['stale_ignored'] != 0
+            or aggregate_result['variant_rejected'] != 0
+            or aggregate_result['committed'] is not True
+        ):
+            raise RuntimeError('Marketplace scoped ingestion did not accept both exact offers')
         if changed_paths and not dry_run:
             submit_urls(changed_paths + ["/", "/products"])
 

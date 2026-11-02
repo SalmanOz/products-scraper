@@ -1,0 +1,23 @@
+{
+  "purpose": "Reviewed exact MediaMarkt marketplace URL hints for two selected seller offers with explicit 5G proof. Prices and stock are never retained; every run rereads the selected PDP.",
+  "products": [
+    {
+      "id": 30,
+      "slug": "samsung-galaxy-s25-ultra",
+      "name": "Samsung Galaxy S25 Ultra",
+      "ram_gb": 12,
+      "storage_gb": 256,
+      "network_generation": "5g",
+      "targets": ["https://www.mediamarkt.com.tr/tr/product/_samsung-galaxy-s25-ultra-5g-12-gb-256-gb-akilli-telefon-titanyum-mavi-166438395.html"]
+    },
+    {
+      "id": 28,
+      "slug": "samsung-galaxy-s24-ultra",
+      "name": "Samsung Galaxy S24 Ultra",
+      "ram_gb": 12,
+      "storage_gb": 256,
+      "network_generation": "5g",
+      "targets": ["https://www.mediamarkt.com.tr/tr/product/_samsung-galaxy-s24-ultra-5g-12-gb-256-gb-akilli-telefon-mor-166438383.html"]
+    }
+  ]
+}

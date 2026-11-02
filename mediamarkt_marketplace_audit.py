@@ -312,10 +312,14 @@ def selected_marketplace_offer(html, final_url):
                _normal(button.get_text(' ', strip=True)) == 'Sepete Ekle'
                for button in buttons):
         return None
-    radio_text = title + ' ' + urlparse(final_url).path
-    radio = ('5g' if re.search(r'(?<![a-z0-9])5g(?![a-z0-9])', radio_text, re.I)
-             else '4g' if re.search(r'(?<![a-z0-9])4g(?![a-z0-9])', radio_text, re.I)
-             else None)
+    title_radios = {value.casefold() for value in re.findall(
+        r'(?<![a-z0-9])([45]g)(?![a-z0-9])', title, re.I)}
+    path_radios = {value.casefold() for value in re.findall(
+        r'(?<![a-z0-9])([45]g)(?![a-z0-9])', urlparse(final_url).path, re.I)}
+    if (len(title_radios) > 1 or len(path_radios) > 1 or
+            (title_radios and path_radios and title_radios != path_radios)):
+        return None
+    radio = next(iter(title_radios or path_radios), None)
     return {'platform': 'MediaMarkt', 'seller_name': unescape(seller_name),
             'seller_id': seller_id, 'price': price, 'currency': 'TRY',
             'availability': 'in_stock' if availability == 'InStock' else 'limited',

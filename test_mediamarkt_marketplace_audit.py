@@ -232,6 +232,16 @@ class MarketplaceAuditTests(unittest.TestCase):
                 data = fixture(); change(data)
                 self.assertIsNone(selected_marketplace_offer(render(data), URL))
 
+    def test_explicit_radio_conflict_between_title_and_url_is_rejected(self):
+        data = fixture()
+        title = data['h1'].replace('Ultra 12', 'Ultra 4G 12')
+        data['h1'] = title
+        data['action']['object']['name'] = title
+        data['apollo']['CofrCoreFeature:Media:tr:' + SKU]['productName'] = title
+        data['apollo']['CofrCoreFeature:Media:tr:' + SKU + '[' + OFFER + ']']['productName'] = title
+        data['button_label'] = 'Sepete Ekle ' + title
+        self.assertIsNone(selected_marketplace_offer(render(data), URL))
+
 
 if __name__ == '__main__':
     unittest.main()

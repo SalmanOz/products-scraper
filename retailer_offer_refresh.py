@@ -26,6 +26,10 @@ from public_retailer_sources import PublicRetailerSources, SOURCES, public_sourc
 from pazarama_category_source import PazaramaCategorySource, pazarama_product_url
 from vatan_reviewed_source import VatanReviewedSource
 from mediamarkt_source import MediaMarktSource, product_url as mediamarkt_product_url
+from mediamarkt_marketplace_source import (MediaMarktMarketplaceSource,
+                                           PROFILES as MEDIAMARKT_MARKETPLACE_PROFILES,
+                                           reviewed_marketplace_offer)
+from mediamarkt_marketplace_preflight import load_verified_offers as load_marketplace_offers
 from apple_store_source import AppleStoreSource, reviewed_slug as apple_store_reviewed_slug
 from turk_telekom_source import TurkTelekomSource, product_url as turk_telekom_product_url
 from pasaj_source import PasajSource, product_url as pasaj_product_url
@@ -526,12 +530,14 @@ class RetailerOfferRefresher:
                  mediamarkt_source=None, apple_store_source=None,
                  turk_telekom_source=None, pasaj_source=None, clock=time.monotonic,
                  hepsiburada_s25_fe_source=None, hepsiburada_apple_source=None,
-                 teknosa_reviewed_source=None):
+                 teknosa_reviewed_source=None, mediamarkt_marketplace_source=None):
         self._fetch = fetch or (session.get if session is not None else requests.get)
         self.public_sources = PublicRetailerSources(fetch=self._fetch)
         self.pazarama_source = PazaramaCategorySource(fetch=self._fetch)
         self.vatan_reviewed_source = vatan_source or VatanReviewedSource(get=self._fetch)
         self.mediamarkt_source = mediamarkt_source or MediaMarktSource(get=self._fetch)
+        self.mediamarkt_marketplace_source = (mediamarkt_marketplace_source or
+            MediaMarktMarketplaceSource(transport=self.mediamarkt_source))
         self.apple_store_source = apple_store_source or AppleStoreSource(get=self._fetch)
         self.turk_telekom_source = turk_telekom_source or TurkTelekomSource(get=self._fetch)
         self.pasaj_source = pasaj_source or PasajSource(get=self._fetch)
@@ -551,6 +557,7 @@ class RetailerOfferRefresher:
         self._transient_blocked_until = {}
         self._clock = clock
         self._fold8_preflight_file = os.environ.get('FOLD8_ULTRA_VERIFIED_AUDIT_FILE')
+        self._marketplace_preflight_file = os.environ.get('MEDIAMARKT_MARKETPLACE_VERIFIED_AUDIT_FILE')
         self._diagnostics = {}
         self._lock = Lock()
 
@@ -579,10 +586,19 @@ class RetailerOfferRefresher:
             with self._lock:
                 detail = dict(self._diagnostics.get(url, {'reason': 'not_attempted', 'http_status': None}))
                 offer = self._cache.get(url)
-            if offer and not self._scraper.has_observed_offer_evidence(product_name, offer, expected_specs):
+            if offer and not self._offer_identity_matches(product_name, offer, expected_specs):
                 detail['reason'] = 'identity_or_variant_not_verified'
-            rows.append({'source_url': url, 'merchant': ALLOWED_HOSTS[_safe_url(url).hostname], **detail})
+            merchant = (MEDIAMARKT_MARKETPLACE_PROFILES[url]['seller_name']
+                        if url in MEDIAMARKT_MARKETPLACE_PROFILES else
+                        ALLOWED_HOSTS[_safe_url(url).hostname])
+            rows.append({'source_url': url, 'merchant': merchant, **detail})
         return rows
+
+    def _offer_identity_matches(self, product_name, offer, expected_specs):
+        if offer.get('url') in MEDIAMARKT_MARKETPLACE_PROFILES:
+            return reviewed_marketplace_offer(offer, product_name, expected_specs)
+        return (self._scraper.is_strict_match(product_name, offer['source_title'], expected_specs)
+                and self._scraper.has_observed_offer_evidence(product_name, offer, expected_specs))
 
     def _transport_failure(self, host):
         host = host.removeprefix('www.')
@@ -614,6 +630,15 @@ class RetailerOfferRefresher:
             with self._lock:
                 self._cache[source_url] = candidate
             return candidate
+        if self._marketplace_preflight_file and source_url in MEDIAMARKT_MARKETPLACE_PROFILES:
+            verified = load_marketplace_offers(self._marketplace_preflight_file)
+            candidate = verified.get(source_url) if verified else None
+            self._record_attempt(source_url,
+                                 'observed_exact_new_marketplace_offer_from_preflight' if candidate
+                                 else 'preflight_invalid_or_stale', 200 if candidate else None)
+            with self._lock:
+                self._cache[source_url] = candidate
+            return candidate
         if source_url == HEPSIBURADA_S25_FE_256_URL:
             candidate, reason, status = self.hepsiburada_s25_fe_source.read_offer()
             self._record_attempt(source_url, reason, status)
@@ -633,7 +658,9 @@ class RetailerOfferRefresher:
                 self._cache[source_url] = candidate
             return candidate
         if parsed.hostname.removeprefix('www.') == 'mediamarkt.com.tr':
-            if mediamarkt_product_url(source_url):
+            if source_url in MEDIAMARKT_MARKETPLACE_PROFILES:
+                candidate, reason, status = self.mediamarkt_marketplace_source.read_offer(source_url)
+            elif mediamarkt_product_url(source_url):
                 candidate, reason, status = self.mediamarkt_source.read_offer(source_url)
             else:
                 candidate, reason, status = None, 'invalid_mediamarkt_pdp_url', None
@@ -813,8 +840,7 @@ class RetailerOfferRefresher:
         # The cached observation is rechecked for every requested catalog model;
         # a base S26 cache hit cannot establish a Plus profile.
         return [dict(offer) for offer in candidates if offer
-                and self._scraper.is_strict_match(product_name, offer['source_title'], expected_specs)
-                and self._scraper.has_observed_offer_evidence(product_name, offer, expected_specs)]
+                and self._offer_identity_matches(product_name, offer, expected_specs)]
 
 
 def refresh_existing_offer_targets(product_name, targets, expected_specs):
