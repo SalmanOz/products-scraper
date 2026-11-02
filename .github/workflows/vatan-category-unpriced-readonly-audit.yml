@@ -1,0 +1,61 @@
+name: Vatan Unpriced Oppo and Vivo Read-only Audit
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: teknoskor-vatan-category-unpriced-readonly-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Test exact category and PDP evidence guards
+        run: python -m unittest -q test_vatan_category_unpriced test_vatan_reviewed_source test_retailer_offer_refresh
+      - name: Start read-only exact PDP browser GET service
+        run: |
+          docker run -d --name=vatan-unpriced-browser -p 8191:8191 -e LOG_LEVEL=info ghcr.io/flaresolverr/flaresolverr:latest
+          for attempt in {1..30}; do
+            if curl --fail --silent http://localhost:8191/ > /dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs vatan-unpriced-browser
+          exit 1
+      - name: Probe two exact selected Vatan PDPs without writes
+        env:
+          VATAN_CATEGORY_AUDIT_OUTPUT_DIR: ${{ runner.temp }}
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+        run: python audit_vatan_category_unpriced.py
+      - name: Publish read-only summary
+        if: always()
+        run: |
+          if test -f "${{ runner.temp }}/vatan-category-unpriced.md"; then
+            cat "${{ runner.temp }}/vatan-category-unpriced.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload read-only evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vatan-category-unpriced-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/vatan-category-unpriced.json
+            ${{ runner.temp }}/vatan-category-unpriced.md
+          if-no-files-found: warn
+          retention-days: 14

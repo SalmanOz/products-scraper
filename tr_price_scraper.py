@@ -687,6 +687,20 @@ class TRPriceScraper:
         if not expected_storage:
             return False
         ram, storage, ambiguous = self._unambiguous_listing_capacities(title)
+        # Vatan sometimes omits both GB suffixes on a concrete Android PDP
+        # ("OPPO Find X9 Pro 16/512 Akıllı Telefon"). Require the same pair in
+        # its exact PDP slug and reject other capacity declarations, so a
+        # model number/storage shorthand cannot silently become RAM evidence.
+        if (ram is None and storage is None and not ambiguous
+                and 'iphone' not in self._identity_words(product_name)
+                and 'akıllı telefon' in title.casefold()):
+            from urllib.parse import urlparse
+            parsed = urlparse(str(offer.get('url') or ''))
+            if parsed.hostname == 'www.vatanbilgisayar.com':
+                pairs = re.findall(r'(?<![\w.,])([1-9]|1\d|2[0-4])\s*/\s*'
+                                   r'(64|128|256|512|1024)(?!\w)', title)
+                if len(pairs) == 1 and f'-{pairs[0][0]}-{pairs[0][1]}-' in parsed.path.lower():
+                    ram, storage = map(int, pairs[0])
         if ambiguous or storage != expected_storage:
             return False
         # iPhone retail variants are identified by exact model + storage;
