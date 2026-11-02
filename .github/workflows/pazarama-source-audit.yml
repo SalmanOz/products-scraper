@@ -37,6 +37,9 @@ jobs:
           PAZARAMA_AUDIT_OUTPUT_DIR: ${{ runner.temp }}
           PAZARAMA_AUDIT_BROWSER_GET: '1'
         run: python audit_pazarama_source.py
+      - name: Diagnose browser GET service failure
+        if: failure()
+        run: docker logs --tail 60 pazarama-audit-browser
       - name: Publish read-only summary
         if: always()
         run: |

@@ -94,6 +94,18 @@ class PazaramaSourceAuditTests(unittest.TestCase):
         self.assertEqual(browser.diagnostics[0]['reason'], 'solver_reported_failure')
         self.assertNotIn('message', browser.diagnostics[0])
 
+    def test_browser_get_http_500_records_sanitized_service_message(self):
+        def post(_url, **_kwargs):
+            data = b'{"message":"TimeoutException while loading https://www.pazarama.com/robots.txt"}'
+            return Response(SOLVER_URL, data, status=500)
+        browser = BrowserGetTransport(post=post)
+        with self.assertRaisesRegex(Exception, 'unavailable'):
+            browser(ROBOTS_URL)
+        diagnostic = browser.diagnostics[0]
+        self.assertEqual(diagnostic['solver_http_status'], 500)
+        self.assertIn('TimeoutException', diagnostic['solver_error_excerpt'])
+        self.assertNotIn('https://', diagnostic['solver_error_excerpt'])
+
     def test_three_exact_variants_and_http_statuses_are_reported_without_writes(self):
         fetch = Fetch(pages())
         report = run_audit(recorder=HttpRecorder(fetch=fetch))

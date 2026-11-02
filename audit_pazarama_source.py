@@ -81,6 +81,18 @@ class BrowserGetTransport:
             diagnostic['solver_http_status'] = response.status_code
             if response.status_code != 200:
                 diagnostic['reason'] = 'solver_http_error'
+                error_body = bytearray()
+                for chunk in response.iter_content(chunk_size=4096):
+                    error_body.extend(chunk)
+                    if len(error_body) >= 4096:
+                        break
+                diagnostic['solver_response_bytes'] = len(error_body)
+                try:
+                    message = str(json.loads(error_body).get('message', ''))
+                    message = re.sub(r'https?://\S+', '[url]', message)
+                    diagnostic['solver_error_excerpt'] = message[:300]
+                except (TypeError, ValueError, UnicodeError, AttributeError):
+                    diagnostic['solver_error_excerpt'] = None
                 raise requests.RequestException('Browser GET service unavailable')
             data = bytearray()
             for chunk in response.iter_content(chunk_size=64 * 1024):
@@ -244,7 +256,8 @@ def format_summary(report):
         lines.append(
             f"Browser GET robots: {diagnostic['reason']}; service HTTP {diagnostic['solver_http_status']}; "
             f"service status {diagnostic['solver_status']}; site HTTP {diagnostic['solution_status']}; "
-            f"URL matched {diagnostic['solution_url_matches']}; response bytes {diagnostic['solver_response_bytes']}."
+            f"URL matched {diagnostic['solution_url_matches']}; response bytes {diagnostic['solver_response_bytes']}; "
+            f"error {diagnostic.get('solver_error_excerpt')}."
         )
     for row in report['products']:
         pdp_status = next((event['http_status'] for event in events
