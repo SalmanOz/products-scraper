@@ -220,6 +220,21 @@ class A55ExactManualCoverageTests(unittest.TestCase):
             self.assertEqual(report['status'], 'failed')
             self.assertEqual(blocked.writes, [])
 
+    def test_only_safe_invalid_target_reasons_can_pass_catalog_audit(self):
+        safe = Client()
+        safe.invalid = 1
+        safe.reasons['unsupported_host'] = 1
+        report, _, _ = self.audited(client=safe)
+        self.assertEqual(report['status'], 'passed', report['catalog_error'])
+        self.assertEqual(report['rows'][0]['catalog_evidence']['invalid_reasons']['unsupported_host'], 1)
+        unsafe = Client()
+        unsafe.invalid = 1
+        unsafe.reasons['malformed_url'] = 1
+        report, _, _ = self.audited(client=unsafe)
+        self.assertEqual(report['status'], 'failed')
+        self.assertIn('raw_seller_or_target_rejection', report['catalog_error'])
+        self.assertEqual(unsafe.writes, [])
+
     def test_priced_variant_or_target_snapshot_drift_blocks_audit(self):
         for drift in ('priced', 'variant', 'target', 'snapshot'):
             with self.subTest(drift=drift):

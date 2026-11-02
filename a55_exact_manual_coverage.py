@@ -19,7 +19,7 @@ from bs4 import BeautifulSoup
 from coverage_two_marketplace import _offer_matches, _read_selected
 from mediamarkt_marketplace_preflight import no_merchant_collision
 from mediamarkt_source import BOT, MAX_HTML_BYTES, MediaMarktSource
-from offer_ingestion_client import OfferIngestionClient
+from offer_ingestion_client import OfferIngestionClient, TARGET_INVALID_REASONS
 from update_prices import PriceUpdater
 
 
@@ -146,9 +146,14 @@ def _catalog(client):
         total = raw['refresh_targets_total']
         invalid = raw['refresh_targets_invalid_count']
         duplicate = raw['refresh_targets_duplicate_count']
+        invalid_reasons = raw['refresh_targets_invalid_reasons']
         if (raw.get('complete') is not True or raw.get('blocked') is not False
                 or raw.get('reasons') != [] or duplicate != 0
                 or invalid and total > 12
+                or not isinstance(invalid_reasons, dict)
+                or set(invalid_reasons) != set(TARGET_INVALID_REASONS)
+                or invalid != (invalid_reasons['unsupported_host'] +
+                               invalid_reasons['retailer_query_restricted'])
                 or raw.get('stored_rows_checked') != total + invalid
                 or raw.get('unknown_seller_rows') != 0
                 or raw.get('invalid_url_rows') != 0
@@ -315,6 +320,9 @@ def verified_offers(report, now=None):
                     or not isinstance(evidence.get('invalid_reasons'), dict)
                     or sum(evidence['invalid_reasons'].values()) !=
                         evidence['invalid_targets']
+                    or evidence['invalid_targets'] != (
+                        evidence['invalid_reasons']['unsupported_host'] +
+                        evidence['invalid_reasons']['retailer_query_restricted'])
                     or not isinstance(evidence.get('target_snapshot'), str)
                     or not re.fullmatch(r'[0-9a-f]{64}', evidence['target_snapshot'])
                     or evidence.get('raw_seller_collision') is not False
@@ -492,6 +500,7 @@ def summary(report, *, publication=None, publish_requested=None):
                      f"stok {offer.get('availability') or '?'}; "
                      f"tam hedef {evidence.get('target_count')}, "
                      f"geçersiz {evidence.get('invalid_targets')}, "
+                     f"geçersiz nedenler {evidence.get('invalid_reasons')}, "
                      f"çift {evidence.get('duplicate_targets')}, "
                      f"ham satır {evidence.get('raw_rows_checked')}, "
                      f"satıcı çakışması {evidence.get('raw_seller_collision')}.")
