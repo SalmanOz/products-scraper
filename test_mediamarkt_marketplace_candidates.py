@@ -69,22 +69,25 @@ class SolverResponse:
 class Source:
     def __init__(self, mapping=None, *, sitemap='ready', direct_reason='ready',
                  browser_url=None, browser_reason='ready', category_pages=None,
-                 category_direct_reason='ready', category_final_url=None):
+                 category_direct_reason='ready', category_final_url=None,
+                 robots='ready'):
         self.mapping = mapping or {}
         self.category_pages = category_pages or {}
         self.category_direct_reason = category_direct_reason
         self.category_final_url = category_final_url
         self.sitemap = sitemap
+        self.robots = robots
         self.direct_reason = direct_reason
         self.browser_url = browser_url
         self.browser_reason = browser_reason
-        self._rules = self
+        self._rules = self if robots == 'ready' else None
         self.direct = []
         self.browser = []
         self.category_browser = []
 
     def discover(self, name, specs):
-        return [{'source_url': url} for url in self.mapping.get(name, [])]
+        return ([{'source_url': url} for url in self.mapping.get(name, [])]
+                if self.sitemap == 'ready' else [])
 
     def can_fetch(self, bot, url):
         return True
@@ -111,8 +114,9 @@ class Source:
         return (b'<html></html>', self.browser_url or url, self.browser_reason)
 
     def report(self):
-        return {'robots_status': 'ready', 'sitemap_status': self.sitemap,
-                'direct_requests': len(self.direct), 'browser_requests': len(self.browser)}
+        return {'robots_status': self.robots, 'sitemap_status': self.sitemap,
+                'direct_requests': len(self.direct),
+                'browser_requests': len(self.browser) + len(self.category_browser)}
 
 
 class MarketplaceCandidateAuditTests(unittest.TestCase):
@@ -216,13 +220,29 @@ class MarketplaceCandidateAuditTests(unittest.TestCase):
         self.assertIsNone(offer)
         self.assertEqual(attempt['reason'], 'changed_selected_url')
 
-    def test_sitemap_unavailable_and_bad_offset_fail_without_pdp(self):
+    def test_sitemap_failure_allows_independent_category_evidence(self):
         rows = [product(238, 'xiaomi-redmi-note-15-pro', 'Xiaomi Redmi Note 15 Pro')]
-        source = Source({'Xiaomi Redmi Note 15 Pro': [REDMI]}, sitemap='blocked')
+        source = Source(sitemap='blocked', category_pages={
+            CATEGORY_HINT_URLS[1]: '<a href="' + REDMI + '">Redmi</a>'})
+        with patch('audit_mediamarkt_marketplace_candidates.selected_marketplace_offer',
+                   return_value=selected(REDMI)):
+            report = run_audit(catalog_get=self.catalog_get(rows), source=source)
+        self.assertEqual(report['status'], 'completed')
+        self.assertEqual(report['source_verified'], 1)
+        self.assertIn('sitemap blocked', summary(report))
+
+    def test_no_robots_or_discovery_source_fails_without_pdp(self):
+        rows = [product(238, 'xiaomi-redmi-note-15-pro', 'Xiaomi Redmi Note 15 Pro')]
+        source = Source(sitemap='blocked', category_direct_reason='http_500')
         report = run_audit(catalog_get=self.catalog_get(rows), source=source)
         self.assertEqual(report['status'], 'failed')
-        self.assertEqual(report['error'], 'mediamarkt_sitemap_unavailable')
-        self.assertEqual(source.direct, [])
+        self.assertEqual(report['error'], 'mediamarkt_discovery_unavailable')
+        self.assertEqual(source.direct, list(CATEGORY_HINT_URLS))
+        self.assertEqual(report['probed'], 0)
+        no_robots = Source(sitemap='robots_unavailable', robots='unavailable')
+        report = run_audit(catalog_get=self.catalog_get(rows), source=no_robots)
+        self.assertEqual(report['status'], 'failed')
+        self.assertEqual(no_robots.direct, [])
         with self.assertRaisesRegex(ValueError, 'offset'):
             run_audit(catalog_get=self.catalog_get(rows), source=source, offset=-1)
 

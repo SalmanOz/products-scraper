@@ -113,8 +113,8 @@ def _candidate_queue(rows, source):
             url = target.get('source_url') if isinstance(target, dict) else None
             if product_url(url):
                 by_url.setdefault(url, {})[row['id']] = (row, specs)
-    category_urls, category_status = _category_hints(source) if source.report().get(
-        'sitemap_status') == 'ready' else (set(), {})
+    category_urls, category_status = _category_hints(source) if source._rules is not None else (
+        set(), {})
     for url in category_urls:
         path = urlparse(url).path
         for row, specs in unpriced_rows:
@@ -197,8 +197,10 @@ def run_audit(*, catalog_get=None, source=None, offset=0):
         report['category_hint_urls'] = category_count
         report['category_status'] = category_status
         report['ambiguous_urls'] = ambiguous
-        if source.report().get('sitemap_status') != 'ready':
-            raise ValueError('mediamarkt_sitemap_unavailable')
+        if (source.report().get('sitemap_status') != 'ready' and
+                not any(status in {'ready', 'browser_ready'} for status in
+                        category_status.values())):
+            raise ValueError('mediamarkt_discovery_unavailable')
         browser_failures = 0
         for url, row, specs in unique[offset:offset + MAX_PROBES]:
             if browser_failures >= MAX_BROWSER_FAILURES:
@@ -242,6 +244,10 @@ def summary(report):
         f"ambiguous {len(report['ambiguous_urls'])}; "
         f"probed {report['probed']}/{report['probe_budget']} from offset "
         f"{report['offset']}; source verified {report['source_verified']}.",
+        f"Source: robots {report['source'].get('robots_status', '?')}; "
+        f"sitemap {report['source'].get('sitemap_status', '?')}; "
+        f"direct {report['source'].get('direct_requests', '?')}; "
+        f"browser {report['source'].get('browser_requests', '?')}.",
     ]
     for category_url, status in report['category_status'].items():
         lines.append(f"- Category hint {category_url}: {status}.")
