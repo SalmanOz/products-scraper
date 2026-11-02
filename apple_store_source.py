@@ -35,6 +35,12 @@ _NAMES = {
     'apple-iphone-17e': 'iPhone 17e 256 GB Siyah',
     'apple-iphone-17': 'iPhone 17 256 GB Siyah',
 }
+_SKUS = {
+    'apple-iphone-18-pro-max': 'MJXN4TU/A',
+    'apple-iphone-18-pro': 'MJRP4TU/A',
+    'apple-iphone-17e': 'MHRV4TU/A',
+    'apple-iphone-17': 'MG6J4TU/A',
+}
 
 
 def _clean(text):
@@ -88,7 +94,7 @@ def selected_offer(html, final_url):
             or offer.get('seller') is not None
             or str(offer.get('itemCondition', 'NewCondition')).rstrip('/').rsplit('/', 1)[-1]
             != 'NewCondition'
-            or not re.fullmatch(r'[A-Z0-9]{5,16}TU/A', str(offer.get('sku', '')))):
+            or offer.get('sku') != _SKUS[slug]):
         return None
     raw_price = offer.get('price')
     if isinstance(raw_price, bool) or not re.fullmatch(r'\d+(?:\.\d{1,2})?', str(raw_price)):

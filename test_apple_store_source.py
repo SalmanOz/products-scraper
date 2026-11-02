@@ -18,14 +18,14 @@ PRICE = {'apple-iphone-18-pro-max': 149999, 'apple-iphone-18-pro': 137999,
 
 def page(slug='apple-iphone-17', *, price=None, visible=None, color='black',
          capacity='256gb', screen=None, disabled=False, seller=None,
-         condition=None, schema_url=None, duplicate=False):
+         condition=None, schema_url=None, sku=None, duplicate=False):
     url = PDP_URLS[slug]
     name = _NAMES[slug]
     price = PRICE[slug] if price is None else price
     visible = (f'{PRICE[slug]:,.2f}'.replace(',', '_').replace('.', ',')
                .replace('_', '.') + ' TL') if visible is None else visible
     offer = {'@type': 'Offer', 'priceCurrency': 'TRY', 'price': price,
-             'sku': SKU[slug]}
+             'sku': sku or SKU[slug]}
     if seller is not None:
         offer['seller'] = seller
     if condition is not None:
@@ -85,6 +85,7 @@ class AppleStoreSourceTests(unittest.TestCase):
             page(capacity='512gb'), page(disabled=True), page(seller={'name': 'Other'}),
             page(condition='https://schema.org/RefurbishedCondition'),
             page(schema_url=PDP_URLS['apple-iphone-17e']), page(duplicate=True),
+            page(sku='MG6L4TU/A'),
         ]
         for html in cases:
             with self.subTest(case=html[:100]):
