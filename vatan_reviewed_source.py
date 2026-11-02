@@ -40,7 +40,7 @@ def reviewed_s25_fe_variant_urls():
     if len(profiles) != 1:
         return ()
     profile = profiles[0]
-    if (profile.get('id') is None
+    if (profile.get('id') == 298
             and profile.get('slug') == S25_FE_256_SLUG
             and profile.get('name') == 'Samsung Galaxy S25 FE 256GB'
             and profile.get('ram_gb') == 8

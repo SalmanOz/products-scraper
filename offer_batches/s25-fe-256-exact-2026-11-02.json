@@ -2,7 +2,7 @@
   "purpose": "Runner-reviewed exact S25 FE 8/256 PDP hints only. No price or stock is stored; every refresh rechecks the selected live first-party Offer.",
   "products": [
     {
-      "id": null,
+      "id": 298,
       "slug": "samsung-galaxy-s25-fe-256gb",
       "name": "Samsung Galaxy S25 FE 256GB",
       "ram_gb": 8,
@@ -11,6 +11,7 @@
       "targets": [
         "https://www.mediamarkt.com.tr/tr/product/_samsung-galaxy-s25fe-8256gb-lacivert-1249060.html",
         "https://www.vatanbilgisayar.com/samsung-galaxy-s25-fe-8-256-gb-akilli-telefon-buz-mavisi.html",
+        "https://www.hepsiburada.com/samsung-galaxy-s25-fe-256-gb-8-gb-ram-samsung-turkiye-garantili-gece-siyahi-pm-HBC00009S6B28",
         "https://www.mediamarkt.com.tr/tr/product/_samsung-galaxy-s25fe-8256gb-buz-mavisi-1249062.html"
       ]
     }

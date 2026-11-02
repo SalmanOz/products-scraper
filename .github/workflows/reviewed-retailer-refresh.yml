@@ -27,7 +27,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
       - name: Test reviewed sources and offer validation
-        run: python -m unittest -q test_apple_store_source test_mediamarkt_source test_vatan_reviewed_source test_turk_telekom_source test_pasaj_source test_retailer_offer_refresh test_reviewed_offer_targets test_price_refresh_orchestration
+        run: python -m unittest -q test_apple_store_source test_mediamarkt_source test_vatan_reviewed_source test_turk_telekom_source test_pasaj_source test_s25_fe_hepsiburada_audit test_retailer_offer_refresh test_reviewed_offer_targets test_price_refresh_orchestration
       - name: Start bounded browser GET service
         run: |
           docker run -d --name=reviewed-retailer-browser -p 8191:8191 -e LOG_LEVEL=info ghcr.io/flaresolverr/flaresolverr:latest
@@ -80,12 +80,14 @@ jobs:
               coverage = report.get('coverage', {})
               lines = ['## Daily reviewed retailer refresh',
                        f"Status: {report.get('status')}; any verified offer on {coverage.get('with_purchasable_offer', 0)}/{coverage.get('products', 0)} models; two merchants on {coverage.get('with_two_merchants', 0)}."]
-              for merchant in ('Apple Store', 'MediaMarkt', 'Vatan Bilgisayar', 'Türk Telekom eMağaza', 'Pasaj'):
+              for merchant in ('Apple Store', 'MediaMarkt', 'Vatan Bilgisayar', 'Türk Telekom eMağaza', 'Pasaj', 'Hepsiburada'):
                   attempts = [row for product in report.get('products', [])
                               for row in product.get('source_attempts', [])
                               if row.get('merchant') == merchant
                               and (merchant != 'Pasaj' or row.get('reason') != 'unreviewed_pasaj_pdp')]
-                  accepted = sum(row.get('reason') in ('observed_exact_offer', 'observed_exact_cash_offer') for row in attempts)
+                  accepted = sum(row.get('reason') in (
+                      'observed_exact_offer', 'observed_exact_cash_offer',
+                      'observed_exact_first_party_cash_offer') for row in attempts)
                   lines.append(f'- {merchant}: {accepted}/{len(attempts)} exact live PDP observations.')
               with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:
                   out.write('\n'.join(lines) + '\n')

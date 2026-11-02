@@ -28,6 +28,9 @@ from mediamarkt_source import MediaMarktSource, product_url as mediamarkt_produc
 from apple_store_source import AppleStoreSource, reviewed_slug as apple_store_reviewed_slug
 from turk_telekom_source import TurkTelekomSource, product_url as turk_telekom_product_url
 from pasaj_source import PasajSource, product_url as pasaj_product_url
+from hepsiburada_s25_fe_source import (
+    HepsiburadaS25FeSource, URL as HEPSIBURADA_S25_FE_256_URL,
+)
 
 
 _MERCHANT_DOMAINS = {
@@ -516,7 +519,8 @@ class RetailerOfferRefresher:
 
     def __init__(self, session=None, fetch=None, vatan_source=None,
                  mediamarkt_source=None, apple_store_source=None,
-                 turk_telekom_source=None, pasaj_source=None, clock=time.monotonic):
+                 turk_telekom_source=None, pasaj_source=None, clock=time.monotonic,
+                 hepsiburada_s25_fe_source=None):
         self._fetch = fetch or (session.get if session is not None else requests.get)
         self.public_sources = PublicRetailerSources(fetch=self._fetch)
         self.pazarama_source = PazaramaCategorySource(fetch=self._fetch)
@@ -525,6 +529,9 @@ class RetailerOfferRefresher:
         self.apple_store_source = apple_store_source or AppleStoreSource(get=self._fetch)
         self.turk_telekom_source = turk_telekom_source or TurkTelekomSource(get=self._fetch)
         self.pasaj_source = pasaj_source or PasajSource(get=self._fetch)
+        self.hepsiburada_s25_fe_source = (
+            hepsiburada_s25_fe_source or HepsiburadaS25FeSource(get=self._fetch)
+        )
         self._scraper = TRPriceScraper()
         self._cache = {}
         self._blocked_hosts = set()
@@ -585,6 +592,12 @@ class RetailerOfferRefresher:
         with self._lock:
             if source_url in self._cache:
                 return self._cache[source_url]
+        if source_url == HEPSIBURADA_S25_FE_256_URL:
+            candidate, reason, status = self.hepsiburada_s25_fe_source.read_offer()
+            self._record_attempt(source_url, reason, status)
+            with self._lock:
+                self._cache[source_url] = candidate
+            return candidate
         if parsed.hostname.removeprefix('www.') == 'mediamarkt.com.tr':
             if mediamarkt_product_url(source_url):
                 candidate, reason, status = self.mediamarkt_source.read_offer(source_url)

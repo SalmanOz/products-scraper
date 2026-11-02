@@ -8,9 +8,11 @@ from unittest.mock import Mock
 import requests
 
 from hepsiburada_s25_fe_source import (
-    HepsiburadaS25FeSource, PRODUCT_ID, ROBOTS_URL, SELLER_URL, SKU, SOLVER_URL, URL,
+    HepsiburadaS25FeSource, NAME, PRODUCT_ID, ROBOTS_URL, SELLER_URL, SKU, SOLVER_URL,
+    SPECS, URL,
     parse_exact_buy_box,
 )
+from retailer_offer_refresh import RetailerOfferRefresher
 
 
 def fixture(*, seller='Hepsiburada', event_seller='Hepsiburada', price=36999,
@@ -145,6 +147,44 @@ class HepsiburadaS25FeAuditTests(unittest.TestCase):
             get=get, post=lambda *_a, **_k: solver_result(ROBOTS_URL,
                                                             'User-agent: *\nDisallow: /'))
         self.assertEqual(denied.read_offer(), (None, 'robots_disallowed', None))
+
+    def test_only_exact_reviewed_url_uses_dedicated_reader_and_8_256_catalog(self):
+        class ExactSource:
+            calls = 0
+
+            def read_offer(self):
+                self.calls += 1
+                offer, reason = parse_exact_buy_box(fixture())
+                return offer, reason, 200
+
+        dedicated = ExactSource()
+        ordinary_requests = []
+
+        def generic_get(url, **_kwargs):
+            ordinary_requests.append(url)
+            return response(url, 'denied', 403)
+
+        reader = RetailerOfferRefresher(
+            fetch=generic_get, hepsiburada_s25_fe_source=dedicated)
+        target = {'source_url': URL}
+        offers = reader.refresh_existing_offer_targets(NAME, [target], SPECS)
+        self.assertEqual([(row['merchant'], row['price']) for row in offers],
+                         [('Hepsiburada', 36999)])
+        self.assertEqual(reader.target_report(NAME, [target], SPECS)[0]['reason'],
+                         'observed_exact_first_party_cash_offer')
+        self.assertEqual(dedicated.calls, 1)
+        self.assertEqual(ordinary_requests, [])
+
+        # The 8/128 catalog entry cannot reuse the cached 8/256 observation.
+        self.assertEqual(reader.refresh_existing_offer_targets(
+            'Samsung Galaxy S25 FE', [target],
+            {'ram_gb': 8, 'storage_gb': 128, 'network_generation': '5g'}), [])
+        self.assertEqual(dedicated.calls, 1)
+        altered_url = URL + '?seller=other'
+        self.assertEqual(reader.refresh_existing_offer_targets(
+            NAME, [{'source_url': altered_url}], SPECS), [])
+        self.assertEqual(ordinary_requests, [altered_url])
+        self.assertEqual(dedicated.calls, 1)
 
 
 if __name__ == '__main__':

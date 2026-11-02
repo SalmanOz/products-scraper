@@ -14,7 +14,6 @@ APPLE_STORE_BATCH_PATH = Path(__file__).parent / 'offer_batches/apple-store-exac
 TURK_TELEKOM_BATCH_PATH = Path(__file__).parent / 'offer_batches/turk-telekom-exact-2026-11-02.json'
 PASAJ_BATCH_PATH = Path(__file__).parent / 'offer_batches/pasaj-exact-2026-11-02.json'
 S25_FE_256_BATCH_PATH = Path(__file__).parent / 'offer_batches/s25-fe-256-exact-2026-11-02.json'
-S25_FE_256_SLUG = 'samsung-galaxy-s25-fe-256gb'
 PROTECTED_TWO_STORE_SLUGS = frozenset({
     'tecno-camon-20-pro', 'tecno-camon-40', 'samsung-galaxy-a27-5g',
     'samsung-galaxy-a37-5g', 'samsung-galaxy-a57-5g',
@@ -30,21 +29,12 @@ def _profiles():
 
 
 def _identity_matches(profile, product):
-    """Only the newly created, slug-unique S25 FE variant may lack a known ID.
-
-    Existing reviewed profiles keep their pinned catalog ID. The new draft gets
-    its ID at publication, so its exact slug/name and positive database ID are
-    checked along with RAM, storage and radio before its URLs become hints.
-    """
-    if profile.get('slug') != product.get('slug') or profile.get('name') != product.get('name'):
-        return False
-    if profile.get('id') is None:
-        product_id = product.get('id')
-        return (profile.get('slug') == S25_FE_256_SLUG
-                and profile.get('name') == 'Samsung Galaxy S25 FE 256GB'
-                and isinstance(product_id, int) and not isinstance(product_id, bool)
-                and product_id > 0)
-    return profile.get('id') == product.get('id')
+    """The published catalog ID, slug and name must all remain exact."""
+    return (isinstance(profile.get('id'), int)
+            and not isinstance(profile.get('id'), bool)
+            and profile['id'] == product.get('id')
+            and profile.get('slug') == product.get('slug')
+            and profile.get('name') == product.get('name'))
 
 
 def with_reviewed_radio(product, expected_specs):

@@ -64,17 +64,19 @@ class ReviewedDailyTargetTests(unittest.TestCase):
 
     def test_new_s25_fe_variant_requires_exact_slug_name_memory_and_radio(self):
         profile = json.loads(S25_FE_256_BATCH_PATH.read_text())['products'][0]
-        self.assertIsNone(profile['id'])
-        product = {'id': 501, 'slug': profile['slug'], 'name': profile['name']}
+        self.assertEqual(profile['id'], 298)
+        product = {'id': 298, 'slug': profile['slug'], 'name': profile['name']}
         specs = {key: profile[key] for key in ('ram_gb', 'storage_gb', 'network_generation')}
         targets = daily_offer_targets(product, specs)
         self.assertEqual([row['source_url'] for row in targets], [
-            profile['targets'][0], profile['targets'][1], profile['targets'][2],
+            profile['targets'][0], profile['targets'][1],
+            profile['targets'][2], profile['targets'][3],
         ])
-        self.assertEqual({row['merchant_name'] for row in targets[:2]},
-                         {'MediaMarkt', 'Vatan Bilgisayar'})
+        self.assertEqual({row['merchant_name'] for row in targets[:3]},
+                         {'MediaMarkt', 'Vatan Bilgisayar', 'Hepsiburada'})
         self.assertEqual(with_reviewed_radio(product, {'ram_gb': 8, 'storage_gb': 256}), specs)
-        for key, wrong in (('id', 0), ('id', True), ('slug', 'samsung-galaxy-s25-fe'),
+        for key, wrong in (('id', 0), ('id', 501), ('id', True),
+                           ('slug', 'samsung-galaxy-s25-fe'),
                            ('name', 'Samsung Galaxy S25 FE'), ('name', 'Samsung Galaxy S25 FE 512GB')):
             self.assertEqual(daily_offer_targets({**product, key: wrong}, specs), [])
         for key, wrong in (('ram_gb', 6), ('storage_gb', 128), ('network_generation', '4g')):
