@@ -57,6 +57,7 @@ permissions:
 
 concurrency:
   group: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.price_index_audit_only == 'true' || github.event.inputs.comparison_readiness_only == 'true') && 'teknoskor-readonly-data-audit' || 'teknoskor-daily-data-sync' }}
+  queue: max
   cancel-in-progress: false
 
 jobs:

@@ -10,6 +10,7 @@ permissions:
 # server's product-row locks also serialize reconciliation with offer writes.
 concurrency:
   group: teknoskor-daily-data-sync
+  queue: max
   cancel-in-progress: false
 
 jobs:

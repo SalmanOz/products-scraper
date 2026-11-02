@@ -18,6 +18,7 @@ permissions:
 # Serialize all catalog/price writers, including the existing daily sync.
 concurrency:
   group: teknoskor-daily-data-sync
+  queue: max
   cancel-in-progress: false
 
 jobs:

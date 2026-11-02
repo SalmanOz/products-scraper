@@ -16,6 +16,7 @@ permissions:
 # preflights have their own queue and can run while daily refresh is active.
 concurrency:
   group: ${{ inputs.publish && 'teknoskor-daily-data-sync' || 'teknoskor-s25-fe-256-preflight' }}
+  queue: max
   cancel-in-progress: false
 
 jobs:

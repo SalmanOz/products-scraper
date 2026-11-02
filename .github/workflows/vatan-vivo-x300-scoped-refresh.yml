@@ -16,6 +16,7 @@ permissions:
 
 concurrency:
   group: ${{ (github.event_name == 'schedule' || inputs.publish) && 'teknoskor-daily-data-sync' || 'teknoskor-vivo-vatan-preflight' }}
+  queue: max
   cancel-in-progress: false
 
 jobs:

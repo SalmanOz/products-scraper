@@ -15,6 +15,7 @@ permissions:
 # A publishing run shares the existing price-writer queue with the daily job.
 concurrency:
   group: ${{ inputs.publish && 'teknoskor-daily-data-sync' || 'teknoskor-hepsiburada-apple-preflight' }}
+  queue: max
   cancel-in-progress: false
 
 jobs:
