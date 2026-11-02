@@ -2,10 +2,15 @@
 
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
+import json
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
-from poco_x8_a27_manual_coverage import PROFILES, audit, publish, verified_offers
+from poco_x8_a27_manual_coverage import (
+    PROFILES, audit, main, publish, summary, verified_offers,
+)
 from test_coverage_two_marketplace import Source
 
 
@@ -270,6 +275,45 @@ class ExactTwoManualCoverageTests(unittest.TestCase):
         client.readback_seller[237] = 'Other Seller'
         with self.assertRaisesRegex(RuntimeError, 'readback_missing'):
             self.publish_exact(report, client, source)
+
+    def test_final_summary_uses_actual_publication_result(self):
+        report, client, source = self.audited()
+        self.assertIn('Denetim aşaması: yazım yok', summary(report))
+        self.assertIn('Yayın istenmedi; bu koşuda fiyat yazımı yok',
+                      summary(report, publish_requested=False))
+        result = self.publish_exact(report, client, source)
+        published = summary(report, publish_requested=True, publication=result)
+        self.assertIn('Yayın tamamlandı: iki teklif kabul edildi', published)
+        self.assertIn('readback doğrulandı', published)
+        self.assertNotIn('yazım yok', published)
+        for incomplete in (None, {**result, 'accepted': 1},
+                           {**result, 'readback': 'missing'}):
+            with self.subTest(incomplete=incomplete):
+                text = summary(report, publish_requested=True,
+                               publication=incomplete)
+                self.assertIn('Yayın sonucu doğrulanamadı', text)
+                self.assertNotIn('yazım yok', text)
+
+    def test_summarize_command_reads_optional_publication_file(self):
+        report, client, source = self.audited()
+        result = self.publish_exact(report, client, source)
+        with TemporaryDirectory() as directory:
+            audit_file = Path(directory) / 'audit.json'
+            publish_file = Path(directory) / 'publish.json'
+            output_file = Path(directory) / 'summary.md'
+            audit_file.write_text(json.dumps(report))
+            publish_file.write_text(json.dumps(result))
+            self.assertEqual(main(['summarize', '--audit-file', str(audit_file),
+                                   '--publish-file', str(publish_file),
+                                   '--output-file', str(output_file),
+                                   '--publish-requested', 'true']), 0)
+            self.assertIn('Yayın tamamlandı', output_file.read_text())
+            publish_file.unlink()
+            self.assertEqual(main(['summarize', '--audit-file', str(audit_file),
+                                   '--publish-file', str(publish_file),
+                                   '--output-file', str(output_file),
+                                   '--publish-requested', 'true']), 0)
+            self.assertIn('Yayın sonucu doğrulanamadı', output_file.read_text())
 
 
 if __name__ == '__main__':

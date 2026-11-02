@@ -371,10 +371,46 @@ def publish(report, *, client=None, source=None, now=None):
             'readback': 'two_exact_selected_offers'}
 
 
-def summary(report):
+def _publication_confirmed(publication):
+    if (not isinstance(publication, dict)
+            or publication.get('status') != 'passed'
+            or publication.get('submitted') != 2
+            or publication.get('accepted') != 2
+            or publication.get('readback') != 'two_exact_selected_offers'
+            or not isinstance(publication.get('offers'), list)
+            or len(publication['offers']) != len(PROFILES)):
+        return False
+    rows = {row.get('source_url'): row for row in publication['offers']
+            if isinstance(row, dict)}
+    if set(rows) != set(PROFILES):
+        return False
+    for url, profile in PROFILES.items():
+        row = rows[url]
+        try:
+            if (row.get('slug') != profile['slug']
+                    or row.get('seller') != profile['seller_name']
+                    or Decimal(str(row.get('price'))) != profile['price']):
+                return False
+        except (InvalidOperation, TypeError, ValueError):
+            return False
+    return True
+
+
+def summary(report, *, publication=None, publish_requested=None):
+    if publish_requested is None:
+        publication_state = 'Denetim aşaması: yazım yok; koşunun yayın sonucu henüz belirlenmedi.'
+    elif publish_requested is False and publication is None:
+        publication_state = 'Yayın istenmedi; bu koşuda fiyat yazımı yok.'
+    elif (publish_requested is True and report.get('status') == 'passed'
+          and report.get('catalog_status') == 'passed'
+          and _publication_confirmed(publication)):
+        publication_state = 'Yayın tamamlandı: iki teklif kabul edildi ve kaynak bazlı readback doğrulandı.'
+    else:
+        publication_state = ('Yayın sonucu doğrulanamadı; yazım gerçekleşmiş olabilir. '
+                             'Ingestion sonucunu kontrol edin.')
     lines = [f"POCO X8 Pro + Galaxy A27 5G MediaMarkt iki SKU: {report['status']}; "
              f"yetkili katalog {report['catalog_status']}; robots "
-             f"{report.get('robots_status')}; yazım yok."]
+             f"{report.get('robots_status')}. {publication_state}"]
     for row in report['rows']:
         offer = row.get('verified_offer') or {}
         evidence = row.get('catalog_evidence') or {}
@@ -392,7 +428,6 @@ def summary(report):
                      f"satıcı çakışması {evidence.get('raw_seller_collision')}.")
     if report.get('catalog_error'):
         lines.append('Katalog engeli: ' + report['catalog_error'])
-    lines.append('Fiyat, skor ve katalog yazımı yalnız ayrıca onaylanan publish=true koşusunda mümkündür.')
     return '\n'.join(lines) + '\n'
 
 
@@ -405,6 +440,11 @@ def main(argv=None):
     write.add_argument('--audit-file', type=Path, required=True)
     write.add_argument('--output-file', type=Path, required=True)
     write.add_argument('--publish-exact-two', action='store_true', required=True)
+    render = sub.add_parser('summarize')
+    render.add_argument('--audit-file', type=Path, required=True)
+    render.add_argument('--publish-file', type=Path, required=True)
+    render.add_argument('--output-file', type=Path, required=True)
+    render.add_argument('--publish-requested', choices=('true', 'false'), required=True)
     args = parser.parse_args(argv)
     if args.action == 'audit':
         report = audit()
@@ -412,6 +452,17 @@ def main(argv=None):
         args.audit_file.with_suffix('.md').write_text(summary(report))
         print(summary(report), end='')
         return 0 if report['status'] == 'passed' else 1
+    if args.action == 'summarize':
+        report = json.loads(args.audit_file.read_text())
+        try:
+            publication = json.loads(args.publish_file.read_text())
+        except (OSError, ValueError):
+            publication = None
+        rendered = summary(report, publication=publication,
+                           publish_requested=args.publish_requested == 'true')
+        args.output_file.write_text(rendered)
+        print(rendered, end='')
+        return 0
     result = publish(json.loads(args.audit_file.read_text()))
     args.output_file.write_text(json.dumps(result, ensure_ascii=False, indent=2) + '\n')
     print(json.dumps(result, ensure_ascii=False))

@@ -61,14 +61,18 @@ jobs:
             --publish-exact-two \
             --audit-file "${{ runner.temp }}/poco-x8-a27-audit.json" \
             --output-file "${{ runner.temp }}/poco-x8-a27-publish.json"
-      - name: Summarize exact two-offer audit and optional readback
+      - name: Summarize final audit and publication outcome
         if: always()
         run: |
-          if test -f "${{ runner.temp }}/poco-x8-a27-audit.md"; then
+          if test -f "${{ runner.temp }}/poco-x8-a27-audit.json"; then
+            python poco_x8_a27_manual_coverage.py summarize \
+              --publish-requested "${{ inputs.publish }}" \
+              --audit-file "${{ runner.temp }}/poco-x8-a27-audit.json" \
+              --publish-file "${{ runner.temp }}/poco-x8-a27-publish.json" \
+              --output-file "${{ runner.temp }}/poco-x8-a27-audit.md"
             cat "${{ runner.temp }}/poco-x8-a27-audit.md" >> "$GITHUB_STEP_SUMMARY"
-          fi
-          if test -f "${{ runner.temp }}/poco-x8-a27-publish.json"; then
-            cat "${{ runner.temp }}/poco-x8-a27-publish.json" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'İki SKU denetim raporu oluşmadı; yayın sonucu için job adımlarını inceleyin.' >> "$GITHUB_STEP_SUMMARY"
           fi
       - name: Upload audit and optional publication evidence
         if: always()
