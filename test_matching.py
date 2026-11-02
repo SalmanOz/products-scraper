@@ -150,6 +150,25 @@ def test_capacity_matching():
     assert not failures, '\n' + '\n'.join(failures)
 
 
+def test_reviewed_catalog_memory_suffix_keeps_exact_mediamarkt_sku_gate():
+    scraper = TRPriceScraper.__new__(TRPriceScraper)
+    name = 'Samsung Galaxy S25 FE 8GB 256GB'
+    specs = {'ram_gb': 8, 'storage_gb': 256, 'network_generation': '5g'}
+    url = ('https://www.mediamarkt.com.tr/tr/product/'
+           '_samsung-galaxy-s25fe-8256gb-lacivert-1249060.html')
+    title = 'SAMSUNG Galaxy S25FE 8/256GB Lacivert'
+    assert scraper.is_strict_match(name, title, specs)
+    assert scraper.has_observed_offer_evidence(name, {'source_title': title, 'url': url}, specs)
+    for wrong in ('SAMSUNG Galaxy S25FE 8/128GB Lacivert',
+                  'SAMSUNG Galaxy S25 Ultra 8/256GB Lacivert',
+                  'SAMSUNG Galaxy S25 8/256GB Lacivert'):
+        assert not scraper.has_observed_offer_evidence(
+            name, {'source_title': wrong, 'url': url}, specs)
+    assert not scraper.has_observed_offer_evidence(
+        name, {'source_title': title, 'url': url.replace('8256gb', '8128gb')}, specs)
+    assert not scraper.is_strict_match(name, title, {**specs, 'storage_gb': 128})
+
+
 def test_standardize_merchant_name():
     failures = []
     for raw, expected in MERCHANT_CASES:
@@ -212,6 +231,8 @@ if __name__ == '__main__':
     print(f'✅ All {len(CASES)} is_strict_match cases passed')
     test_capacity_matching()
     print(f'✅ All {len(CAPACITY_CASES)} capacity matching cases passed')
+    test_reviewed_catalog_memory_suffix_keeps_exact_mediamarkt_sku_gate()
+    print('✅ Reviewed catalog memory suffix retains exact MediaMarkt SKU gate')
     test_standardize_merchant_name()
     print(f'✅ All {len(MERCHANT_CASES)} _standardize_merchant_name cases passed')
     test_is_trusted_merchant()

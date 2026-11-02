@@ -3,7 +3,8 @@ import unittest
 from xml.sax.saxutils import escape
 
 from mediamarkt_source import (
-    MediaMarktSource, ROBOTS_URL, SITEMAP_URLS, _selected_offer, product_url,
+    MediaMarktSource, ROBOTS_URL, SITEMAP_URLS, REVIEWED_COMPACT_PHONE_URLS,
+    _selected_offer, product_url,
 )
 from retailer_offer_refresh import RetailerOfferRefresher
 
@@ -88,6 +89,11 @@ class MediaMarktSourceTests(unittest.TestCase):
 
     def test_only_clean_exact_product_urls(self):
         self.assertTrue(product_url(URL))
+        self.assertEqual(len(REVIEWED_COMPACT_PHONE_URLS), 2)
+        self.assertTrue(all(product_url(url) for url in REVIEWED_COMPACT_PHONE_URLS))
+        compact = next(url for url in REVIEWED_COMPACT_PHONE_URLS if '1249062' in url)
+        self.assertFalse(product_url(compact.replace('8256gb', '8128gb')))
+        self.assertFalse(product_url(compact.replace('1249062', '1249063')))
         for url in (URL.replace('https:', 'http:'), URL + '?sku=1',
                     URL.replace('www.mediamarkt.com.tr', 'attacker.example'),
                     URL.replace('iphone-17', 'outlet-iphone-17'),

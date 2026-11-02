@@ -387,6 +387,19 @@ class TRPriceScraper:
         return cls._normalize_words(value).split()
 
     @classmethod
+    def _catalog_model_name(cls, product_name, expected_specs):
+        """Remove a terminal catalog memory label only when it equals the SKU spec."""
+        name = str(product_name or '')
+        suffix = re.search(r'\s+(\d{1,2})\s*GB\s+(\d{2,4})\s*GB\s*$', name, re.I)
+        if not suffix:
+            return name
+        specs = expected_specs or {}
+        if (cls._spec_int(specs.get('ram_gb')) != int(suffix[1])
+                or cls._spec_int(specs.get('storage_gb')) != int(suffix[2])):
+            return None
+        return name[:suffix.start()].strip() or None
+
+    @classmethod
     def _radio_generation(cls, value):
         tokens = cls._identity_words(value)
         return '5g' if '5g' in tokens else '4g' if '4g' in tokens or 'lte' in tokens else None
@@ -510,7 +523,10 @@ class TRPriceScraper:
         def normalize_product_text(value):
             return ' '.join(self._identity_words(value))
 
-        name = normalize_product_text(product_name)
+        model_name = self._catalog_model_name(product_name, expected_specs)
+        if not model_name:
+            return False
+        name = normalize_product_text(model_name)
         title = normalize_product_text(item_title)
         
         # 1. Alphanumeric word extraction
@@ -645,6 +661,9 @@ class TRPriceScraper:
         title = offer.get('source_title')
         if not isinstance(title, str) or not title.strip():
             return False
+        model_name = self._catalog_model_name(product_name, expected_specs)
+        if not model_name:
+            return False
         if not self.is_strict_match(product_name, title, expected_specs):
             return False
         expected_specs = expected_specs or {}
@@ -677,7 +696,15 @@ class TRPriceScraper:
             parsed_url = urlparse(str(offer.get('url', '')))
             if parsed_url.scheme not in {'http', 'https'} or not parsed_url.netloc:
                 return False
-            url_text = re.sub(r'[-_/]+', ' ', unquote(parsed_url.path))
+            path = unquote(parsed_url.path)
+            if parsed_url.hostname == 'www.mediamarkt.com.tr' and path.startswith('/tr/product/_'):
+                # MediaMarkt joins 8/256 GB as 8256gb in some exact PDP URLs.
+                # The title must independently establish the same capacities.
+                path = re.sub(
+                    r'(?<![a-z0-9])([1-9]|1\d|2[0-4])(64|128|256|512|1024)[-_]?gb(?=$|[-_/.])',
+                    lambda match: f'{match[1]}gb-ram-{match[2]}gb', path, flags=re.I,
+                )
+            url_text = re.sub(r'[-_/]+', ' ', path)
         except (TypeError, ValueError):
             return False
         url_ram, url_storage = self._extract_listing_capacities(url_text)
@@ -690,7 +717,7 @@ class TRPriceScraper:
             return False
         if observed_radio and url_radio and observed_radio != url_radio:
             return False
-        product_words = self._identity_words(product_name)
+        product_words = self._identity_words(model_name)
         url_words = self._identity_words(url_text)
         expected_brands = {brand for brand, aliases in self.PHONE_BRAND_ALIASES.items() if set(product_words) & aliases}
         url_brands = {brand for brand, aliases in self.PHONE_BRAND_ALIASES.items() if set(url_words) & aliases}

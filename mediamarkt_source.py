@@ -43,6 +43,10 @@ _HEADERS = {'User-Agent': BOT + '/1.0 (+https://teknoskor.com)',
             'Accept-Language': 'tr-TR,tr;q=0.9'}
 _USED = re.compile(r'outlet|yenilenmi[sş]|refurbish|ikinci[- ]el|te[sş]hir|kullan[iı]lm[iı][sş]', re.I)
 _PRICE = re.compile(r'₺\s*(\d{1,3}(?:\.\d{3})*|\d+),')
+REVIEWED_COMPACT_PHONE_URLS = frozenset({
+    'https://www.mediamarkt.com.tr/tr/product/_samsung-galaxy-s25fe-8256gb-lacivert-1249060.html',
+    'https://www.mediamarkt.com.tr/tr/product/_samsung-galaxy-s25fe-8256gb-buz-mavisi-1249062.html',
+})
 
 
 def product_url(url):
@@ -56,7 +60,8 @@ def product_url(url):
                     and parsed.username is None and parsed.password is None
                     and parsed.port in (None, 443) and not parsed.query and not parsed.fragment
                     and re.fullmatch(r'/tr/product/_[a-z0-9-]+-\d{6,12}\.html', path)
-                    and 'akilli-telefon' in path and not _USED.search(path))
+                    and ('akilli-telefon' in path or url in REVIEWED_COMPACT_PHONE_URLS)
+                    and not _USED.search(path))
     except (TypeError, ValueError):
         return False
 
