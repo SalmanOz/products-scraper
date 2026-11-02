@@ -15,7 +15,8 @@ from tempfile import gettempdir
 from bs4 import BeautifulSoup
 import requests
 
-from pazarama_category_source import CATEGORY_URL, ROBOTS_URL, PazaramaCategorySource
+from pazarama_category_source import (CATEGORY_URL, ROBOTS_URL, PazaramaCategorySource,
+                                       _category_page_number, pazarama_product_url)
 from retailer_offer_refresh import RetailerOfferRefresher, _schema_nodes, _type_is
 
 
@@ -33,6 +34,58 @@ PROFILES = (
 OUTPUT_DIR = Path(os.environ.get('PAZARAMA_AUDIT_OUTPUT_DIR', gettempdir()))
 REPORT_PATH = OUTPUT_DIR / 'pazarama-source-audit.json'
 SUMMARY_PATH = OUTPUT_DIR / 'pazarama-source-audit.md'
+SOLVER_URL = 'http://localhost:8191/v1'
+MAX_SOLVER_BYTES = 8 * 1024 * 1024
+
+
+class BrowserResponse:
+    def __init__(self, url, status, body):
+        self.url, self.status_code, self.data = url, status, body.encode('utf-8')
+        self.headers = {'Content-Length': str(len(self.data))}
+
+    def iter_content(self, chunk_size):
+        for index in range(0, len(self.data), chunk_size):
+            yield self.data[index:index + chunk_size]
+
+    def close(self):
+        pass
+
+
+class BrowserGetTransport:
+    """Bounded GET-only runner probe through the existing local browser service.
+
+    The source fetches robots first and checks its policy before any category or
+    PDP URL reaches this adapter. No cart, search, login or write URL is allowed.
+    """
+
+    def __init__(self, post=None):
+        self._post = post or requests.post
+
+    def __call__(self, url, **_kwargs):
+        if url != ROBOTS_URL and _category_page_number(url) is None and not pazarama_product_url(url):
+            raise requests.RequestException('Unreviewed Pazarama browser GET URL')
+        response = self._post(SOLVER_URL, json={
+            'cmd': 'request.get', 'url': url, 'maxTimeout': 45000,
+        }, timeout=60, stream=True)
+        try:
+            if response.status_code != 200:
+                raise requests.RequestException('Browser GET service unavailable')
+            data = bytearray()
+            for chunk in response.iter_content(chunk_size=64 * 1024):
+                data.extend(chunk)
+                if len(data) > MAX_SOLVER_BYTES:
+                    raise requests.RequestException('Oversized browser GET result')
+        finally:
+            response.close()
+        try:
+            payload = json.loads(data)
+            solution = payload['solution']
+            status, final_url, body = (solution['status'], solution['url'], solution['response'])
+            if not isinstance(status, int) or not isinstance(body, str) or final_url != url:
+                raise ValueError('Invalid browser GET result')
+            return BrowserResponse(final_url, status, body)
+        except (KeyError, TypeError, ValueError, UnicodeError) as error:
+            raise requests.RequestException('Invalid browser GET result') from error
 
 
 class HttpRecorder:
@@ -92,7 +145,9 @@ def selected_price_evidence(html, url):
 
 
 def run_audit(recorder=None, source=None, refresher=None):
-    recorder = recorder if recorder is not None else HttpRecorder()
+    browser_get = os.environ.get('PAZARAMA_AUDIT_BROWSER_GET') == '1'
+    recorder = recorder if recorder is not None else HttpRecorder(
+        fetch=BrowserGetTransport() if browser_get else None)
     source = source if source is not None else PazaramaCategorySource(fetch=recorder)
     refresher = refresher if refresher is not None else RetailerOfferRefresher(fetch=recorder)
     refresher.pazarama_source = source
@@ -140,6 +195,7 @@ def run_audit(recorder=None, source=None, refresher=None):
                          else 'not_verified')
     verified = sum(row['status'] == 'verified' for row in rows)
     return {'purpose': 'read_only_runner_access_probe',
+            'transport': 'browser_get' if browser_get else 'normal_http_get',
             'checked_at': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
             'status': 'passed' if verified == len(PROFILES) else 'partial' if verified else 'failed',
             'verified_products': verified, 'required_products': len(PROFILES),
@@ -153,6 +209,7 @@ def format_summary(report):
                 or '/cep-telefonu-k-K03043?' in event['url']]
     lines = ['## Pazarama Android offer source audit',
              f"Status: {report['status']} — {report['verified_products']}/{report['required_products']} exact variants verified.",
+             f"Transport: {report.get('transport', 'normal_http_get')}.",
              f"Robots HTTP {robots}; category pages {report['category']['category_pages']} "
              f"(statuses: {', '.join(map(str, sorted(set(category)))) or 'none'}); "
              f"eligible cards {report['category']['eligible_card_urls']}."]

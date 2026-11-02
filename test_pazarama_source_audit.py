@@ -1,8 +1,10 @@
 """Offline GitHub-runner audit contract; no live network or ingestion."""
 
+import json
 import unittest
 
-from audit_pazarama_source import HttpRecorder, PROFILES, format_summary, run_audit
+from audit_pazarama_source import (BrowserGetTransport, HttpRecorder, PROFILES,
+                                   SOLVER_URL, format_summary, run_audit)
 from pazarama_category_source import CATEGORY_URL, ROBOTS_URL
 from test_pazarama_offer_reader import page, schema
 
@@ -65,6 +67,22 @@ def pages():
 
 
 class PazaramaSourceAuditTests(unittest.TestCase):
+    def test_browser_get_probe_is_bounded_to_reviewed_read_only_urls(self):
+        calls = []
+        def post(url, **kwargs):
+            calls.append((url, kwargs))
+            payload = {'status': 'ok', 'solution': {'status': 200,
+                       'url': kwargs['json']['url'], 'response': 'User-agent: *\nAllow: /\n'}}
+            return Response(SOLVER_URL, json.dumps(payload).encode())
+        browser = BrowserGetTransport(post=post)
+        response = browser(ROBOTS_URL)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(b''.join(response.iter_content(10)), b'User-agent: *\nAllow: /\n')
+        self.assertEqual(calls[0][1]['json']['cmd'], 'request.get')
+        with self.assertRaisesRegex(Exception, 'Unreviewed'):
+            browser('https://www.pazarama.com/arama?q=galaxy')
+        self.assertEqual(len(calls), 1)
+
     def test_three_exact_variants_and_http_statuses_are_reported_without_writes(self):
         fetch = Fetch(pages())
         report = run_audit(recorder=HttpRecorder(fetch=fetch))
