@@ -22,7 +22,8 @@ from audit_mediamarkt_unpriced_coverage import (
     _catalog, _has_current_price, _specs, selected_rejection_evidence,
 )
 from mediamarkt_marketplace_audit import catalog_variant_matches, selected_marketplace_offer
-from mediamarkt_source import BOT, MAX_HTML_BYTES, MediaMarktSource, product_url
+from mediamarkt_source import (BOT, MAX_HTML_BYTES, MAX_SOLVER_BYTES, SOLVER_URL,
+                               MediaMarktSource, product_url)
 from vatan_sitemap_source import VatanSitemapSource
 
 
@@ -47,8 +48,10 @@ def _category_hints(source):
             continue
         try:
             body, reason, _ = source._direct(category_url, MAX_HTML_BYTES, 'text/html')
+            if reason == 'http_403':
+                body, reason = _browser_category(source, category_url)
             status[category_url] = reason
-            if reason != 'ready':
+            if reason not in {'ready', 'browser_ready'}:
                 continue
             soup = BeautifulSoup(body, 'html.parser')
             for anchor in soup.select('a[href]'):
@@ -58,6 +61,41 @@ def _category_hints(source):
         except (requests.RequestException, OSError, TypeError, ValueError, AttributeError):
             status[category_url] = 'transport_error'
     return hints, status
+
+
+def _browser_category(source, category_url):
+    """One browser GET after a 403; accept only this reviewed category URL."""
+    if (category_url not in CATEGORY_HINT_URLS or source._rules is None or
+            not source._rules.can_fetch(BOT, category_url)):
+        return None, 'robots_disallowed_or_invalid_category'
+    source._pace(browser=True)
+    response = source._post(SOLVER_URL, json={
+        'cmd': 'request.get', 'url': category_url, 'maxTimeout': 45000,
+    }, timeout=60, stream=True)
+    try:
+        if response.status_code != 200:
+            return None, f'solver_http_{response.status_code}'
+        data = bytearray()
+        for chunk in response.iter_content(chunk_size=64 * 1024):
+            data.extend(chunk)
+            if len(data) > MAX_SOLVER_BYTES:
+                return None, 'solver_oversized'
+        payload = json.loads(data)
+        solution = payload.get('solution') if isinstance(payload, dict) else None
+        if (not isinstance(solution, dict) or payload.get('status') != 'ok'
+                or solution.get('url') != category_url):
+            return None, 'changed_or_unavailable_category'
+        if solution.get('status') != 200:
+            return None, f"site_http_{solution.get('status')}"
+        html = solution.get('response')
+        if not isinstance(html, str):
+            return None, 'invalid_html'
+        body = html.encode('utf-8')
+        if len(body) > MAX_HTML_BYTES:
+            return None, 'html_oversized'
+        return body, 'browser_ready'
+    finally:
+        response.close()
 
 
 def _candidate_queue(rows, source):

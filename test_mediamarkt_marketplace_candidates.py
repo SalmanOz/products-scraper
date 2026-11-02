@@ -6,7 +6,8 @@ import unittest
 from unittest.mock import patch
 
 from audit_mediamarkt_marketplace_candidates import (
-    CATEGORY_HINT_URLS, MAX_PROBES, _read_selected, run_audit, summary,
+    CATEGORY_HINT_URLS, MAX_PROBES, _browser_category, _read_selected, run_audit,
+    summary,
 )
 from audit_mediamarkt_unpriced_coverage import CATALOG_URL
 
@@ -52,11 +53,27 @@ class Response:
         pass
 
 
+class SolverResponse:
+    def __init__(self, url, html, *, final_url=None):
+        self.status_code = 200
+        self.data = json.dumps({'status': 'ok', 'solution': {
+            'url': final_url or url, 'status': 200, 'response': html}}).encode()
+
+    def iter_content(self, chunk_size):
+        yield self.data
+
+    def close(self):
+        pass
+
+
 class Source:
     def __init__(self, mapping=None, *, sitemap='ready', direct_reason='ready',
-                 browser_url=None, browser_reason='ready', category_pages=None):
+                 browser_url=None, browser_reason='ready', category_pages=None,
+                 category_direct_reason='ready', category_final_url=None):
         self.mapping = mapping or {}
         self.category_pages = category_pages or {}
+        self.category_direct_reason = category_direct_reason
+        self.category_final_url = category_final_url
         self.sitemap = sitemap
         self.direct_reason = direct_reason
         self.browser_url = browser_url
@@ -64,6 +81,7 @@ class Source:
         self._rules = self
         self.direct = []
         self.browser = []
+        self.category_browser = []
 
     def discover(self, name, specs):
         return [{'source_url': url} for url in self.mapping.get(name, [])]
@@ -73,9 +91,20 @@ class Source:
 
     def _direct(self, url, limit, accept):
         self.direct.append(url)
+        reason = (self.category_direct_reason if url in CATEGORY_HINT_URLS
+                  else self.direct_reason)
         body = self.category_pages.get(url, '<html></html>')
-        return (body.encode() if self.direct_reason == 'ready' else None,
-                self.direct_reason, 200 if self.direct_reason == 'ready' else 403)
+        return (body.encode() if reason == 'ready' else None,
+                reason, 200 if reason == 'ready' else 403)
+
+    def _pace(self, *, browser=False):
+        assert browser
+
+    def _post(self, url, *, json, timeout, stream):
+        category_url = json['url']
+        self.category_browser.append(category_url)
+        return SolverResponse(category_url, self.category_pages.get(category_url, ''),
+                              final_url=self.category_final_url)
 
     def _browser_get(self, url):
         self.browser.append(url)
@@ -155,6 +184,24 @@ class MarketplaceCandidateAuditTests(unittest.TestCase):
         self.assertEqual(report['source_verified'], 2)
         self.assertEqual({r['source_url'] for r in report['candidates']}, {REDMI, POCO})
         self.assertEqual(source.direct[:2], list(CATEGORY_HINT_URLS))
+
+    def test_category_403_gets_one_exact_browser_read_and_rejects_redirect(self):
+        rows = [product(238, 'xiaomi-redmi-note-15-pro', 'Xiaomi Redmi Note 15 Pro'),
+                product(183, 'poco-x6-pro', 'POCO X6 Pro')]
+        pages = {CATEGORY_HINT_URLS[0]: '<a href="' + POCO + '">POCO</a>',
+                 CATEGORY_HINT_URLS[1]: '<a href="' + REDMI + '">Redmi</a>'}
+        source = Source(category_pages=pages, category_direct_reason='http_403')
+        with patch('audit_mediamarkt_marketplace_candidates.selected_marketplace_offer',
+                   side_effect=lambda body, url: selected(url)):
+            report = run_audit(catalog_get=self.catalog_get(rows), source=source)
+        self.assertEqual(source.category_browser, list(CATEGORY_HINT_URLS))
+        self.assertEqual(report['probed'], 2)
+        self.assertEqual(report['source_verified'], 2)
+        self.assertEqual(set(report['category_status'].values()), {'browser_ready'})
+        redirected = Source(category_pages=pages, category_final_url=POCO)
+        body, reason = _browser_category(redirected, CATEGORY_HINT_URLS[0])
+        self.assertIsNone(body)
+        self.assertEqual(reason, 'changed_or_unavailable_category')
 
     def test_exact_403_browser_retry_and_redirect_rejection(self):
         source = Source(direct_reason='http_403')
