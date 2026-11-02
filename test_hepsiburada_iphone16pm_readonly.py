@@ -4,6 +4,7 @@ import html as html_library
 import json
 import unittest
 from io import BytesIO
+from unittest.mock import patch
 
 import requests
 
@@ -12,7 +13,7 @@ from audit_hepsiburada_iphone16pm_readonly import (
     SELLER, SELLER_URL, SKU, URL, HepsiburadaIphone16PmAuditSource,
     parse_exact_buy_box, run_audit,
 )
-from hepsiburada_s25_fe_source import ROBOTS_URL, SOLVER_URL
+from hepsiburada_s25_fe_source import ROBOTS_URL
 
 
 def evidence():
@@ -108,11 +109,6 @@ def response(url, body, status=200):
     result.raw = BytesIO(result._content)
     result.headers['Content-Length'] = str(len(result._content))
     return result
-
-
-def solver_response(url, body, status=200):
-    return response(SOLVER_URL, json.dumps({'status': 'ok', 'solution': {
-        'status': status, 'url': url, 'response': body}}))
 
 
 class HepsiburadaIphone16PmAuditTests(unittest.TestCase):
@@ -226,51 +222,41 @@ class HepsiburadaIphone16PmAuditTests(unittest.TestCase):
                          (None, 'robots_disallowed', None))
         self.assertEqual(calls, [ROBOTS_URL])
 
-    def test_403_browser_fallback_stays_exact_and_429_never_falls_back(self):
+    def test_403_429_and_redirect_stop_without_browser_or_post(self):
         calls = []
 
         def get(url, **_):
-            calls.append(('direct', url))
-            return response(url, 'denied', 403)
+            calls.append(url)
+            return response(url, 'User-agent: *\nAllow: /\n' if url == ROBOTS_URL
+                            else 'blocked', 200 if url == ROBOTS_URL else 403)
 
-        def post(_url, **kwargs):
-            url = kwargs['json']['url']
-            calls.append(('browser', url))
-            body = ('<html><pre>User-agent: *\nAllow: /\n</pre></html>'
-                    if url == ROBOTS_URL else fixture())
-            return solver_response(url, body)
-
-        offer, reason, status = HepsiburadaIphone16PmAuditSource(
-            get=get, post=post).read_offer()
-        self.assertEqual((reason, status, offer['price']),
-                         ('selected_new_cash_offer_observed', 200, 129999))
-        self.assertEqual(calls, [
-            ('direct', ROBOTS_URL), ('browser', ROBOTS_URL),
-            ('direct', URL), ('browser', URL),
-        ])
-
+        with patch('requests.post') as post:
+            self.assertEqual(HepsiburadaIphone16PmAuditSource(get=get).read_offer(),
+                             (None, 'http_403', 403))
+            post.assert_not_called()
+        self.assertEqual(calls, [ROBOTS_URL, URL])
         calls.clear()
 
         def get_429(url, **_):
-            calls.append(('direct', url))
+            calls.append(url)
             return response(url, 'User-agent: *\nAllow: /\n' if url == ROBOTS_URL
                             else 'blocked', 200 if url == ROBOTS_URL else 429)
 
         self.assertEqual(HepsiburadaIphone16PmAuditSource(
-            get=get_429, post=post).read_offer(), (None, 'http_429', 429))
-        self.assertEqual(calls, [('direct', ROBOTS_URL), ('direct', URL)])
+            get=get_429).read_offer(), (None, 'http_429', 429))
+        self.assertEqual(calls, [ROBOTS_URL, URL])
 
         calls.clear()
 
-        def wrong_final_url(_url, **kwargs):
-            url = kwargs['json']['url']
-            calls.append(('browser', url))
-            return solver_response(url + '?changed', fixture())
+        def redirected(url, **_):
+            calls.append(url)
+            return response(url if url == ROBOTS_URL else URL + '?changed',
+                            'User-agent: *\nAllow: /\n' if url == ROBOTS_URL else fixture())
 
         self.assertEqual(HepsiburadaIphone16PmAuditSource(
-            get=get, post=wrong_final_url).read_offer(),
-            (None, 'robots_browser_changed_url', 200))
-        self.assertEqual(calls, [('direct', ROBOTS_URL), ('browser', ROBOTS_URL)])
+            get=redirected).read_offer(),
+            (None, 'unexpected_final_url', 200))
+        self.assertEqual(calls, [ROBOTS_URL, URL])
 
 
 if __name__ == '__main__':

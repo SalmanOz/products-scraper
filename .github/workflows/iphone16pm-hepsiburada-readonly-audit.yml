@@ -1,0 +1,72 @@
+name: iPhone 16 Pro Max Hepsiburada Read-only PDP Audit
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: teknoskor-iphone16pm-hepsiburada-readonly-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install parser dependencies
+        run: pip install -r requirements.txt
+      - name: Test selected SKU, GTIN, seller, cash price, stock, and GET-only boundary
+        run: python -m unittest -q test_hepsiburada_iphone16pm_readonly
+      - name: Audit the exact public PDP with GET only
+        run: python audit_hepsiburada_iphone16pm_readonly.py > "$RUNNER_TEMP/iphone16pm-hepsiburada-audit.json"
+      - name: Summarize verified or blocked reason
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ['RUNNER_TEMP'])
+          output = root / 'iphone16pm-hepsiburada-audit.json'
+          try:
+              report = json.loads(output.read_text())
+          except (OSError, ValueError):
+              report = {'verified': False, 'reason': 'audit_output_unavailable',
+                        'http_status': None, 'offer': None}
+          offer = report.get('offer') or {}
+          lines = [
+              '## iPhone 16 Pro Max 8/256 Hepsiburada exact PDP (read only)',
+              f"Verified: {report.get('verified')}",
+              f"Reason: {report.get('reason')}",
+              f"HTTP status: {report.get('http_status')}",
+              f"Selected merchant: {offer.get('merchant')}",
+              f"Selected SKU: {offer.get('sku')}",
+              f"Cash TRY: {offer.get('price')}",
+              'No catalog, price, image, or production API writes.',
+          ]
+          summary = '\n'.join(lines) + '\n'
+          (root / 'iphone16pm-hepsiburada-audit.md').write_text(summary)
+          with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a') as stream:
+              stream.write(summary)
+          print(summary, end='')
+          PY
+      - name: Upload read-only audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: iphone16pm-hepsiburada-audit-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/iphone16pm-hepsiburada-audit.json
+            ${{ runner.temp }}/iphone16pm-hepsiburada-audit.md
+          if-no-files-found: warn
+          retention-days: 14

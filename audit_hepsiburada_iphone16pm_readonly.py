@@ -251,15 +251,16 @@ def parse_exact_buy_box(html: str, final_url: str = URL):
 class HepsiburadaIphone16PmAuditSource:
     """Robots preflight followed by one bounded, exact public PDP read."""
 
-    def __init__(self, get=None, post=None, sleep=time.sleep):
+    def __init__(self, get=None, sleep=time.sleep):
         self._get = get
-        self._post = post
         self._sleep = sleep
 
     def read_offer(self):
-        reader = HepsiburadaS25FeSource(get=self._get, post=self._post, sleep=self._sleep)
+        # Use only direct public GETs. This audit does not call the local
+        # FlareSolverr POST endpoint or a production ingestion endpoint.
+        reader = HepsiburadaS25FeSource(get=self._get, sleep=self._sleep)
         try:
-            robots, reason, status = reader._read_with_fallback(
+            robots, reason, status = reader._read(
                 ROBOTS_URL, MAX_ROBOTS_BYTES, accept='text/plain')
             if reason != 'ready':
                 return None, 'robots_' + reason, status
@@ -275,7 +276,7 @@ class HepsiburadaIphone16PmAuditSource:
                 return None, 'robots_delay_exceeds_budget', None
             if delay:
                 self._sleep(delay)
-            body, reason, status = reader._read_with_fallback(
+            body, reason, status = reader._read(
                 URL, MAX_HTML_BYTES, accept='text/html')
             if reason != 'ready':
                 return None, reason, status
@@ -295,4 +296,6 @@ def run_audit(source=None):
 
 
 if __name__ == '__main__':
-    print(json.dumps(run_audit(), ensure_ascii=False, sort_keys=True))
+    report = run_audit()
+    print(json.dumps(report, ensure_ascii=False, sort_keys=True))
+    raise SystemExit(0 if report['verified'] else 1)
