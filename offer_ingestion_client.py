@@ -336,9 +336,13 @@ class OfferIngestionClient:
                     or not re.fullmatch(r'[0-9a-f]{64}', snapshot)):
                 raise IngestionClientError('Complete target page metadata is invalid')
             if invalid:
-                raise IngestionClientError('Complete target source has invalid rows')
+                raise IngestionClientError(
+                    f'Complete target source has invalid rows '
+                    f'(total={total}, invalid={invalid}, duplicate={duplicate})')
             if duplicate:
-                raise IngestionClientError('Complete target source has duplicate rows')
+                raise IngestionClientError(
+                    f'Complete target source has duplicate rows '
+                    f'(total={total}, invalid={invalid}, duplicate={duplicate})')
             if truncated is not (page * COMPLETE_TARGET_PAGE_SIZE < total):
                 raise IngestionClientError('Complete target page completeness is invalid')
             metadata = (total, invalid, duplicate, snapshot)

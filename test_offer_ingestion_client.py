@@ -246,7 +246,7 @@ def test_complete_target_pages_require_stable_bounded_identity_and_no_discards()
                for call in calls)
     failures = [
         ([page_response(1, [target(i) for i in range(12)], invalid=1)],
-         'invalid rows'),
+         'invalid rows (total=14, invalid=1, duplicate=0)'),
         ([page_response(1, [target(i) for i in range(12)]),
           page_response(2, [target(12), target(13)], snapshot='b' * 64)],
          'snapshot changed'),
