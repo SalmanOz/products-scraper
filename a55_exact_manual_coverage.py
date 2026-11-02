@@ -467,6 +467,8 @@ def summary(report, *, publication=None, publish_requested=None):
         publication_state = 'Denetim aşaması: yazım yok; koşunun yayın sonucu henüz belirlenmedi.'
     elif publish_requested is False and publication is None:
         publication_state = 'Yayın istenmedi; bu koşuda fiyat yazımı yok.'
+    elif publish_requested is True and report.get('status') != 'passed':
+        publication_state = 'Denetim başarısız; yayın adımı çalıştırılmadı ve fiyat yazımı yok.'
     elif (publish_requested is True and report.get('status') == 'passed'
           and report.get('catalog_status') == 'passed'
           and _publication_confirmed(publication)):

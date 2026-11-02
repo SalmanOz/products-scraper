@@ -305,6 +305,9 @@ class A55ExactManualCoverageTests(unittest.TestCase):
         self.assertIn('Denetim aşaması: yazım yok', summary(report))
         self.assertIn('Yayın istenmedi; bu koşuda fiyat yazımı yok',
                       summary(report, publish_requested=False))
+        failed = {**report, 'status': 'failed'}
+        self.assertIn('Denetim başarısız; yayın adımı çalıştırılmadı',
+                      summary(failed, publish_requested=True))
         result = self.publish_exact(report, client, source)
         self.assertIn('Yayın tamamlandı: iki teklif kabul edildi',
                       summary(report, publish_requested=True, publication=result))
