@@ -1,0 +1,87 @@
+name: iPhone 16 Pro Max Exact Manual Offer Coverage
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish one exact iPhone 16 Pro Max offer only after this run passes its read-only audit'
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ inputs.publish && 'teknoskor-daily-data-sync' || 'teknoskor-iphone16pm-readonly-audit' }}
+  queue: max
+  cancel-in-progress: false
+
+jobs:
+  exact_iphone16pm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Test exact one-off audit and writer gates
+        run: python -m unittest -q test_iphone16pm_manual_coverage test_mediamarkt_iphone16pm_readonly test_mediamarkt_iphone16pm_parser test_mediamarkt_marketplace_audit test_mediamarkt_source
+      - name: Start bounded browser GET service
+        run: |
+          docker run -d --name=iphone16pm-browser -p 8191:8191 -e LOG_LEVEL=info ghcr.io/flaresolverr/flaresolverr:latest
+          for attempt in {1..30}; do
+            if curl --fail --silent http://localhost:8191/ > /dev/null; then exit 0; fi
+            sleep 2
+          done
+          docker logs iphone16pm-browser
+          exit 1
+      - name: Read exact selected iPhone 16 Pro Max PDP, legal seller and authenticated catalog without writes
+        id: audit
+        env:
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+        run: |
+          : "${SCRAPER_INGESTION_SECRET:?SCRAPER_INGESTION_SECRET is required}"
+          python iphone16pm_manual_coverage.py audit --audit-file "${{ runner.temp }}/iphone16pm-audit.json"
+      - name: Publish only the one audited iPhone 16 Pro Max selected offer
+        if: ${{ inputs.publish && steps.audit.outcome == 'success' }}
+        env:
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+        run: |
+          : "${SCRAPER_INGESTION_SECRET:?SCRAPER_INGESTION_SECRET is required}"
+          python iphone16pm_manual_coverage.py publish \
+            --publish-exact-one \
+            --audit-file "${{ runner.temp }}/iphone16pm-audit.json" \
+            --output-file "${{ runner.temp }}/iphone16pm-publish.json"
+      - name: Summarize final iPhone 16 Pro Max audit and publication outcome
+        if: always()
+        run: |
+          if test -f "${{ runner.temp }}/iphone16pm-audit.json"; then
+            python iphone16pm_manual_coverage.py summarize \
+              --publish-requested "${{ inputs.publish }}" \
+              --audit-file "${{ runner.temp }}/iphone16pm-audit.json" \
+              --publish-file "${{ runner.temp }}/iphone16pm-publish.json" \
+              --output-file "${{ runner.temp }}/iphone16pm-audit.md"
+            cat "${{ runner.temp }}/iphone16pm-audit.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'iPhone 16 Pro Max denetim raporu oluşmadı; yayın sonucu için job adımlarını inceleyin.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload audit and optional publication evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: iphone16pm-exact-manual-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/iphone16pm-audit.json
+            ${{ runner.temp }}/iphone16pm-audit.md
+            ${{ runner.temp }}/iphone16pm-publish.json
+          if-no-files-found: warn
+          retention-days: 30

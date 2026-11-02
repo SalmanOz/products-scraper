@@ -62,12 +62,13 @@ def _ref(apollo, parent, name, typename, expected_id):
     return node
 
 
-def _price(raw):
+def _price(raw, *, allow_cents=False):
     if (isinstance(raw, bool) or
             not re.fullmatch(r'\d+(?:\.\d{1,2})?', str(raw))):
         return None
     value = float(raw)
-    if not math.isfinite(value) or not 0 < value <= 5_000_000 or value != int(value):
+    if (not math.isfinite(value) or not 0 < value <= 5_000_000 or
+            (not allow_cents and value != int(value))):
         return None
     return value
 
@@ -149,7 +150,12 @@ def catalog_variant_matches(evidence, expected_name, expected_specs):
     return not expected_radio or observed_radio == expected_radio
 
 
-def selected_marketplace_offer(html, final_url):
+def selected_marketplace_offer(html, final_url, *,
+                               allow_refurbished_alternatives=False,
+                               allow_cents=False,
+                               require_selected_condition_radio=False,
+                               allow_delivery_card=False,
+                               require_gtin_variant=False):
     """Return selected-offer evidence only when every independent layer agrees.
 
     The returned record is an audit observation, not an ingestion offer. Its
@@ -183,6 +189,20 @@ def selected_marketplace_offer(html, final_url):
         offers = offers if isinstance(offers, list) else [offers]
         if len(offers) == 1 and isinstance(offers[0], dict):
             selected.append((product, offers[0]))
+        elif allow_refurbished_alternatives and len(offers) > 1:
+            # The selected NEW offer must be unique. The other schema offers
+            # may only be refurbished alternatives for this exact PDP; the
+            # Apollo default/best offer and checked radio are checked below.
+            new = [row for row in offers if isinstance(row, dict) and
+                   row.get('itemCondition') == 'https://schema.org/NewCondition']
+            others = [row for row in offers if row not in new]
+            if (len(new) == 1 and len(others) == len(offers) - 1 and
+                    all(isinstance(row, dict) and row.get('@type') == 'Offer' and
+                        row.get('url') == final_url and
+                        row.get('itemCondition') ==
+                        'https://schema.org/RefurbishedCondition'
+                        for row in others)):
+                selected.append((product, new[0]))
     if len(selected) != 1:
         return None
     product, offer = selected[0]
@@ -193,6 +213,7 @@ def selected_marketplace_offer(html, final_url):
         return None
     variants = product.get('hasVariant')
     selected_variant_gtin = None
+    selected_variant_sku = None
     if variants is not None:
         if not isinstance(variants, list):
             return None
@@ -203,6 +224,17 @@ def selected_marketplace_offer(html, final_url):
             return None
         if selected_variants:
             selected_variant_gtin = selected_variants[0].get('gtin13')
+        if require_gtin_variant:
+            matched_gtins = [row for row in variants if isinstance(row, dict)
+                             and row.get('gtin13') == gtin]
+            if (gtin is None or len(matched_gtins) != 1 or
+                    not re.fullmatch(r'\d{6,12}',
+                                     str(matched_gtins[0].get('sku', '')))):
+                return None
+            selected_variant_gtin = gtin
+            selected_variant_sku = str(matched_gtins[0]['sku'])
+    elif require_gtin_variant:
+        return None
     brand = product.get('brand')
     if (not re.fullmatch(r'\d{6,12}', sku) or
             not final_url.endswith('-' + sku + '.html') or
@@ -214,7 +246,7 @@ def selected_marketplace_offer(html, final_url):
     availability = str(offer.get('availability', '')).rstrip('/').rsplit('/', 1)[-1]
     if availability not in {'InStock', 'LimitedAvailability'}:
         return None
-    price = _price(offer.get('price'))
+    price = _price(offer.get('price'), allow_cents=allow_cents)
     seller = offer.get('seller')
     if price is None or not isinstance(seller, dict) or seller.get('@type') != 'Organization':
         return None
@@ -261,7 +293,7 @@ def selected_marketplace_offer(html, final_url):
             marketplace.get('offerCondition') != 'NEW' or
             marketplace.get('isBestOffer') is not True or
             marketplace.get('currencyIsoCode') != 'TRY' or
-            _price(marketplace.get('price')) != price or
+            _price(marketplace.get('price'), allow_cents=allow_cents) != price or
             _normal(marketplace.get('sellerName')) != seller_name or
             str(marketplace.get('sellerId')) != seller_id):
         return None
@@ -281,7 +313,7 @@ def selected_marketplace_offer(html, final_url):
             _normal(site_seller.get('sellerName')) != seller_name or
             str(site_seller.get('sellerId')) != seller_id or
             not isinstance(site_price, dict) or
-            _price(site_price.get('amount')) != price or
+            _price(site_price.get('amount'), allow_cents=allow_cents) != price or
             online.get('isAvailableAndBuyable') is not True or
             online.get('isAvailableForDelivery') is not True or
             online.get('onlineStatus') != 'MP_OFFER'):
@@ -310,28 +342,53 @@ def selected_marketplace_offer(html, final_url):
             selected_price.get('isProductOfTypeMarketplace') is not True or
             selected_price.get('marketplaceSeller') != site_seller or
             not isinstance(selected_amount, dict) or
-            _price(selected_amount.get('amount')) != price or
+            _price(selected_amount.get('amount'), allow_cents=allow_cents) != price or
             selected_online.get('isAvailableAndBuyable') is not True or
             selected_online.get('isAvailableForDelivery') is not True or
             selected_online.get('onlineStatus') != 'MP_OFFER' or
             not isinstance(condition_offer, dict) or
             condition_offer.get('conditionType') != 'NEW' or
             str(condition_offer.get('offerId')) != offer_id or
-            _price(condition_offer.get('priceAmount')) != price or
+            _price(condition_offer.get('priceAmount'), allow_cents=allow_cents) != price or
             condition_offer.get('priceCurrency') != 'TRY'):
         return None
 
     visible_price = _one(soup.select('[data-test="cofr-price mms-branded-price"]'))
     visible_stock = _one(soup.select('[data-test="mms-pdp-details-availability"]'))
+    delivery = (visible_stock.select('[data-test="mms-cofr-delivery_AVAILABLE"]')
+                if visible_stock else [])
+    if allow_delivery_card and not delivery:
+        chosen = soup.select('input[name="pdp-condition-selector"][checked]')
+        chosen_card = chosen[0].find_parent('li') if len(chosen) == 1 else None
+        delivery = (chosen_card.select('[data-test="mms-cofr-delivery_AVAILABLE"]')
+                    if chosen_card else [])
     if (visible_price is None or visible_stock is None or
             _PROMOTION.search(visible_price.get_text(' ', strip=True)) or
-            visible_stock.select_one('[data-test="mms-cofr-delivery_AVAILABLE"]') is None or
-            'Adrese teslimata uygun.' not in visible_stock.get_text(' ', strip=True)):
+            not any('Adrese teslimata uygun.' in row.get_text(' ', strip=True)
+                    for row in delivery)):
         return None
     whole = _one(visible_price.select('[data-test="branded-price-whole-value"]'))
     match = _PRICE.fullmatch(whole.get_text(' ', strip=True)) if whole else None
-    if not match or float(match[1].replace('.', '')) != price:
+    decimal = _one(visible_price.select('[data-test="branded-price-decimal-value"]'))
+    if allow_cents:
+        decimal_text = decimal.get_text(' ', strip=True) if decimal else None
+        displayed = (float(match[1].replace('.', '') + '.' + decimal_text)
+                     if match and decimal_text and
+                     re.fullmatch(r'\d{2}', decimal_text) else None)
+    else:
+        displayed = float(match[1].replace('.', '')) if match else None
+    if displayed != price:
         return None
+    if require_selected_condition_radio:
+        checked = soup.select('input[name="pdp-condition-selector"][checked]')
+        if (len(checked) != 1 or checked[0].get('id') != offer_id or
+                checked[0].get('value') != offer_id):
+            return None
+        labels = soup.select('label[for="' + offer_id + '"]')
+        if (len(labels) != 1 or checked[0] not in labels[0].descendants or
+                _normal(labels[0].get_text(' ', strip=True)) !=
+                'Yeni ürünler ' + seller_name):
+            return None
     seller_link = [link for link in visible_price.select('a[href]')
                    if link.get('href') == _SELLER_URL + seller_id and
                    _normal(link.get_text(' ', strip=True)) == seller_name]
@@ -356,12 +413,15 @@ def selected_marketplace_offer(html, final_url):
     if features[2] and radio and features[2] != radio:
         return None
     radio = radio or features[2]
-    return {'platform': 'MediaMarkt', 'seller_name': unescape(seller_name),
-            'seller_id': seller_id, 'price': price, 'currency': 'TRY',
-            'availability': 'in_stock' if availability == 'InStock' else 'limited',
-            'condition': 'new', 'source_title': unescape(title),
-            'sku': sku, 'gtin13': gtin,
-            'selected_variant_gtin13': selected_variant_gtin,
-            'offer_id': offer_id, 'url': final_url,
-            'ram_gb': capacities[0], 'storage_gb': capacities[1],
-            'network_generation': radio}
+    result = {'platform': 'MediaMarkt', 'seller_name': unescape(seller_name),
+              'seller_id': seller_id, 'price': price, 'currency': 'TRY',
+              'availability': 'in_stock' if availability == 'InStock' else 'limited',
+              'condition': 'new', 'source_title': unescape(title),
+              'sku': sku, 'gtin13': gtin,
+              'selected_variant_gtin13': selected_variant_gtin,
+              'offer_id': offer_id, 'url': final_url,
+              'ram_gb': capacities[0], 'storage_gb': capacities[1],
+              'network_generation': radio}
+    if require_gtin_variant:
+        result['selected_variant_sku'] = selected_variant_sku
+    return result
