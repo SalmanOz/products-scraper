@@ -61,12 +61,16 @@ class CandidateAuditTests(unittest.TestCase):
         self.assertEqual(fetch.call_count, 2)
         self.assertFalse(rows[0]['candidate_is_approved_for_ingestion'])
 
-    def test_wrong_capacity_and_unqualified_ram_never_become_identity_proof(self):
+    def test_wrong_capacity_rejected_and_matching_title_stays_research_only(self):
         self.assertFalse(document_evidence('<h1>POCO X7 Pro 12GB RAM 512GB</h1>', URL, PROFILE)['heading_matches_full_memory_and_radio'])
         profile = next(p for p in load_profiles() if p['slug'] == 'samsung-galaxy-a37-5g')
         title = 'Samsung Galaxy A37 5G 6 GB 128 GB (Samsung Türkiye Garantili) Antrasit 128 GB'
         url = 'https://www.ayazgrupiletisim.com.tr/urun/samsung-galaxy-a37-5g-6-gb-128-gb-samsung-turkiye-garantili-antrasit-128-gb'
-        self.assertFalse(document_evidence(f'<h1>{title}</h1>', url, profile)['heading_matches_full_memory_and_radio'])
+        matching = document_evidence(f'<h1>{title}</h1>', url, profile)
+        self.assertTrue(matching['heading_matches_full_memory_and_radio'])
+        self.assertFalse(matching['candidate_is_approved_for_ingestion'])
+        conflicted = document_evidence(f'<h1>{title} 8 GB RAM</h1>', url, profile)
+        self.assertFalse(conflicted['heading_matches_full_memory_and_radio'])
 
     def test_runner_uses_actual_read_only_daily_code_and_cannot_turn_missing_pairs_green(self):
         updater = SimpleNamespace(run_update=AsyncMock(), last_report={'coverage': {'with_two_merchants': 0}})

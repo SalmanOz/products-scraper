@@ -8,7 +8,7 @@
     {"slug": "tecno-camon-40", "url": "https://www.evkur.com.tr/tecno-mobile-camon-40-cm5-12256-gb-beyaz", "review_status": "wrong_ram_12gb_not_catalog_8gb"},
     {"slug": "samsung-galaxy-a27-5g", "url": "https://www.caglargsm.com/urun/samsung-galaxy-a27-5g-128-gb-6-gb-ram-samsung-siyah", "review_status": "retailer_identity_and_inconsistent_specification_quality_not_approved"},
     {"slug": "samsung-galaxy-a27-5g", "url": "https://www.ayazgrupiletisim.com.tr/urun/samsung-galaxy-a27-5g-8-gb-256-gb-samsung-turkiye-garantili-siyah-256-gb", "review_status": "wrong_memory_8_256_not_catalog_6_128"},
-    {"slug": "samsung-galaxy-a37-5g", "url": "https://www.ayazgrupiletisim.com.tr/urun/samsung-galaxy-a37-5g-6-gb-128-gb-samsung-turkiye-garantili-antrasit-128-gb", "review_status": "unqualified_ram_title_no_separate_ram_field_do_not_infer"},
+    {"slug": "samsung-galaxy-a37-5g", "url": "https://www.ayazgrupiletisim.com.tr/urun/samsung-galaxy-a37-5g-6-gb-128-gb-samsung-turkiye-garantili-antrasit-128-gb", "review_status": "title_capacity_matches_but_retailer_offer_not_approved"},
     {"slug": "samsung-galaxy-a57-5g", "url": "https://www.dolgunteknoloji.com.tr/urun/samsung-galaxy-a57-5g-128gb-8gb-ram-samsung-turkiye-garantili-gri-cep-telefonu/", "review_status": "requires_live_price_dom_schema_and_variant_consistency_review"},
     {"slug": "samsung-galaxy-a54-5g", "url": "https://www.inbox.com.tr/samsung-galaxy-a54-8128-gb-graphite-u-sma546ezkctur", "review_status": "robots_returns_html_404_with_200_not_a_verified_policy"},
     {"slug": "samsung-galaxy-a54-5g", "url": "https://www.migros.com.tr/samsung-galaxy-a54-8128-gb-5g-graft-siyah-cep-telefonu-p-255e640", "review_status": "schema_only_price_visible_price_placeholder_location_and_purchase_not_verified"},
