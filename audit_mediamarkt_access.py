@@ -184,7 +184,19 @@ def main():
                + f"; robots={report['robots'].get('http_status')}"
                + f"; sitemap URLs={[x.get('url_count') for x in report['sitemaps']]}"
                + f"; first-party iPhone17 price={offer.get('price')}.\n")
-    (OUT / 'mediamarkt-access.md').write_text('## Read-only MediaMarkt access check\n\n' + summary)
+    detail_lines = []
+    for name, row in report['products'].items():
+        final = row.get('redirect_response') or row
+        chosen = row.get('selected') or {}
+        item = chosen.get('selected_offer') or {}
+        detail_lines.append(
+            f"- {name}: initial HTTP {row.get('http_status')}, final HTTP {final.get('http_status')}, "
+            f"redirect allowed {row.get('redirect_allowed')}, selected {chosen.get('selected_offer_count')}, "
+            f"cash {item.get('price')}, seller {str(item.get('seller'))[:60]}, "
+            f"condition {str(item.get('condition'))[-30:]}, active basket {chosen.get('active_basket_buttons')}."
+        )
+    (OUT / 'mediamarkt-access.md').write_text(
+        '## Read-only MediaMarkt access check\n\n' + summary + '\n'.join(detail_lines) + '\n')
     print(summary, end='')
     return 0 if ready else 1
 
