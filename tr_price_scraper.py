@@ -391,13 +391,18 @@ class TRPriceScraper:
         """Remove a terminal catalog memory label only when it equals the SKU spec."""
         name = str(product_name or '')
         suffix = re.search(r'\s+(\d{1,2})\s*GB\s+(\d{2,4})\s*GB\s*$', name, re.I)
-        if not suffix:
-            return name
         specs = expected_specs or {}
-        if (cls._spec_int(specs.get('ram_gb')) != int(suffix[1])
-                or cls._spec_int(specs.get('storage_gb')) != int(suffix[2])):
-            return None
-        return name[:suffix.start()].strip() or None
+        if suffix:
+            if (cls._spec_int(specs.get('ram_gb')) != int(suffix[1])
+                    or cls._spec_int(specs.get('storage_gb')) != int(suffix[2])):
+                return None
+            return name[:suffix.start()].strip() or None
+        storage = re.search(r'\s+(\d{2,4})\s*GB\s*$', name, re.I)
+        if storage:
+            if cls._spec_int(specs.get('storage_gb')) != int(storage[1]):
+                return None
+            return name[:storage.start()].strip() or None
+        return name
 
     @classmethod
     def _radio_generation(cls, value):

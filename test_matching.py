@@ -169,6 +169,23 @@ def test_reviewed_catalog_memory_suffix_keeps_exact_mediamarkt_sku_gate():
     assert not scraper.is_strict_match(name, title, {**specs, 'storage_gb': 128})
 
 
+def test_storage_only_catalog_suffix_keeps_exact_variant_gate():
+    scraper = TRPriceScraper.__new__(TRPriceScraper)
+    name = 'Samsung Galaxy S25 FE 256GB'
+    specs = {'ram_gb': 8, 'storage_gb': 256, 'network_generation': '5g'}
+    url = ('https://www.mediamarkt.com.tr/tr/product/'
+           '_samsung-galaxy-s25fe-8256gb-lacivert-1249060.html')
+    title = 'Samsung Galaxy S25 FE 8/256GB Akıllı Telefon Lacivert'
+    assert scraper.is_strict_match(name, title, specs)
+    assert scraper.has_observed_offer_evidence(name, {'source_title': title, 'url': url}, specs)
+    for wrong in ('Samsung Galaxy S25 FE 8/128GB Akıllı Telefon Lacivert',
+                  'Samsung Galaxy S25 Ultra 8/256GB Akıllı Telefon Lacivert',
+                  'Samsung Galaxy S25 8/256GB Akıllı Telefon Lacivert'):
+        assert not scraper.has_observed_offer_evidence(
+            name, {'source_title': wrong, 'url': url}, specs)
+    assert not scraper.is_strict_match(name, title, {**specs, 'storage_gb': 128})
+
+
 def test_standardize_merchant_name():
     failures = []
     for raw, expected in MERCHANT_CASES:
