@@ -1,0 +1,61 @@
+name: MediaMarkt Two Unpriced Exact Read-Only Audit
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: teknoskor-two-unpriced-readonly-audit
+  queue: max
+  cancel-in-progress: false
+
+jobs:
+  exact_audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Test exact selected PDP and read-only boundaries
+        run: python -m unittest -q test_coverage_two_marketplace test_mediamarkt_marketplace_audit test_mediamarkt_source
+      - name: Start bounded browser GET service
+        run: |
+          docker run -d --name=mediamarkt-two-unpriced-browser -p 8191:8191 -e LOG_LEVEL=info ghcr.io/flaresolverr/flaresolverr:latest
+          for attempt in {1..30}; do
+            if curl --fail --silent http://localhost:8191/ > /dev/null; then exit 0; fi
+            sleep 2
+          done
+          docker logs mediamarkt-two-unpriced-browser
+          exit 1
+      - name: Reverify both selected PDPs, seller, stock, GTIN and catalog without writes
+        env:
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+        run: |
+          : "${SCRAPER_INGESTION_SECRET:?SCRAPER_INGESTION_SECRET is required}"
+          python coverage_two_marketplace.py --audit-file "${{ runner.temp }}/coverage-two-audit.json"
+      - name: Summarize exact coverage
+        if: always()
+        run: |
+          if test -f "${{ runner.temp }}/coverage-two-audit.md"; then
+            cat "${{ runner.temp }}/coverage-two-audit.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload read-only audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mediamarkt-two-unpriced-audit-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/coverage-two-audit.json
+            ${{ runner.temp }}/coverage-two-audit.md
+          if-no-files-found: warn
+          retention-days: 30
