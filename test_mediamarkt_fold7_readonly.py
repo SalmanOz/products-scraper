@@ -22,11 +22,16 @@ SELLER_HTML = (f'<main>Firma adı: {LEGAL_NAME} Şehir: Şanlıurfa '
 
 
 class Transport:
-    def __init__(self, *, allowed=True, seller_html=SELLER_HTML):
+    def __init__(self, *, allowed=True, seller_html=SELLER_HTML,
+                 pdp_status=200, browser_url=URL, browser_reason='ready'):
         self._rules = None
         self.allowed = allowed
         self.seller_html = seller_html
+        self.pdp_status = pdp_status
+        self.browser_url = browser_url
+        self.browser_reason = browser_reason
         self.urls = []
+        self.browser_urls = []
 
     def _load_robots(self):
         self._rules = self
@@ -36,8 +41,15 @@ class Transport:
 
     def _direct(self, url, max_bytes, accept):
         self.urls.append(url)
+        if url == URL and self.pdp_status != 200:
+            return None, f'http_{self.pdp_status}', self.pdp_status
         return (b'<html></html>' if url == URL else self.seller_html,
                 'ready', 200)
+
+    def _browser_get(self, url):
+        self.browser_urls.append(url)
+        return (b'<html></html>' if self.browser_reason == 'ready' else None,
+                self.browser_url, self.browser_reason)
 
 
 class Fold7AuditTests(unittest.TestCase):
@@ -65,9 +77,33 @@ class Fold7AuditTests(unittest.TestCase):
         self.assertTrue(report['verified'])
         self.assertFalse(report['writes'])
         self.assertEqual(source.urls, [URL, SELLER_URL])
+        self.assertEqual(source.browser_urls, [])
         parser.assert_called_once_with(b'<html></html>', URL)
         self.assertEqual(run_audit(Transport(seller_html='<main>Other seller</main>'))['reason'],
                          'seller_identity_unverified')
+
+    @patch('audit_mediamarkt_fold7_readonly.selected_marketplace_offer', return_value=EVIDENCE)
+    def test_only_exact_pdp_403_uses_bounded_browser_fallback(self, parser):
+        source = Transport(pdp_status=403)
+        report = run_audit(source)
+        self.assertTrue(report['verified'])
+        self.assertEqual(report['pdp_direct_http_status'], 403)
+        self.assertEqual(report['pdp_http_status'], 200)
+        self.assertEqual(report['pdp_read_mode'], 'browser_after_403')
+        self.assertEqual(source.browser_urls, [URL])
+        self.assertEqual(source.urls, [URL, SELLER_URL])
+        parser.assert_called_once_with(b'<html></html>', URL)
+
+        for source in (Transport(pdp_status=404),
+                       Transport(pdp_status=403, browser_url=URL + '?changed'),
+                       Transport(pdp_status=403, browser_reason='site_http_403')):
+            with self.subTest(status=source.pdp_status,
+                              browser_url=source.browser_url,
+                              browser_reason=source.browser_reason):
+                report = run_audit(source)
+                self.assertFalse(report['verified'])
+                self.assertEqual(source.browser_urls, [URL] if source.pdp_status == 403 else [])
+                self.assertEqual(source.urls, [URL])
 
 
 if __name__ == '__main__':

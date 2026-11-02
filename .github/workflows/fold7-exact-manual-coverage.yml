@@ -33,6 +33,15 @@ jobs:
         run: pip install -r requirements.txt
       - name: Test exact one-off audit and writer gates
         run: python -m unittest -q test_fold7_manual_coverage test_mediamarkt_fold7_readonly test_mediamarkt_marketplace_audit test_mediamarkt_source
+      - name: Start bounded browser GET service
+        run: |
+          docker run -d --name=fold7-browser -p 8191:8191 -e LOG_LEVEL=info ghcr.io/flaresolverr/flaresolverr:latest
+          for attempt in {1..30}; do
+            if curl --fail --silent http://localhost:8191/ > /dev/null; then exit 0; fi
+            sleep 2
+          done
+          docker logs fold7-browser
+          exit 1
       - name: Read exact selected Fold7 PDP, legal seller and authenticated catalog without writes
         id: audit
         env:

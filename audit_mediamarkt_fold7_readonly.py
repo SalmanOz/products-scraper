@@ -60,7 +60,7 @@ def exact_seller_identity(html):
 
 
 def run_audit(transport=None):
-    """Robots preflight, then two ordinary public GETs; no browser or DB writes."""
+    """Robots preflight, then bounded public GETs; no DB writes."""
     result = {'purpose': 'read_only_exact_fold7_marketplace_audit',
               'checked_at': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
               'catalog': CATALOG, 'url': URL, 'seller_url': SELLER_URL,
@@ -77,6 +77,18 @@ def run_audit(transport=None):
             return result
         result['robots_allowed'] = True
         body, reason, status = source._direct(URL, MAX_HTML_BYTES, 'text/html')
+        result['pdp_direct_http_status'] = status
+        if reason == 'http_403':
+            # Use the same bounded browser GET that the reviewed MediaMarkt
+            # reader uses. Only a 403 on this exact robots-allowed PDP may
+            # trigger it; a changed final URL or challenge HTML still fails.
+            body, final_url, reason = source._browser_get(URL)
+            if reason == 'ready' and final_url != URL:
+                reason = 'unexpected_browser_url'
+            status = 200 if reason == 'ready' else 403
+            result['pdp_read_mode'] = 'browser_after_403'
+        else:
+            result['pdp_read_mode'] = 'direct'
         result['pdp_http_status'] = status
         if reason != 'ready':
             result['reason'] = 'pdp_' + reason
