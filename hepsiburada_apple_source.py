@@ -136,7 +136,9 @@ def parse_exact_buy_box(html: str, url: str, final_url: str | None = None):
     if (len(capacity) != 1 or capacity[0].get('aria-label') != 'Seçili Kapasite 256 GB'
             or len(color) != 1 or color[0].get('aria-label') != f'Seçili Renk {target.color}'):
         return None, 'selected_controls_mismatch'
-    technical = soup.select('.techSpecs')
+    # HB exposes this section as id="techSpecs"; its generated class name
+    # changes. Keep the evidence anchored to the selected product table.
+    technical = soup.select('#techSpecs[data-test-id="KeyFeaturesTable"]')
     detail = _normalized(technical[0].get_text(' ', strip=True)) if len(technical) == 1 else ''
     if (not re.search(r'\bDahili Hafıza\s+256 GB\b', detail)
             or not re.search(rf'\bRAM Kapasitesi\s+{target.ram_gb} GB RAM\b', detail)

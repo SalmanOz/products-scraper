@@ -47,7 +47,11 @@ def fixture(target, *, seller='Hepsiburada', event_seller='Hepsiburada',
       <div><span>Satıcı: </span><a href="{SELLER_URL}" title="{seller}">{seller}</a></div>
       <button data-test-id="variant-box-Kapasite-256 GB" aria-label="Seçili Kapasite 256 GB">256 GB</button>
       <button data-test-id="variant-box-Renk-{target.color}" aria-label="Seçili Renk {target.color}">{target.color}</button>
-      <div class="techSpecs">Dahili Hafıza {details_storage} GB RAM Kapasitesi {target.ram_gb} GB RAM Mobil Bağlantı Hızı 5G</div>
+      <div id="techSpecs" data-test-id="KeyFeaturesTable" class="generated-class">
+        <div><div>Dahili Hafıza</div><div><span>{details_storage} GB</span></div></div>
+        <div><div>RAM  Kapasitesi</div><div><span>{target.ram_gb} GB RAM</span></div></div>
+        <div><div>Mobil Bağlantı Hızı</div><div><span>5G</span></div></div>
+      </div>
       <div data-test-id="default-price"><div><span>{cash} TL</span></div></div>
       {''.join(events)}
       <button data-test-id="addToCart" {'disabled' if not cart else ''}>Sepete ekle</button>
