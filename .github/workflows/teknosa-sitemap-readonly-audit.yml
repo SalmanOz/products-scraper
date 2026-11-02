@@ -1,0 +1,57 @@
+name: Teknosa Product Sitemap Read-only Discovery Audit
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: teknoskor-teknosa-sitemap-readonly-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Test robots, sitemap XML and exact URL hint boundaries
+        run: python -m unittest -q test_teknosa_sitemap_audit
+      - name: Start bounded read-only browser GET service
+        run: |
+          docker run -d --name=teknosa-sitemap-browser -p 8191:8191 -e LOG_LEVEL=info ghcr.io/flaresolverr/flaresolverr:latest
+          for attempt in {1..30}; do
+            if curl --fail --silent http://localhost:8191/ > /dev/null; then exit 0; fi
+            sleep 2
+          done
+          docker logs teknosa-sitemap-browser
+          exit 1
+      - name: Read robots, index and one product shard without writes
+        env:
+          TEKNOSA_SITEMAP_AUDIT_OUTPUT_DIR: ${{ runner.temp }}
+        run: python audit_teknosa_sitemap.py
+      - name: Publish read-only summary
+        if: always()
+        run: |
+          if test -f "${{ runner.temp }}/teknosa-sitemap-audit.md"; then
+            cat "${{ runner.temp }}/teknosa-sitemap-audit.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload read-only evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: teknosa-sitemap-audit-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/teknosa-sitemap-audit.json
+            ${{ runner.temp }}/teknosa-sitemap-audit.md
+          if-no-files-found: warn
+          retention-days: 14
