@@ -1,0 +1,45 @@
+name: Pazarama Android Offer Source Audit
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# No production credentials, catalog API, ingestion, browser or price writer.
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Test Pazarama robots, exact variants and price separation
+        run: python -m unittest -q test_pazarama_category_source test_pazarama_offer_reader test_pazarama_source_audit
+      - name: Probe three exact catalog variants on this runner
+        env:
+          PAZARAMA_AUDIT_OUTPUT_DIR: ${{ runner.temp }}
+        run: python audit_pazarama_source.py
+      - name: Publish read-only summary
+        if: always()
+        run: |
+          if test -f "${{ runner.temp }}/pazarama-source-audit.md"; then
+            cat "${{ runner.temp }}/pazarama-source-audit.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Pazarama audit exited before writing a report.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload read-only Pazarama evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pazarama-source-audit-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/pazarama-source-audit.json
+            ${{ runner.temp }}/pazarama-source-audit.md
+          if-no-files-found: warn
+          retention-days: 30
