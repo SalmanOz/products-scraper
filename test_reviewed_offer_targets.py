@@ -3,7 +3,8 @@ from unittest.mock import patch
 import unittest
 
 from reviewed_offer_targets import (
-    APPLE_STORE_BATCH_PATH, MEDIAMARKT_BATCH_PATH, TURK_TELEKOM_BATCH_PATH,
+    APPLE_STORE_BATCH_PATH, HEPSIBURADA_APPLE_BATCH_PATH, MEDIAMARKT_BATCH_PATH,
+    TURK_TELEKOM_BATCH_PATH,
     PASAJ_BATCH_PATH, URL_BATCH, VATAN_BATCH_PATH, S25_FE_256_BATCH_PATH,
     daily_offer_targets, with_reviewed_radio,
 )
@@ -58,7 +59,8 @@ class ReviewedDailyTargetTests(unittest.TestCase):
             daily_offer_targets(product, specs)
             self.assertEqual([call.args[0] for call in read.call_args_list],
                              [URL_BATCH, VATAN_BATCH_PATH, MEDIAMARKT_BATCH_PATH,
-                              APPLE_STORE_BATCH_PATH, TURK_TELEKOM_BATCH_PATH,
+                              APPLE_STORE_BATCH_PATH, HEPSIBURADA_APPLE_BATCH_PATH,
+                              TURK_TELEKOM_BATCH_PATH,
                               PASAJ_BATCH_PATH,
                               S25_FE_256_BATCH_PATH])
 
@@ -160,6 +162,25 @@ class ReviewedDailyTargetTests(unittest.TestCase):
             self.assertFalse(any(row['merchant_name'] == 'Apple Store'
                                  for row in daily_offer_targets(
                                      product, {**specs, 'storage_gb': 512})))
+
+    def test_three_hepsiburada_apple_seeds_require_exact_catalog_identity(self):
+        profiles = json.loads(HEPSIBURADA_APPLE_BATCH_PATH.read_text())['products']
+        self.assertEqual([profile['id'] for profile in profiles], [248, 296, 297])
+        for profile in profiles:
+            product = {key: profile[key] for key in ('id', 'slug', 'name')}
+            specs = {key: profile[key] for key in
+                     ('ram_gb', 'storage_gb', 'network_generation')}
+            def hepsiburada_targets(item, attributes):
+                return [row for row in daily_offer_targets(item, attributes)
+                        if row['merchant_name'] == 'Hepsiburada']
+            self.assertEqual(hepsiburada_targets(product, specs),
+                             [{'merchant_name': 'Hepsiburada',
+                               'source_url': profile['targets'][0]}])
+            for key, wrong in (('id', 999), ('slug', 'wrong'), ('name', 'Other Phone')):
+                self.assertEqual(hepsiburada_targets({**product, key: wrong}, specs), [])
+            for key, wrong in (('ram_gb', 6), ('storage_gb', 128),
+                               ('network_generation', '4g')):
+                self.assertEqual(hepsiburada_targets(product, {**specs, key: wrong}), [])
 
     def test_three_runner_verified_turk_telekom_urls_require_exact_catalog_sku(self):
         profiles = json.loads(TURK_TELEKOM_BATCH_PATH.read_text())['products']

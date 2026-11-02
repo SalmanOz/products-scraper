@@ -12,6 +12,7 @@ from hepsiburada_apple_source import (
     BY_URL, REVIEWED_PDPS, HepsiburadaAppleSource, parse_exact_buy_box,
 )
 from hepsiburada_s25_fe_source import ROBOTS_URL, SELLER_URL, SOLVER_URL
+from retailer_offer_refresh import RetailerOfferRefresher
 
 
 def fixture(target, *, seller='Hepsiburada', event_seller='Hepsiburada',
@@ -170,6 +171,44 @@ class HepsiburadaAppleAuditTests(unittest.TestCase):
         self.assertEqual([row['id'] for row in report['products']], [248, 296, 297])
         self.assertEqual([row['url'] for row in report['products']],
                          [target.url for target in REVIEWED_PDPS])
+
+    def test_only_exact_url_routes_to_reader_and_catalog_variant_is_rechecked(self):
+        class FakeSource:
+            def __init__(self):
+                self.calls = []
+
+            def read_offer(self, url):
+                self.calls.append(url)
+                offer, reason = parse_exact_buy_box(fixture(BY_URL[url]), url)
+                return offer, reason, 200
+
+        dedicated = FakeSource()
+        generic_calls = []
+        def generic_get(url, **_):
+            generic_calls.append(url)
+            return response(url, 'denied', 403)
+        reader = RetailerOfferRefresher(fetch=generic_get,
+                                        hepsiburada_apple_source=dedicated)
+        for target in REVIEWED_PDPS:
+            targets = [{'source_url': target.url}]
+            offers = reader.refresh_existing_offer_targets(
+                target.name, targets, target.specs)
+            self.assertEqual([(row['merchant'], row['url']) for row in offers],
+                             [('Hepsiburada', target.url)])
+            self.assertEqual(reader.target_report(
+                target.name, targets, target.specs)[0]['reason'],
+                'observed_exact_first_party_cash_offer')
+        self.assertEqual(dedicated.calls, [target.url for target in REVIEWED_PDPS])
+        self.assertEqual(generic_calls, [])
+
+        target = REVIEWED_PDPS[0]
+        self.assertEqual(reader.refresh_existing_offer_targets(
+            target.name, [{'source_url': target.url}],
+            {**target.specs, 'storage_gb': 128}), [])
+        self.assertEqual(dedicated.calls, [item.url for item in REVIEWED_PDPS])
+        self.assertEqual(reader.refresh_existing_offer_targets(
+            target.name, [{'source_url': target.schema_url}], target.specs), [])
+        self.assertEqual(generic_calls, [target.schema_url])
 
 
 if __name__ == '__main__':
