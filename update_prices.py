@@ -36,6 +36,7 @@ class PriceUpdater:
         self.vatan_sitemap_source = vatan_sitemap_source or VatanSitemapSource()
         self.pazarama_source = getattr(self.offer_refresher, 'pazarama_source', None)
         self.mediamarkt_source = getattr(self.offer_refresher, 'mediamarkt_source', None)
+        self.apple_store_source = getattr(self.offer_refresher, 'apple_store_source', None)
         if isinstance(self.price_scraper, TRPriceScraper):
             self.price_scraper.retailer_offer_refresher = self.offer_refresher
         self.last_report = None
@@ -464,6 +465,8 @@ class PriceUpdater:
             self.last_report['vatan_sitemap_discovery'] = self.vatan_sitemap_source.report()
             if self.mediamarkt_source:
                 self.last_report['mediamarkt_source'] = self.mediamarkt_source.report()
+            if self.apple_store_source:
+                self.last_report['apple_store_source'] = self.apple_store_source.report()
             if self.pazarama_source:
                 self.last_report['pazarama_category_discovery'] = self.pazarama_source.report()
 

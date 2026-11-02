@@ -24,6 +24,7 @@ from public_retailer_sources import PublicRetailerSources, SOURCES, public_sourc
 from pazarama_category_source import PazaramaCategorySource, pazarama_product_url
 from vatan_reviewed_source import VatanReviewedSource
 from mediamarkt_source import MediaMarktSource, product_url as mediamarkt_product_url
+from apple_store_source import AppleStoreSource, reviewed_slug as apple_store_reviewed_slug
 
 
 _MERCHANT_DOMAINS = {
@@ -506,12 +507,14 @@ def _public_retailer_product(soup, product, offer, url, price, availability):
 class RetailerOfferRefresher:
     MAX_TARGETS_PER_REFRESH = 12
 
-    def __init__(self, session=None, fetch=None, vatan_source=None, mediamarkt_source=None):
+    def __init__(self, session=None, fetch=None, vatan_source=None,
+                 mediamarkt_source=None, apple_store_source=None):
         self._fetch = fetch or (session.get if session is not None else requests.get)
         self.public_sources = PublicRetailerSources(fetch=self._fetch)
         self.pazarama_source = PazaramaCategorySource(fetch=self._fetch)
         self.vatan_reviewed_source = vatan_source or VatanReviewedSource(get=self._fetch)
         self.mediamarkt_source = mediamarkt_source or MediaMarktSource(get=self._fetch)
+        self.apple_store_source = apple_store_source or AppleStoreSource(get=self._fetch)
         self._scraper = TRPriceScraper()
         self._cache = {}
         self._blocked_hosts = set()
@@ -569,6 +572,15 @@ class RetailerOfferRefresher:
                 candidate, reason, status = self.mediamarkt_source.read_offer(source_url)
             else:
                 candidate, reason, status = None, 'invalid_mediamarkt_pdp_url', None
+            self._record_attempt(source_url, reason, status)
+            with self._lock:
+                self._cache[source_url] = candidate
+            return candidate
+        if parsed.hostname.removeprefix('www.') == 'apple.com':
+            if apple_store_reviewed_slug(source_url):
+                candidate, reason, status = self.apple_store_source.read_offer(source_url)
+            else:
+                candidate, reason, status = None, 'unreviewed_apple_pdp', None
             self._record_attempt(source_url, reason, status)
             with self._lock:
                 self._cache[source_url] = candidate

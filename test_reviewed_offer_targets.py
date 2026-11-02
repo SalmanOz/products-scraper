@@ -3,7 +3,7 @@ from unittest.mock import patch
 import unittest
 
 from reviewed_offer_targets import (
-    MEDIAMARKT_BATCH_PATH, URL_BATCH, VATAN_BATCH_PATH,
+    APPLE_STORE_BATCH_PATH, MEDIAMARKT_BATCH_PATH, URL_BATCH, VATAN_BATCH_PATH,
     daily_offer_targets, with_reviewed_radio,
 )
 
@@ -55,7 +55,8 @@ class ReviewedDailyTargetTests(unittest.TestCase):
         with patch('pathlib.Path.read_text', autospec=True, return_value=raw) as read:
             daily_offer_targets(product, specs)
             self.assertEqual([call.args[0] for call in read.call_args_list],
-                             [URL_BATCH, VATAN_BATCH_PATH, MEDIAMARKT_BATCH_PATH])
+                             [URL_BATCH, VATAN_BATCH_PATH, MEDIAMARKT_BATCH_PATH,
+                              APPLE_STORE_BATCH_PATH])
 
     def test_same_reviewed_iphone_retains_vatan_and_mediamarkt_targets(self):
         profile = next(p for p in json.loads(VATAN_BATCH_PATH.read_text())['products']
@@ -63,7 +64,23 @@ class ReviewedDailyTargetTests(unittest.TestCase):
         product = {key: profile[key] for key in ('id', 'slug', 'name')}
         specs = {key: profile[key] for key in ('ram_gb', 'storage_gb', 'network_generation')}
         self.assertEqual({row['merchant_name'] for row in daily_offer_targets(product, specs)},
-                         {'Vatan Bilgisayar', 'MediaMarkt'})
+                         {'Vatan Bilgisayar', 'MediaMarkt', 'Apple Store'})
+
+    def test_four_apple_store_seeds_require_exact_catalog_identity(self):
+        for profile in json.loads(APPLE_STORE_BATCH_PATH.read_text())['products']:
+            product = {key: profile[key] for key in ('id', 'slug', 'name')}
+            specs = {key: profile[key] for key in
+                     ('ram_gb', 'storage_gb', 'network_generation')}
+            urls = [row['source_url'] for row in daily_offer_targets(product, specs)
+                    if row['merchant_name'] == 'Apple Store']
+            self.assertEqual(urls, profile['targets'])
+            for key, wrong in (('id', -1), ('slug', 'wrong'), ('name', 'Other Phone')):
+                changed = {**product, key: wrong}
+                self.assertFalse(any(row['merchant_name'] == 'Apple Store'
+                                     for row in daily_offer_targets(changed, specs)))
+            self.assertFalse(any(row['merchant_name'] == 'Apple Store'
+                                 for row in daily_offer_targets(
+                                     product, {**specs, 'storage_gb': 512})))
 
     def test_distinct_merchants_get_priority_and_unsafe_targets_are_not_forwarded(self):
         product = {'id': 999, 'slug': 'other-phone', 'name': 'Other Phone', 'offer_targets': [

@@ -10,6 +10,7 @@ from vatan_reviewed_source import BATCH_PATH as VATAN_BATCH_PATH
 
 URL_BATCH = Path(__file__).parent / 'offer_batches/budget-eight-2026-10-25.json'
 MEDIAMARKT_BATCH_PATH = Path(__file__).parent / 'offer_batches/mediamarkt-exact-2026-11-02.json'
+APPLE_STORE_BATCH_PATH = Path(__file__).parent / 'offer_batches/apple-store-exact-2026-11-02.json'
 PROTECTED_TWO_STORE_SLUGS = frozenset({
     'tecno-camon-20-pro', 'tecno-camon-40', 'samsung-galaxy-a27-5g',
     'samsung-galaxy-a37-5g', 'samsung-galaxy-a57-5g',
@@ -18,7 +19,8 @@ PROTECTED_TWO_STORE_SLUGS = frozenset({
 
 
 def _profiles():
-    for path in (URL_BATCH, VATAN_BATCH_PATH, MEDIAMARKT_BATCH_PATH):
+    for path in (URL_BATCH, VATAN_BATCH_PATH, MEDIAMARKT_BATCH_PATH,
+                 APPLE_STORE_BATCH_PATH):
         yield from json.loads(path.read_text())['products']
 
 

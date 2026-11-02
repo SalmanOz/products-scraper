@@ -5,6 +5,7 @@ from apple_store_source import (
     AppleStoreSource, PDP_URLS, ROBOTS_URL, _NAMES, reviewed_slug, selected_offer,
 )
 from tr_price_scraper import TRPriceScraper
+from retailer_offer_refresh import RetailerOfferRefresher
 
 
 SKU = {'apple-iphone-18-pro-max': 'MJXN4TU/A',
@@ -129,6 +130,18 @@ class AppleStoreSourceTests(unittest.TestCase):
 
         source = AppleStoreSource(get=get, post=post)
         self.assertIsNone(source.read_offer(PDP_URLS['apple-iphone-17'])[0])
+
+    def test_unreviewed_apple_page_never_uses_generic_reader(self):
+        def unexpected_fetch(*_args, **_kwargs):
+            raise AssertionError('Generic Apple GET must not run')
+
+        reader = RetailerOfferRefresher(fetch=unexpected_fetch)
+        url = PDP_URLS['apple-iphone-17'] + '?utm_source=card'
+        self.assertIsNone(reader._fetch_target(url))
+        self.assertEqual(reader.target_report('Apple iPhone 17', [url], {}), [{
+            'source_url': url, 'merchant': 'Apple Store',
+            'reason': 'unreviewed_apple_pdp', 'http_status': None,
+        }])
 
 
 if __name__ == '__main__':
