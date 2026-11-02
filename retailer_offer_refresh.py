@@ -7,6 +7,7 @@ never promoted to retailer evidence.
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from html import unescape
 import ipaddress
 import json
 import math
@@ -172,6 +173,58 @@ def _is_conditional_price(soup, offer, price):
     return False
 
 
+def _vatan_selected_variant(soup, product, offer, final_url, price, availability):
+    """Accept only Vatan's separately priced, selected PDP beside other variants.
+
+    Its Product.hasVariant lists other colors/capacities even though the Product
+    itself has one Offer for the fetched SKU. The generic reader still rejects
+    every other hasVariant shape and never reads prices from variant branches.
+    """
+    parsed = _safe_url(final_url)
+    condition = offer.get('itemCondition')
+    if (not parsed or parsed.hostname.removeprefix('www.') != 'vatanbilgisayar.com'
+            or parsed.query or availability != 'in_stock'
+            or not isinstance(condition, str)
+            or condition.rstrip('/').rsplit('/', 1)[-1] != 'NewCondition'
+            or offer.get('url') != final_url):
+        return False
+    seller = offer.get('seller')
+    seller_url = _safe_url(seller.get('url')) if isinstance(seller, dict) else None
+    if (not isinstance(seller, dict) or seller.get('name') != 'Vatan Bilgisayar'
+            or not seller_url or seller_url.hostname.removeprefix('www.') != 'vatanbilgisayar.com'):
+        return False
+    sku = str(product.get('sku', ''))
+    variants = product.get('hasVariant')
+    def other_variant(variant):
+        if not isinstance(variant, dict) or not isinstance(variant.get('url'), str):
+            return False
+        target = _safe_url(variant['url'])
+        return bool(target and target.hostname.removeprefix('www.') == 'vatanbilgisayar.com'
+                    and not target.query and not _same_resource(variant['url'], final_url)
+                    and str(variant.get('sku', '')) != sku)
+    if (not re.fullmatch(r'\d{5,7}', sku) or not isinstance(variants, list)
+            or not variants or not all(other_variant(variant) for variant in variants)):
+        return False
+    heading = soup.select('.product-detail h1.product-list__product-name')
+    code = soup.select('.product-detail .product-id')
+    cart = soup.select('.product-detail button#add-to-cart-button.detail-cart-button.basketBTN')
+    if (len(heading) != 1 or len(code) != 1 or len(cart) != 1
+            or ' '.join(unescape(product.get('name', '')).split()) != heading[0].get_text(' ', strip=True)
+            or not re.search(r'/\s*' + re.escape(sku) + r'\b', code[0].get_text(' ', strip=True))
+            or cart[0].has_attr('disabled') or 'disabled' in cart[0].get('class', [])
+            or str(cart[0].get('aria-disabled', '')).casefold() == 'true'
+            or not re.search(r'\bSepete Ekle\b', cart[0].get_text(' ', strip=True), re.I)):
+        return False
+    web_price = soup.select('.product-detail .web-ozel-prod')
+    visible_prices = (soup.select('.product-detail .web-ozel-prod .web-ozel-fiyat')
+                      if web_price else soup.select('.product-detail .product-detail-price'))
+    if len(visible_prices) != 1:
+        return False
+    visible = visible_prices[0].get_text(' ', strip=True)
+    match = re.fullmatch(r'(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?)\s*(?:TL|₺)', visible, re.I)
+    return bool(match and float(match[1].replace('.', '').replace(',', '.')) == price)
+
+
 def _product_offer(soup, final_url):
     nodes = _schema_nodes(soup)
     products = [node for node in nodes if _type_is(node, 'Product')]
@@ -229,8 +282,6 @@ def _product_offer(soup, final_url):
     if len(selected) != 1:
         return None
     product = selected[0]
-    if product.get('hasVariant'):
-        return None
     offer = own_offer(product)
     title = product.get('name')
     if (not offer or not isinstance(title, str) or not title.strip()
@@ -275,6 +326,9 @@ def _product_offer(soup, final_url):
         return None
     if re.search(r'\b(?:taksit|installment|monthly|aylık|aylik)\b', str(offer.get('name', '')), re.I):
         return None
+    if product.get('hasVariant') and not _vatan_selected_variant(
+            soup, product, offer, final_url, price, availability):
+        return None
     if public_source(final_url) and not _public_retailer_product(soup, product, offer, final_url, price, availability):
         return None
     return {'merchant': ALLOWED_HOSTS[_safe_url(final_url).hostname],
@@ -282,7 +336,7 @@ def _product_offer(soup, final_url):
             # An Offer may name its canonical/seller URL while the fetched PDP
             # carries tracking or another seller query. Keep the observed
             # Offer's URL, never claim that price for a different URL selection.
-            'source_title': title.strip(),
+            'source_title': unescape(title.strip()) if product.get('hasVariant') else title.strip(),
             'url': urljoin(final_url, offer['url']) if offer.get('url') else final_url,
             'observed_at': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')}
 

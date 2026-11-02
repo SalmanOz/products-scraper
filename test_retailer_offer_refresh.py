@@ -16,6 +16,8 @@ from retailer_offer_refresh import ALLOWED_HOSTS, RetailerOfferRefresher
 URL = 'https://www.idefix.com/samsung-galaxy-s25-12gb-128gb-p-1'
 TITLE = 'Samsung Galaxy S25 12GB RAM 128GB Siyah'
 SPECS = {'ram_gb': 12, 'storage_gb': 128}
+VATAN_URL = 'https://www.vatanbilgisayar.com/iphone-17-256-gb-akilli-telefon-beyaz.html'
+VATAN_TITLE = 'iPhone 17 256 GB Akıllı Telefon Beyaz'
 
 
 def product_schema(url=URL, title=TITLE):
@@ -26,6 +28,31 @@ def product_schema(url=URL, title=TITLE):
 
 def page(data, heading=TITLE):
     return '<html><h1>' + heading + '</h1><script type="application/ld+json">' + json.dumps(data) + '</script></html>'
+
+
+def vatan_variant_schema(url=VATAN_URL, title=VATAN_TITLE, sku='153480', price='89999'):
+    return {'@type': 'Product', 'name': title, 'sku': sku,
+            'hasVariant': [{'@type': 'Product', 'sku': '153481',
+                            'url': 'https://www.vatanbilgisayar.com/other-color.html'}],
+            'offers': {'@type': 'Offer', 'url': url, 'price': price,
+                       'priceCurrency': 'TRY', 'availability': 'https://schema.org/InStock',
+                       'itemCondition': 'https://schema.org/NewCondition',
+                       'seller': {'@type': 'Organization', 'name': 'Vatan Bilgisayar',
+                                  'url': 'https://www.vatanbilgisayar.com'}}}
+
+
+def vatan_variant_page(schema, *, title=VATAN_TITLE, visible_price='89.999 TL', web_price=True,
+                       code='MG6K4TU/A / 153480', cart=True, extra=''):
+    price = ('<div class="web-ozel-prod"><span>Web\'e Özel</span>'
+             '<span class="web-ozel-fiyat">' + visible_price + '</span></div>'
+             '<div class="product-detail-price">94.999 TL</div>' if web_price else
+             '<div class="product-detail-price">' + visible_price + '</div>')
+    button = ('<button id="add-to-cart-button" class="detail-cart-button basketBTN">'
+              'Sepete Ekle</button>' if cart else '')
+    return ('<html><div class="product-detail"><h1 class="product-list__product-name">'
+            + title + '</h1><div class="product-id">' + code + '</div>'
+            + price + button + '</div>' + extra + '<script type="application/ld+json">'
+            + json.dumps(schema, ensure_ascii=False) + '</script></html>')
 
 
 class Response:
@@ -93,6 +120,85 @@ class RetailerRefreshTests(unittest.TestCase):
         for schema in cases:
             with self.subTest(schema=schema):
                 self.assertEqual(self.refresh(schema)[0], [])
+
+    def test_vatan_selected_variant_uses_own_exact_offer_and_visible_cash_price(self):
+        schema = vatan_variant_schema()
+        for web_price in (True, False):
+            with self.subTest(web_price=web_price):
+                html = vatan_variant_page(schema, web_price=web_price)
+                offers, calls, _ = self.refresh(
+                    schema, url=VATAN_URL, name='Apple iPhone 17',
+                    specs={'ram_gb': 8, 'storage_gb': 256, 'network_generation': '5g'},
+                    response=Response(html, url=VATAN_URL))
+                self.assertEqual(len(calls), 1)
+                self.assertEqual(len(offers), 1)
+                self.assertEqual(offers[0]['merchant'], 'Vatan Bilgisayar')
+                self.assertEqual(offers[0]['price'], 89999)
+                self.assertEqual(offers[0]['url'], VATAN_URL)
+        encoded = vatan_variant_schema()
+        encoded['name'] = VATAN_TITLE.replace('Akıllı', 'Ak&#x131;ll&#x131;')
+        offers, _, _ = self.refresh(
+            encoded, url=VATAN_URL, name='Apple iPhone 17',
+            specs={'ram_gb': 8, 'storage_gb': 256, 'network_generation': '5g'},
+            response=Response(vatan_variant_page(encoded), url=VATAN_URL))
+        self.assertEqual(offers[0]['source_title'], VATAN_TITLE)
+
+    def test_vatan_android_selected_variants_require_exact_memory_and_radio(self):
+        cases = [
+            ('https://www.vatanbilgisayar.com/xiaomi-17t-12-256gb-akilli-telefon-siyah.html',
+             'Xiaomi 17T 12/256GB Akıllı Telefon Siyah', 'Xiaomi 17T', '157950', '54999', '54.999 TL'),
+            ('https://www.vatanbilgisayar.com/samsung-galaxy-s26-akilli-telefon.html',
+             'Samsung Galaxy S26 5G 12/256 Gb Akıllı Telefon Siyah', 'Samsung Galaxy S26',
+             '156533', '68999', '68.999 TL'),
+        ]
+        for url, title, name, sku, price, visible in cases:
+            with self.subTest(name=name):
+                schema = vatan_variant_schema(url, title, sku, price)
+                html = vatan_variant_page(schema, title=title, code='MODEL / ' + sku,
+                                          visible_price=visible, web_price=False)
+                offers, _, _ = self.refresh(
+                    schema, url=url, name=name,
+                    specs={'ram_gb': 12, 'storage_gb': 256, 'network_generation': '5g'},
+                    response=Response(html, url=url))
+                self.assertEqual(len(offers), 1)
+                self.assertEqual(offers[0]['price'], float(price))
+                self.assertEqual(self.refresh(
+                    schema, url=url, name=name,
+                    specs={'ram_gb': 8, 'storage_gb': 256, 'network_generation': '5g'},
+                    response=Response(html, url=url))[0], [])
+
+    def test_vatan_variant_rejects_ambiguous_or_unpurchasable_selected_sku(self):
+        cases = []
+        cases.append(('missing_offer', lambda s: s.pop('offers'), {}))
+        cases.append(('wrong_offer_url', lambda s: s['offers'].update(
+            url='https://www.vatanbilgisayar.com/iphone-17-512-gb-akilli-telefon-beyaz.html'), {}))
+        cases.append(('same_variant_url', lambda s: s['hasVariant'][0].update(url=VATAN_URL), {}))
+        cases.append(('same_variant_sku', lambda s: s['hasVariant'][0].update(sku='153480'), {}))
+        cases.append(('wrong_seller', lambda s: s['offers']['seller'].update(name='Other'), {}))
+        cases.append(('wrong_seller_url', lambda s: s['offers']['seller'].update(url='https://www.idefix.com'), {}))
+        cases.append(('used_condition', lambda s: s['offers'].update(itemCondition='https://schema.org/UsedCondition'), {}))
+        cases.append(('out_of_stock', lambda s: s['offers'].update(availability='https://schema.org/OutOfStock'), {}))
+        cases.append(('wrong_visible_price', lambda s: None, {'visible_price': '88.999 TL'}))
+        cases.append(('wrong_visible_sku', lambda s: None, {'code': 'MG6K4TU/A / 153481'}))
+        cases.append(('missing_main_cart', lambda s: None, {'cart': False}))
+        cases.append(('basket_price', lambda s: None, {'extra': '<p>Sepette 89.999 TL</p>'}))
+        for label, mutate, page_options in cases:
+            with self.subTest(label=label):
+                schema = vatan_variant_schema()
+                mutate(schema)
+                html = vatan_variant_page(schema, **page_options)
+                offers, _, _ = self.refresh(
+                    schema, url=VATAN_URL, name='Apple iPhone 17',
+                    specs={'ram_gb': 8, 'storage_gb': 256, 'network_generation': '5g'},
+                    response=Response(html, url=VATAN_URL))
+                self.assertEqual(offers, [])
+        schema = vatan_variant_schema()
+        disabled = vatan_variant_page(schema).replace(
+            '<button id="add-to-cart-button"', '<button disabled id="add-to-cart-button"')
+        self.assertEqual(self.refresh(
+            schema, url=VATAN_URL, name='Apple iPhone 17',
+            specs={'ram_gb': 8, 'storage_gb': 256, 'network_generation': '5g'},
+            response=Response(disabled, url=VATAN_URL))[0], [])
 
     def test_recommendation_price_is_not_used_when_main_product_has_no_offer(self):
         main = product_schema()

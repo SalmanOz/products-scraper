@@ -268,6 +268,17 @@ Bu işlem yeni ürün eklemez; günlük fiyat taramasının davranışını değ
 
 ## Fiyat yenileme / puan senkronizasyonu
 
+Günlük fiyat keşfi Vatan'ın `robots.txt` içinde ilan ettiği ve taramaya izin
+verdiği `sitemap.axd` dosyasını bir kez okur; yasaklı `/arama/*` yolunu kullanmaz.
+Robots ve XML yanıtları boyut, URL sayısı ve yönlendirme sınırlarıyla denetlenir;
+her model için en fazla dört tam model/RAM/depolama URL'si seçilir. Açık 4G/5G
+çelişkisi elenir. Bu URL'ler yalnızca aday ürün sayfasıdır, fiyat veya stok kanıtı
+değildir. Her adayın canlı Product→Offer kaydı, seçili varyantı, görünür peşin
+fiyatı ve stok durumu mevcut kesin ürün sayfası doğrulamasından geçmelidir.
+Engellenen ya da erişilemeyen sitemap fiyat üretmez. Çalışma raporundaki
+`vatan_sitemap_discovery` alanı keşif durumunu ve uygun URL sayısını gösterir;
+gerçek fiyat kapsamı ancak aday sayfalar doğrulandıktan sonra anlaşılır.
+
 Günlük fiyat adımı başarılı olsa da kısmen başarısız olsa da ardından
 `reconcile_scores.py` çalışır. Hiç yeni teklif bulunmaması, eski fiyat kanıtlarının
 süresinin dolmadığı anlamına gelmez. Ayrıca `Reconcile Current Offer Scores`

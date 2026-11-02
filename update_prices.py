@@ -14,6 +14,7 @@ from offer_ingestion_client import OfferIngestionClient
 from price_sanity import filter_price_outliers
 from retailer_offer_refresh import ALLOWED_HOSTS, RetailerOfferRefresher, _safe_url
 from reviewed_offer_targets import daily_offer_targets, with_reviewed_radio, PROTECTED_TWO_STORE_SLUGS
+from vatan_sitemap_source import VatanSitemapSource
 
 load_dotenv()
 
@@ -24,13 +25,15 @@ PURCHASABLE = {'in_stock', 'limited'}
 MAX_SOURCE_OBSERVATION_AGE_SECONDS = 3 * 60 * 60
 
 class PriceUpdater:
-    def __init__(self, ingestion_client=None, price_scraper=None, offer_refresher=None):
+    def __init__(self, ingestion_client=None, price_scraper=None, offer_refresher=None,
+                 vatan_sitemap_source=None):
         self.ingestion_client = (
             ingestion_client or OfferIngestionClient.from_env()
         )
         self.price_scraper = price_scraper or TRPriceScraper()
         self.offer_matcher = TRPriceScraper()
         self.offer_refresher = offer_refresher or RetailerOfferRefresher()
+        self.vatan_sitemap_source = vatan_sitemap_source or VatanSitemapSource()
         if isinstance(self.price_scraper, TRPriceScraper):
             self.price_scraper.retailer_offer_refresher = self.offer_refresher
         self.last_report = None
@@ -345,6 +348,14 @@ class PriceUpdater:
                     except Exception as error:
                         product_report['public_discovery_error'] = type(error).__name__
                         logging.warning('  ⚠️ Public catalog discovery unavailable (%s)', type(error).__name__)
+                    vatan_targets = []
+                    try:
+                        vatan_targets = await asyncio.to_thread(
+                            self.vatan_sitemap_source.discover, name, expected_specs)
+                    except Exception as error:
+                        product_report['vatan_sitemap_error'] = type(error).__name__
+                        logging.warning('  ⚠️ Vatan sitemap discovery unavailable (%s)', type(error).__name__)
+                    product_report['vatan_sitemap_candidates'] = len(vatan_targets)
                     try:
                         hints = await self.price_scraper.get_best_prices(name, expected_specs)
                     except Exception as error:
@@ -354,7 +365,7 @@ class PriceUpdater:
                         product_report['legacy_discovery_error'] = type(error).__name__
                         logging.warning('  ⚠️ Legacy discovery unavailable (%s)', type(error).__name__)
                     hints = hints if isinstance(hints, list) else []
-                    discovery_targets = public_targets + [{'source_url': row.get('url')} for row in hints
+                    discovery_targets = public_targets + vatan_targets + [{'source_url': row.get('url')} for row in hints
                                          if isinstance(row, dict) and _safe_url(row.get('url'))]
                     product_report['discovered_destinations'] = len(discovery_targets)
                     # Discovery cards are URL hints, not current merchant cash
@@ -427,6 +438,7 @@ class PriceUpdater:
                 product_report['source_attempts'] = self.offer_refresher.target_report(name, targets, expected_specs)
             if hasattr(self.offer_refresher, 'public_sources'):
                 self.last_report['public_source_discovery'] = self.offer_refresher.public_sources.report()
+            self.last_report['vatan_sitemap_discovery'] = self.vatan_sitemap_source.report()
 
             if processed_count % INGESTION_PRODUCT_BATCH_SIZE == 0:
                 self.flush_offers(pending_offers, aggregate_result)
