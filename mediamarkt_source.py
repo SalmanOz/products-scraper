@@ -167,7 +167,7 @@ def _selected_offer(html, final_url):
 
 class MediaMarktSource:
     def __init__(self, get=None, post=None, sleep=time.sleep, monotonic=time.monotonic,
-                 preflight_file=None, now=None):
+                 preflight_file=None, now=None, rejected_offer_observer=None):
         self._get, self._post = get or requests.get, post or requests.post
         self._sleep, self._monotonic = sleep, monotonic
         self._lock = RLock()
@@ -187,6 +187,9 @@ class MediaMarktSource:
         self._preflight_file = (preflight_file if preflight_file is not None else
                                 os.environ.get('XIAOMI_17T_VERIFIED_AUDIT_FILE'))
         self._now = now or (lambda: datetime.now(timezone.utc))
+        # Read-only audits may inspect rejected selected-offer evidence from
+        # the HTML already fetched. Normal price refreshes do no extra work.
+        self._rejected_offer_observer = rejected_offer_observer
 
     def _pace(self, browser=False):
         with self._lock:
@@ -379,6 +382,13 @@ class MediaMarktSource:
                 elif reason != 'ready':
                     return None, reason, status
                 offer = _selected_offer(body, current)
+                if offer is None and self._rejected_offer_observer is not None:
+                    try:
+                        self._rejected_offer_observer(current, body)
+                    except Exception:
+                        # Diagnostics must never make a price reader succeed
+                        # or fail differently from its strict offer contract.
+                        pass
                 return offer, 'observed_exact_offer' if offer else 'no_exact_product_offer', 200
             except (requests.RequestException, ValueError, TypeError, UnicodeError):
                 self._browser_failures += 1

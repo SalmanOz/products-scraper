@@ -1,0 +1,53 @@
+name: MediaMarkt Unpriced Phone Coverage Read-only Audit
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Test catalog, sitemap, and strict offer boundaries
+        run: python -m unittest -q test_mediamarkt_source test_mediamarkt_unpriced_coverage_audit
+      - name: Start bounded browser GET service
+        run: |
+          docker run -d --name=mediamarkt-unpriced-browser -p 8191:8191 -e LOG_LEVEL=info ghcr.io/flaresolverr/flaresolverr:latest
+          for attempt in {1..30}; do
+            if curl --fail --silent http://localhost:8191/ > /dev/null; then exit 0; fi
+            sleep 2
+          done
+          docker logs mediamarkt-unpriced-browser
+          exit 1
+      - name: Verify current unpriced catalog candidates without writes
+        env:
+          MEDIAMARKT_UNPRICED_AUDIT_OUTPUT_DIR: ${{ runner.temp }}
+        run: python audit_mediamarkt_unpriced_coverage.py
+      - name: Publish read-only summary
+        if: always()
+        run: |
+          if test -f "${{ runner.temp }}/mediamarkt-unpriced-coverage.md"; then
+            cat "${{ runner.temp }}/mediamarkt-unpriced-coverage.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload read-only evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mediamarkt-unpriced-coverage-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/mediamarkt-unpriced-coverage.json
+            ${{ runner.temp }}/mediamarkt-unpriced-coverage.md
+          if-no-files-found: warn
+          retention-days: 14
