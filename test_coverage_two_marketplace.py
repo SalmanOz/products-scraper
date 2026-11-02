@@ -1,6 +1,5 @@
 """Read-only two-PDP audit boundaries; no ingestion path is exercised."""
 
-from datetime import datetime, timezone
 import unittest
 from unittest.mock import patch
 
@@ -115,7 +114,7 @@ class CoverageTwoMarketplaceTests(unittest.TestCase):
                 self.assertEqual(source.direct, list(PROFILES))
                 self.assertEqual(client.writes, [])
 
-    def test_priced_catalog_or_platform_collision_stops_before_pdp(self):
+    def test_priced_catalog_stops_before_pdp_but_collision_still_reads_both(self):
         client = Client()
         first_url = list(PROFILES)[0]
         first = PROFILES[first_url]
@@ -129,7 +128,30 @@ class CoverageTwoMarketplaceTests(unittest.TestCase):
              'source_url': 'https://www.hepsiburada.com/other'}]
         report, _, source = self.audited(client=client)
         self.assertEqual(report['status'], 'failed')
-        self.assertEqual(source.direct, [])
+        self.assertEqual(source.direct, list(PROFILES))
+        self.assertTrue(all(row['verified_offer'] for row in report['rows']))
+        collision = report['catalog_collisions'][first['slug']]
+        self.assertEqual(collision['target_count'], 1)
+        self.assertEqual(collision['targets'][0]['source_url'],
+                         'https://www.hepsiburada.com/other')
+        self.assertIn('seller_name_on_other_url_or_platform', collision['reasons'])
+        self.assertEqual(client.writes, [])
+
+    def test_full_private_target_page_is_reported_after_both_live_reads(self):
+        client = Client()
+        first = list(PROFILES.values())[0]
+        client.rows[0]['offer_targets'] = [
+            {'merchant_name': 'MediaMarkt',
+             'source_url': f'https://www.mediamarkt.com.tr/tr/product/_other-{i}.html'}
+            for i in range(12)]
+        report, client, source = self.audited(client=client)
+        self.assertEqual(report['status'], 'failed')
+        self.assertEqual(source.direct, list(PROFILES))
+        self.assertTrue(all(row['verified_offer'] for row in report['rows']))
+        collision = report['catalog_collisions'][first['slug']]
+        self.assertEqual(collision['target_count'], 12)
+        self.assertEqual(len(collision['targets']), 12)
+        self.assertEqual(collision['reasons'], ['target_page_full'])
         self.assertEqual(client.writes, [])
 
     def test_robots_and_changed_browser_url_never_verify_offer(self):
@@ -142,8 +164,8 @@ class CoverageTwoMarketplaceTests(unittest.TestCase):
         source.changed_browser_url = True
         report, client, source = self.audited(source=source)
         self.assertEqual(report['status'], 'failed')
-        self.assertEqual(source.direct, [list(PROFILES)[0]])
-        self.assertEqual(source.browser, [list(PROFILES)[0]])
+        self.assertEqual(source.direct, list(PROFILES))
+        self.assertEqual(source.browser, list(PROFILES))
         self.assertEqual(client.writes, [])
 
     def test_exact_403_browser_retry_stays_within_two_urls(self):
