@@ -1,0 +1,32 @@
+{
+  "purpose": "Three reviewed Apple variant URL hints for a read-only Hepsiburada first-party audit. No stored prices or stock; every read rechecks robots, selected seller, SKU, cash price, and cart.",
+  "products": [
+    {
+      "id": 248,
+      "slug": "apple-iphone-17e",
+      "name": "Apple iPhone 17e",
+      "ram_gb": 8,
+      "storage_gb": 256,
+      "network_generation": "5g",
+      "targets": ["https://www.hepsiburada.com/apple-iphone-17e-256-gb-beyaz-p-HBCV0000D58K87?magaza=Hepsiburada&"]
+    },
+    {
+      "id": 296,
+      "slug": "apple-iphone-18-pro",
+      "name": "Apple iPhone 18 Pro",
+      "ram_gb": 12,
+      "storage_gb": 256,
+      "network_generation": "5g",
+      "targets": ["https://www.hepsiburada.com/apple-iphone-18-pro-256-gb-siyah-p-HBCV0000IOFEJU"]
+    },
+    {
+      "id": 297,
+      "slug": "apple-iphone-18-pro-max",
+      "name": "Apple iPhone 18 Pro Max",
+      "ram_gb": 12,
+      "storage_gb": 256,
+      "network_generation": "5g",
+      "targets": ["https://www.hepsiburada.com/apple-iphone-18-pro-max-256-gb-siyah-p-HBCV0000IOFEKB"]
+    }
+  ]
+}

@@ -1,0 +1,57 @@
+name: Apple 17e 18 Pro and Pro Max Hepsiburada Read-only PDP Audit
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: teknoskor-hepsiburada-apple-readonly-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 16
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Test exact selected seller, SKU, price, and robots denial
+        run: python -m unittest -q test_hepsiburada_apple_audit
+      - name: Start bounded read-only browser GET service
+        run: |
+          docker run -d --name=hepsiburada-apple-audit-browser -p 8191:8191 -e LOG_LEVEL=info ghcr.io/flaresolverr/flaresolverr:latest
+          for attempt in {1..30}; do
+            if curl --fail --silent http://localhost:8191/ > /dev/null; then exit 0; fi
+            sleep 2
+          done
+          docker logs hepsiburada-apple-audit-browser
+          exit 1
+      - name: Probe three reviewed public PDPs without writes
+        env:
+          HEPSIBURADA_APPLE_AUDIT_OUTPUT_DIR: ${{ runner.temp }}
+        run: python audit_hepsiburada_apple.py
+      - name: Publish read-only result
+        if: always()
+        run: |
+          if test -f "${{ runner.temp }}/hepsiburada-apple-audit.md"; then
+            cat "${{ runner.temp }}/hepsiburada-apple-audit.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload read-only evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hepsiburada-apple-audit-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/hepsiburada-apple-audit.json
+            ${{ runner.temp }}/hepsiburada-apple-audit.md
+          if-no-files-found: warn
+          retention-days: 14
