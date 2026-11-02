@@ -8,7 +8,7 @@ from unittest.mock import Mock
 import requests
 
 from hepsiburada_s25_fe_source import (
-    HepsiburadaS25FeSource, PRODUCT_ID, ROBOTS_URL, SELLER_URL, SKU, URL,
+    HepsiburadaS25FeSource, PRODUCT_ID, ROBOTS_URL, SELLER_URL, SKU, SOLVER_URL, URL,
     parse_exact_buy_box,
 )
 
@@ -49,6 +49,12 @@ def response(url, body, status=200):
     result.raw = BytesIO(result._content)
     result.headers['Content-Length'] = str(len(result._content))
     return result
+
+
+def solver_result(url, body, *, status=200):
+    return response(SOLVER_URL, json.dumps({'status': 'ok', 'solution': {
+        'status': status, 'url': url, 'response': body,
+    }}))
 
 
 class HepsiburadaS25FeAuditTests(unittest.TestCase):
@@ -97,16 +103,48 @@ class HepsiburadaS25FeAuditTests(unittest.TestCase):
                          (None, 'robots_disallowed', None))
         self.assertEqual(blocked, [ROBOTS_URL])
 
-    def test_403_does_not_trigger_unreviewed_browser_fallback(self):
+    def test_bounded_browser_reads_robots_before_product_after_direct_403(self):
         calls = []
         def get(url, **_):
-            calls.append(url)
-            return response(url, 'User-agent: *\nAllow: /\n'
-                            if url == ROBOTS_URL else 'denied',
-                            200 if url == ROBOTS_URL else 403)
-        self.assertEqual(HepsiburadaS25FeSource(get=get).read_offer(),
-                         (None, 'http_403', 403))
-        self.assertEqual(calls, [ROBOTS_URL, URL])
+            calls.append(('direct', url))
+            return response(url, 'denied', 403)
+        def post(_url, **kwargs):
+            url = kwargs['json']['url']
+            calls.append(('browser', url))
+            return solver_result(url, '<html><body><pre>User-agent: *\nAllow: /\n</pre></body></html>'
+                                 if url == ROBOTS_URL else fixture())
+        offer, reason, status = HepsiburadaS25FeSource(get=get, post=post).read_offer()
+        self.assertEqual((reason, status, offer['price']),
+                         ('observed_exact_first_party_cash_offer', 200, 36999))
+        self.assertEqual(calls, [
+            ('direct', ROBOTS_URL), ('browser', ROBOTS_URL),
+            ('direct', URL), ('browser', URL),
+        ])
+
+    def test_browser_robots_challenge_never_requests_product(self):
+        calls = []
+        def get(url, **_):
+            calls.append(('direct', url))
+            return response(url, 'denied', 403)
+        def post(_url, **kwargs):
+            url = kwargs['json']['url']
+            calls.append(('browser', url))
+            return solver_result(url, '<html><body>Access denied</body></html>')
+        self.assertEqual(HepsiburadaS25FeSource(get=get, post=post).read_offer(),
+                         (None, 'robots_invalid', 200))
+        self.assertEqual(calls, [('direct', ROBOTS_URL), ('browser', ROBOTS_URL)])
+
+    def test_browser_redirect_or_disallowed_robots_fail_closed(self):
+        def get(_url, **_):
+            return response(ROBOTS_URL, 'denied', 403)
+        changed = HepsiburadaS25FeSource(
+            get=get, post=lambda *_a, **_k: solver_result(ROBOTS_URL + '?x=1',
+                                                            'User-agent: *\nAllow: /'))
+        self.assertEqual(changed.read_offer(), (None, 'robots_browser_changed_url', 200))
+        denied = HepsiburadaS25FeSource(
+            get=get, post=lambda *_a, **_k: solver_result(ROBOTS_URL,
+                                                            'User-agent: *\nDisallow: /'))
+        self.assertEqual(denied.read_offer(), (None, 'robots_disallowed', None))
 
 
 if __name__ == '__main__':

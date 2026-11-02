@@ -26,6 +26,17 @@ jobs:
         run: pip install -r requirements.txt
       - name: Test selected buy box and robots denial contracts
         run: python -m unittest -q test_s25_fe_hepsiburada_audit
+      - name: Start bounded read-only browser GET service
+        run: |
+          docker run -d --name=s25-fe-hepsiburada-browser -p 8191:8191 -e LOG_LEVEL=info ghcr.io/flaresolverr/flaresolverr:latest
+          for attempt in {1..30}; do
+            if curl --fail --silent http://localhost:8191/ > /dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs s25-fe-hepsiburada-browser
+          exit 1
       - name: Probe one exact public PDP without writes
         env:
           S25_FE_HEPSIBURADA_AUDIT_OUTPUT_DIR: ${{ runner.temp }}

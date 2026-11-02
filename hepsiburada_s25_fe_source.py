@@ -18,13 +18,13 @@ from urllib.robotparser import RobotFileParser
 from bs4 import BeautifulSoup
 import requests
 
-from retailer_offer_refresh import _is_conditional_price
 from tr_price_scraper import TRPriceScraper
 
 
 URL = ('https://www.hepsiburada.com/samsung-galaxy-s25-fe-256-gb-8-gb-ram-'
        'samsung-turkiye-garantili-gece-siyahi-pm-HBC00009S6B28')
 ROBOTS_URL = 'https://www.hepsiburada.com/robots.txt'
+SOLVER_URL = 'http://localhost:8191/v1'
 SELLER_URL = 'https://www.hepsiburada.com/magaza/hepsiburada'
 PRODUCT_ID = 'HBC00009S6B28'
 SKU = 'HBCV00009S5QYI'
@@ -33,6 +33,8 @@ SPECS = {'ram_gb': 8, 'storage_gb': 256, 'network_generation': '5g'}
 BOT = 'TeknoskorPriceBot'
 MAX_ROBOTS_BYTES = 64 * 1024
 MAX_HTML_BYTES = 5 * 1024 * 1024
+MAX_SOLVER_BYTES = 8 * 1024 * 1024
+MAX_BROWSER_REQUESTS = 2
 HEADERS = {'User-Agent': BOT + '/1.0 (+https://teknoskor.com)',
            'Accept': 'text/html', 'Accept-Language': 'tr-TR,tr;q=0.9'}
 
@@ -126,6 +128,10 @@ def parse_exact_buy_box(html: str, final_url: str = URL):
                           _normalized(visible.get_text(' ', strip=True)) if visible else '', re.I)
     if not amount or float(amount[1].replace('.', '').replace(',', '.')) != price:
         return None, 'visible_cash_price_mismatch'
+    # Delayed import avoids a module cycle once the exact reader is wired into
+    # RetailerOfferRefresher. The shared conditional-price policy remains the
+    # authority; this reader never overrides it.
+    from retailer_offer_refresh import _is_conditional_price
     if _is_conditional_price(soup, offer, price):
         return None, 'conditional_price'
     events = []
@@ -156,11 +162,13 @@ def parse_exact_buy_box(html: str, final_url: str = URL):
 
 
 class HepsiburadaS25FeSource:
-    """Bounded direct GET only; browser fallback requires separate runner proof."""
+    """Exact direct GET with bounded browser fallback only after HTTP 403."""
 
-    def __init__(self, get=None, sleep=time.sleep):
+    def __init__(self, get=None, post=None, sleep=time.sleep):
         self._get = get or requests.get
+        self._post = post or requests.post
         self._sleep = sleep
+        self._browser_requests = 0
 
     def _read(self, url, maximum, *, accept):
         response = self._get(url, timeout=(5, 15), allow_redirects=False, stream=True,
@@ -184,12 +192,70 @@ class HepsiburadaS25FeSource:
         finally:
             response.close()
 
+    def _browser_read(self, url, maximum):
+        if self._browser_requests >= MAX_BROWSER_REQUESTS:
+            return None, 'browser_budget_exhausted', None
+        self._browser_requests += 1
+        response = None
+        try:
+            response = self._post(SOLVER_URL, json={
+                'cmd': 'request.get', 'url': url, 'maxTimeout': 45000,
+            }, timeout=60, stream=True)
+            if response.status_code != 200:
+                return None, f'solver_http_{response.status_code}', response.status_code
+            data = bytearray()
+            for chunk in response.iter_content(chunk_size=64 * 1024):
+                data.extend(chunk)
+                if len(data) > MAX_SOLVER_BYTES:
+                    return None, 'solver_oversized', response.status_code
+            payload = json.loads(data)
+            solution = payload.get('solution') if isinstance(payload, dict) else None
+            if not isinstance(payload, dict) or payload.get('status') != 'ok' or not isinstance(solution, dict):
+                return None, 'solver_unavailable', response.status_code
+            status = solution.get('status')
+            if solution.get('url') != url:
+                return None, 'browser_changed_url', status
+            if status != 200:
+                return None, f'browser_site_http_{status}', status
+            text = solution.get('response')
+            if not isinstance(text, str):
+                return None, 'browser_invalid_body', status
+            body = text.encode('utf-8')
+            if len(body) > maximum:
+                return None, 'browser_oversized', status
+            return body, 'ready', status
+        except (requests.RequestException, ValueError, TypeError, UnicodeError):
+            return None, 'browser_unavailable', None
+        finally:
+            if response is not None:
+                response.close()
+
+    def _read_with_fallback(self, url, maximum, *, accept):
+        body, reason, status = self._read(url, maximum, accept=accept)
+        return (self._browser_read(url, maximum) if reason == 'http_403'
+                else (body, reason, status))
+
+    @staticmethod
+    def _robots_text(raw):
+        text = raw.decode('utf-8-sig', errors='strict')
+        if re.search(r'<\s*(?:html|body|pre)\b', text, re.I):
+            # Chromium may wrap a text/plain robots response in a single PRE.
+            soup = BeautifulSoup(text, 'html.parser')
+            blocks = soup.find_all('pre')
+            if (len(blocks) != 1 or soup.find(['script', 'form', 'iframe'])
+                    or _normalized(soup.get_text(' ', strip=True)) !=
+                       _normalized(blocks[0].get_text(' ', strip=True))):
+                return ''
+            text = blocks[0].get_text()
+        return text
+
     def read_offer(self):
         try:
-            robots, reason, status = self._read(ROBOTS_URL, MAX_ROBOTS_BYTES, accept='text/plain')
+            robots, reason, status = self._read_with_fallback(
+                ROBOTS_URL, MAX_ROBOTS_BYTES, accept='text/plain')
             if reason != 'ready':
                 return None, 'robots_' + reason, status
-            text = robots.decode('utf-8-sig', errors='strict')
+            text = self._robots_text(robots)
             if not re.search(r'^\s*user-agent\s*:', text, re.I | re.M) or '<html' in text.lower():
                 return None, 'robots_invalid', status
             rules = RobotFileParser()
@@ -201,7 +267,8 @@ class HepsiburadaS25FeSource:
                 return None, 'robots_delay_exceeds_budget', None
             if delay:
                 self._sleep(delay)
-            html, reason, status = self._read(URL, MAX_HTML_BYTES, accept='text/html')
+            html, reason, status = self._read_with_fallback(
+                URL, MAX_HTML_BYTES, accept='text/html')
             if reason != 'ready':
                 return None, reason, status
             offer, reason = parse_exact_buy_box(html.decode('utf-8-sig', errors='strict'))
