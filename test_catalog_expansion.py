@@ -53,6 +53,16 @@ class CatalogExpansionTests(unittest.TestCase):
         self.assertEqual(len(new), 6)
         self.assertFalse({p["slug"] for p in old} & {p["slug"] for p in new})
 
+    def test_exact_s25_fe_memory_variant_is_draft_and_keeps_base_slug_separate(self):
+        batch = load_reviewed_batch("s25-fe-256-2026-11")
+        self.assertEqual(batch["mode"], "draft")
+        self.assertEqual(batch["products"][0]["slug"], "samsung-galaxy-s25-fe-256gb")
+        self.assertNotEqual(batch["products"][0]["slug"], "samsung-galaxy-s25-fe")
+        client = FakeClient()
+        with patch("catalog_expansion.SourceIngestionClient.from_env", return_value=client):
+            expand_catalog(batch["batch_id"])
+        self.assertEqual(client.calls[0][2]["json"], batch)
+
     def test_incomplete_or_wrong_response_cannot_report_success(self):
         invalid_bodies = [
             {"committed": False},

@@ -11,7 +11,7 @@ from reviewed_offer_targets import daily_offer_targets, with_reviewed_radio
 from test_retailer_offer_refresh import VATAN_URL, vatan_variant_page, vatan_variant_schema
 from vatan_reviewed_source import (
     MAX_BROWSER_REQUESTS, ROBOTS_URL, SOLVER_URL, VatanReviewedSource,
-    reviewed_profiles,
+    reviewed_profiles, S25_FE_256_VATAN_URL,
 )
 
 
@@ -38,6 +38,12 @@ def solver_result(url=VATAN_URL, html=None, status=200):
 
 
 class VatanReviewedSourceTests(unittest.TestCase):
+    def test_only_exact_new_variant_vatan_url_is_browser_reviewed(self):
+        source = VatanReviewedSource()
+        self.assertTrue(source.is_reviewed(S25_FE_256_VATAN_URL))
+        self.assertFalse(source.is_reviewed(S25_FE_256_VATAN_URL + '?other=1'))
+        self.assertFalse(source.is_reviewed(S25_FE_256_VATAN_URL.replace('256', '128')))
+
     def test_only_exact_catalog_skus_get_reviewed_url_hints(self):
         profiles = reviewed_profiles()
         self.assertEqual(len(profiles), 6)

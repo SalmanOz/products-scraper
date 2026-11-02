@@ -28,6 +28,12 @@ load_dotenv(os.path.join(os.path.dirname(__file__), '.env'))
 
 
 SOURCE_PRODUCT_OVERRIDES = {
+    "samsung-galaxy-s25-fe-256gb": {
+        "expected_name": "Samsung Galaxy S25 FE",
+        "url": "https://www.kimovil.com/en/where-to-buy-samsung-galaxy-s25-feglobal-8gb-256gb",
+        "expected_ram_gb": 8,
+        "expected_storage_gb": 256,
+    },
     "oppo-reno15-pro-5g": {
         "expected_name": "Oppo Reno15 Pro",
         "url": "https://www.kimovil.com/en/where-to-buy-oppo-reno15-pro",
@@ -242,6 +248,7 @@ class KimovilScraper:
         seed_physical_attributes=False,
         record_sink=None,
         image_sink=None,
+        expected_memory=None,
     ):
         try:
             # Kept for backward-compatible callers. Product category and all
@@ -381,6 +388,14 @@ class KimovilScraper:
                     for key, value in quick_specs.items()
                     if value and value != "---"
                 }
+
+            if expected_memory and any(
+                attributes.get(key) != expected_memory.get(key)
+                for key in ("ram_gb", "storage_gb")
+            ):
+                raise SourceIngestionError(
+                    f"Selected source memory differs from reviewed {product_slug}",
+                )
 
             def calc_gaming(antutu, bat, nm):
                 if antutu <= 0 or bat <= 0:
@@ -614,6 +629,10 @@ class KimovilScraper:
                 ),
                 record_sink=staged_records,
                 image_sink=staged_images,
+                expected_memory={
+                    "ram_gb": source_override["expected_ram_gb"],
+                    "storage_gb": source_override["expected_storage_gb"],
+                } if "expected_ram_gb" in source_override else None,
             )
             if not success:
                 matched_url = self.search_product_on_kimovil(
@@ -632,6 +651,10 @@ class KimovilScraper:
                         ),
                         record_sink=staged_records,
                         image_sink=staged_images,
+                        expected_memory={
+                            "ram_gb": source_override["expected_ram_gb"],
+                            "storage_gb": source_override["expected_storage_gb"],
+                        } if "expected_ram_gb" in source_override else None,
                     )
             if success:
                 succeeded += 1

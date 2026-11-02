@@ -12,6 +12,8 @@ URL_BATCH = Path(__file__).parent / 'offer_batches/budget-eight-2026-10-25.json'
 MEDIAMARKT_BATCH_PATH = Path(__file__).parent / 'offer_batches/mediamarkt-exact-2026-11-02.json'
 APPLE_STORE_BATCH_PATH = Path(__file__).parent / 'offer_batches/apple-store-exact-2026-11-02.json'
 TURK_TELEKOM_BATCH_PATH = Path(__file__).parent / 'offer_batches/turk-telekom-exact-2026-11-02.json'
+S25_FE_256_BATCH_PATH = Path(__file__).parent / 'offer_batches/s25-fe-256-exact-2026-11-02.json'
+S25_FE_256_SLUG = 'samsung-galaxy-s25-fe-256gb'
 PROTECTED_TWO_STORE_SLUGS = frozenset({
     'tecno-camon-20-pro', 'tecno-camon-40', 'samsung-galaxy-a27-5g',
     'samsung-galaxy-a37-5g', 'samsung-galaxy-a57-5g',
@@ -21,8 +23,27 @@ PROTECTED_TWO_STORE_SLUGS = frozenset({
 
 def _profiles():
     for path in (URL_BATCH, VATAN_BATCH_PATH, MEDIAMARKT_BATCH_PATH,
-                 APPLE_STORE_BATCH_PATH, TURK_TELEKOM_BATCH_PATH):
+                 APPLE_STORE_BATCH_PATH, TURK_TELEKOM_BATCH_PATH,
+                 S25_FE_256_BATCH_PATH):
         yield from json.loads(path.read_text())['products']
+
+
+def _identity_matches(profile, product):
+    """Only the newly created, slug-unique S25 FE variant may lack a known ID.
+
+    Existing reviewed profiles keep their pinned catalog ID. The new draft gets
+    its ID at publication, so its exact slug/name and positive database ID are
+    checked along with RAM, storage and radio before its URLs become hints.
+    """
+    if profile.get('slug') != product.get('slug') or profile.get('name') != product.get('name'):
+        return False
+    if profile.get('id') is None:
+        product_id = product.get('id')
+        return (profile.get('slug') == S25_FE_256_SLUG
+                and profile.get('name') == 'Samsung Galaxy S25 FE 256GB'
+                and isinstance(product_id, int) and not isinstance(product_id, bool)
+                and product_id > 0)
+    return profile.get('id') == product.get('id')
 
 
 def with_reviewed_radio(product, expected_specs):
@@ -36,9 +57,7 @@ def with_reviewed_radio(product, expected_specs):
     if specs.get('network_generation') is not None:
         return specs
     for profile in _profiles():
-        if (profile.get('id') == product.get('id')
-                and profile.get('slug') == product.get('slug')
-                and profile.get('name') == product.get('name')
+        if (_identity_matches(profile, product)
                 and all(TRPriceScraper._spec_int(specs.get(key)) == profile.get(key)
                         for key in ('ram_gb', 'storage_gb'))
                 and profile.get('network_generation') in {'4g', '5g'}):
@@ -57,8 +76,7 @@ def daily_offer_targets(product, expected_specs):
     """
     seeds = []
     for profile in _profiles():
-        if (profile.get('id') != product.get('id') or profile.get('slug') != product.get('slug')
-                or profile.get('name') != product.get('name')):
+        if not _identity_matches(profile, product):
             continue
         same_memory = all(TRPriceScraper._spec_int(expected_specs.get(key)) == profile.get(key)
                           for key in ('ram_gb', 'storage_gb'))

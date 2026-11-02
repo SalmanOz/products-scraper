@@ -4,7 +4,7 @@ import unittest
 
 from reviewed_offer_targets import (
     APPLE_STORE_BATCH_PATH, MEDIAMARKT_BATCH_PATH, TURK_TELEKOM_BATCH_PATH,
-    URL_BATCH, VATAN_BATCH_PATH,
+    URL_BATCH, VATAN_BATCH_PATH, S25_FE_256_BATCH_PATH,
     daily_offer_targets, with_reviewed_radio,
 )
 
@@ -57,7 +57,31 @@ class ReviewedDailyTargetTests(unittest.TestCase):
             daily_offer_targets(product, specs)
             self.assertEqual([call.args[0] for call in read.call_args_list],
                              [URL_BATCH, VATAN_BATCH_PATH, MEDIAMARKT_BATCH_PATH,
-                              APPLE_STORE_BATCH_PATH, TURK_TELEKOM_BATCH_PATH])
+                              APPLE_STORE_BATCH_PATH, TURK_TELEKOM_BATCH_PATH,
+                              S25_FE_256_BATCH_PATH])
+
+    def test_new_s25_fe_variant_requires_exact_slug_name_memory_and_radio(self):
+        profile = json.loads(S25_FE_256_BATCH_PATH.read_text())['products'][0]
+        self.assertIsNone(profile['id'])
+        product = {'id': 501, 'slug': profile['slug'], 'name': profile['name']}
+        specs = {key: profile[key] for key in ('ram_gb', 'storage_gb', 'network_generation')}
+        targets = daily_offer_targets(product, specs)
+        self.assertEqual([row['source_url'] for row in targets], [
+            profile['targets'][0], profile['targets'][1], profile['targets'][2],
+        ])
+        self.assertEqual({row['merchant_name'] for row in targets[:2]},
+                         {'MediaMarkt', 'Vatan Bilgisayar'})
+        self.assertEqual(with_reviewed_radio(product, {'ram_gb': 8, 'storage_gb': 256}), specs)
+        for key, wrong in (('id', 0), ('id', True), ('slug', 'samsung-galaxy-s25-fe'),
+                           ('name', 'Samsung Galaxy S25 FE'), ('name', 'Samsung Galaxy S25 FE 512GB')):
+            self.assertEqual(daily_offer_targets({**product, key: wrong}, specs), [])
+        for key, wrong in (('ram_gb', 6), ('storage_gb', 128), ('network_generation', '4g')):
+            self.assertEqual(daily_offer_targets(product, {**specs, key: wrong}), [])
+
+        old_variant = {'id': 234, 'slug': 'samsung-galaxy-s25-fe',
+                       'name': 'Samsung Galaxy S25 FE'}
+        self.assertEqual(daily_offer_targets(old_variant,
+                         {'ram_gb': 8, 'storage_gb': 128, 'network_generation': '5g'}), [])
 
     def test_same_reviewed_iphone_retains_vatan_and_mediamarkt_targets(self):
         profile = next(p for p in json.loads(VATAN_BATCH_PATH.read_text())['products']

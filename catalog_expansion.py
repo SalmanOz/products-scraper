@@ -17,7 +17,10 @@ def load_reviewed_batch(batch_id: str) -> dict:
     if not path.is_file():
         raise ValueError(f"Unknown reviewed catalog batch: {batch_id}")
     batch = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(batch, dict) or set(batch) != {"batch_id", "products"} or batch["batch_id"] != batch_id:
+    if (not isinstance(batch, dict)
+            or set(batch) not in ({"batch_id", "products"}, {"batch_id", "mode", "products"})
+            or batch["batch_id"] != batch_id
+            or ("mode" in batch and batch["mode"] != "draft")):
         raise ValueError("Catalog batch identity does not match its file")
     products = batch["products"]
     if not isinstance(products, list) or not 1 <= len(products) <= 20:

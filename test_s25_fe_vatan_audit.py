@@ -25,9 +25,10 @@ class Reader:
 
 
 class VatanAuditTests(unittest.TestCase):
-    def test_audit_url_is_reviewed_only_when_explicitly_scoped(self):
-        self.assertFalse(VatanReviewedSource().is_reviewed(URL))
+    def test_audit_url_is_now_permanently_reviewed_for_exact_variant(self):
+        self.assertTrue(VatanReviewedSource().is_reviewed(URL))
         self.assertTrue(VatanReviewedSource(additional_reviewed_urls=(URL,)).is_reviewed(URL))
+        self.assertFalse(VatanReviewedSource().is_reviewed(URL.replace('256', '128')))
         with self.assertRaises(ValueError):
             VatanReviewedSource(additional_reviewed_urls=('https://other.example/p.html',))
 

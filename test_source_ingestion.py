@@ -222,6 +222,40 @@ class ProductIdentityTests(unittest.TestCase):
         )
         self.assertEqual(storage["value"], 1024)
 
+    def test_reviewed_s25_fe_source_requires_exact_8_256_before_staging(self):
+        override = SOURCE_PRODUCT_OVERRIDES['samsung-galaxy-s25-fe-256gb']
+        self.assertEqual(override['expected_ram_gb'], 8)
+        self.assertEqual(override['expected_storage_gb'], 256)
+        scraper = KimovilScraper()
+        template = """
+            <html><head><meta name='deviceki' content='{"name":"Samsung Galaxy S25 FE","partials":{}}'>
+            <meta name='devicecompare' content='{"name":"Samsung Galaxy S25 FE"}'></head><body>
+            <section class='container-sheet-hardware'><h2>Performance &amp; Hardware</h2>
+            <table class='k-dltable'>
+            <tr><th class='label'>Memory RAM</th><td class='value'>8 GB</td></tr>
+            <tr><th class='label'>Capacity</th><td class='value'>%s GB</td></tr>
+            </table></section></body></html>
+        """
+        records = []
+        scraper.get_via_flaresolverr = lambda _url: template % 128
+        self.assertFalse(scraper.scrape_product_details(
+            override['url'], product_slug='samsung-galaxy-s25-fe-256gb',
+            expected_name=override['expected_name'], existing_attributes={},
+            seed_physical_attributes=True, record_sink=records,
+            expected_memory={'ram_gb': 8, 'storage_gb': 256},
+        ))
+        self.assertEqual(records, [])
+        scraper.get_via_flaresolverr = lambda _url: template % 256
+        self.assertTrue(scraper.scrape_product_details(
+            override['url'], product_slug='samsung-galaxy-s25-fe-256gb',
+            expected_name=override['expected_name'], existing_attributes={},
+            seed_physical_attributes=True, record_sink=records,
+            expected_memory={'ram_gb': 8, 'storage_gb': 256},
+        ))
+        self.assertEqual({r['attribute_key']: r['value'] for r in records
+                          if r['attribute_key'] in {'ram_gb', 'storage_gb'}},
+                         {'ram_gb': 8, 'storage_gb': 256})
+
     def test_catalog_aliases_keep_source_identity_checks_exact(self):
         self.assertEqual(
             SOURCE_PRODUCT_OVERRIDES["samsung-galaxy-a36-5g"],

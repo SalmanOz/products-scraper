@@ -53,7 +53,8 @@ jobs:
           batches = ('apple-store-exact-2026-11-02.json',
                      'mediamarkt-exact-2026-11-02.json',
                      'vatan-exact-2026-11-02.json',
-                     'turk-telekom-exact-2026-11-02.json')
+                     'turk-telekom-exact-2026-11-02.json',
+                     's25-fe-256-exact-2026-11-02.json')
           slugs = sorted({row['slug'] for name in batches
                           for row in json.loads((Path('offer_batches') / name).read_text())['products']})
           print(','.join(slugs))

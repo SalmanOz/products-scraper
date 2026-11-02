@@ -17,6 +17,12 @@ from vatan_sitemap_source import BOT, MAX_ROBOTS_BYTES, ROBOTS_URL, VatanSitemap
 
 
 BATCH_PATH = Path(__file__).parent / 'offer_batches/vatan-exact-2026-11-02.json'
+S25_FE_256_BATCH_PATH = Path(__file__).parent / 'offer_batches/s25-fe-256-exact-2026-11-02.json'
+S25_FE_256_SLUG = 'samsung-galaxy-s25-fe-256gb'
+S25_FE_256_VATAN_URL = (
+    'https://www.vatanbilgisayar.com/'
+    'samsung-galaxy-s25-fe-8-256-gb-akilli-telefon-buz-mavisi.html'
+)
 SOLVER_URL = 'http://localhost:8191/v1'
 MAX_SOLVER_BYTES = 8 * 1024 * 1024
 MAX_HTML_BYTES = 5 * 1024 * 1024
@@ -26,6 +32,23 @@ MAX_BROWSER_REQUESTS = 6
 def reviewed_profiles():
     """Load reviewed SKU identities and exact URL hints, never observations."""
     return json.loads(BATCH_PATH.read_text())['products']
+
+
+def reviewed_s25_fe_variant_urls():
+    """Authorize only the runner-proven Vatan URL for the exact new SKU."""
+    profiles = json.loads(S25_FE_256_BATCH_PATH.read_text())['products']
+    if len(profiles) != 1:
+        return ()
+    profile = profiles[0]
+    if (profile.get('id') is None
+            and profile.get('slug') == S25_FE_256_SLUG
+            and profile.get('name') == 'Samsung Galaxy S25 FE 256GB'
+            and profile.get('ram_gb') == 8
+            and profile.get('storage_gb') == 256
+            and profile.get('network_generation') == '5g'
+            and S25_FE_256_VATAN_URL in profile.get('targets', ())):
+        return (S25_FE_256_VATAN_URL,)
+    return ()
 
 
 class VatanReviewedSource:
@@ -42,7 +65,7 @@ class VatanReviewedSource:
         self._urls = frozenset(
             url for profile in reviewed_profiles() for url in profile['targets']
             if VatanSitemapSource._safe_product_url(url)
-        ) | frozenset(additional_reviewed_urls)
+        ) | frozenset(reviewed_s25_fe_variant_urls()) | frozenset(additional_reviewed_urls)
         self._loaded = False
         self._rules = None
         self._delay = 0

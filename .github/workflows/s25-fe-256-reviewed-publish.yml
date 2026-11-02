@@ -1,0 +1,93 @@
+name: Samsung S25 FE 8 256 Reviewed Variant Publication
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'After read-only proof, stage the new draft, publish it and ingest two exact merchants'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+# A writer must not overlap the daily catalog or offer writer. Read-only
+# preflights have their own queue and can run while daily refresh is active.
+concurrency:
+  group: ${{ inputs.publish && 'teknoskor-daily-data-sync' || 'teknoskor-s25-fe-256-preflight' }}
+  cancel-in-progress: false
+
+jobs:
+  reviewed_variant:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Test exact technical source, catalog and offer contracts
+        run: python -m unittest -q test_s25_fe_variant_publication test_catalog_expansion test_source_ingestion test_reviewed_offer_targets test_vatan_reviewed_source test_retailer_offer_refresh
+      - name: Start bounded read-only PDP browser service
+        run: |
+          docker run -d --name=s25-fe-256-browser -p 8191:8191 -e LOG_LEVEL=info ghcr.io/flaresolverr/flaresolverr:latest
+          for attempt in {1..30}; do
+            if curl --fail --silent http://localhost:8191/ > /dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs s25-fe-256-browser
+          exit 1
+      - name: Read-only preflight of official SKU, 8/256 specifications and two cash offers
+        id: preflight
+        env:
+          S25_FE_PUBLISH_OUTPUT_DIR: ${{ runner.temp }}/s25-fe-preflight
+        run: python publish_s25_fe_variant.py
+      - name: Publish only the reviewed new draft and exact live offers
+        id: publish
+        if: ${{ inputs.publish && steps.preflight.outcome == 'success' }}
+        env:
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+          R2_PUBLIC_DOMAIN: ${{ secrets.R2_PUBLIC_DOMAIN }}
+          S25_FE_PUBLISH_OUTPUT_DIR: ${{ runner.temp }}/s25-fe-publication
+        run: |
+          : "${SCRAPER_INGESTION_SECRET:?SCRAPER_INGESTION_SECRET is required}"
+          python publish_s25_fe_variant.py --publish
+      - name: Reconcile current offer scores after a publication attempt
+        if: ${{ inputs.publish && !cancelled() && (steps.publish.outcome == 'success' || steps.publish.outcome == 'failure') }}
+        env:
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+        run: python reconcile_scores.py
+      - name: Summarize scoped review and publication
+        if: always()
+        run: |
+          for path in "${{ runner.temp }}/s25-fe-preflight/s25-fe-256-publication.md" \
+                      "${{ runner.temp }}/s25-fe-publication/s25-fe-256-publication.md"; do
+            if test -f "$path"; then cat "$path" >> "$GITHUB_STEP_SUMMARY"; fi
+          done
+      - name: Upload review, publication and score evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: s25-fe-256-reviewed-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/s25-fe-preflight/s25-fe-256-publication.json
+            ${{ runner.temp }}/s25-fe-preflight/s25-fe-256-publication.md
+            ${{ runner.temp }}/s25-fe-publication/s25-fe-256-publication.json
+            ${{ runner.temp }}/s25-fe-publication/s25-fe-256-publication.md
+            score-reconciliation.json
+          if-no-files-found: warn
+          retention-days: 30

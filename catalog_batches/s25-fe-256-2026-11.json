@@ -1,0 +1,13 @@
+{
+  "batch_id": "s25-fe-256-2026-11",
+  "mode": "draft",
+  "products": [
+    {
+      "name": "Samsung Galaxy S25 FE 256GB",
+      "slug": "samsung-galaxy-s25-fe-256gb",
+      "brandSlug": "samsung",
+      "evidenceUrl": "https://www.samsung.com/tr/smartphones/galaxy-s/galaxy-s25-fe-navy-256gb-sm-s731bdbgtur/buy/",
+      "segment": "popular_missing"
+    }
+  ]
+}
