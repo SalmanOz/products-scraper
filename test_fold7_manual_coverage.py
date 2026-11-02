@@ -2,6 +2,9 @@
 
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
+import json
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
@@ -9,7 +12,7 @@ from audit_mediamarkt_fold7_readonly import (
     CATALOG, LEGAL_NAME, MERSIS_NUMBER, SELLER, SELLER_URL, TAX_NUMBER,
     TITLE, URL,
 )
-from fold7_manual_coverage import audit, publish, summary, verified_offer
+from fold7_manual_coverage import audit, main, publish, summary, verified_offer
 from offer_ingestion_client import IngestionClientError, TARGET_INVALID_REASONS
 
 
@@ -354,6 +357,58 @@ class Fold7ManualCoverageTests(unittest.TestCase):
         client.readback_seller = 'Other seller'
         with self.assertRaisesRegex(RuntimeError, 'readback_missing'):
             self.publish_exact(report, client, source)
+
+    def test_final_summary_uses_exact_publication_result(self):
+        report, client, source = self.audited()
+        self.assertIn('Denetim aşaması: yazım yok', summary(report))
+        self.assertIn('Yayın istenmedi; bu koşuda fiyat yazımı yok',
+                      summary(report, publish_requested=False))
+        result = self.publish_exact(report, client, source)
+        published = summary(report, publish_requested=True, publication=result)
+        self.assertIn('Yayın tamamlandı: bir teklif kabul edildi', published)
+        self.assertIn('readback doğrulandı', published)
+        self.assertNotIn('yazım yok', published)
+        incomplete = (None, {**result, 'accepted': 0},
+                      {**result, 'submitted': True},
+                      {**result, 'readback': 'missing'},
+                      {**result, 'slug': 'other-product'},
+                      {**result, 'seller': 'Other seller'},
+                      {**result, 'source_url': 'https://example.com/other'},
+                      {**result, 'price': result['price'] + 1})
+        for candidate in incomplete:
+            with self.subTest(candidate=candidate):
+                rendered = summary(report, publish_requested=True,
+                                   publication=candidate)
+                self.assertIn('Yayın sonucu doğrulanamadı', rendered)
+                self.assertNotIn('yazım yok', rendered)
+        self.assertIn('Yayın sonucu doğrulanamadı',
+                      summary({**report, 'status': 'failed'},
+                              publish_requested=True, publication=result))
+        self.assertIn('Yayın sonucu doğrulanamadı',
+                      summary(report, publish_requested=False,
+                              publication=result))
+
+    def test_summarize_command_handles_missing_or_invalid_publication(self):
+        report, client, source = self.audited()
+        result = self.publish_exact(report, client, source)
+        with TemporaryDirectory() as directory:
+            audit_file = Path(directory) / 'audit.json'
+            publish_file = Path(directory) / 'publish.json'
+            output_file = Path(directory) / 'summary.md'
+            audit_file.write_text(json.dumps(report))
+            publish_file.write_text(json.dumps(result))
+            args = ['summarize', '--audit-file', str(audit_file),
+                    '--publish-file', str(publish_file),
+                    '--output-file', str(output_file),
+                    '--publish-requested', 'true']
+            self.assertEqual(main(args), 0)
+            self.assertIn('Yayın tamamlandı', output_file.read_text())
+            publish_file.write_text('{invalid json')
+            self.assertEqual(main(args), 0)
+            self.assertIn('Yayın sonucu doğrulanamadı', output_file.read_text())
+            publish_file.unlink()
+            self.assertEqual(main(args), 0)
+            self.assertIn('Yayın sonucu doğrulanamadı', output_file.read_text())
 
 
 if __name__ == '__main__':

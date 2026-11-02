@@ -357,14 +357,47 @@ def publish(report, *, client=None, source=None, now=None):
             'readback': 'exact_selected_offer'}
 
 
-def summary(report):
+def _publication_confirmed(report, publication):
+    if (not isinstance(publication, dict)
+            or publication.get('status') != 'passed'
+            or type(publication.get('submitted')) is not int
+            or publication['submitted'] != 1
+            or type(publication.get('accepted')) is not int
+            or publication['accepted'] != 1
+            or publication.get('readback') != 'exact_selected_offer'
+            or publication.get('slug') != CATALOG['slug']
+            or publication.get('seller') != SELLER
+            or publication.get('source_url') != URL):
+        return False
+    offer = report.get('verified_offer')
+    if not isinstance(offer, dict):
+        return False
+    try:
+        return Decimal(str(publication.get('price'))) == Decimal(str(offer['price']))
+    except (KeyError, InvalidOperation, TypeError, ValueError):
+        return False
+
+
+def summary(report, *, publication=None, publish_requested=None):
     source = report.get('source_audit') or {}
     offer = report.get('verified_offer') or {}
+    if publish_requested is None:
+        publication_state = 'Denetim aşaması: yazım yok; koşunun yayın sonucu henüz belirlenmedi.'
+    elif publish_requested is False and publication is None:
+        publication_state = 'Yayın istenmedi; bu koşuda fiyat yazımı yok.'
+    elif (publish_requested is True and report.get('status') == 'passed'
+          and report.get('catalog_status') == 'passed'
+          and _publication_confirmed(report, publication)):
+        publication_state = ('Yayın tamamlandı: bir teklif kabul edildi ve '
+                             'kaynak bazlı readback doğrulandı.')
+    else:
+        publication_state = ('Yayın sonucu doğrulanamadı; yazım gerçekleşmiş olabilir. '
+                             'Ingestion sonucunu kontrol edin.')
     return (f"Fold7 12/256 tek SKU denetimi: {report['status']}; "
             f"katalog {report['catalog_status']}; "
             f"kaynak {source.get('reason') or 'okunmadı'}; "
             f"{offer.get('price') or '?'} TRY. "
-            f"{report.get('catalog_error') or ''}\nDenetimde yazım yok.\n")
+            f"{report.get('catalog_error') or ''}\n{publication_state}\n")
 
 
 def main(argv=None):
@@ -376,6 +409,11 @@ def main(argv=None):
     write.add_argument('--audit-file', type=Path, required=True)
     write.add_argument('--output-file', type=Path, required=True)
     write.add_argument('--publish-exact-one', action='store_true', required=True)
+    render = sub.add_parser('summarize')
+    render.add_argument('--audit-file', type=Path, required=True)
+    render.add_argument('--publish-file', type=Path, required=True)
+    render.add_argument('--output-file', type=Path, required=True)
+    render.add_argument('--publish-requested', choices=('true', 'false'), required=True)
     args = parser.parse_args(argv)
     if args.action == 'audit':
         report = audit()
@@ -383,6 +421,17 @@ def main(argv=None):
         args.audit_file.with_suffix('.md').write_text(summary(report))
         print(summary(report), end='')
         return 0 if report['status'] == 'passed' else 1
+    if args.action == 'summarize':
+        report = json.loads(args.audit_file.read_text())
+        try:
+            publication = json.loads(args.publish_file.read_text())
+        except (OSError, ValueError):
+            publication = None
+        rendered = summary(report, publication=publication,
+                           publish_requested=args.publish_requested == 'true')
+        args.output_file.write_text(rendered)
+        print(rendered, end='')
+        return 0
     report = json.loads(args.audit_file.read_text())
     result = publish(report)
     args.output_file.write_text(json.dumps(result, ensure_ascii=False, indent=2) + '\n')

@@ -61,14 +61,18 @@ jobs:
             --publish-exact-one \
             --audit-file "${{ runner.temp }}/fold7-audit.json" \
             --output-file "${{ runner.temp }}/fold7-publish.json"
-      - name: Summarize exact Fold7 audit and accepted readback
+      - name: Summarize final Fold7 audit and publication outcome
         if: always()
         run: |
-          if test -f "${{ runner.temp }}/fold7-audit.md"; then
+          if test -f "${{ runner.temp }}/fold7-audit.json"; then
+            python fold7_manual_coverage.py summarize \
+              --publish-requested "${{ inputs.publish }}" \
+              --audit-file "${{ runner.temp }}/fold7-audit.json" \
+              --publish-file "${{ runner.temp }}/fold7-publish.json" \
+              --output-file "${{ runner.temp }}/fold7-audit.md"
             cat "${{ runner.temp }}/fold7-audit.md" >> "$GITHUB_STEP_SUMMARY"
-          fi
-          if test -f "${{ runner.temp }}/fold7-publish.json"; then
-            cat "${{ runner.temp }}/fold7-publish.json" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Fold7 denetim raporu oluşmadı; yayın sonucu için job adımlarını inceleyin.' >> "$GITHUB_STEP_SUMMARY"
           fi
       - name: Upload audit and optional publication evidence
         if: always()
