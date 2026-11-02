@@ -5,6 +5,7 @@ from unittest.mock import Mock
 from bs4 import BeautifulSoup
 
 from retailer_offer_refresh import _product_offer
+from retailer_offer_refresh import RetailerOfferRefresher
 from teknosa_reviewed_source import (
     EAN, PRODUCT_ID, ROBOTS_URL, URL, TeknosaReviewedSource,
     parse_exact_first_party_offer,
@@ -122,6 +123,24 @@ class TeknosaReviewedSourceTests(unittest.TestCase):
         self.assertEqual(requests, [('get', ROBOTS_URL), ('browser', ROBOTS_URL),
                                     ('get', URL), ('browser', URL)])
         self.assertEqual(reader.read_offer(URL + '?shopId=teknosa')[1], 'unreviewed_pdp')
+
+    def test_reviewed_url_routes_through_strict_reader_and_rechecks_model(self):
+        class FakeReviewed:
+            def read_offer(self, url):
+                offer, reason = parse_exact_first_party_offer(page(), url)
+                return offer, reason, 200
+        refresher = RetailerOfferRefresher(
+            fetch=Mock(side_effect=AssertionError('generic fetch must not run')),
+            teknosa_reviewed_source=FakeReviewed())
+        target = [{'source_url': URL}]
+        specs = {'ram_gb': 8, 'storage_gb': 256, 'network_generation': '5g'}
+        offers = refresher.refresh_existing_offer_targets('Apple iPhone 17e', target, specs)
+        self.assertEqual([(row['merchant'], row['price']) for row in offers],
+                         [('Teknosa', 68999.0)])
+        self.assertEqual(refresher.refresh_existing_offer_targets(
+            'Apple iPhone 17', target, specs), [])
+        self.assertEqual(refresher.target_report('Apple iPhone 17e', target, specs)[0]['reason'],
+                         'observed_exact_first_party_cash_offer')
 
 
 if __name__ == '__main__':

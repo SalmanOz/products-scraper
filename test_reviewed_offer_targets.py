@@ -4,7 +4,7 @@ import unittest
 
 from reviewed_offer_targets import (
     APPLE_STORE_BATCH_PATH, HEPSIBURADA_APPLE_BATCH_PATH, MEDIAMARKT_BATCH_PATH,
-    TURK_TELEKOM_BATCH_PATH,
+    TURK_TELEKOM_BATCH_PATH, TEKNOSA_FIRST_PARTY_BATCH_PATH,
     PASAJ_BATCH_PATH, URL_BATCH, VATAN_BATCH_PATH, S25_FE_256_BATCH_PATH,
     daily_offer_targets, with_reviewed_radio,
 )
@@ -60,6 +60,7 @@ class ReviewedDailyTargetTests(unittest.TestCase):
             self.assertEqual([call.args[0] for call in read.call_args_list],
                              [URL_BATCH, VATAN_BATCH_PATH, MEDIAMARKT_BATCH_PATH,
                               APPLE_STORE_BATCH_PATH, HEPSIBURADA_APPLE_BATCH_PATH,
+                              TEKNOSA_FIRST_PARTY_BATCH_PATH,
                               TURK_TELEKOM_BATCH_PATH,
                               PASAJ_BATCH_PATH,
                               S25_FE_256_BATCH_PATH])
@@ -181,6 +182,29 @@ class ReviewedDailyTargetTests(unittest.TestCase):
             for key, wrong in (('ram_gb', 6), ('storage_gb', 128),
                                ('network_generation', '4g')):
                 self.assertEqual(hepsiburada_targets(product, {**specs, key: wrong}), [])
+
+    def test_teknosa_first_party_seed_requires_exact_catalog_identity(self):
+        profiles = json.loads(TEKNOSA_FIRST_PARTY_BATCH_PATH.read_text())['products']
+        self.assertEqual(len(profiles), 1)
+        profile = profiles[0]
+        self.assertEqual(profile['id'], 248)
+        self.assertNotIn('price', profile)
+        self.assertEqual(profile['targets'], [
+            'https://www.teknosa.com/apple-iphone-17e-256gb-beyaz-akilli-telefon-p-100000061663'])
+        product = {key: profile[key] for key in ('id', 'slug', 'name')}
+        specs = {key: profile[key] for key in
+                 ('ram_gb', 'storage_gb', 'network_generation')}
+        def teknosa_targets(item, attributes):
+            return [row for row in daily_offer_targets(item, attributes)
+                    if row['merchant_name'] == 'Teknosa']
+        self.assertEqual(teknosa_targets(product, specs),
+                         [{'merchant_name': 'Teknosa',
+                           'source_url': profile['targets'][0]}])
+        for key, wrong in (('id', 999), ('slug', 'wrong'), ('name', 'Other Phone')):
+            self.assertEqual(teknosa_targets({**product, key: wrong}, specs), [])
+        for key, wrong in (('ram_gb', 6), ('storage_gb', 128),
+                           ('network_generation', '4g')):
+            self.assertEqual(teknosa_targets(product, {**specs, key: wrong}), [])
 
     def test_three_runner_verified_turk_telekom_urls_require_exact_catalog_sku(self):
         profiles = json.loads(TURK_TELEKOM_BATCH_PATH.read_text())['products']

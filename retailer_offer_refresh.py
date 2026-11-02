@@ -32,6 +32,7 @@ from hepsiburada_s25_fe_source import (
     HepsiburadaS25FeSource, URL as HEPSIBURADA_S25_FE_256_URL,
 )
 from hepsiburada_apple_source import HepsiburadaAppleSource, BY_URL as HEPSIBURADA_APPLE_PDPS
+from teknosa_reviewed_source import TeknosaReviewedSource, URL as TEKNOSA_FIRST_PARTY_URL
 
 
 _MERCHANT_DOMAINS = {
@@ -522,7 +523,8 @@ class RetailerOfferRefresher:
     def __init__(self, session=None, fetch=None, vatan_source=None,
                  mediamarkt_source=None, apple_store_source=None,
                  turk_telekom_source=None, pasaj_source=None, clock=time.monotonic,
-                 hepsiburada_s25_fe_source=None, hepsiburada_apple_source=None):
+                 hepsiburada_s25_fe_source=None, hepsiburada_apple_source=None,
+                 teknosa_reviewed_source=None):
         self._fetch = fetch or (session.get if session is not None else requests.get)
         self.public_sources = PublicRetailerSources(fetch=self._fetch)
         self.pazarama_source = PazaramaCategorySource(fetch=self._fetch)
@@ -536,6 +538,9 @@ class RetailerOfferRefresher:
         )
         self.hepsiburada_apple_source = (
             hepsiburada_apple_source or HepsiburadaAppleSource(get=self._fetch)
+        )
+        self.teknosa_reviewed_source = (
+            teknosa_reviewed_source or TeknosaReviewedSource(get=self._fetch)
         )
         self._scraper = TRPriceScraper()
         self._cache = {}
@@ -605,6 +610,12 @@ class RetailerOfferRefresher:
             return candidate
         if source_url in HEPSIBURADA_APPLE_PDPS:
             candidate, reason, status = self.hepsiburada_apple_source.read_offer(source_url)
+            self._record_attempt(source_url, reason, status)
+            with self._lock:
+                self._cache[source_url] = candidate
+            return candidate
+        if source_url == TEKNOSA_FIRST_PARTY_URL:
+            candidate, reason, status = self.teknosa_reviewed_source.read_offer(source_url)
             self._record_attempt(source_url, reason, status)
             with self._lock:
                 self._cache[source_url] = candidate

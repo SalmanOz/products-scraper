@@ -1,0 +1,97 @@
+name: Teknosa iPhone 17e Scoped Price Refresh
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Write only after this run reverifies the exact first-party buy box'
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ inputs.publish && 'teknoskor-daily-data-sync' || 'teknoskor-teknosa-first-party-preflight' }}
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Test exact seller, catalog identity, and offer routing
+        run: python -m unittest -q test_teknosa_reviewed_source test_reviewed_offer_targets test_retailer_offer_refresh test_price_refresh_orchestration
+      - name: Start bounded browser GET service
+        run: |
+          docker run -d --name=teknosa-scoped-browser -p 8191:8191 -e LOG_LEVEL=info ghcr.io/flaresolverr/flaresolverr:latest
+          for attempt in {1..30}; do
+            if curl --fail --silent http://localhost:8191/ > /dev/null; then exit 0; fi
+            sleep 2
+          done
+          docker logs teknosa-scoped-browser
+          exit 1
+      - name: Reverify exact first-party cash offer without writes
+        env:
+          TEKNOSA_AUDIT_OUTPUT_DIR: ${{ runner.temp }}
+        run: python audit_teknosa_first_party.py
+      - name: Refresh only the reviewed iPhone 17e SKU
+        if: ${{ inputs.publish }}
+        id: scoped_prices
+        env:
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+        run: |
+          set -euo pipefail
+          : "${SCRAPER_INGESTION_SECRET:?SCRAPER_INGESTION_SECRET is required}"
+          python update_prices.py --slugs apple-iphone-17e \
+            --known-pdp-only --report teknosa-first-party-scoped-report.json
+      - name: Reconcile scores after committed offers
+        if: ${{ always() && !cancelled() && (steps.scoped_prices.outcome == 'success' || steps.scoped_prices.outcome == 'failure') }}
+        env:
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+        run: python reconcile_scores.py
+      - name: Summarize audit and scoped refresh
+        if: always()
+        run: |
+          if test -f "${{ runner.temp }}/teknosa-first-party-audit.md"; then
+            cat "${{ runner.temp }}/teknosa-first-party-audit.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if test -f teknosa-first-party-scoped-report.json; then
+            python - <<'PY'
+          import json, os
+          from pathlib import Path
+          report = json.loads(Path('teknosa-first-party-scoped-report.json').read_text())
+          coverage = report.get('coverage', {})
+          lines = ['## Reviewed Teknosa iPhone 17e SKU refresh',
+                   f"Status: {report.get('status')}; verified offer on {coverage.get('with_purchasable_offer', 0)}/{coverage.get('products', 0)} models; two merchants on {coverage.get('with_two_merchants', 0)}."]
+          for product in report.get('products', []):
+              rows = [row for row in product.get('source_attempts', []) if row.get('merchant') == 'Teknosa']
+              lines.append(f"- {product['slug']}: " + ', '.join(f"{row.get('reason')} HTTP {row.get('http_status')}" for row in rows))
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:
+              out.write('\n'.join(lines) + '\n')
+          PY
+          fi
+      - name: Upload audit and price evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: teknosa-first-party-scoped-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/teknosa-first-party-audit.json
+            ${{ runner.temp }}/teknosa-first-party-audit.md
+            teknosa-first-party-scoped-report.json
+            score-reconciliation.json
+          if-no-files-found: warn
+          retention-days: 30

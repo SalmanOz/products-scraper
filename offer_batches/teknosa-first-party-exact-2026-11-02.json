@@ -1,0 +1,14 @@
+{
+  "purpose": "Runner-verified exact first-party Teknosa URL hint. No stored price or stock; every read rechecks robots, selected seller, SKU, cash price, and cart.",
+  "products": [
+    {
+      "id": 248,
+      "slug": "apple-iphone-17e",
+      "name": "Apple iPhone 17e",
+      "ram_gb": 8,
+      "storage_gb": 256,
+      "network_generation": "5g",
+      "targets": ["https://www.teknosa.com/apple-iphone-17e-256gb-beyaz-akilli-telefon-p-100000061663"]
+    }
+  ]
+}
