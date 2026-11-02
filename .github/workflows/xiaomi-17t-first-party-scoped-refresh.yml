@@ -31,7 +31,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
       - name: Test strict first-party reader, catalog identity, and scoped routing
-        run: python -m unittest -q test_mediamarkt_source test_retailer_offer_refresh test_reviewed_offer_targets test_xiaomi_17t_first_party_audit test_price_refresh_orchestration
+        run: python -m unittest -q test_mediamarkt_source test_retailer_offer_refresh test_reviewed_offer_targets test_xiaomi_17t_first_party_audit test_xiaomi_17t_preflight_handoff test_price_refresh_orchestration
       - name: Start bounded browser GET service
         run: |
           docker run -d --name=xiaomi-17t-scoped-browser -p 8191:8191 -e LOG_LEVEL=info ghcr.io/flaresolverr/flaresolverr:latest
@@ -51,11 +51,18 @@ jobs:
         env:
           TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
           SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+          XIAOMI_17T_VERIFIED_AUDIT_FILE: ${{ runner.temp }}/xiaomi-17t-first-party.json
         run: |
           set -euo pipefail
           : "${SCRAPER_INGESTION_SECRET:?SCRAPER_INGESTION_SECRET is required}"
           python update_prices.py --slugs xiaomi-17t-pro,xiaomi-17t \
             --known-pdp-only --report xiaomi-17t-scoped-report.json
+      - name: Require both exact MediaMarkt offers in committed refresh
+        if: ${{ inputs.publish && steps.scoped_prices.outcome == 'success' }}
+        run: |
+          python verify_xiaomi_17t_scoped_refresh.py \
+            "${{ runner.temp }}/xiaomi-17t-first-party.json" \
+            xiaomi-17t-scoped-report.json
       - name: Reconcile scores after committed offers
         if: ${{ always() && !cancelled() && (steps.scoped_prices.outcome == 'success' || steps.scoped_prices.outcome == 'failure') }}
         env:

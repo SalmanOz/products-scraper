@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime, timezone
 
 from audit_xiaomi_17t_first_party import REVIEWED, run_audit
 
@@ -33,11 +34,13 @@ class Reader:
         offer = {'merchant': 'MediaMarkt', 'price': 62999 if row[1].endswith('pro') else 54999,
                  'currency': 'TRY', 'availability': 'in_stock',
                  'source_title': f'{name} {row[3]}/{row[4]}GB Akıllı Telefon {row[7]}',
-                 'url': row[6]}
+                 'url': row[6],
+                 'observed_at': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')}
         return [{**offer, **self.changes.get(name, {})}]
 
-    def target_report(self, *_args):
-        return [{'reason': 'observed_exact_offer', 'http_status': 200}]
+    def target_report(self, _name, targets, _specs):
+        return [{'source_url': targets[0]['source_url'], 'merchant': 'MediaMarkt',
+                 'reason': 'observed_exact_offer', 'http_status': 200}]
 
     def report(self):
         return {'robots_status': 'ready', 'browser_requests': 0, 'browser_html_responses': 0}

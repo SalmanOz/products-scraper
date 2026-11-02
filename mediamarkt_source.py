@@ -6,6 +6,7 @@ product GET and matching selected Product/Offer, visible price and stock.
 
 import json
 import math
+import os
 import re
 import time
 import xml.etree.ElementTree as ET
@@ -19,6 +20,7 @@ from bs4 import BeautifulSoup
 import requests
 
 from vatan_sitemap_source import VatanSitemapSource
+from xiaomi_17t_preflight import PROFILES as XIAOMI_17T_PREFLIGHT_URLS, load_verified_offer
 
 
 BOT = 'TeknoskorPriceBot'
@@ -164,7 +166,8 @@ def _selected_offer(html, final_url):
 
 
 class MediaMarktSource:
-    def __init__(self, get=None, post=None, sleep=time.sleep, monotonic=time.monotonic):
+    def __init__(self, get=None, post=None, sleep=time.sleep, monotonic=time.monotonic,
+                 preflight_file=None, now=None):
         self._get, self._post = get or requests.get, post or requests.post
         self._sleep, self._monotonic = sleep, monotonic
         self._lock = RLock()
@@ -181,6 +184,9 @@ class MediaMarktSource:
         self._browser_successes = 0
         self._browser_failures = 0
         self._blocked = False
+        self._preflight_file = (preflight_file if preflight_file is not None else
+                                os.environ.get('XIAOMI_17T_VERIFIED_AUDIT_FILE'))
+        self._now = now or (lambda: datetime.now(timezone.utc))
 
     def _pace(self, browser=False):
         with self._lock:
@@ -345,6 +351,10 @@ class MediaMarktSource:
     def read_offer(self, source_url):
         if not product_url(source_url):
             return None, 'invalid_url', None
+        if self._preflight_file and source_url in XIAOMI_17T_PREFLIGHT_URLS:
+            offer = load_verified_offer(self._preflight_file, source_url, self._now())
+            return (offer, 'observed_exact_offer_from_preflight', 200) if offer else (
+                None, 'preflight_invalid_or_stale', None)
         self._load_robots()
         if self._rules is None:
             return None, 'robots_unavailable', None

@@ -77,17 +77,20 @@ def _verified_offer(offers, profile, color):
     offer = offers[0]
     price = offer.get('price')
     title = offer.get('source_title')
+    observed_at = offer.get('observed_at')
     url = profile['targets'][0]
     if (offer.get('merchant') != 'MediaMarkt' or offer.get('url') != url
             or offer.get('currency') != 'TRY'
             or offer.get('availability') not in {'in_stock', 'limited'}
             or not isinstance(price, (int, float)) or isinstance(price, bool)
             or not math.isfinite(price) or not 0 < price <= 5_000_000
-            or not isinstance(title, str) or color not in _fold(title).split()
+            or not isinstance(title, str) or not isinstance(observed_at, str)
+            or color not in _fold(title).split()
             or color not in _fold(url).split()):
         return None
     return {key: offer.get(key) for key in
-            ('merchant', 'price', 'currency', 'availability', 'source_title', 'url')}
+            ('merchant', 'price', 'currency', 'availability', 'source_title', 'url',
+             'observed_at')}
 
 
 def run_audit(reader=None, catalog_get=None):

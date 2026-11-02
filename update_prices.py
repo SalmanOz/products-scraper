@@ -3,6 +3,7 @@ import logging
 import asyncio
 import json
 import math
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 import re
@@ -15,6 +16,7 @@ from price_sanity import filter_price_outliers
 from retailer_offer_refresh import ALLOWED_HOSTS, RetailerOfferRefresher, _safe_url
 from reviewed_offer_targets import daily_offer_targets, with_reviewed_radio, PROTECTED_TWO_STORE_SLUGS
 from vatan_sitemap_source import VatanSitemapSource
+from xiaomi_17t_preflight import PROFILES as XIAOMI_17T_PREFLIGHT_URLS
 
 load_dotenv()
 
@@ -272,6 +274,11 @@ class PriceUpdater:
 
     async def _run_update(self, product_id=None, phase2_backfill=False, *, dry_run=False,
                           product_slugs=None, known_pdp_only=False):
+        xiaomi_preflight_only = bool(os.environ.get('XIAOMI_17T_VERIFIED_AUDIT_FILE'))
+        if xiaomi_preflight_only and (product_id is not None or phase2_backfill
+                                      or not known_pdp_only or product_slugs is None
+                                      or set(product_slugs) != {p[1] for p in XIAOMI_17T_PREFLIGHT_URLS.values()}):
+            raise RuntimeError('Xiaomi preflight requires only the two reviewed slugs and known PDPs')
         if product_id is not None and phase2_backfill:
             raise RuntimeError(
                 "Phase 2 backfill must validate the full published catalog"
@@ -315,6 +322,12 @@ class PriceUpdater:
             name = p['name']
             expected_specs = with_reviewed_radio(p, self.get_expected_specs(p.get('attributes')))
             targets = daily_offer_targets(p, expected_specs)
+            if xiaomi_preflight_only:
+                reviewed_url = next(url for url, profile in XIAOMI_17T_PREFLIGHT_URLS.items()
+                                    if profile[1] == p['slug'])
+                targets = [row for row in targets if row['source_url'] == reviewed_url]
+                if len(targets) != 1:
+                    raise RuntimeError('Exact Xiaomi MediaMarkt reviewed target missing for ' + p['slug'])
             product_report = {'slug': p['slug'], 'targets': targets,
                               'purchasable_merchants': [], 'prepared_offers': [],
                               'rejected_live_observations': 0, 'discovered_destinations': 0}
