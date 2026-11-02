@@ -140,8 +140,13 @@ def summary(report):
     if len(report['rows']) > 20:
         lines.append(f"- {len(report['rows']) - 20} more affected products in artifact.")
     if report['incomplete_products']:
-        lines.append('Incomplete catalog pages are listed in the JSON artifact; '
-                     'no omission is inferred for them.')
+        for row in report['incomplete_products'][:10]:
+            lines.append(f"- Incomplete {row['slug']}: {row['reason']}; "
+                         'no omitted seller is inferred.')
+        if len(report['incomplete_products']) > 10:
+            lines.append(
+                f"- {len(report['incomplete_products']) - 10} more incomplete "
+                'products in the JSON artifact.')
     return '\n'.join(lines) + '\n'
 
 

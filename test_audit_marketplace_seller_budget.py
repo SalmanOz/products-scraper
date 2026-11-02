@@ -94,6 +94,8 @@ class SellerBudgetAuditTests(unittest.TestCase):
         self.assertEqual(report['incomplete_products'], [{
             'slug': 'other-phone', 'reason': 'target_pages_unavailable',
         }])
+        self.assertIn('Incomplete other-phone: target_pages_unavailable',
+                      summary(report))
         self.assertEqual(client.calls, ['catalog_get', 'complete_get',
                                         'inspection_get'])
 
