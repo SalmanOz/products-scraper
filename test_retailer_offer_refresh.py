@@ -490,6 +490,41 @@ class RetailerRefreshTests(unittest.TestCase):
         self.assertEqual(reasons[targets[0]], 'access_denied')
         self.assertEqual({reasons[url] for url in targets[1:]}, {'host_circuit_open'})
 
+    def test_transient_outage_pauses_then_reprobes_without_reopening_access_denials(self):
+        now = [1000]
+        calls = []
+        urls = [f'https://www.idefix.com/samsung-galaxy-s25-12gb-128gb-p-{i}'
+                for i in range(5)]
+
+        def fetch(url, **_kwargs):
+            calls.append(url)
+            if url in urls[:2]:
+                return Response(status=503, url=url)
+            return Response(page(product_schema(url)), url=url)
+
+        reader = RetailerOfferRefresher(fetch=fetch, clock=lambda: now[0])
+        self.assertEqual(reader.refresh_existing_offer_targets('Samsung Galaxy S25', urls[:3], SPECS), [])
+        self.assertEqual(calls, urls[:2])
+        self.assertEqual(reader.target_report('Samsung Galaxy S25', urls[:3], SPECS)[2]['reason'],
+                         'host_circuit_open')
+
+        now[0] += reader.TRANSIENT_CIRCUIT_COOLDOWN_SECONDS + 1
+        offers = reader.refresh_existing_offer_targets('Samsung Galaxy S25', urls[3:], SPECS)
+        self.assertEqual(calls, urls[:2] + urls[3:])
+        self.assertEqual(len(offers), 2)
+        self.assertEqual([row['url'] for row in offers], urls[3:])
+
+        denied = 'https://www.n11.com/samsung-galaxy-s25-12gb-128gb-p-1'
+        denied_next = 'https://www.n11.com/samsung-galaxy-s25-12gb-128gb-p-2'
+        def denied_fetch(url, **_kwargs):
+            return Response(status=403, url=url)
+        denied_reader = RetailerOfferRefresher(fetch=denied_fetch, clock=lambda: now[0])
+        self.assertEqual(denied_reader.refresh_existing_offer_targets('Samsung Galaxy S25', [denied], SPECS), [])
+        now[0] += reader.TRANSIENT_CIRCUIT_COOLDOWN_SECONDS + 1
+        self.assertEqual(denied_reader.refresh_existing_offer_targets('Samsung Galaxy S25', [denied_next], SPECS), [])
+        self.assertEqual(denied_reader.target_report('Samsung Galaxy S25', [denied_next], SPECS)[0]['reason'],
+                         'host_circuit_open')
+
     def test_unreviewed_vatan_denial_does_not_block_reviewed_exact_pdp(self):
         unreviewed = 'https://www.vatanbilgisayar.com/iphone-17-256-gb-akilli-telefon-sis-mavisi.html'
         html = vatan_variant_page(vatan_variant_schema())

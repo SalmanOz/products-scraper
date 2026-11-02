@@ -12,6 +12,7 @@ import ipaddress
 import json
 import math
 import re
+import time
 import unicodedata
 from threading import Lock
 from urllib.parse import parse_qsl, urljoin, urlparse
@@ -510,10 +511,11 @@ def _public_retailer_product(soup, product, offer, url, price, availability):
 
 class RetailerOfferRefresher:
     MAX_TARGETS_PER_REFRESH = 12
+    TRANSIENT_CIRCUIT_COOLDOWN_SECONDS = 5 * 60
 
     def __init__(self, session=None, fetch=None, vatan_source=None,
                  mediamarkt_source=None, apple_store_source=None,
-                 turk_telekom_source=None):
+                 turk_telekom_source=None, clock=time.monotonic):
         self._fetch = fetch or (session.get if session is not None else requests.get)
         self.public_sources = PublicRetailerSources(fetch=self._fetch)
         self.pazarama_source = PazaramaCategorySource(fetch=self._fetch)
@@ -525,6 +527,8 @@ class RetailerOfferRefresher:
         self._cache = {}
         self._blocked_hosts = set()
         self._transport_failures = {}
+        self._transient_blocked_until = {}
+        self._clock = clock
         self._diagnostics = {}
         self._lock = Lock()
 
@@ -564,7 +568,13 @@ class RetailerOfferRefresher:
             failures = self._transport_failures.get(host, 0) + 1
             self._transport_failures[host] = failures
             if failures >= 2:
-                self._blocked_hosts.add(host)
+                # A transient 5xx or connection failure can clear during a
+                # long catalog run. Pause this retailer before one later PDP
+                # probe; explicit 403/429/challenge denials still stay blocked
+                # for the entire run.
+                self._transient_blocked_until[host] = (
+                    self._clock() + self.TRANSIENT_CIRCUIT_COOLDOWN_SECONDS
+                )
 
     def _fetch_target(self, source_url):
         parsed = _safe_url(source_url)
@@ -612,7 +622,9 @@ class RetailerOfferRefresher:
                     self._record_attempt(source_url, reason)
                     break
             with self._lock:
-                blocked = parsed.hostname.removeprefix('www.') in self._blocked_hosts
+                host = parsed.hostname.removeprefix('www.')
+                blocked = (host in self._blocked_hosts
+                           or self._transient_blocked_until.get(host, 0) > self._clock())
             # Generic discovery URLs can trip the retailer-wide circuit after
             # a 403. Reviewed Vatan PDPs have their own exact-URL robots gate
             # and bounded browser fallback, so keep those six independent.
@@ -678,7 +690,9 @@ class RetailerOfferRefresher:
                         self._blocked_hosts.add(parsed.hostname.removeprefix('www.'))
                     break
                 with self._lock:
-                    self._transport_failures[parsed.hostname.removeprefix('www.')] = 0
+                    host = parsed.hostname.removeprefix('www.')
+                    self._transport_failures[host] = 0
+                    self._transient_blocked_until.pop(host, None)
                 candidate = _product_offer(soup, actual_url)
                 self._record_attempt(source_url, 'observed_exact_offer' if candidate else 'no_exact_product_offer', status)
                 break
