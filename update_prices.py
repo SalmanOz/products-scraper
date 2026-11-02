@@ -34,6 +34,7 @@ class PriceUpdater:
         self.offer_matcher = TRPriceScraper()
         self.offer_refresher = offer_refresher or RetailerOfferRefresher()
         self.vatan_sitemap_source = vatan_sitemap_source or VatanSitemapSource()
+        self.pazarama_source = getattr(self.offer_refresher, 'pazarama_source', None)
         if isinstance(self.price_scraper, TRPriceScraper):
             self.price_scraper.retailer_offer_refresher = self.offer_refresher
         self.last_report = None
@@ -356,6 +357,15 @@ class PriceUpdater:
                         product_report['vatan_sitemap_error'] = type(error).__name__
                         logging.warning('  ⚠️ Vatan sitemap discovery unavailable (%s)', type(error).__name__)
                     product_report['vatan_sitemap_candidates'] = len(vatan_targets)
+                    pazarama_targets = []
+                    try:
+                        if self.pazarama_source:
+                            pazarama_targets = await asyncio.to_thread(
+                                self.pazarama_source.discover, name, expected_specs)
+                    except Exception as error:
+                        product_report['pazarama_discovery_error'] = type(error).__name__
+                        logging.warning('  ⚠️ Pazarama category discovery unavailable (%s)', type(error).__name__)
+                    product_report['pazarama_candidates'] = len(pazarama_targets)
                     try:
                         hints = await self.price_scraper.get_best_prices(name, expected_specs)
                     except Exception as error:
@@ -365,7 +375,7 @@ class PriceUpdater:
                         product_report['legacy_discovery_error'] = type(error).__name__
                         logging.warning('  ⚠️ Legacy discovery unavailable (%s)', type(error).__name__)
                     hints = hints if isinstance(hints, list) else []
-                    discovery_targets = public_targets + vatan_targets + [{'source_url': row.get('url')} for row in hints
+                    discovery_targets = public_targets + vatan_targets + pazarama_targets + [{'source_url': row.get('url')} for row in hints
                                          if isinstance(row, dict) and _safe_url(row.get('url'))]
                     product_report['discovered_destinations'] = len(discovery_targets)
                     # Discovery cards are URL hints, not current merchant cash
@@ -439,6 +449,8 @@ class PriceUpdater:
             if hasattr(self.offer_refresher, 'public_sources'):
                 self.last_report['public_source_discovery'] = self.offer_refresher.public_sources.report()
             self.last_report['vatan_sitemap_discovery'] = self.vatan_sitemap_source.report()
+            if self.pazarama_source:
+                self.last_report['pazarama_category_discovery'] = self.pazarama_source.report()
 
             if processed_count % INGESTION_PRODUCT_BATCH_SIZE == 0:
                 self.flush_offers(pending_offers, aggregate_result)

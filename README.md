@@ -279,6 +279,16 @@ Engellenen ya da erişilemeyen sitemap fiyat üretmez. Çalışma raporundaki
 `vatan_sitemap_discovery` alanı keşif durumunu ve uygun URL sayısını gösterir;
 gerçek fiyat kapsamı ancak aday sayfalar doğrulandıktan sonra anlaşılır.
 
+Pazarama keşfi, `robots.txt` izniyle Android telefon kategorisinin en fazla 16
+yayınlanmış sayfasını bir kez okuyup çalışma boyunca önbelleğe alır. Kartlardan
+yalnızca tam model, RAM ve depolama eşleşen ürün URL'leri alınır; kart fiyatı
+kanıt değildir. Ürün sayfasında tek Product→Offer, H1, satıcı, yeni ürün/stok,
+aktif “Sepete Ekle” ve görünür normal fiyat birlikte doğrulanır. “Sepette”
+indirimi varsa JSON-LD'deki koşullu fiyat yalnız indirim etiketini doğrulamak
+için kullanılır; kaydedilen fiyat ürünün ayrı, üzeri çizilmemiş normal fiyatıdır.
+Kupon/üyelik fiyatı veya belirsiz fiyat düzeni elenir. Raporun
+`pazarama_category_discovery` alanı keşif ve ürün sayfası istek sayılarını gösterir.
+
 Günlük fiyat adımı başarılı olsa da kısmen başarısız olsa da ardından
 `reconcile_scores.py` çalışır. Hiç yeni teklif bulunmaması, eski fiyat kanıtlarının
 süresinin dolmadığı anlamına gelmez. Ayrıca `Reconcile Current Offer Scores`

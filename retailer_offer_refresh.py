@@ -21,6 +21,7 @@ import requests
 
 from tr_price_scraper import TRPriceScraper
 from public_retailer_sources import PublicRetailerSources, SOURCES, public_source
+from pazarama_category_source import PazaramaCategorySource, pazarama_product_url
 
 
 _MERCHANT_DOMAINS = {
@@ -79,6 +80,8 @@ def _safe_url(url):
             return None
         query = parse_qsl(parsed.query, keep_blank_values=True, max_num_fields=50)
         if host.removeprefix('www.') in SOURCES and not public_source(url):
+            return None
+        if host.removeprefix('www.') == 'pazarama.com' and not pazarama_product_url(url):
             return None
         if any(re.search(r'token|auth|password|secret|signature|session|email|api.?key|access.?key|credential|add.?to.?cart|wc.?ajax|nonce|pao.?key|pao.?edit',
                          key, re.I) for key, _ in query):
@@ -225,6 +228,100 @@ def _vatan_selected_variant(soup, product, offer, final_url, price, availability
     return bool(match and float(match[1].replace('.', '').replace(',', '.')) == price)
 
 
+def _pazarama_visible_cash_price(soup, product, offer, url, schema_price, availability):
+    """Read only the selected PDP's ordinary price, never its Sepette Offer.price.
+
+    Pazarama's JSON-LD Offer.price is the automatic cart-discount amount when
+    its selected product panel displays ``Sepette``. The separate, unstruck
+    main price is the visible ordinary price before that cart promotion.
+    """
+    if (not pazarama_product_url(url) or availability != 'in_stock'
+            or not isinstance(product.get('url'), str)
+            or not _same_resource(product['url'], url)):
+        return None
+    if (any(key in offer for key in ('validForMemberTier', 'eligibleCustomerType',
+                                    'eligibleTransactionVolume', 'priceSpecification'))
+            or re.search(r'kupon|üyelere|uyelere|üyelik|uyelik|premium',
+                         str(offer.get('name', '')) + ' ' + str(offer.get('description', '')), re.I)):
+        return None
+    headings = soup.select('.product-detail h1')
+    if len(headings) != 1:
+        return None
+    heading = ' '.join(headings[0].get_text(' ', strip=True).split())
+    title = ' '.join(unescape(str(product.get('name', ''))).split())
+    if not heading or heading != title:
+        return None
+    brand = product.get('brand')
+    brand_name = brand.get('name') if isinstance(brand, dict) else brand
+    if not isinstance(brand_name, str) or not brand_name.strip():
+        return None
+    brand_key = TRPriceScraper._normalize_words(brand_name)
+    title_words = set(TRPriceScraper._normalize_words(title).split())
+    brand_markers = {'xiaomi': {'xiaomi', 'redmi', 'poco'},
+                     'samsung': {'samsung', 'galaxy'},
+                     'apple': {'apple', 'iphone'}}.get(brand_key, {brand_key})
+    if not title_words.intersection(brand_markers):
+        return None
+    if str(product.get('itemCondition', '')).rstrip('/').rsplit('/', 1)[-1] != 'NewCondition':
+        return None
+    if (offer.get('itemCondition') is not None and
+            str(offer['itemCondition']).rstrip('/').rsplit('/', 1)[-1] != 'NewCondition'):
+        return None
+    seller = offer.get('seller')
+    if not isinstance(seller, str) or not seller.strip() or len(seller) > 120:
+        return None
+    detail = soup.select_one('.product-detail')
+    if detail is None:
+        return None
+    seller_elements = [node for node in detail.select('p')
+                       if len(node.select('span')) == 2
+                       and node.select('span')[0].get_text(' ', strip=True).rstrip(':').strip() == 'Satıcı']
+    if (len(seller_elements) != 1
+            or TRPriceScraper._normalize_words(seller_elements[0].select('span')[1].get_text(' ', strip=True))
+            != TRPriceScraper._normalize_words(seller)):
+        return None
+    carts = detail.select('button[data-testid="base-addbasket-button"]')
+    if (not carts or any(button.has_attr('disabled')
+                         or str(button.get('aria-disabled', '')).lower() == 'true'
+                         or button.get_text(' ', strip=True) != 'Sepete Ekle'
+                         for button in carts)):
+        return None
+    # The selected product area excludes site navigation and recommendation
+    # cards. Other discount mechanisms are not verified by this source.
+    visible = detail.get_text(' ', strip=True)
+    if re.search(r'kupon|üyelere|uyelere|üyelik|uyelik|premium|plus\s+fiyat', visible, re.I):
+        return None
+    main_prices = [node for node in detail.select('p')
+                   if 'text-4xl' in node.get('class', [])
+                   and not node.find_parent(attrs={'data-testid': 'product-card-discount'})]
+    if len(main_prices) != 1:
+        return None
+    main_price = main_prices[0]
+    if (any(name in {'del', 's'} for name in [main_price.name, *(parent.name for parent in main_price.parents)])
+            or any('line-through' in parent.get('class', [])
+                   for parent in [main_price, *main_price.parents] if hasattr(parent, 'get'))):
+        return None
+    amount = re.fullmatch(r'(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)\s*TL',
+                          main_price.get_text(' ', strip=True), re.I)
+    if not amount:
+        return None
+    cash_price = float(amount[1].replace('.', '').replace(',', '.'))
+    if not math.isfinite(cash_price) or not 0 < cash_price <= 5_000_000:
+        return None
+    discounts = detail.select('[data-testid="product-card-discount"]')
+    if discounts:
+        if len(discounts) != 1 or discounts[0].parent is not main_price.parent:
+            return None
+        discount = re.fullmatch(r'Sepette\s+(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)\s*TL',
+                                discounts[0].get_text(' ', strip=True), re.I)
+        if (not discount or float(discount[1].replace('.', '').replace(',', '.')) != schema_price
+                or cash_price <= schema_price):
+            return None
+    elif re.search(r'\bSepette\b', visible, re.I) or cash_price != schema_price:
+        return None
+    return cash_price
+
+
 def _product_offer(soup, final_url):
     nodes = _schema_nodes(soup)
     products = [node for node in nodes if _type_is(node, 'Product')]
@@ -307,7 +404,8 @@ def _product_offer(soup, final_url):
     price = float(raw_price)
     if not math.isfinite(price) or not 0 < price <= 5_000_000:
         return None
-    if _is_conditional_price(soup, offer, price):
+    is_pazarama = pazarama_product_url(final_url)
+    if not is_pazarama and _is_conditional_price(soup, offer, price):
         return None
     availability = offer.get('availability')
     if not isinstance(availability, str):
@@ -329,6 +427,10 @@ def _product_offer(soup, final_url):
     if product.get('hasVariant') and not _vatan_selected_variant(
             soup, product, offer, final_url, price, availability):
         return None
+    if is_pazarama:
+        price = _pazarama_visible_cash_price(soup, product, offer, final_url, price, availability)
+        if price is None:
+            return None
     if public_source(final_url) and not _public_retailer_product(soup, product, offer, final_url, price, availability):
         return None
     return {'merchant': ALLOWED_HOSTS[_safe_url(final_url).hostname],
@@ -398,6 +500,7 @@ class RetailerOfferRefresher:
     def __init__(self, session=None, fetch=None):
         self._fetch = fetch or (session.get if session is not None else requests.get)
         self.public_sources = PublicRetailerSources(fetch=self._fetch)
+        self.pazarama_source = PazaramaCategorySource(fetch=self._fetch)
         self._scraper = TRPriceScraper()
         self._cache = {}
         self._blocked_hosts = set()
@@ -464,7 +567,8 @@ class RetailerOfferRefresher:
                 self._record_attempt(source_url, 'host_circuit_open')
                 break
             try:
-                fetch = self.public_sources.fetch if public_source(current) else self._fetch
+                fetch = (self.public_sources.fetch if public_source(current) else
+                         self.pazarama_source.fetch if pazarama_product_url(current) else self._fetch)
                 response = fetch(current, timeout=(5, 15), allow_redirects=False,
                                        headers={'Accept': 'text/html', 'Accept-Language': 'tr-TR,tr;q=0.9'})
                 status = response.status_code
@@ -486,7 +590,8 @@ class RetailerOfferRefresher:
                     destination_url = _safe_url(destination)
                     if not destination_url or (requested_variant and
                             _variant_query(destination_url) != requested_variant) or (public_source(source_url) and
-                            public_source(destination) != public_source(source_url)):
+                            public_source(destination) != public_source(source_url)) or (
+                            pazarama_product_url(source_url) and not pazarama_product_url(destination)):
                         self._record_attempt(source_url, 'unsafe_or_changed_variant_redirect', status)
                         break
                     current = destination

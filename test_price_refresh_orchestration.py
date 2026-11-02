@@ -183,6 +183,26 @@ class PriceRefreshOrchestrationTests(unittest.TestCase):
         self.assertEqual({r['seller'] for r in client.submissions[0]}, {'Teknosa', 'Trendyol'})
         self.assertTrue(all(r['checked_at'] == PDP_OBSERVED_AT for r in client.submissions[0]))
 
+    def test_pazarama_category_urls_are_hints_until_pdp_observation(self):
+        pazarama = {
+            **offer(0), 'merchant': 'Pazarama',
+            'url': 'https://www.pazarama.com/samsung-galaxy-s25-12gb-ram-256gb-p-1',
+            'price': 21000,
+        }
+        updater, client, refresher, discovery = self.updater([offer(0)], [pazarama])
+        discovery.rows = []
+        source = Mock()
+        source.discover.return_value = [{'source_url': pazarama['url']}]
+        source.report.return_value = {'status': 'ready', 'category_pages': 2}
+        updater.pazarama_source = source
+        asyncio.run(updater.run_update())
+        source.discover.assert_called_once_with('Samsung Galaxy S25', {
+            'ram_gb': 12, 'storage_gb': 256, 'network_generation': '5g',
+        })
+        self.assertEqual(refresher.calls[1][1], [{'source_url': pazarama['url']}])
+        self.assertEqual({row['seller'] for row in client.submissions[0]}, {'Teknosa', 'Pazarama'})
+        self.assertEqual(updater.last_report['pazarama_category_discovery']['status'], 'ready')
+
     def test_discovery_outages_do_not_discard_valid_current_pdp(self):
         updater, client, refresher, discovery = self.updater([offer(0)])
         refresher.public_sources = Mock()
