@@ -33,7 +33,7 @@ PROFILES = {
     },
     'https://www.mediamarkt.com.tr/tr/product/_poco-x6-pro-8-gb-256-gb-akilli-telefon-siyah-142988315.html': {
         'id': 183, 'slug': 'poco-x6-pro', 'name': 'POCO X6 Pro',
-        'ram_gb': 8, 'storage_gb': 256, 'network_generation': None,
+        'ram_gb': 8, 'storage_gb': 256, 'network_generation': '5g',
         'sku': '142988315', 'gtin13': '6941812757994',
         'source_title': 'POCO X6 Pro 8 GB 256 GB Akıllı Telefon Siyah',
         'seller_name': 'Başaran Ticaret', 'seller_id': '12140',
@@ -101,20 +101,32 @@ def _catalog_rows(client):
 
 
 def _collision_evidence(product, profile, url):
-    """Explain the unchanged fail-closed seller/platform and target-cap gate."""
+    """Explain the fail-closed seller/platform and target-completeness gate."""
     targets = product.get('offer_targets') if isinstance(product, dict) else None
     if not isinstance(targets, list):
         return {'blocked': True, 'reasons': ['offer_targets_unavailable'],
-                'target_count': None, 'targets': []}
+                'target_count': None, 'offer_targets_truncated': None,
+                'targets': []}
+    truncated = product.get('offer_targets_truncated')
+    def seller_name(row):
+        return row.get('seller_name') if 'seller_name' in row else row.get('merchant_name')
     seller_targets = [row for row in targets
                       if isinstance(row, dict) and
-                      str(row.get('merchant_name', '')).strip().casefold() ==
+                      str(seller_name(row) or '').strip().casefold() ==
                       profile['seller_name'].casefold()]
     reasons = []
-    if len(targets) >= 12:
+    if len(targets) > 12 or (len(targets) == 12 and truncated is not False):
         reasons.append('target_page_full')
+    if truncated is True:
+        reasons.append('target_page_truncated')
+    if truncated is not None and not isinstance(truncated, bool):
+        reasons.append('target_page_completeness_invalid')
     if any(not isinstance(row, dict) for row in targets):
         reasons.append('invalid_target_row')
+    if any(isinstance(row, dict) and
+           (not isinstance(seller_name(row), str) or not seller_name(row).strip())
+           for row in targets):
+        reasons.append('invalid_target_seller')
     if any(not isinstance(row.get('source_url'), str) for row in seller_targets):
         reasons.append('invalid_seller_target_url')
     if any(row.get('source_url') != url or
@@ -125,8 +137,9 @@ def _collision_evidence(product, profile, url):
         'blocked': bool(reasons) or not no_merchant_collision(product, profile, url),
         'reasons': reasons,
         'target_count': len(targets),
+        'offer_targets_truncated': truncated,
         'targets': [{key: row.get(key) for key in
-                     ('merchant_name', 'source_url', 'checked_at')}
+                     ('seller_name', 'merchant_name', 'source_url', 'checked_at')}
                     for row in targets if isinstance(row, dict)],
     }
 
@@ -278,7 +291,8 @@ def summary(report):
                      f"fiyatlı {price_status.get('priced')}; "
                      f"{', '.join(catalog.get('reasons', [])) or 'exact_unpriced'}.")
         collision = report['catalog_collisions'].get(row['product']['slug']) or {}
-        lines.append(f"  Katalog hedefleri {collision.get('target_count')}/12; "
+        lines.append(f"  Katalog hedefleri {collision.get('target_count')}/12, "
+                     f"kırpılmış {collision.get('offer_targets_truncated')}; "
                      f"çakışma {', '.join(collision.get('reasons', [])) or 'yok'}.")
     if report.get('error'):
         lines.append('Hata: ' + report['error'])

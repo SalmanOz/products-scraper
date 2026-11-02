@@ -145,6 +145,39 @@ def render(data):
 
 
 class MarketplaceAuditTests(unittest.TestCase):
+    def test_exact_sku_feature_graph_can_prove_radio_when_title_omits_it(self):
+        data = fixture()
+        no_radio_url = URL.replace('ultra-5g-', 'ultra-')
+        data['canonical'] = no_radio_url
+        data['action']['object']['url'] = no_radio_url
+        data['action']['object']['offers'][0]['url'] = no_radio_url
+        groups = data['apollo']['GraphqlProductFeatureGroups:' + SKU]
+        groups['featureGroups'][0]['features'].append({'__ref': 'GraphqlProductFeature:Radio'})
+        data['apollo']['GraphqlProductFeature:Radio'] = {
+            '__typename': 'GraphqlProductFeature',
+            'name': 'Mobil Telefon Standardı', 'value': '5G'}
+        observed = selected_marketplace_offer(render(data), no_radio_url)
+        self.assertIsNotNone(observed)
+        self.assertEqual(observed['network_generation'], '5g')
+        self.assertTrue(catalog_variant_matches(observed, 'Samsung Galaxy S25 Ultra',
+                                                {'ram_gb': 12, 'storage_gb': 256,
+                                                 'network_generation': '5g'}))
+        data['apollo']['GraphqlProductFeature:Radio']['value'] = '4G'
+        observed = selected_marketplace_offer(render(data), no_radio_url)
+        self.assertEqual(observed['network_generation'], '4g')
+        self.assertFalse(catalog_variant_matches(observed, 'Samsung Galaxy S25 Ultra',
+                                                 {'ram_gb': 12, 'storage_gb': 256,
+                                                  'network_generation': '5g'}))
+
+    def test_feature_graph_radio_conflict_with_url_fails_closed(self):
+        data = fixture()
+        groups = data['apollo']['GraphqlProductFeatureGroups:' + SKU]
+        groups['featureGroups'][0]['features'].append({'__ref': 'GraphqlProductFeature:Radio'})
+        data['apollo']['GraphqlProductFeature:Radio'] = {
+            '__typename': 'GraphqlProductFeature',
+            'name': 'Mobil Telefon Standardı', 'value': '4G'}
+        self.assertIsNone(selected_marketplace_offer(render(data), URL))
+
     def test_selected_offer_ignores_cheaper_related_variant(self):
         result = selected_marketplace_offer(render(fixture()), URL)
         self.assertEqual((result['sku'], result['offer_id'], result['seller_name'],

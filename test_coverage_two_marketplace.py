@@ -144,7 +144,7 @@ class CoverageTwoMarketplaceTests(unittest.TestCase):
 
     def test_catalog_radio_mismatch_is_reported_after_both_pdp_reads(self):
         client = Client()
-        client.rows[1]['attributes']['Connectivity'] = {'5G': True}
+        client.rows[1]['attributes']['Connectivity'] = {'5G': False}
         report, client, source = self.audited(client=client)
         self.assertEqual(report['status'], 'failed')
         self.assertEqual(source.direct, list(PROFILES))
@@ -152,7 +152,7 @@ class CoverageTwoMarketplaceTests(unittest.TestCase):
                          ['passed', 'failed'])
         self.assertEqual(report['rows'][1]['catalog_evidence']['observed_specs'],
                          {'ram_gb': 8, 'storage_gb': 256,
-                          'network_generation': '5g'})
+                          'network_generation': '4g'})
         self.assertIn('catalog_variant_changed', report['rows'][1]['errors'])
         self.assertTrue(all(row['verified_offer'] for row in report['rows']))
         self.assertEqual(client.writes, [])
@@ -208,6 +208,28 @@ class CoverageTwoMarketplaceTests(unittest.TestCase):
         self.assertEqual(collision['target_count'], 12)
         self.assertEqual(len(collision['targets']), 12)
         self.assertEqual(collision['reasons'], ['target_page_full'])
+        self.assertEqual(client.writes, [])
+
+    def test_complete_twelve_targets_are_safe_only_when_explicitly_untruncated(self):
+        client = Client()
+        first = list(PROFILES.values())[0]
+        client.rows[0]['offer_targets'] = [
+            {'merchant_name': 'MediaMarkt', 'seller_name': 'Other Seller',
+             'source_url': f'https://www.mediamarkt.com.tr/tr/product/_other-{i}.html'}
+            for i in range(12)]
+        client.rows[0]['offer_targets_truncated'] = False
+        report, client, source = self.audited(client=client)
+        self.assertEqual(report['status'], 'passed')
+        self.assertEqual(source.direct, list(PROFILES))
+        collision = report['catalog_collisions'][first['slug']]
+        self.assertEqual(collision['target_count'], 12)
+        self.assertIs(collision['offer_targets_truncated'], False)
+        self.assertEqual(collision['reasons'], [])
+        client.rows[0]['offer_targets_truncated'] = True
+        report, _, source = self.audited(client=client)
+        self.assertEqual(report['status'], 'failed')
+        self.assertIn('target_page_truncated',
+                      report['catalog_collisions'][first['slug']]['reasons'])
         self.assertEqual(client.writes, [])
 
     def test_robots_and_changed_browser_url_never_verify_offer(self):

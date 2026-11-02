@@ -21,15 +21,23 @@ def _time(value):
 def no_merchant_collision(product, profile, url):
     """A seller name may identify only one platform for this catalog product."""
     targets = product.get('offer_targets')
-    if not isinstance(targets, list) or len(targets) >= 12:
-        return False  # API caps targets at 12; a full page may hide a collision.
+    truncated = product.get('offer_targets_truncated')
+    if (not isinstance(targets, list) or len(targets) > 12 or
+            truncated is True or
+            (truncated is not None and not isinstance(truncated, bool)) or
+            (len(targets) == 12 and truncated is not False)):
+        return False  # A full page is safe only when the API proves completeness.
     for row in targets:
         if not isinstance(row, dict):
             return False
-        if str(row.get('merchant_name', '')).strip().casefold() != profile['seller_name'].casefold():
+        seller = row.get('seller_name') if 'seller_name' in row else row.get('merchant_name')
+        if not isinstance(seller, str) or not seller.strip():
+            return False
+        if seller.strip().casefold() != profile['seller_name'].casefold():
             continue
         source = row.get('source_url')
-        if source != url or urlparse(source).hostname != 'www.mediamarkt.com.tr':
+        if (not isinstance(source, str) or source != url or
+                urlparse(source).hostname != 'www.mediamarkt.com.tr'):
             return False
     return True
 

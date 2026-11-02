@@ -120,6 +120,22 @@ class MarketplacePipelineTests(unittest.TestCase):
         self.assertTrue(no_merchant_collision(product, PROFILES[URL], URL))
         product['offer_targets'] = [{'merchant_name': 'Other'}] * 12
         self.assertFalse(no_merchant_collision(product, PROFILES[URL], URL))
+        product['offer_targets_truncated'] = False
+        self.assertTrue(no_merchant_collision(product, PROFILES[URL], URL))
+        product['offer_targets_truncated'] = True
+        self.assertFalse(no_merchant_collision(product, PROFILES[URL], URL))
+
+    def test_collision_guard_uses_actual_seller_when_catalog_has_it(self):
+        product = catalog_product(URL)
+        product['offer_targets_truncated'] = False
+        product['offer_targets'] = [{
+            'merchant_name': 'MediaMarkt', 'seller_name': 'CepHane Teknoloji',
+            'source_url': 'https://www.hepsiburada.com/other'}]
+        self.assertFalse(no_merchant_collision(product, PROFILES[URL], URL))
+        product['offer_targets'][0]['seller_name'] = 'Başaran Ticaret'
+        self.assertTrue(no_merchant_collision(product, PROFILES[URL], URL))
+        product['offer_targets'][0]['seller_name'] = None
+        self.assertFalse(no_merchant_collision(product, PROFILES[URL], URL))
 
     def test_daily_refresh_keeps_both_exact_urls_and_seller_drift_fails(self):
         for url, profile in PROFILES.items():

@@ -82,7 +82,7 @@ def _gtin13(raw):
 
 
 def _product_capacities(apollo, graph_product, sku):
-    """Read explicit RAM and storage from this SKU's technical feature graph."""
+    """Read RAM, storage and optional radio from this SKU's feature graph."""
     product_ref = graph_product.get('product')
     if product_ref != {'__ref': 'GraphqlProduct:Media:tr-TR:' + sku}:
         return None
@@ -94,7 +94,8 @@ def _product_capacities(apollo, graph_product, sku):
     groups = apollo.get('GraphqlProductFeatureGroups:' + sku)
     if not isinstance(groups, dict) or groups.get('productId') != sku:
         return None
-    found = {'RAM Bellek Boyutu': [], 'Bellek Kapasitesi': []}
+    found = {'RAM Bellek Boyutu': [], 'Bellek Kapasitesi': [],
+             'Mobil Telefon Standardı': []}
     for group in groups.get('featureGroups', []):
         if not isinstance(group, dict) or not isinstance(group.get('features'), list):
             return None
@@ -107,12 +108,18 @@ def _product_capacities(apollo, graph_product, sku):
             name = feature.get('name')
             if name in found:
                 found[name].append(str(feature.get('value', '')))
-    if any(len(values) != 1 or not re.fullmatch(r'\d{1,4}', values[0])
-           for values in found.values()):
+    if any(len(found[name]) != 1 or
+           not re.fullmatch(r'\d{1,4}', found[name][0])
+           for name in ('RAM Bellek Boyutu', 'Bellek Kapasitesi')):
         return None
     ram = int(found['RAM Bellek Boyutu'][0])
     storage = int(found['Bellek Kapasitesi'][0])
-    return (ram, storage) if 1 <= ram <= 64 and 32 <= storage <= 4096 else None
+    radio_values = found['Mobil Telefon Standardı']
+    if len(radio_values) > 1:
+        return None
+    radio = radio_values[0].strip().casefold() if radio_values else None
+    radio = radio if radio in {'4g', '5g'} else None
+    return (ram, storage, radio) if 1 <= ram <= 64 and 32 <= storage <= 4096 else None
 
 
 def catalog_variant_matches(evidence, expected_name, expected_specs):
@@ -258,9 +265,10 @@ def selected_marketplace_offer(html, final_url):
             _normal(marketplace.get('sellerName')) != seller_name or
             str(marketplace.get('sellerId')) != seller_id):
         return None
-    capacities = _product_capacities(apollo, graph_product, sku)
-    if capacities is None:
+    features = _product_capacities(apollo, graph_product, sku)
+    if features is None:
         return None
+    capacities = features[:2]
     from tr_price_scraper import TRPriceScraper
     title_ram, title_storage = TRPriceScraper()._extract_listing_capacities(title)
     if (title_ram, title_storage) != capacities:
@@ -345,6 +353,9 @@ def selected_marketplace_offer(html, final_url):
             (title_radios and path_radios and title_radios != path_radios)):
         return None
     radio = next(iter(title_radios or path_radios), None)
+    if features[2] and radio and features[2] != radio:
+        return None
+    radio = radio or features[2]
     return {'platform': 'MediaMarkt', 'seller_name': unescape(seller_name),
             'seller_id': seller_id, 'price': price, 'currency': 'TRY',
             'availability': 'in_stock' if availability == 'InStock' else 'limited',
