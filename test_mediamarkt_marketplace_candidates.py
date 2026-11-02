@@ -144,6 +144,18 @@ class MarketplaceCandidateAuditTests(unittest.TestCase):
                          {'6932554491543', '6941812757994'})
         self.assertIn('no price, score or catalog writes', summary(report))
 
+    def test_missing_selected_radio_never_counts_as_source_verified(self):
+        row = product(238, 'xiaomi-redmi-note-15-pro', 'Xiaomi Redmi Note 15 Pro')
+        row['attributes'] = {'ram_gb': 8, 'storage_gb': 256}
+        source = Source({'Xiaomi Redmi Note 15 Pro': [REDMI]})
+        with patch('audit_mediamarkt_marketplace_candidates.selected_marketplace_offer',
+                   return_value=selected(REDMI, radio=None)):
+            report = run_audit(catalog_get=self.catalog_get([row]), source=source)
+        self.assertEqual(report['probed'], 1)
+        self.assertEqual(report['source_verified'], 0)
+        self.assertEqual(report['candidates'][0]['review_status'], 'selected_radio_unproven')
+        self.assertIsNone(report['candidates'][0]['selected_offer']['network_generation'])
+
     def test_ambiguous_catalog_mapping_skips_pdp_and_priced_rows(self):
         rows = [product(1, 'redmi-a', 'Redmi A'), product(2, 'redmi-b', 'Redmi B'),
                 product(3, 'priced', 'Priced', price=10000)]

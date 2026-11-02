@@ -166,8 +166,9 @@ def _review(evidence, row, specs):
         return 'selected_gtin_missing'
     expected_radio = specs.get('network_generation')
     observed_radio = evidence.get('network_generation')
-    if expected_radio in {'4g', '5g'} and observed_radio is None:
-        return 'catalog_radio_unproven_in_selected_pdp'
+    if observed_radio not in {'4g', '5g'}:
+        return ('catalog_radio_unproven_in_selected_pdp'
+                if expected_radio in {'4g', '5g'} else 'selected_radio_unproven')
     if expected_radio in {'4g', '5g'} and observed_radio != expected_radio:
         return 'catalog_radio_conflict'
     if not catalog_variant_matches(evidence, row['name'], specs):
