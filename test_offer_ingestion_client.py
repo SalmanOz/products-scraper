@@ -210,6 +210,61 @@ def test_catalog_target_completeness_must_be_boolean_and_survive_local_filtering
     assert product['offer_targets_truncated'] is True
 
 
+def test_complete_target_pages_require_stable_bounded_identity_and_no_discards():
+    def target(index):
+        return {'merchant_name': 'MediaMarkt', 'seller_name': 'Other Seller',
+                'source_url': f'https://www.mediamarkt.com.tr/tr/product/_phone-{index}.html',
+                'checked_at': '2026-11-02T17:00:00Z'}
+
+    def page_response(index, targets, *, snapshot='a' * 64, invalid=0,
+                      duplicate=0, total=14):
+        return FakeResponse(200, {'products': [{
+            'id': 238, 'slug': 'xiaomi-redmi-note-15-pro',
+            'name': 'Xiaomi Redmi Note 15 Pro', 'offer_targets': targets,
+            'offer_targets_total': total,
+            'offer_targets_invalid_count': invalid,
+            'offer_targets_duplicate_count': duplicate,
+            'offer_targets_page': index,
+            'offer_targets_snapshot': snapshot,
+            'offer_targets_truncated': bool(invalid or duplicate or index * 12 < total),
+        }]})
+
+    def read(responses):
+        session = FakeSession(responses)
+        client = OfferIngestionClient('https://teknoskor.com', TEST_SECRET,
+                                      session=session, sleep=lambda _seconds: None)
+        return client.get_complete_offer_targets(238), session.calls
+
+    complete, calls = read([page_response(1, [target(i) for i in range(12)]),
+                            page_response(2, [target(12), target(13)])])
+    assert len(complete['offer_targets']) == 14
+    assert complete['offer_targets_truncated'] is False
+    assert complete['offer_targets_total'] == 14
+    assert [call[2]['params']['offer_target_page'] for call in calls] == ['1', '2']
+    assert all(call[2]['params']['offer_target_product_id'] == '238' for call in calls)
+    assert all(call[2]['headers']['Authorization'] == f'Bearer {TEST_SECRET}'
+               for call in calls)
+    failures = [
+        ([page_response(1, [target(i) for i in range(12)], invalid=1)],
+         'invalid rows'),
+        ([page_response(1, [target(i) for i in range(12)]),
+          page_response(2, [target(12), target(13)], snapshot='b' * 64)],
+         'snapshot changed'),
+        ([page_response(1, [target(i) for i in range(12)]),
+          page_response(2, [target(0), target(13)])],
+         'repeated'),
+        ([page_response(1, [target(i) for i in range(12)], total=61)],
+         'metadata is invalid'),
+    ]
+    for responses, reason in failures:
+        try:
+            read(responses)
+        except IngestionClientError as error:
+            assert reason in str(error), (reason, str(error))
+        else:
+            assert False, f'Incomplete target pages accepted: {reason}'
+
+
 def test_ingestion_batches_at_500_and_sends_bearer_token():
     session = FakeSession(
         [
@@ -762,6 +817,7 @@ if __name__ == "__main__":
     test_refreshed_stock_and_actual_fetch_time_are_not_rewritten_as_new_unknown_evidence()
     test_catalog_is_read_without_mysql()
     test_catalog_target_completeness_must_be_boolean_and_survive_local_filtering()
+    test_complete_target_pages_require_stable_bounded_identity_and_no_discards()
     test_ingestion_batches_at_500_and_sends_bearer_token()
     test_committed_503_retries_until_scores_are_recalculated()
     test_committed_503_fails_when_scores_never_recalculate()

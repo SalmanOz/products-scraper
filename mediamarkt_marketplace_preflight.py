@@ -3,6 +3,7 @@
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import re
 from urllib.parse import urlparse
 
 from mediamarkt_marketplace_source import PROFILES, reviewed_marketplace_offer
@@ -22,11 +23,18 @@ def no_merchant_collision(product, profile, url):
     """A seller name may identify only one platform for this catalog product."""
     targets = product.get('offer_targets')
     truncated = product.get('offer_targets_truncated')
-    if (not isinstance(targets, list) or len(targets) > 12 or
+    total = product.get('offer_targets_total')
+    snapshot = product.get('offer_targets_snapshot')
+    if (not isinstance(targets, list) or len(targets) > 60 or
             truncated is True or
             (truncated is not None and not isinstance(truncated, bool)) or
             (len(targets) == 12 and truncated is not False)):
         return False  # A full page is safe only when the API proves completeness.
+    if (len(targets) > 12 and (truncated is not False or
+            type(total) is not int or total != len(targets) or
+            not isinstance(snapshot, str) or
+            not re.fullmatch(r'[0-9a-f]{64}', snapshot))):
+        return False  # Multi-page evidence must prove a complete stable snapshot.
     for row in targets:
         if not isinstance(row, dict):
             return False

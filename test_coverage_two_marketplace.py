@@ -232,6 +232,65 @@ class CoverageTwoMarketplaceTests(unittest.TestCase):
                       report['catalog_collisions'][first['slug']]['reasons'])
         self.assertEqual(client.writes, [])
 
+    def test_complete_paginated_targets_can_clear_twelve_row_cap(self):
+        class PaginatedClient(Client):
+            def __init__(self):
+                super().__init__()
+                self.complete_calls = []
+                self.hidden_seller = 'Other Seller'
+
+            def get_complete_offer_targets(self, product_id):
+                self.complete_calls.append(product_id)
+                first = self.rows[0]
+                complete = first['offer_targets'] + [
+                    {'merchant_name': 'MediaMarkt', 'seller_name': self.hidden_seller,
+                     'source_url': f'https://www.mediamarkt.com.tr/tr/product/_other-{i}.html'}
+                    for i in range(12, 14)]
+                return {'id': first['id'], 'slug': first['slug'],
+                        'name': first['name'], 'offer_targets': complete,
+                        'offer_targets_truncated': False,
+                        'offer_targets_total': 14,
+                        'offer_targets_snapshot': 'a' * 64}
+
+        client = PaginatedClient()
+        client.rows[0]['offer_targets'] = [
+            {'merchant_name': 'MediaMarkt', 'seller_name': 'Other Seller',
+             'source_url': f'https://www.mediamarkt.com.tr/tr/product/_other-{i}.html'}
+            for i in range(12)]
+        client.rows[0]['offer_targets_truncated'] = True
+        report, client, source = self.audited(client=client)
+        self.assertEqual(report['status'], 'passed', report.get('error'))
+        self.assertEqual(source.direct, list(PROFILES))
+        self.assertEqual(client.complete_calls, [238])
+        first_slug = list(PROFILES.values())[0]['slug']
+        collision = report['catalog_collisions'][first_slug]
+        self.assertEqual(collision['target_count'], 14)
+        self.assertIs(collision['offer_targets_truncated'], False)
+        self.assertEqual(collision['reasons'], [])
+        self.assertEqual(client.writes, [])
+        client.hidden_seller = list(PROFILES.values())[0]['seller_name']
+        report, client, source = self.audited(client=client)
+        self.assertEqual(report['status'], 'failed')
+        self.assertEqual(source.direct, list(PROFILES))
+        self.assertIn('seller_name_on_other_url_or_platform',
+                      report['catalog_collisions'][first_slug]['reasons'])
+        self.assertEqual(client.writes, [])
+
+    def test_failed_target_pagination_keeps_both_source_observations(self):
+        class BrokenPages(Client):
+            def get_complete_offer_targets(self, product_id):
+                from offer_ingestion_client import IngestionClientError
+                raise IngestionClientError('Complete target source has duplicate rows')
+
+        client = BrokenPages()
+        client.rows[0]['offer_targets_truncated'] = True
+        report, client, source = self.audited(client=client)
+        self.assertEqual(report['status'], 'failed')
+        self.assertEqual(source.direct, list(PROFILES))
+        self.assertTrue(all(row['verified_offer'] for row in report['rows']))
+        self.assertIn('duplicate rows', report['error'])
+        self.assertEqual(client.writes, [])
+
     def test_robots_and_changed_browser_url_never_verify_offer(self):
         report, client, source = self.audited(source=Source('unavailable'))
         self.assertEqual(report['status'], 'failed')

@@ -1,8 +1,9 @@
 import logging
 import math
 import os
+import re
 import time
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qsl, urljoin, urlparse
 
 import requests
 
@@ -10,6 +11,8 @@ import requests
 RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 MAX_INGESTION_BATCH_SIZE = 500
 CATALOG_PAGE_SIZE = 500
+COMPLETE_TARGET_PAGE_SIZE = 12
+MAX_COMPLETE_TARGET_PAGES = 5
 
 
 class IngestionClientError(RuntimeError):
@@ -281,6 +284,114 @@ class OfferIngestionClient:
                 "Catalog endpoint returned no published products"
             )
         return products
+
+    def get_complete_offer_targets(self, product_id):
+        """Read every safe target for one product with bounded stable pages.
+
+        This is only extra catalog evidence. A missing or changing page, a
+        discarded URL or a duplicate target fails closed; no price is read
+        from these records.
+        """
+        if type(product_id) is not int or product_id <= 0:
+            raise IngestionClientError('Complete target product id is invalid')
+        headers = {'Authorization': f'Bearer {self.secret}',
+                   'Accept': 'application/json'}
+        first_identity = None
+        first_metadata = None
+        gathered = []
+        seen_urls = set()
+        for page in range(1, MAX_COMPLETE_TARGET_PAGES + 1):
+            body = self._request_json(
+                'GET', '/api/ingestion/catalog', headers=headers,
+                params={'include_offer_targets': '1',
+                        'offer_target_product_id': str(product_id),
+                        'offer_target_page': str(page)},
+            )
+            rows = body.get('products') if isinstance(body, dict) else None
+            if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict):
+                raise IngestionClientError('Complete target product is unavailable')
+            product = rows[0]
+            identity = (product.get('id'), product.get('slug'), product.get('name'))
+            if (type(identity[0]) is not int or identity[0] != product_id
+                    or not isinstance(identity[1], str) or not identity[1]
+                    or not isinstance(identity[2], str) or not identity[2]):
+                raise IngestionClientError('Complete target product identity changed')
+            if first_identity is None:
+                first_identity = identity
+            elif identity != first_identity:
+                raise IngestionClientError('Complete target product identity changed')
+            total = product.get('offer_targets_total')
+            invalid = product.get('offer_targets_invalid_count')
+            duplicate = product.get('offer_targets_duplicate_count')
+            response_page = product.get('offer_targets_page')
+            snapshot = product.get('offer_targets_snapshot')
+            truncated = product.get('offer_targets_truncated')
+            if (type(total) is not int or not 0 <= total <=
+                    COMPLETE_TARGET_PAGE_SIZE * MAX_COMPLETE_TARGET_PAGES
+                    or type(invalid) is not int or invalid < 0
+                    or type(duplicate) is not int or duplicate < 0
+                    or type(response_page) is not int or response_page != page
+                    or type(truncated) is not bool
+                    or not isinstance(snapshot, str)
+                    or not re.fullmatch(r'[0-9a-f]{64}', snapshot)):
+                raise IngestionClientError('Complete target page metadata is invalid')
+            if invalid:
+                raise IngestionClientError('Complete target source has invalid rows')
+            if duplicate:
+                raise IngestionClientError('Complete target source has duplicate rows')
+            if truncated is not (page * COMPLETE_TARGET_PAGE_SIZE < total):
+                raise IngestionClientError('Complete target page completeness is invalid')
+            metadata = (total, invalid, duplicate, snapshot)
+            if first_metadata is None:
+                first_metadata = metadata
+            elif metadata != first_metadata:
+                raise IngestionClientError('Complete target snapshot changed')
+            targets = product.get('offer_targets')
+            expected_length = min(COMPLETE_TARGET_PAGE_SIZE,
+                                  max(0, total - len(gathered)))
+            if not isinstance(targets, list) or len(targets) != expected_length:
+                raise IngestionClientError('Complete target page is missing rows')
+            for target in targets:
+                if not isinstance(target, dict):
+                    raise IngestionClientError('Complete target row is invalid')
+                url = target.get('source_url')
+                merchant = target.get('merchant_name')
+                seller = target.get('seller_name') if 'seller_name' in target else merchant
+                try:
+                    parsed = urlparse(url) if isinstance(url, str) else None
+                    valid_url = bool(parsed and parsed.scheme == 'https' and
+                                     parsed.hostname and not parsed.port and
+                                     not parsed.username and not parsed.password and
+                                     parsed.path not in ('', '/') and
+                                     not parsed.fragment and
+                                     not any(re.search(
+                                         r'(?:token|auth|password|secret|signature|session|email|api.?key|access.?key|credential|add.?to.?cart|wc.?ajax|nonce|pao.?key|pao.?edit)',
+                                         key, re.I)
+                                         for key, _ in parse_qsl(parsed.query,
+                                                                max_num_fields=50)))
+                except ValueError:
+                    valid_url = False
+                if (not isinstance(url, str) or len(url) > 1000 or
+                        not valid_url or
+                        not isinstance(merchant, str) or not merchant.strip() or
+                        not isinstance(seller, str) or not seller.strip() or
+                        target.get('checked_at') is not None and
+                        not isinstance(target.get('checked_at'), str)):
+                    raise IngestionClientError('Complete target row is invalid')
+                if url in seen_urls:
+                    raise IngestionClientError('Complete target URL repeated across pages')
+                seen_urls.add(url)
+                gathered.append({key: target.get(key) for key in
+                                 ('merchant_name', 'source_url', 'checked_at')}
+                                | ({'seller_name': target['seller_name']}
+                                   if 'seller_name' in target else {}))
+            if len(gathered) == total:
+                return {'id': first_identity[0], 'slug': first_identity[1],
+                        'name': first_identity[2], 'offer_targets': gathered,
+                        'offer_targets_truncated': False,
+                        'offer_targets_total': total,
+                        'offer_targets_snapshot': snapshot}
+        raise IngestionClientError('Complete target page limit exceeded')
 
     def get_public_price_priority(self):
         """Read a bounded public catalog snapshot only to order crawl work.

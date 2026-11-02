@@ -18,7 +18,7 @@ import requests
 from mediamarkt_marketplace_audit import catalog_variant_matches, selected_marketplace_offer
 from mediamarkt_marketplace_preflight import no_merchant_collision
 from mediamarkt_source import BOT, MAX_HTML_BYTES, MediaMarktSource, product_url
-from offer_ingestion_client import OfferIngestionClient
+from offer_ingestion_client import IngestionClientError, OfferIngestionClient
 from update_prices import PriceUpdater
 
 
@@ -63,6 +63,21 @@ def _catalog_rows(client):
         rows = [row for row in products if isinstance(row, dict)
                 and row.get('id') == profile['id']]
         product = rows[0] if len(rows) == 1 else None
+        if product and product.get('offer_targets_truncated') is True:
+            try:
+                complete = client.get_complete_offer_targets(profile['id'])
+                original = product.get('offer_targets')
+                if (not isinstance(original, list)
+                        or any(complete.get(key) != product.get(key)
+                               for key in ('id', 'slug', 'name'))
+                        or complete['offer_targets'][:len(original)] != original):
+                    raise ValueError('complete_target_snapshot_differs_from_catalog')
+                product = {**product, **complete}
+            except Exception as error:
+                reason = (str(error) if isinstance(error, IngestionClientError)
+                          and str(error).startswith('Complete target')
+                          else type(error).__name__)
+                errors.append(f"complete_targets_{profile['slug']}_{reason}")
         attributes = product.get('attributes') if product else None
         specs = PriceUpdater.get_expected_specs(attributes)
         price_status = prices.get(profile['id'])
@@ -108,6 +123,8 @@ def _collision_evidence(product, profile, url):
                 'target_count': None, 'offer_targets_truncated': None,
                 'targets': []}
     truncated = product.get('offer_targets_truncated')
+    total = product.get('offer_targets_total')
+    snapshot = product.get('offer_targets_snapshot')
     def seller_name(row):
         return row.get('seller_name') if 'seller_name' in row else row.get('merchant_name')
     seller_targets = [row for row in targets
@@ -115,8 +132,14 @@ def _collision_evidence(product, profile, url):
                       str(seller_name(row) or '').strip().casefold() ==
                       profile['seller_name'].casefold()]
     reasons = []
-    if len(targets) > 12 or (len(targets) == 12 and truncated is not False):
+    if len(targets) == 12 and truncated is not False:
         reasons.append('target_page_full')
+    if len(targets) > 12 and (type(total) is not int or total != len(targets)
+                              or not isinstance(snapshot, str)
+                              or not re.fullmatch(r'[0-9a-f]{64}', snapshot)):
+        reasons.append('complete_target_evidence_missing')
+    if len(targets) > 60:
+        reasons.append('target_page_over_limit')
     if truncated is True:
         reasons.append('target_page_truncated')
     if truncated is not None and not isinstance(truncated, bool):
@@ -137,6 +160,7 @@ def _collision_evidence(product, profile, url):
         'blocked': bool(reasons) or not no_merchant_collision(product, profile, url),
         'reasons': reasons,
         'target_count': len(targets),
+        'offer_targets_total': total,
         'offer_targets_truncated': truncated,
         'targets': [{key: row.get(key) for key in
                      ('seller_name', 'merchant_name', 'source_url', 'checked_at')}

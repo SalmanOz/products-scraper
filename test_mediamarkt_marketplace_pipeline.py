@@ -137,6 +137,22 @@ class MarketplacePipelineTests(unittest.TestCase):
         product['offer_targets'][0]['seller_name'] = None
         self.assertFalse(no_merchant_collision(product, PROFILES[URL], URL))
 
+    def test_collision_guard_accepts_only_proven_complete_multi_page_targets(self):
+        product = catalog_product(URL)
+        product['offer_targets'] = [
+            {'merchant_name': 'MediaMarkt', 'seller_name': 'Other Seller',
+             'source_url': f'https://www.mediamarkt.com.tr/tr/product/_other-{i}.html'}
+            for i in range(14)]
+        product['offer_targets_truncated'] = False
+        product['offer_targets_total'] = 14
+        product['offer_targets_snapshot'] = 'a' * 64
+        self.assertTrue(no_merchant_collision(product, PROFILES[URL], URL))
+        product['offer_targets'][13]['seller_name'] = PROFILES[URL]['seller_name']
+        self.assertFalse(no_merchant_collision(product, PROFILES[URL], URL))
+        product['offer_targets'][13]['seller_name'] = 'Other Seller'
+        product['offer_targets_snapshot'] = None
+        self.assertFalse(no_merchant_collision(product, PROFILES[URL], URL))
+
     def test_daily_refresh_keeps_both_exact_urls_and_seller_drift_fails(self):
         for url, profile in PROFILES.items():
             product = catalog_product(url)
