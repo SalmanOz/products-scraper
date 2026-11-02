@@ -9,7 +9,7 @@ from audit_mediamarkt_fold7_readonly import (
     CATALOG, LEGAL_NAME, MERSIS_NUMBER, SELLER, SELLER_URL, TAX_NUMBER,
     TITLE, URL,
 )
-from fold7_manual_coverage import audit, publish, verified_offer
+from fold7_manual_coverage import audit, publish, summary, verified_offer
 
 
 EVIDENCE = {
@@ -120,6 +120,31 @@ class Fold7ManualCoverageTests(unittest.TestCase):
         self.assertEqual(report['catalog_evidence']['target_count'], 0)
         self.assertEqual(source.urls, [URL, SELLER_URL])
         self.assertEqual(client.writes, [])
+
+    def test_catalog_get_failures_report_only_fixed_stage_codes(self):
+        stages = (
+            ('get_published_products', 'catalog_primary_get_failed'),
+            ('get_public_price_priority', 'public_price_status_get_failed'),
+            ('get_complete_offer_targets', 'complete_targets_get_failed'),
+            ('get_raw_seller_collision_proof', 'raw_seller_proof_get_failed'),
+        )
+        secret = 'secret-response-body-and-bearer-token'
+        for method, stage in stages:
+            with self.subTest(method=method):
+                client, source = Client(), Source()
+
+                def fail(*_args, **_kwargs):
+                    raise RuntimeError(secret)
+
+                setattr(client, method, fail)
+                report = audit(client=client, source=source)
+                self.assertEqual(report['status'], 'failed')
+                self.assertEqual(report['catalog_status'], 'failed')
+                self.assertEqual(report['catalog_error'], stage)
+                self.assertEqual(source.urls, [])
+                self.assertEqual(client.writes, [])
+                self.assertNotIn(secret, str(report))
+                self.assertNotIn(secret, summary(report))
 
     def test_publish_rechecks_live_pdp_legal_seller_and_catalog_then_writes_one(self):
         report, client, source = self.audited()

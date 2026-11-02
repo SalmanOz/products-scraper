@@ -33,6 +33,19 @@ OFFER_IDENTITY_FIELDS = (
 )
 
 
+class CatalogStageError(ValueError):
+    """Safe, fixed failure code for a catalog read; never serialize its cause."""
+
+
+def _catalog_read(stage, read):
+    try:
+        return read()
+    except Exception:
+        # The client error may contain an endpoint response or request URL.
+        # Keep only the fixed stage in artifacts and GitHub job output.
+        raise CatalogStageError(stage) from None
+
+
 def _utc(value):
     stamp = datetime.fromisoformat(value.replace('Z', '+00:00'))
     if stamp.tzinfo is None:
@@ -42,8 +55,10 @@ def _utc(value):
 
 def _catalog(client):
     """Check current unpriced SKU and every stored seller target, not hints."""
-    products = client.get_published_products()
-    prices = client.get_public_price_priority()
+    products = _catalog_read('catalog_primary_get_failed',
+                             client.get_published_products)
+    prices = _catalog_read('public_price_status_get_failed',
+                           client.get_public_price_priority)
     if not isinstance(products, list) or not isinstance(prices, dict):
         raise ValueError('catalog_unavailable')
     rows = [row for row in products if isinstance(row, dict)
@@ -62,7 +77,8 @@ def _catalog(client):
     initial_targets = product.get('offer_targets')
     if not isinstance(initial_targets, list):
         raise ValueError('catalog_targets_unavailable')
-    complete = client.get_complete_offer_targets(CATALOG['id'])
+    complete = _catalog_read('complete_targets_get_failed',
+                             lambda: client.get_complete_offer_targets(CATALOG['id']))
     if (any(complete.get(key) != product.get(key)
             for key in ('id', 'slug', 'name'))
             or complete.get('offer_targets_truncated') is not False
@@ -72,7 +88,9 @@ def _catalog(client):
     collision = _collision_evidence(full_product, PROFILE, URL)
     if collision['blocked'] or collision['reasons']:
         raise ValueError('catalog_seller_or_target_collision')
-    raw = client.get_raw_seller_collision_proof(CATALOG['id'], SELLER, URL)
+    raw = _catalog_read('raw_seller_proof_get_failed',
+                        lambda: client.get_raw_seller_collision_proof(
+                            CATALOG['id'], SELLER, URL))
     if (raw.get('complete') is not True or raw.get('blocked') is not False
             or raw.get('reasons') != []
             or raw.get('unknown_seller_rows') != 0
