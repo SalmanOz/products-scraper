@@ -413,6 +413,66 @@ def test_uncommitted_error_fails_the_run():
         raise AssertionError("Uncommitted ingestion error did not fail")
 
 
+def test_strict_two_offer_batch_sends_opt_in_and_requires_atomic_ack():
+    session = FakeSession([FakeResponse(200, {
+        "accepted": 2, "stale_ignored": 0, "variant_rejected": 0,
+        "variant_rejections": [], "changed_paths": ["/product/phone-1"],
+        "committed": True, "require_all_accepted": True,
+    })])
+    client = OfferIngestionClient(
+        "https://teknoskor.com", TEST_SECRET, session=session,
+        sleep=lambda _seconds: None,
+    )
+    result = client.ingest_offers(
+        [sample_offer(0), sample_offer(1)], require_all_accepted=True,
+    )
+    assert result["accepted"] == 2
+    assert len(session.calls) == 1
+    assert session.calls[0][2]["json"]["require_all_accepted"] is True
+
+
+def test_strict_batch_rejects_missing_atomic_ack_or_partial_acceptance():
+    for response in (
+        {"accepted": 2, "stale_ignored": 0, "variant_rejected": 0,
+         "variant_rejections": [], "committed": True},
+        {"accepted": 1, "stale_ignored": 0, "variant_rejected": 1,
+         "variant_rejections": [{"index": 1, "product_slug": "phone-2",
+                                 "issues": ["storage_gb_mismatch"]}],
+         "committed": True, "require_all_accepted": True},
+    ):
+        session = FakeSession([FakeResponse(200, response)])
+        client = OfferIngestionClient(
+            "https://teknoskor.com", TEST_SECRET, session=session,
+            sleep=lambda _seconds: None,
+        )
+        try:
+            client.ingest_offers(
+                [sample_offer(0), sample_offer(1)], require_all_accepted=True,
+            )
+        except IngestionClientError:
+            pass
+        else:
+            raise AssertionError("Strict batch accepted an unsafe response")
+
+
+def test_strict_batch_refuses_to_span_multiple_requests():
+    session = FakeSession([])
+    client = OfferIngestionClient(
+        "https://teknoskor.com", TEST_SECRET, session=session,
+        sleep=lambda _seconds: None,
+    )
+    try:
+        client.ingest_offers(
+            [sample_offer(i) for i in range(501)],
+            require_all_accepted=True,
+        )
+    except IngestionClientError as error:
+        assert "multiple HTTP batches" in str(error)
+    else:
+        raise AssertionError("Strict batch was split across requests")
+    assert session.calls == []
+
+
 def test_retryable_uncommitted_error_is_retried():
     delays = []
     session = FakeSession(

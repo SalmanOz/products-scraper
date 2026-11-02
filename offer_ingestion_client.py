@@ -602,7 +602,13 @@ class OfferIngestionClient:
             raise IngestionClientError('Offer identity readiness response is invalid')
         return identity
 
-    def ingest_offers(self, offers):
+    def ingest_offers(self, offers, *, require_all_accepted=False):
+        if type(require_all_accepted) is not bool:
+            raise IngestionClientError("require_all_accepted must be a boolean")
+        if require_all_accepted and len(offers) > MAX_INGESTION_BATCH_SIZE:
+            raise IngestionClientError(
+                "Atomic offer ingestion cannot span multiple HTTP batches"
+            )
         if not offers:
             return {
                 "accepted": 0,
@@ -632,11 +638,18 @@ class OfferIngestionClient:
                 "POST",
                 "/api/ingestion/offers",
                 headers=headers,
-                json={"offers": batch},
+                json={
+                    "offers": batch,
+                    **({"require_all_accepted": True} if require_all_accepted else {}),
+                },
             )
             if not isinstance(body, dict) or body.get("committed") is not True:
                 raise IngestionClientError(
                     "Offer ingestion response did not confirm a commit"
+                )
+            if require_all_accepted and body.get("require_all_accepted") is not True:
+                raise IngestionClientError(
+                    "Offer ingestion response did not confirm atomic acceptance"
                 )
 
             try:
@@ -653,6 +666,12 @@ class OfferIngestionClient:
             ):
                 raise IngestionClientError(
                     "Offer ingestion response count does not match submitted batch"
+                )
+            if require_all_accepted and (
+                accepted != len(batch) or stale_ignored != 0 or variant_rejected != 0
+            ):
+                raise IngestionClientError(
+                    "Atomic offer ingestion did not accept every submitted offer"
                 )
             rejections = body.get("variant_rejections", [])
             if not isinstance(rejections, list) or len(rejections) != variant_rejected:

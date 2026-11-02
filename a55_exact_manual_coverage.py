@@ -421,7 +421,7 @@ def publish(report, *, client=None, source=None, now=None):
             or any(not _fresh(offer['observed_at'], commit_time)
                    for offer in current.values())):
         raise ValueError('exact_two_observation_stale_before_commit')
-    result = client.ingest_offers(records)
+    result = client.ingest_offers(records, require_all_accepted=True)
     if (not isinstance(result, dict) or result.get('committed') is not True
             or result.get('accepted') != 2 or result.get('stale_ignored') != 0
             or result.get('variant_rejected') != 0):

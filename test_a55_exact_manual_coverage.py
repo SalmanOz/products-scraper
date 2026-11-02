@@ -84,6 +84,7 @@ class Client:
             'offer_targets_truncated': False,
         }
         self.writes = []
+        self.atomic_flags = []
         self.ack = {'committed': True, 'accepted': 2,
                     'stale_ignored': 0, 'variant_rejected': 0}
         self.readback_seller_drift = None
@@ -137,7 +138,8 @@ class Client:
                 'offer_targets_truncated': False,
                 'offer_targets_snapshot': self.snapshot}
 
-    def ingest_offers(self, records):
+    def ingest_offers(self, records, *, require_all_accepted=False):
+        self.atomic_flags.append(require_all_accepted)
         self.writes.append(deepcopy(records))
         return deepcopy(self.ack)
 
@@ -260,6 +262,7 @@ class A55ExactManualCoverageTests(unittest.TestCase):
         result = self.publish_exact(report, client, source)
         self.assertEqual(result['accepted'], 2)
         self.assertEqual(len(client.writes), 1)
+        self.assertEqual(client.atomic_flags, [True])
         rows = client.writes[0]
         self.assertEqual(len(rows), 2)
         self.assertEqual({row['product_id'] for row in rows}, {PRODUCT_ID})
