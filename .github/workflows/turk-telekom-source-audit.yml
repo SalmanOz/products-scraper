@@ -1,0 +1,45 @@
+name: Türk Telekom Public PDP Source Audit
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# No production credentials or daily writer concurrency group.
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Test selected-variant source
+        run: python -m unittest -q test_turk_telekom_source
+      - name: Probe three exact public PDPs
+        env:
+          TT_AUDIT_OUTPUT_DIR: ${{ runner.temp }}
+        run: python audit_turk_telekom_source.py
+      - name: Publish audit evidence
+        if: always()
+        run: |
+          if test -f "${{ runner.temp }}/turk-telekom-source-audit.md"; then
+            cat "${{ runner.temp }}/turk-telekom-source-audit.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Türk Telekom audit exited before writing a report.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload read-only evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: turk-telekom-source-audit-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/turk-telekom-source-audit.json
+            ${{ runner.temp }}/turk-telekom-source-audit.md
+          if-no-files-found: warn
+          retention-days: 30
