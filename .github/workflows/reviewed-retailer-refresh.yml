@@ -1,0 +1,98 @@
+name: Daily Reviewed Retailer Price Refresh
+
+on:
+  schedule:
+    # The full catalog starts at 03:00 UTC and has a two-hour hard timeout.
+    # One follow-up writer avoids multiple pending jobs replacing each other.
+    - cron: '30 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: teknoskor-daily-data-sync
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Test reviewed sources and offer validation
+        run: python -m unittest -q test_apple_store_source test_mediamarkt_source test_vatan_reviewed_source test_retailer_offer_refresh test_reviewed_offer_targets test_price_refresh_orchestration
+      - name: Start bounded browser GET service
+        run: |
+          docker run -d --name=reviewed-retailer-browser -p 8191:8191 -e LOG_LEVEL=info ghcr.io/flaresolverr/flaresolverr:latest
+          for attempt in {1..30}; do
+            if curl --fail --silent http://localhost:8191/ > /dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs reviewed-retailer-browser
+          exit 1
+      - name: Refresh reviewed exact SKU destinations
+        id: scoped_prices
+        env:
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+        run: |
+          set -euo pipefail
+          : "${SCRAPER_INGESTION_SECRET:?SCRAPER_INGESTION_SECRET is required}"
+          slugs="$(python - <<'PY'
+          import json
+          from pathlib import Path
+          batches = ('apple-store-exact-2026-11-02.json',
+                     'mediamarkt-exact-2026-11-02.json',
+                     'vatan-exact-2026-11-02.json')
+          slugs = sorted({row['slug'] for name in batches
+                          for row in json.loads((Path('offer_batches') / name).read_text())['products']})
+          print(','.join(slugs))
+          PY
+          )"
+          python update_prices.py --slugs "$slugs" --known-pdp-only --report reviewed-retailer-report.json
+      - name: Reconcile scores after committed offers
+        if: ${{ always() && !cancelled() && (steps.scoped_prices.outcome == 'success' || steps.scoped_prices.outcome == 'failure') }}
+        env:
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+        run: python reconcile_scores.py
+      - name: Summarize reviewed source outcomes
+        if: always()
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          path = Path('reviewed-retailer-report.json')
+          if path.is_file():
+              report = json.loads(path.read_text())
+              coverage = report.get('coverage', {})
+              lines = ['## Daily reviewed retailer refresh',
+                       f"Status: {report.get('status')}; any verified offer on {coverage.get('with_purchasable_offer', 0)}/{coverage.get('products', 0)} models; two merchants on {coverage.get('with_two_merchants', 0)}."]
+              for merchant in ('Apple Store', 'MediaMarkt', 'Vatan Bilgisayar'):
+                  attempts = [row for product in report.get('products', [])
+                              for row in product.get('source_attempts', [])
+                              if row.get('merchant') == merchant]
+                  accepted = sum(row.get('reason') == 'observed_exact_offer' for row in attempts)
+                  lines.append(f'- {merchant}: {accepted}/{len(attempts)} exact live PDP observations.')
+              with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:
+                  out.write('\n'.join(lines) + '\n')
+          PY
+      - name: Upload offer and score evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reviewed-retailers-${{ github.run_id }}
+          path: |
+            reviewed-retailer-report.json
+            score-reconciliation.json
+          if-no-files-found: warn
+          retention-days: 30

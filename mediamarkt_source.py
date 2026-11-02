@@ -34,7 +34,9 @@ MAX_SITEMAP_BYTES = 3 * 1024 * 1024
 MAX_HTML_BYTES = 5 * 1024 * 1024
 MAX_SOLVER_BYTES = 8 * 1024 * 1024
 MAX_DIRECT_REQUESTS = 80
-MAX_BROWSER_REQUESTS = 16
+# The reviewed-source daily follow-up can cover fourteen MediaMarkt seeds plus
+# currently stored exact Android PDPs in one bounded run.
+MAX_BROWSER_REQUESTS = 24
 MAX_CANDIDATES_PER_PRODUCT = 3
 _NS = '{http://www.sitemaps.org/schemas/sitemap/0.9}'
 _HEADERS = {'User-Agent': BOT + '/1.0 (+https://teknoskor.com)',
