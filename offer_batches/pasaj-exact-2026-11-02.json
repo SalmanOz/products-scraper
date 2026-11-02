@@ -1,5 +1,5 @@
 {
-  "purpose": "One live-verified Turkcell Pasaj exact iPhone PDP URL hint. No price or stock is stored; every run rechecks robots, variant specifications, seller, selected cash price, stock and purchase control.",
+  "purpose": "Live-verified Turkcell Pasaj exact iPhone PDP URL hints. No price or stock is stored; every run rechecks robots, variant specifications, seller, selected cash price, stock and purchase control.",
   "products": [
     {
       "id": 235,
@@ -9,6 +9,15 @@
       "storage_gb": 256,
       "network_generation": "5g",
       "targets": ["https://www.turkcell.com.tr/pasaj/cep-telefonu/ios-telefonlar/apple-iphone-17/iphone-17-256-gb"]
+    },
+    {
+      "id": 23,
+      "slug": "apple-iphone-16",
+      "name": "Apple iPhone 16",
+      "ram_gb": 8,
+      "storage_gb": 128,
+      "network_generation": "5g",
+      "targets": ["https://www.turkcell.com.tr/pasaj/cep-telefonu/ios-telefonlar/apple-iphone-16/iphone-16-128-gb"]
     }
   ]
 }

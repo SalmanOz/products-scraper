@@ -1,4 +1,4 @@
-"""Read one reviewed Turkcell Pasaj cash PDP from its public HTML.
+"""Read reviewed Turkcell Pasaj cash PDPs from their public HTML.
 
 The contracted Pasaj Limit price, bundle cards, marketplace sellers, and an
 AggregateOffer's lowPrice are not cash observations. A selected cash radio,
@@ -19,6 +19,12 @@ import requests
 
 IPHONE17_256_URL = ('https://www.turkcell.com.tr/pasaj/cep-telefonu/'
                     'ios-telefonlar/apple-iphone-17/iphone-17-256-gb')
+IPHONE16_128_URL = ('https://www.turkcell.com.tr/pasaj/cep-telefonu/'
+                    'ios-telefonlar/apple-iphone-16/iphone-16-128-gb')
+REVIEWED = {
+    IPHONE17_256_URL: {'title': 'iPhone 17 256 GB', 'ram': '8 GB', 'storage': '256 GB'},
+    IPHONE16_128_URL: {'title': 'iPhone 16 128 GB', 'ram': '8 GB', 'storage': '128 GB'},
+}
 ROBOTS_URL = 'https://www.turkcell.com.tr/robots.txt'
 BOT = 'TeknoskorPriceBot'
 MAX_ROBOTS_BYTES = 64 * 1024
@@ -28,8 +34,8 @@ SELLER = 'Turkcell Satış A.Ş.'
 
 
 def product_url(url):
-    """The pilot only accepts the exact PDP whose variant was reviewed."""
-    return isinstance(url, str) and url == IPHONE17_256_URL
+    """Only accept exact PDPs whose variants and RAM evidence were reviewed."""
+    return isinstance(url, str) and url in REVIEWED
 
 
 def _money(value):
@@ -57,9 +63,27 @@ def _feature(soup, name):
     return rows[0] if len(rows) == 1 else None
 
 
+def _iphone16_ram_in_exact_faq(soup):
+    """Its RAM is stated in the SKU-named FAQ, not the short feature table."""
+    questions = []
+    for node in soup.select('#service-faq .m-accordion__container'):
+        heading = node.select_one('.m-accordion__head [itemprop="name"]')
+        if heading and heading.get_text(' ', strip=True) == 'iPhone 16 128 GB Özellikleri Nelerdir?':
+            questions.append(node)
+    if len(questions) != 1:
+        return False
+    answer = questions[0].select_one('.m-accordion__body[itemprop="acceptedAnswer"]')
+    if not answer:
+        return False
+    memory = [li.get_text(' ', strip=True) for li in answer.select('li')
+              if re.search(r'\b(?:RAM|bellek)\b', li.get_text(' ', strip=True), re.I)]
+    return memory == ['8 GB LPDDR5 RAM ile donatılmıştır.']
+
+
 def _selected_offer(html, url):
     if not product_url(url):
         return None
+    reviewed = REVIEWED[url]
     soup = BeautifulSoup(html, 'html.parser')
     if re.search(r'captcha|access denied|just a moment',
                  ' '.join(n.get_text(' ', strip=True) for n in soup.select('title,h1')), re.I):
@@ -67,9 +91,13 @@ def _selected_offer(html, url):
     canonical = soup.select('link[rel="canonical"]')
     headings = [n.get_text(' ', strip=True) for n in soup.select('h1') if n.get_text(' ', strip=True)]
     if (len(canonical) != 1 or canonical[0].get('href') != url or
-            headings != ['iPhone 17 256 GB'] or
-            _feature(soup, 'Ram (bellek) Kapasitesi') != '8 GB' or
-            _feature(soup, 'Dahili Hafıza') != '256 GB'):
+            headings != [reviewed['title']] or
+            _feature(soup, 'Dahili Hafıza') != reviewed['storage'] or
+            (url == IPHONE16_128_URL and (
+                not _iphone16_ram_in_exact_faq(soup) or
+                _feature(soup, 'Ram (bellek) Kapasitesi') not in (None, reviewed['ram']))) or
+            (url == IPHONE17_256_URL and
+             _feature(soup, 'Ram (bellek) Kapasitesi') != reviewed['ram'])):
         return None
     products = []
     for script in soup.select('script[type="application/ld+json"]'):
@@ -208,6 +236,8 @@ class PasajSource:
         with self._lock:
             try:
                 self._ensure_robots()
+                if not self._rules.can_fetch(BOT, url):
+                    return None, 'robots_disallowed', None
                 if self._pdp_requests >= MAX_PDP_REQUESTS:
                     return None, 'pdp_budget_exhausted', None
                 self._pdp_requests += 1
@@ -223,4 +253,4 @@ class PasajSource:
 
     def report(self):
         return {'robots_status': self._robots_status, 'pdp_requests': self._pdp_requests,
-                'blocked': self._blocked, 'reviewed_pdp_count': 1}
+                'blocked': self._blocked, 'reviewed_pdp_count': len(REVIEWED)}

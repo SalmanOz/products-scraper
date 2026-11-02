@@ -20,7 +20,7 @@ jobs:
         run: pip install -r requirements.txt
       - name: Test exact cash source
         run: python -m unittest -q test_pasaj_source
-      - name: Probe reviewed public PDP
+      - name: Probe reviewed public PDPs
         env:
           PASAJ_AUDIT_OUTPUT_DIR: ${{ runner.temp }}
         run: python audit_pasaj_source.py
