@@ -479,10 +479,14 @@ class RetailerRefreshTests(unittest.TestCase):
         offers = reader.refresh_existing_offer_targets('Samsung Galaxy S25', targets, SPECS)
         self.assertEqual(len(calls), 12)
         self.assertEqual(set(calls), set(idefix[:10]) | {teknosa, n11})
-        self.assertEqual({row['merchant'] for row in offers}, {'idefix', 'Teknosa', 'n11'})
+        # Teknosa is a marketplace. A generic Product schema cannot establish
+        # that the selected seller is Teknosa, even in this budget test.
+        self.assertEqual({row['merchant'] for row in offers}, {'idefix', 'n11'})
         report = reader.target_report('Samsung Galaxy S25', targets, SPECS)
         self.assertIn(n11, [row['source_url'] for row in report])
         self.assertIn(teknosa, [row['source_url'] for row in report])
+        self.assertEqual(next(row['reason'] for row in report if row['source_url'] == teknosa),
+                         'no_exact_product_offer')
         self.assertEqual(next(row['reason'] for row in report if row['source_url'] == idefix[10]),
                          'target_budget_skipped')
 

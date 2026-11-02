@@ -1,0 +1,57 @@
+name: Teknosa iPhone 17e First-party Read-only PDP Audit
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: teknoskor-teknosa-first-party-readonly-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Test exact SKU, selected seller, cash price, and robots denial
+        run: python -m unittest -q test_teknosa_reviewed_source
+      - name: Start bounded read-only browser GET service
+        run: |
+          docker run -d --name=teknosa-readonly-browser -p 8191:8191 -e LOG_LEVEL=info ghcr.io/flaresolverr/flaresolverr:latest
+          for attempt in {1..30}; do
+            if curl --fail --silent http://localhost:8191/ > /dev/null; then exit 0; fi
+            sleep 2
+          done
+          docker logs teknosa-readonly-browser
+          exit 1
+      - name: Probe one reviewed public PDP without writes
+        env:
+          TEKNOSA_AUDIT_OUTPUT_DIR: ${{ runner.temp }}
+        run: python audit_teknosa_first_party.py
+      - name: Publish read-only result
+        if: always()
+        run: |
+          if test -f "${{ runner.temp }}/teknosa-first-party-audit.md"; then
+            cat "${{ runner.temp }}/teknosa-first-party-audit.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload read-only evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: teknosa-first-party-audit-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/teknosa-first-party-audit.json
+            ${{ runner.temp }}/teknosa-first-party-audit.md
+          if-no-files-found: warn
+          retention-days: 14

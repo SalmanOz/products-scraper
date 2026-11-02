@@ -336,12 +336,13 @@ def _pazarama_visible_cash_price(soup, product, offer, url, schema_price, availa
 
 
 def _product_offer(soup, final_url):
-    # MediaMarkt publishes marketplace and refurbished BuyAction offers under
-    # its own host. Only the dedicated selected first-party reader may accept
-    # those pages; the generic Product parser must never label a third-party
-    # seller as MediaMarkt.
+    # MediaMarkt and Teknosa both publish marketplace offers under their own
+    # hosts. The generic parser labels the host as merchant, so it must not
+    # turn another seller's selected buy box into a retailer-owned offer.
+    # Their exact first-party readers verify the visible selected seller.
     if (_safe_url(final_url) and
-            _safe_url(final_url).hostname.removeprefix('www.') == 'mediamarkt.com.tr'):
+            _safe_url(final_url).hostname.removeprefix('www.') in
+            {'mediamarkt.com.tr', 'teknosa.com'}):
         return None
     nodes = _schema_nodes(soup)
     products = [node for node in nodes if _type_is(node, 'Product')]
