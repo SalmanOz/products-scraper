@@ -143,8 +143,9 @@ def parse_catalog_listing(html, url, name, specs):
             values['Dahili Hafıza'].lower().replace(' ', '-')]:
         return None, 'selected_query_memory_mismatch'
     choices = main[0].select('button.sku-selection .sku-attributes-text')
-    if (len(choices) != 1 or choices[0].get_text(' ', strip=True) !=
-            ', '.join(str(a.get('name') or '') for a in attributes)):
+    selected_choice = ', '.join(str(a.get('name') or '') for a in attributes)
+    choice = choices[0].get_text(' ', strip=True) if len(choices) == 1 else None
+    if choice not in (selected_choice, 'Seçim Yap'):
         return None, 'visible_selected_variant_mismatch'
     price = _amount(product.get('displayPriceFloat'))
     original = _amount(product.get('priceFloat'))
@@ -171,15 +172,26 @@ def parse_catalog_listing(html, url, name, specs):
         return None, 'schema_selected_cash_offer_mismatch'
     visible = main[0].select('.price-wrapper .newPrice ins')
     carts = main[0].select('button#addToBasket')
-    if (len(visible) != 1 or _cash(visible[0].get_text(' ', strip=True)) != price
-            or len(carts) != 1 or carts[0].has_attr('disabled')
-            or carts[0].get('aria-disabled') == 'true' or carts[0].get_text(' ', strip=True) != 'Sepete Ekle'
-            or _is_conditional_price(main[0], offer, float(price))):
+    if len(visible) != 1 or len(carts) != 1 or carts[0].get_text(' ', strip=True) != 'Sepete Ekle':
+        return None, 'visible_cash_or_selected_cart_mismatch'
+    visible_price = visible[0].get_text(' ', strip=True)
+    hydrated = (choice == selected_choice and _cash(visible_price) == price
+                and not carts[0].has_attr('disabled') and carts[0].get('aria-disabled') != 'true')
+    # n11's literal server HTML contains this all-or-nothing Vue placeholder,
+    # even with an explicit selected seller/color URL. Its serialized product,
+    # selected SKU, commercial metadata and separate JSON-LD must still agree
+    # on the same in-stock SKU and ordinary cash price above. No JavaScript is
+    # evaluated and no DOM price/cart contradiction is ignored.
+    pending = (choice == 'Seçim Yap' and visible_price == ''
+               and carts[0].has_attr('disabled') and 'disabled' in carts[0].get('class', [])
+               and state.get('isProductDetailPage') is True)
+    if (not (hydrated or pending) or _is_conditional_price(main[0], offer, float(price))):
         return None, 'visible_cash_or_selected_cart_mismatch'
     return {'platform': 'n11', 'merchant': seller_name, 'merchant_id': seller_id,
             'selected_n11_seller': seller_name, 'selected_n11_merchant_id': seller_id,
             'selected_n11_variant_verified': True, 'sku': str(sku['id']),
             'product_id': str(product['id']), 'group_id': group, 'gtin13': gtin,
+            'source_render_state': 'ssr_placeholder' if pending else 'hydrated_selected',
             'source_title': title, 'url': canonical, 'price': float(price), 'currency': 'TRY',
             'condition': 'new', 'availability': 'in_stock',
             'observed_at': datetime.now(timezone.utc).isoformat()}, 'selected_n11_cash_offer'

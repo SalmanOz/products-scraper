@@ -25,6 +25,22 @@ def document(change=None):
 
 
 class N11CatalogTests(unittest.TestCase):
+    def test_real_server_html_placeholder_keeps_selected_sku_cash_and_stock_proof(self):
+        html = Path(__file__).with_name('fixtures').joinpath('n11-selected-ssr-cash.html').read_text()
+        offer, reason = parse_catalog_listing(html, URL, NAME, SPECS)
+        self.assertEqual(reason, 'selected_n11_cash_offer')
+        self.assertEqual((offer['merchant'], offer['price'], offer['source_render_state']),
+                         ('n11', 29499, 'ssr_placeholder'))
+        for before, after in (
+            ('Seçim Yap', '128 GB, Gri'), ('"availableToBuy": true', '"availableToBuy": false'),
+            ('"isProductDetailPage": true', '"isProductDetailPage": false'),
+            ('disabled="disabled"', ''), ('"outOfStock": false', '"outOfStock": true'),
+            ('<ins data-v-01cd5d8e=""></ins>', '<ins data-v-01cd5d8e="">1 TL</ins>'),
+        ):
+            with self.subTest(before=before):
+                self.assertIn(before, html)
+                self.assertIsNone(parse_catalog_listing(html.replace(before, after), URL, NAME, SPECS)[0])
+
     def test_search_discovers_only_matching_new_phone_destinations_and_never_card_prices(self):
         title = 'Samsung Galaxy A57 8 GB 256 GB (Samsung Türkiye Garantili)'
         def card(url, name=title):
