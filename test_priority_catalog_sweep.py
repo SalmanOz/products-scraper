@@ -2,7 +2,7 @@ from copy import deepcopy
 import unittest
 from unittest.mock import patch
 
-from sweep_priority_catalog import catalog_queue, sweep
+from sweep_priority_catalog import catalog_queue, coverage_readback, sweep
 from publish_priority_candidates import CandidatePublicationError
 from test_priority_candidates import Client, audit, reader
 
@@ -26,6 +26,17 @@ def sweep_reader():
 
 
 class SweepTests(unittest.TestCase):
+    def test_exhausting_the_queue_cannot_pass_when_public_price_coverage_is_below_half(self):
+        result = {'catalog_count': 110, 'rows': [{'reason': 'document_read'},
+                                               {'reason': 'source_circuit_open'}]}
+        current = {i: (str(i), i < 48) for i in range(110)}
+        report = coverage_readback(result, current)
+        self.assertFalse(report['passed'])
+        self.assertEqual((report['priced'], report['documents_read'], report['source_circuit_skips']), (48, 1, 1))
+        current.update({i: (str(i), True) for i in range(55)})
+        self.assertTrue(coverage_readback(result, current)['passed'])
+        self.assertFalse(coverage_readback(result, {})['passed'])
+
     def test_all_110_models_are_visited_before_any_second_color(self):
         catalog = products(110)
         rows = catalog_queue(catalog, {i: ('', i % 2 == 0) for i in range(1, 111)})

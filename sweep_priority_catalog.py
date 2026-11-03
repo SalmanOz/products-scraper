@@ -124,7 +124,20 @@ def save_report(result):
     lines += ['', 'Reasons: ' + json.dumps(counts, ensure_ascii=False), '',
               'Sources: ' + json.dumps(result.get('sources'), ensure_ascii=False), '',
               'No-hint models: ' + ', '.join(result['models_without_priority_hints'])]
+    if result.get('public_coverage'):
+        lines += ['', 'Public coverage: ' + json.dumps(result['public_coverage'], ensure_ascii=False)]
     Path('priority-catalog-sweep.md').write_text('\n'.join(lines))
+
+
+def coverage_readback(result, current):
+    """An exhausted queue is operational completion, not sufficient coverage."""
+    if not isinstance(current, dict) or len(current) != result['catalog_count']:
+        return {'passed': False, 'reason': 'public_catalog_readback_changed_or_incomplete'}
+    priced = sum(row[1] is True for row in current.values())
+    return {'catalog': len(current), 'priced': priced, 'ratio': priced / len(current),
+            'minimum_ratio': 0.5, 'passed': priced / len(current) >= 0.5,
+            'documents_read': sum(row.get('reason') == 'document_read' for row in result['rows']),
+            'source_circuit_skips': sum(row.get('reason') == 'source_circuit_open' for row in result['rows'])}
 
 
 def main():
@@ -144,10 +157,15 @@ def main():
                 'expected_specs': row.get('expected_specs'), 'heading': row.get('heading'),
                 'physical_facts': row.get('physical_facts'), 'publication': row.get('publication')},
                 ensure_ascii=False), flush=True)
-    result = sweep(client=OfferIngestionClient.from_env(), publish=args.publish, checkpoint=checkpoint)
+    client = OfferIngestionClient.from_env()
+    result = sweep(client=client, publish=args.publish, checkpoint=checkpoint)
+    result['public_coverage'] = coverage_readback(result, client.get_public_price_priority())
+    save_report(result)
     print(Path('priority-catalog-sweep.md').read_text())
     if result['status'] != 'completed':
         raise SystemExit('Publication verification failed; remaining queue inspected without writes')
+    if not result['public_coverage']['passed']:
+        raise SystemExit('Public catalog coverage gate failed; queue completion alone is insufficient')
 
 
 if __name__ == '__main__':
