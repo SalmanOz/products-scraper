@@ -150,9 +150,11 @@ class PriorityRetailerTransport:
         with self._lock:
             state = self._states.setdefault(host, {'rules': None, 'robots': 'not_loaded',
                 'pdp_requests': 0, 'search_requests': 0, 'browser_requests': 0,
-                'delay': 0.5, 'blocked': False, 'seen': set()})
+                'delay': 0.5, 'blocked': False, 'seen': set(), 'transient_retries': 1})
             if state['blocked']:
                 return None, 'source_circuit_open', None
+            if state.get('retry_after', 0) > self._clock():
+                return None, 'source_cooldown', None
             try:
                 if state['robots'] == 'not_loaded':
                     raw, reason, status = self._read('https://' + host + '/robots.txt',
@@ -184,7 +186,10 @@ class PriorityRetailerTransport:
                     state['search_requests'] += 1
                 raw, reason, status = self._read(url, MAX_HTML_BYTES, 'text/html', state)
                 if reason != 'ready':
-                    if status in (403, 429, 500, 502, 503, 504):
+                    if status in (500, 502, 503, 504) and state['transient_retries']:
+                        state['transient_retries'] -= 1
+                        state['retry_after'] = self._clock() + 30
+                    elif status in (403, 429, 500, 502, 503, 504):
                         state['blocked'] = True
                     return None, reason, status
                 html = raw.decode('utf-8-sig', errors='strict')

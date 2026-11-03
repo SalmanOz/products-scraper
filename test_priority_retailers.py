@@ -16,6 +16,37 @@ URLS = (
 
 
 class PriorityRetailerTests(unittest.TestCase):
+    def test_one_transient_failure_cools_down_then_allows_one_later_healthy_pdp(self):
+        now, calls = [1000], []
+        def get(url, **_):
+            calls.append(url)
+            if url.endswith('robots.txt'):
+                return Response(url, 'User-agent: *\nAllow: /\n')
+            return Response(url, '<h1>Phone</h1>', status=503 if url.endswith(('1234', '1237')) else 200)
+        source = PriorityRetailerTransport(get=get, sleep=lambda _: None, clock=lambda: now[0], maximum_per_host=5)
+        self.assertEqual(source.read_document(URLS[0])[1], 'http_503')
+        second = URLS[0].replace('1234', '1235')
+        self.assertEqual(source.read_document(second)[1], 'source_cooldown')
+        self.assertEqual(len(calls), 2)
+        now[0] += 31
+        self.assertEqual(source.read_document(second)[1], 'document_read')
+        self.assertEqual(source.read_document(URLS[0].replace('1234', '1237'))[1], 'http_503')
+        self.assertEqual(source.read_document(URLS[0].replace('1234', '1238'))[1], 'source_circuit_open')
+
+    def test_explicit_browser_denial_is_never_misclassified_as_a_retryable_service_500(self):
+        def get(url, **_):
+            return Response(url, 'User-agent: *\nAllow: /\n' if url.endswith('robots.txt') else 'denied',
+                            status=200 if url.endswith('robots.txt') else 403)
+        for message, reason, status in (
+            ('Error: Cloudflare has blocked this request. Probably your IP is banned.', 'browser_access_denied', 403),
+            ('Error: Timeout after 45.0 seconds.', 'browser_timeout', 504),
+        ):
+            source = PriorityRetailerTransport(get=get, sleep=lambda _: None,
+                post=lambda url, **_: Response(url, json.dumps({'status': 'error', 'message': message}), status=500))
+            self.assertEqual(source.read_document(URLS[2])[1:], (reason, status))
+            self.assertEqual(source.read_document(URLS[2] + '1')[1],
+                             'source_circuit_open' if status == 403 else 'source_cooldown')
+
     def test_n11_discovery_search_obeys_robots_and_shared_document_budget(self):
         calls = []
         def get(url, **_):

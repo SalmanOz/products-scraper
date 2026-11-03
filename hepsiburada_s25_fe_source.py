@@ -205,14 +205,24 @@ class HepsiburadaS25FeSource:
             response = self._post(SOLVER_URL, json={
                 'cmd': 'request.get', 'url': url, 'maxTimeout': 45000,
             }, timeout=60, stream=True)
-            if response.status_code != 200:
-                return None, f'solver_http_{response.status_code}', response.status_code
             data = bytearray()
             for chunk in response.iter_content(chunk_size=64 * 1024):
                 data.extend(chunk)
                 if len(data) > MAX_SOLVER_BYTES:
                     return None, 'solver_oversized', response.status_code
-            payload = json.loads(data)
+            try:
+                payload = json.loads(data)
+            except (ValueError, TypeError):
+                if response.status_code != 200:
+                    return None, f'solver_http_{response.status_code}', response.status_code
+                raise
+            if response.status_code != 200:
+                message = str(payload.get('message') or '').casefold() if isinstance(payload, dict) else ''
+                if 'cloudflare has blocked this request' in message:
+                    return None, 'browser_access_denied', 403
+                if 'timeout after' in message:
+                    return None, 'browser_timeout', 504
+                return None, f'solver_http_{response.status_code}', response.status_code
             solution = payload.get('solution') if isinstance(payload, dict) else None
             if not isinstance(payload, dict) or payload.get('status') != 'ok' or not isinstance(solution, dict):
                 return None, 'solver_unavailable', response.status_code

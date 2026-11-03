@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 
 from audit_priority_retailers import inspect_target
-from offer_ingestion_client import OfferIngestionClient
+from offer_ingestion_client import IngestionClientError, OfferIngestionClient
 from priority_retailer_transport import HOSTS, PriorityRetailerTransport, product_host
 from publish_priority_candidates import CandidatePublicationError, refresh_candidates
 from retailer_offer_refresh import RetailerOfferRefresher
@@ -90,6 +90,12 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                     # Stop ALL further price writes, but finish the independent
                     # GET-only diagnosis so the rest of the catalog is not lost.
                     refreshed = error.result
+                    publication_failed = True
+                except IngestionClientError:
+                    # No mutation has started: the fresh catalog/proof read
+                    # was unavailable even after bounded retries. Preserve
+                    # the rest of the independent source diagnosis.
+                    refreshed = {'status': 'publication_preflight_unavailable', 'writes': False}
                     publication_failed = True
                 row['publication'] = refreshed
                 result['accepted'] += refreshed.get('ingestion', {}).get('accepted', 0)
@@ -176,6 +182,7 @@ def coverage_readback(result, current):
     return {'catalog': len(current), 'priced': priced, 'ratio': priced / len(current),
             'minimum_ratio': 0.5, 'passed': priced / len(current) >= 0.5,
             'documents_read': sum(row.get('reason') == 'document_read' for row in result['rows']),
+            'source_cooldown_skips': sum(row.get('reason') == 'source_cooldown' for row in result['rows']),
             'source_circuit_skips': sum(row.get('reason') == 'source_circuit_open' for row in result['rows'])}
 
 

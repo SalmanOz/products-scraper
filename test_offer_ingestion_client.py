@@ -39,6 +39,18 @@ class FakeSession:
         return response
 
 
+def test_transient_catalog_gateway_520_retries_instead_of_aborting_the_catalog_sweep():
+    for body in ({'error': 'Temporary gateway error'}, ValueError('not JSON')):
+        delays = []
+        session = FakeSession([FakeResponse(520, body), FakeResponse(200, {'products': []})])
+        client = OfferIngestionClient('https://teknoskor.com', TEST_SECRET,
+                                      session=session, sleep=delays.append)
+        assert client._request_json('GET', '/api/ingestion/catalog') == {'products': []}
+        assert delays == [1]
+        assert len(session.calls) == 2
+
+
+
 class OneOfferScraper:
     async def get_best_prices(self, product_name, expected_specs=None):
         return [
