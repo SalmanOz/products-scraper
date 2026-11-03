@@ -52,6 +52,21 @@ def document(changes=None):
 
 
 class TrendyolCatalogTests(unittest.TestCase):
+    def test_plus_capacity_heading_survives_selected_source_and_ingestion_preparation(self):
+        from tr_price_scraper import TRPriceScraper
+        for title in [NAME + ' 8+128 GB ROM Grafit', NAME + ' 8GB+128GB Grafit']:
+            changes = {('title',): title, ('state', 'product', 'name'): title.removeprefix('Samsung '),
+                       ('schema', 'name'): title}
+            offer, reason = parse_catalog_listing(document(changes), URL, NAME, SPECS)
+            self.assertIsNotNone(offer, reason)
+            self.assertEqual(offer['source_title'], title)
+            self.assertTrue(TRPriceScraper().has_observed_offer_evidence(NAME, offer, SPECS))
+            updater = PriceUpdater(ingestion_client=object())
+            record = updater.prepare_product_offers({'id': 999, 'slug': 'samsung-galaxy-a54-5g'},
+                [offer], updater.utc_timestamp(), updater.utc_timestamp())[0]
+            self.assertEqual(record['source_title'], title)
+            self.assertEqual(record['source_variant_evidence']['ram_gb'], 8)
+
     def test_selected_seller_reaches_ingestion_preparation_without_manual_phone_profile(self):
         class Transport:
             def read_document(self, url):

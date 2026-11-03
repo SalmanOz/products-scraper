@@ -664,8 +664,15 @@ class TRPriceScraper:
 
         # 3. Handle Pro/Max/Ultra variations strictly
         variations = ["pro", "max", "plus", "ultra", "lite", "fe", "mini", "se", "e", "edge"]
+        def model_variations(words):
+            return {word for index, word in enumerate(words) if word in variations and not (
+                word == 'plus' and index > 0 and index + 1 < len(words)
+                and not (index > 1 and words[index - 2] == 'iphone' and words[index - 1].isdigit())
+                and (re.fullmatch(r'\d+(?:gb|tb)?', words[index - 1]) or words[index - 1] in ('ram', 'rom'))
+                and re.fullmatch(r'\d+(?:gb|tb)?', words[index + 1]))}
+        name_variations, title_variations = model_variations(name_words), model_variations(title_words)
         for var in variations:
-            if (var in title_words) != (var in name_words):
+            if (var in title_variations) != (var in name_variations):
                 return False
 
         # 4. A product row represents a concrete RAM/storage variant. When a
@@ -702,9 +709,9 @@ class TRPriceScraper:
         expected_storage = self._spec_int(expected_specs.get('storage_gb'))
         if not expected_storage:
             return False
-        ram, storage, ambiguous = self._unambiguous_listing_capacities(title)
-        from selected_sku_evidence import selected_sku_evidence
+        from selected_sku_evidence import selected_sku_evidence, selected_capacity_title
         selected = selected_sku_evidence(offer)
+        ram, storage, ambiguous = self._unambiguous_listing_capacities(selected_capacity_title(title, selected))
         if selected:
             # Actual selected attributes can establish omitted heading facts;
             # explicit conflicting/ambiguous heading facts still reject.

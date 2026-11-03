@@ -22,6 +22,24 @@ def a16_offer():
 
 
 class SelectedSkuEvidenceTests(unittest.TestCase):
+    def test_plus_capacity_requires_actual_selected_sku_and_preserves_raw_title(self):
+        offer, specs = a16_offer()
+        matcher = TRPriceScraper()
+        for title in ['Samsung Galaxy A16 4+128 GB Siyah Cep Telefonu',
+                      'Samsung Galaxy A16 4GB+128GB ROM Siyah Cep Telefonu']:
+            changed = dict(offer, source_title=title)
+            self.assertTrue(matcher.has_observed_offer_evidence('Samsung Galaxy A16', changed, specs))
+            self.assertEqual(changed['source_title'], title)
+            changed.pop('selected_trendyol_variant_verified')
+            self.assertFalse(matcher.has_observed_offer_evidence('Samsung Galaxy A16', changed, specs))
+        for title in ['Samsung Galaxy A16 4+4 GB RAM 128 GB', 'Samsung Galaxy A16 4+256 GB',
+                      'Samsung Galaxy A16 8+128 GB', 'Samsung Galaxy A16 RAM 4+128 GB',
+                      'Samsung Galaxy A16 4+128 GB RAM', 'Samsung Galaxy A16 4+128 GB 8 GB RAM',
+                      'Samsung Galaxy A16 4+128 GB Sanal RAM', 'Samsung Galaxy A16 Plus 4+128 GB']:
+            self.assertFalse(matcher.has_observed_offer_evidence('Samsung Galaxy A16', dict(offer, source_title=title), specs), title)
+        self.assertFalse(matcher.is_strict_match('Apple iPhone 16', 'Apple iPhone 16+ 256GB'))
+        self.assertFalse(matcher.is_strict_match('Samsung Galaxy S26', 'Samsung Galaxy S26+ 12+256GB'))
+
     def test_selected_actual_attributes_establish_omitted_radio_without_rewriting_title(self):
         offer, specs = a16_offer()
         assert offer is not None

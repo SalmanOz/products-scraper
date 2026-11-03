@@ -7,6 +7,26 @@ import re
 from urllib.parse import parse_qsl, urlparse
 
 
+def selected_capacity_title(title, selected):
+    """Disambiguate an observed '+' pair only with independent selected facts.
+
+    This is parsing text, never the stored source title. Virtual RAM, choices,
+    attached RAM labels and conflicting additional declarations remain unsafe.
+    """
+    if not selected or re.search(r'\b(?:virtual|sanal|extended)\s*ram\b|\bram\s*(?:virtual|sanal|extended)\b', title, re.I):
+        return title
+    pair = re.compile(r'(?<![\w.,])([1-9]|1\d|2[0-4])\s*(?:GB)?\s*\+\s*'
+                      r'(64|128|256|512|1024)\s*GB(?!\w)', re.I)
+    def replace(match):
+        before, after = title[max(0, match.start()-24):match.start()], title[match.end():match.end()+24]
+        if (int(match[1]) != selected['ram_gb'] or int(match[2]) != selected['storage_gb']
+                or re.search(r'\b(?:iphone|ram|rom|depolama|haf[ıi]za)\s*:?\s*$', before, re.I)
+                or re.match(r'\s*ram\b', after, re.I)):
+            return match[0]
+        return f'{match[1]} GB RAM {match[2]} GB ROM'
+    return pair.sub(replace, title)
+
+
 def selected_sku_evidence(offer):
     if not isinstance(offer, dict) or offer.get('platform') not in ('Trendyol', 'n11'):
         return None
