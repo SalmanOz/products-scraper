@@ -152,7 +152,14 @@ class PriorityRetailerTransport:
         url = 'https://www.n11.com/arama?' + urlencode({'q': query})
         return self._read_document(url, 'www.n11.com')
 
-    def _read_document(self, url, host):
+    def read_teknosa_category(self, url):
+        from teknosa_catalog_discovery import category_page_number
+        page = category_page_number(url)
+        if page is None or page >= 40:
+            return None, 'invalid_catalog_category', None
+        return self._read_document(url, 'www.teknosa.com', category=True)
+
+    def _read_document(self, url, host, category=False):
         with self._lock:
             state = self._states.setdefault(host, {'rules': None, 'robots': 'not_loaded',
                 'pdp_requests': 0, 'search_requests': 0, 'browser_requests': 0,
@@ -184,10 +191,15 @@ class PriorityRetailerTransport:
                     return None, 'robots_disallowed', None
                 if url in state['seen']:
                     return None, 'already_read', None
-                if state['pdp_requests'] >= self._maximum:
+                category_count = state.get('category_requests', 0)
+                if category and category_count >= 40:
+                    return None, 'category_budget_exhausted', None
+                if not category and state['pdp_requests'] - category_count >= self._maximum:
                     return None, 'pdp_budget_exhausted', None
                 state['seen'].add(url)
                 state['pdp_requests'] += 1
+                if category:
+                    state['category_requests'] = category_count + 1
                 if urlparse(url).path == '/arama':
                     state['search_requests'] += 1
                 raw, reason, status = self._read(url, MAX_HTML_BYTES, 'text/html', state)
@@ -209,7 +221,7 @@ class PriorityRetailerTransport:
 
     def report(self):
         return {HOSTS[host]: {**{key: value for key, value in state.items()
-                              if key in {'robots', 'browser_requests', 'blocked', 'search_requests'}},
-                              'pdp_requests': state['pdp_requests'] - state['search_requests'],
+                              if key in {'robots', 'browser_requests', 'blocked', 'search_requests', 'category_requests'}},
+                              'pdp_requests': state['pdp_requests'] - state['search_requests'] - state.get('category_requests', 0),
                               'document_requests': state['pdp_requests']}
                 for host, state in self._states.items()}

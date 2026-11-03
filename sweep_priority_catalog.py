@@ -55,7 +55,8 @@ def catalog_queue(products, prices):
     return [(url, product) for _, url, product in rows]
 
 
-def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None, discover_n11=False):
+def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None,
+          discover_n11=False, discover_teknosa=False):
     products, prices = client.get_published_products(), client.get_public_price_priority()
     if (not products or len(products) > 200 or len({p['id'] for p in products}) != len(products)
             or len({p['slug'] for p in products}) != len(products)):
@@ -124,6 +125,34 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                 'observed_url': offer['source_document_url'], 'reason': 'document_read', 'http_status': 200,
                 'document_reused': True, 'reader_reason': 'observed_public_seller_card', 'prepared_offer': offer})
     try:
+        if discover_teknosa:
+            from teknosa_catalog_discovery import (CATEGORY_URL, MAX_CATEGORY_PAGES,
+                                                   parse_category_document, match_catalog_destinations)
+            cards, category_url, category_seen = [], CATEGORY_URL, set()
+            discovery = result['category_discovery'] = {'retailer': 'Teknosa', 'pages': [],
+                                                       'new_targets': [], 'pagination_complete': False}
+            for _ in range(MAX_CATEGORY_PAGES):
+                if not category_url or category_url in category_seen:
+                    break
+                category_seen.add(category_url)
+                html, reason, status = transport.read_teknosa_category(category_url)
+                discovery['pages'].append({'url': category_url, 'reason': reason, 'http_status': status})
+                if html is None:
+                    break
+                found, category_url = parse_category_document(html, category_url)
+                cards.extend(found)
+                if checkpoint:
+                    checkpoint(result)
+            discovery['pagination_complete'] = category_url is None
+            known = {observed_url(url) for url, _ in targets}
+            matched = match_catalog_destinations([c for c in cards if c['source_url'] not in known], products)
+            for product in sorted(products, key=lambda p: (prices.get(p['id'], ('', True))[1], p['id'])):
+                for candidate in matched.get(product['id'], []):
+                    discovery['new_targets'].append({'slug': product['slug'], **candidate})
+                    result['queued'] += 1
+                    process_target(candidate['source_url'], product)
+                    result['models_without_priority_hints'] = [slug for slug in
+                        result['models_without_priority_hints'] if slug != product['slug']]
         for url, product in targets:
             process_target(url, product)
         if discover_n11:
@@ -189,6 +218,11 @@ def save_report(result):
             'catalog_queries': len(result['discovery']),
             'search_documents_read': sum(row['reason'] == 'document_read' for row in result['discovery']),
             'new_targets': sum(len(row['new_targets']) for row in result['discovery'])}, ensure_ascii=False)]
+    if result.get('category_discovery'):
+        discovery = result['category_discovery']
+        lines += ['', 'Automatic Teknosa category discovery: ' + json.dumps({
+            'pages': len(discovery['pages']), 'pagination_complete': discovery['pagination_complete'],
+            'new_targets': len(discovery['new_targets'])}, ensure_ascii=False)]
     if result.get('public_coverage'):
         lines += ['', 'Public coverage: ' + json.dumps(result['public_coverage'], ensure_ascii=False)]
     Path('priority-catalog-sweep.md').write_text('\n'.join(lines))
@@ -247,7 +281,8 @@ def main():
                 'physical_facts': row.get('physical_facts'), 'publication': row.get('publication')},
                 ensure_ascii=False), flush=True)
     client = OfferIngestionClient.from_env()
-    result = sweep(client=client, publish=args.publish, checkpoint=checkpoint, discover_n11=True)
+    result = sweep(client=client, publish=args.publish, checkpoint=checkpoint,
+                   discover_n11=True, discover_teknosa=True)
     result['public_coverage'] = coverage_readback(result, client.get_public_price_priority())
     save_report(result)
     print(Path('priority-catalog-sweep.md').read_text())
