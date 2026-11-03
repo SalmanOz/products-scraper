@@ -1,0 +1,44 @@
+name: Priority Retailer Catalog Read-only Audit
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: teknoskor-priority-retailer-readonly
+  cancel-in-progress: false
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python -m unittest -q test_priority_retailers
+      - name: Start existing public document GET transport
+        run: |
+          docker run -d --name=priority-retailer-browser -p 8191:8191 -e LOG_LEVEL=info ghcr.io/flaresolverr/flaresolverr:latest
+          for attempt in {1..30}; do
+            if curl --fail --silent http://localhost:8191/ > /dev/null; then exit 0; fi
+            sleep 2
+          done
+          exit 1
+      - name: Automatically select two catalog hints per priority retailer without writes
+        env:
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+        run: python audit_priority_retailers.py
+      - if: always()
+        run: |
+          if test -f priority-retailer-audit.md; then cat priority-retailer-audit.md >> "$GITHUB_STEP_SUMMARY"; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: priority-retailer-audit-${{ github.run_id }}
+          path: priority-retailer-audit.*
+          retention-days: 14
