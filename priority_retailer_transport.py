@@ -12,6 +12,8 @@ from urllib.robotparser import RobotFileParser
 
 from bs4 import BeautifulSoup
 import requests
+from curl_cffi import requests as compatible_requests
+from curl_cffi.requests.exceptions import RequestException as CompatibleRequestException
 
 from hepsiburada_s25_fe_source import HepsiburadaS25FeSource
 
@@ -20,6 +22,13 @@ HOSTS = {'www.hepsiburada.com': 'Hepsiburada', 'www.trendyol.com': 'Trendyol',
          'www.n11.com': 'n11', 'www.teknosa.com': 'Teknosa'}
 BOT = 'TeknoskorPriceBot'
 MAX_HTML_BYTES = 5 * 1024 * 1024
+
+
+def compatible_get(url, **kwargs):
+    # Keep the existing bot identity, timeouts, no-redirect policy and streaming
+    # limits. The existing HTTP client supplies browser-compatible TLS/HTTP2;
+    # no proxy, account cookie, IP rotation or private endpoint is involved.
+    return compatible_requests.get(url, impersonate='chrome', **kwargs)
 
 
 def product_host(url):
@@ -71,7 +80,7 @@ class PriorityRetailerTransport:
                  maximum_per_host=2):
         if type(maximum_per_host) is not int or not 1 <= maximum_per_host <= 200:
             raise ValueError('Invalid priority retailer request budget')
-        self._get, self._post = get, post
+        self._get, self._post = get or compatible_get, post
         self._sleep, self._clock = sleep, clock
         self._maximum = maximum_per_host
         self._states = {}
@@ -170,7 +179,7 @@ class PriorityRetailerTransport:
                     state['blocked'] = True
                     return None, 'challenge_page', status
                 return html, 'document_read', status
-            except (requests.RequestException, ValueError, TypeError, UnicodeError):
+            except (requests.RequestException, CompatibleRequestException, ValueError, TypeError, UnicodeError):
                 state['blocked'] = True
                 return None, 'transport_error', None
 

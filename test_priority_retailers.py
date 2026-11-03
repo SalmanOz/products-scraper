@@ -1,5 +1,6 @@
 import json
 import unittest
+from unittest.mock import patch
 
 from audit_priority_retailers import queue
 from priority_retailer_transport import PriorityRetailerTransport, product_host
@@ -15,6 +16,22 @@ URLS = (
 
 
 class PriorityRetailerTests(unittest.TestCase):
+    def test_compatible_http_retains_bot_identity_robots_streaming_and_no_redirects(self):
+        calls = []
+        def get(url, **kwargs):
+            calls.append((url, kwargs))
+            return Response(url, 'User-agent: *\nAllow: /\n' if url.endswith('robots.txt') else '<h1>Phone</h1>')
+        with patch('priority_retailer_transport.compatible_requests.get', side_effect=get):
+            source = PriorityRetailerTransport(sleep=lambda _: None)
+            self.assertEqual(source.read_document(URLS[2])[1], 'document_read')
+        self.assertEqual(len(calls), 2)
+        for _, options in calls:
+            self.assertEqual(options['impersonate'], 'chrome')
+            self.assertIn('TeknoskorPriceBot', options['headers']['User-Agent'])
+            self.assertFalse(options['allow_redirects'])
+            self.assertTrue(options['stream'])
+            self.assertEqual(options['timeout'], (5, 15))
+
     def test_refresh_budget_reserves_the_four_requested_retailers_first(self):
         from offer_target_selection import select_offer_targets
         other = [{'source_url': 'https://www.idefix.com/phone-p-123'},
