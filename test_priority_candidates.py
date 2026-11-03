@@ -128,6 +128,34 @@ class PriorityCandidateTests(unittest.TestCase):
         self.assertEqual(written['source_variant_evidence']['network_generation'], '5g')
         self.assertEqual(written['source_variant_evidence']['sku'], str(observed['item_number']))
 
+    def test_url_keyed_writer_can_add_the_same_seller_on_another_platform_without_legacy_clearance(self):
+        class ScopedClient(Client):
+            def ingest_listing_offers(self, records, *, require_all_accepted=True):
+                result = super().ingest_offers(records, require_all_accepted=require_all_accepted)
+                return {**result, 'offer_identity_contract': 'seller-source-url-v1'}
+            def ingest_offers(self, *args, **kwargs):
+                raise AssertionError('Never fall back to the legacy writer')
+        report = audit()
+        observed = report['rows'][0]['prepared_offer']
+        client = ScopedClient()
+        old_url = 'https://www.n11.com/urun/samsung-galaxy-a36-8gb-128gb-12345678'
+        client.product.update(offer_targets=[{'merchant_name': observed['merchant'], 'source_url': old_url}],
+                              offer_targets_truncated=True)
+        result = refresh_candidates(report, client=client, reader=reader())
+        self.assertEqual(result['status'], 'completed')
+        self.assertEqual(client.writes[0][0]['source_url'], TARGET)
+        self.assertEqual(client.writes[0][0]['seller'], observed['merchant'])
+        self.assertEqual(result['rows'][0]['target_proof']['listing_identity_contract'], 'seller-source-url-v1')
+        self.assertEqual(client.product['offer_targets'][0]['source_url'], old_url)
+        # Without that dedicated contract, every original collision/completeness
+        # boundary stays in force. A method name is not permission to use the
+        # old upsert behavior with relaxed source checks.
+        legacy = Client()
+        legacy.product.update(offer_targets=client.product['offer_targets'], offer_targets_truncated=True)
+        blocked = refresh_candidates(report, client=legacy, reader=reader())
+        self.assertEqual(blocked['status'], 'no_verified_candidates')
+        self.assertEqual(legacy.writes, [])
+
     def test_stale_duplicate_cross_platform_and_protected_a37_candidates_abort_before_writes(self):
         for kind in ('stale', 'duplicate', 'host', 'a37', 'catalog_count', 'writes', 'too_many'):
             client, report = Client(), audit()

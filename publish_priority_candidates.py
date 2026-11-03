@@ -67,7 +67,8 @@ def refresh_candidates(audit, *, client, reader=None):
     if len(products) != len(catalog) or len(catalog) != audit.get('catalog_count'):
         raise ValueError('catalog_changed')
     reader = reader or RetailerOfferRefresher(n11_document_get=getattr(client, 'n11_document_get', None))
-    updater = PriceUpdater(ingestion_client=client, offer_refresher=reader)
+    listing_scoped = callable(getattr(type(client), 'ingest_listing_offers', None))
+    updater = PriceUpdater(ingestion_client=client, offer_refresher=reader, listing_scoped=listing_scoped)
     result = {'purpose': 'single_manual_priority_candidate_refresh', 'writes': False,
               'status': 'prepared', 'candidates': len(rows), 'rows': [], 'prepared_offers': []}
     seen, url_owners = set(), {}
@@ -143,8 +144,11 @@ def refresh_candidates(audit, *, client, reader=None):
         if any(not _fresh(o.get('observed_at')) for o in prepared):
             raise ValueError('prepared_observation_expired')
         try:
-            ingestion = client.ingest_offers(prepared, require_all_accepted=True)
+            writer = client.ingest_listing_offers if listing_scoped else client.ingest_offers
+            ingestion = writer(prepared, require_all_accepted=True)
             result.update(writes=True, ingestion=ingestion)
+            if listing_scoped and ingestion.get('offer_identity_contract') != 'seller-source-url-v1':
+                raise ValueError('listing_identity_not_confirmed')
             if (ingestion.get('committed') is not True or ingestion.get('accepted') != len(prepared)
                     or ingestion.get('stale_ignored') != 0 or ingestion.get('variant_rejected') != 0):
                 raise ValueError('atomic_acceptance_not_confirmed')
@@ -157,6 +161,7 @@ def refresh_candidates(audit, *, client, reader=None):
             result['status'] = 'publication_failed'
             result['publication_error'] = (str(error) if type(error) is ValueError and
                 str(error) in {'atomic_acceptance_not_confirmed',
+                               'listing_identity_not_confirmed',
                                'accepted_offer_not_visible_in_commercial_readback'}
                 else type(error).__name__)
             result['publication_outcome_unconfirmed'] = True

@@ -1015,3 +1015,53 @@ class CompleteTargetInspectionTests(TestCase):
                     session=FakeSession([FakeResponse(200, body) for body in bodies]))
                 with self.assertRaises(IngestionClientError):
                     client.get_complete_offer_target_inspection(238)
+
+class ListingIdentityContractTests(TestCase):
+    @staticmethod
+    def accepted():
+        return {'accepted': 1, 'stale_ignored': 0, 'variant_rejected': 0,
+                'variant_rejections': [], 'committed': True, 'require_all_accepted': True,
+                'offer_identity_contract': 'seller-source-url-v1'}
+
+    def test_only_the_strict_listing_route_and_its_identity_acknowledgment_are_used(self):
+        session = FakeSession([FakeResponse(200, self.accepted())])
+        client = OfferIngestionClient('https://teknoskor.com', TEST_SECRET, session=session)
+        result = client.ingest_listing_offers([sample_offer(0)])
+        self.assertEqual(result['accepted'], 1)
+        self.assertEqual(result['offer_identity_contract'], 'seller-source-url-v1')
+        self.assertEqual(len(session.calls), 1)
+        self.assertEqual(session.calls[0][1], 'https://teknoskor.com/api/ingestion/listing-offers')
+        self.assertIs(session.calls[0][2]['json']['require_all_accepted'], True)
+
+    def test_old_deployment_or_missing_identity_ack_cannot_fall_back_to_a_merchant_only_write(self):
+        for status, body in [(404, {'error': 'Not found'}),
+                             (200, {**self.accepted(), 'offer_identity_contract': None})]:
+            session = FakeSession([FakeResponse(status, body)])
+            client = OfferIngestionClient('https://teknoskor.com', TEST_SECRET, session=session)
+            with self.assertRaises(IngestionClientError):
+                client.ingest_listing_offers([sample_offer(0)])
+            self.assertEqual(len(session.calls), 1)
+            self.assertTrue(session.calls[0][1].endswith('/api/ingestion/listing-offers'))
+        session = FakeSession([])
+        client = OfferIngestionClient('https://teknoskor.com', TEST_SECRET, session=session)
+        with self.assertRaises(IngestionClientError):
+            client.ingest_listing_offers([sample_offer(0)], require_all_accepted=False)
+        self.assertEqual(session.calls, [])
+
+    def test_daily_updater_selects_the_strict_writer_when_supported_and_never_uses_legacy_upsert(self):
+        class NewClient:
+            def __init__(self): self.calls = []
+            def ingest_listing_offers(self, records, *, require_all_accepted):
+                self.calls.append((records, require_all_accepted))
+                return {'accepted': len(records), 'stale_ignored': 0, 'variant_rejected': 0,
+                        'variant_rejections': [], 'changed_paths': [], 'committed': True,
+                        'offer_identity_contract': 'seller-source-url-v1'}
+            def ingest_offers(self, *args, **kwargs):
+                raise AssertionError('Legacy writer must not receive URL-scoped records')
+        client = NewClient()
+        updater = PriceUpdater(ingestion_client=client)
+        self.assertTrue(updater.listing_scoped)
+        total = updater.empty_ingestion_result()
+        updater.flush_offers([sample_offer(0)], total)
+        self.assertEqual(total['accepted'], 1)
+        self.assertIs(client.calls[0][1], True)

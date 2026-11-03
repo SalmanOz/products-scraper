@@ -41,10 +41,16 @@ MAX_SOURCE_OBSERVATION_AGE_SECONDS = 3 * 60 * 60
 
 class PriceUpdater:
     def __init__(self, ingestion_client=None, price_scraper=None, offer_refresher=None,
-                 vatan_sitemap_source=None):
+                 vatan_sitemap_source=None, listing_scoped=None):
         self.ingestion_client = (
             ingestion_client or OfferIngestionClient.from_env()
         )
+        if listing_scoped is None:
+            listing_scoped = callable(getattr(type(self.ingestion_client), 'ingest_listing_offers', None))
+        if type(listing_scoped) is not bool or (listing_scoped and not callable(
+                getattr(self.ingestion_client, 'ingest_listing_offers', None))):
+            raise ValueError('URL-scoped publication requires the dedicated listing writer')
+        self.listing_scoped = listing_scoped
         self.price_scraper = price_scraper or TRPriceScraper()
         self.offer_matcher = TRPriceScraper()
         self.offer_refresher = offer_refresher or RetailerOfferRefresher(
@@ -181,6 +187,19 @@ class PriceUpdater:
 
     def hydrate_marketplace_target_proof(self, product, offers, product_report):
         """Resolve a truncated seller snapshot only after a live marketplace read."""
+        if self.listing_scoped:
+            # This writer can update only the same seller AND exact source URL.
+            # Another platform/color/unknown legacy row cannot be overwritten.
+            # Live SKU/seller/cash/stock gates and server full-model matching
+            # remain mandatory. Never label this as a raw-seller clearance.
+            product_report['listing_identity_contract'] = 'seller-source-url-v1'
+            # Explicit reviewed MediaMarkt profiles retain their existing extra
+            # collision/completeness boundary; the priority readers above do
+            # not need it to protect an unrelated stored listing anymore.
+            offers = [offer for offer in offers if isinstance(offer, dict) and
+                      (offer.get('platform') == 'MediaMarkt' or offer.get('url') in ALL_MARKETPLACE_PROFILES)]
+            if not offers:
+                return
         if not any(isinstance(offer, dict) and offer.get('platform') in {'MediaMarkt', 'Hepsiburada', 'Trendyol', 'Teknosa', 'n11'}
                    for offer in offers):
             return
@@ -237,31 +256,31 @@ class PriceUpdater:
             from n11_catalog_source import catalog_offer_matches
             if (host != 'www.n11.com'
                     or not catalog_offer_matches(offer, product['name'], expected_specs)
-                    or not no_merchant_collision(self._collision_product(product, offer),
-                         {'seller_name': merchant}, offer['url'], expected_host=host)):
+                    or (not self.listing_scoped and not no_merchant_collision(self._collision_product(product, offer),
+                         {'seller_name': merchant}, offer['url'], expected_host=host))):
                 return False
         elif offer.get('platform') == 'Teknosa' and offer.get('selected_teknosa_variant_verified') is True:
             from teknosa_marketplace_source import catalog_offer_matches
             if (host != 'www.teknosa.com'
                     or not catalog_offer_matches(offer, product['name'], expected_specs)
-                    or not no_merchant_collision(self._collision_product(product, offer),
-                         {'seller_name': merchant}, offer['url'], expected_host=host)):
+                    or (not self.listing_scoped and not no_merchant_collision(self._collision_product(product, offer),
+                         {'seller_name': merchant}, offer['url'], expected_host=host))):
                 return False
         elif offer.get('platform') == 'Trendyol':
             from trendyol_catalog_source import catalog_offer_matches
             if (host != 'www.trendyol.com'
                     or not catalog_offer_matches(offer, product['name'], expected_specs)
                     or not self.offer_matcher.has_observed_offer_evidence(product['name'], offer, expected_specs)
-                    or not no_merchant_collision(self._collision_product(product, offer),
-                         {'seller_name': merchant}, offer['url'], expected_host=host)):
+                    or (not self.listing_scoped and not no_merchant_collision(self._collision_product(product, offer),
+                         {'seller_name': merchant}, offer['url'], expected_host=host))):
                 return False
         elif offer.get('platform') == 'Hepsiburada':
             from hepsiburada_catalog_source import catalog_offer_matches
             if (host != 'www.hepsiburada.com'
                     or not catalog_offer_matches(offer, product['name'], expected_specs)
                     or not self.offer_matcher.has_observed_offer_evidence(product['name'], offer, expected_specs)
-                    or not no_merchant_collision(self._collision_product(product, offer),
-                         {'seller_name': merchant}, offer['url'], expected_host=host)):
+                    or (not self.listing_scoped and not no_merchant_collision(self._collision_product(product, offer),
+                         {'seller_name': merchant}, offer['url'], expected_host=host))):
                 return False
         elif offer.get('platform') == 'MediaMarkt':
             from mediamarkt_marketplace_audit import generic_marketplace_offer
@@ -427,8 +446,10 @@ class PriceUpdater:
     def flush_offers(self, pending_offers, aggregate):
         if not pending_offers:
             return
-        result = self.ingestion_client.ingest_offers(
-            list(pending_offers)
+        writer = self.ingestion_client.ingest_listing_offers if self.listing_scoped else self.ingestion_client.ingest_offers
+        result = writer(
+            list(pending_offers),
+            **({'require_all_accepted': True} if self.listing_scoped else {}),
         )
         self.merge_ingestion_result(aggregate, result)
         logging.info(

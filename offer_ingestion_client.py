@@ -694,7 +694,17 @@ class OfferIngestionClient:
         except (ValueError, TypeError, KeyError, AttributeError) as error:
             raise requests.RequestException('Dedicated public source collector unavailable') from error
 
-    def ingest_offers(self, offers, *, require_all_accepted=False):
+    def ingest_listing_offers(self, offers, *, require_all_accepted=True):
+        """Use only the full-evidence, URL-keyed endpoint; never fall back.
+
+        An older deployment has no such route and therefore cannot silently
+        apply its old merchant-only update semantics to these observations.
+        """
+        if require_all_accepted is not True or not offers:
+            raise IngestionClientError('Listing ingestion requires a nonempty atomic batch')
+        return self.ingest_offers(offers, require_all_accepted=True, _listing_contract=True)
+
+    def ingest_offers(self, offers, *, require_all_accepted=False, _listing_contract=False):
         if type(require_all_accepted) is not bool:
             raise IngestionClientError("require_all_accepted must be a boolean")
         if require_all_accepted and len(offers) > MAX_INGESTION_BATCH_SIZE:
@@ -728,7 +738,7 @@ class OfferIngestionClient:
             batch = offers[start : start + MAX_INGESTION_BATCH_SIZE]
             body = self._request_json(
                 "POST",
-                "/api/ingestion/offers",
+                "/api/ingestion/listing-offers" if _listing_contract else "/api/ingestion/offers",
                 headers=headers,
                 json={
                     "offers": batch,
@@ -739,6 +749,8 @@ class OfferIngestionClient:
                 raise IngestionClientError(
                     "Offer ingestion response did not confirm a commit"
                 )
+            if _listing_contract and body.get('offer_identity_contract') != 'seller-source-url-v1':
+                raise IngestionClientError('Listing ingestion did not confirm source URL identity')
             if require_all_accepted and body.get("require_all_accepted") is not True:
                 raise IngestionClientError(
                     "Offer ingestion response did not confirm atomic acceptance"
@@ -807,6 +819,8 @@ class OfferIngestionClient:
         totals["changed_paths"] = list(
             dict.fromkeys(totals["changed_paths"])
         )
+        if _listing_contract:
+            totals['offer_identity_contract'] = 'seller-source-url-v1'
         return totals
 
     def reconcile_scores(self):
