@@ -52,6 +52,40 @@ def document(changes=None):
 
 
 class TrendyolCatalogTests(unittest.TestCase):
+    def test_public_lowest_price_template_still_requires_one_visible_cash_price_and_all_selected_proof(self):
+        original = '<div data-testid="normal-price"><span class="discounted">34.997 TL</span></div>'
+        # Public template observed on S26 Ultra Nov 4 2026. Its struck original
+        # price is not the cash price and the historical label is not a coupon.
+        alternate = ('<button class="price lowest-price" data-testid="lowest-price">'
+                     '<div class="lowest-price-label">Son 10 Günün En Düşük Fiyatı!</div>'
+                     '<span class="original">35.997 TL</span><span class="discounted">34.997 TL</span></button>')
+        html = document({('state', 'product', 'attributes', 0, 'value', 'name'): 'Yok'}).replace(original, alternate)
+        offer, reason = parse_catalog_listing(html, URL, NAME, SPECS)
+        self.assertIsNotNone(offer, reason)
+        self.assertEqual(offer['price'], 34997)
+        for changed in [html.replace('Son 10 Günün En Düşük Fiyatı!', 'Uygulamaya özel fiyat'),
+                        html.replace('<span class="discounted">34.997 TL', '<span class="discounted">33.997 TL'),
+                        html + original, html.replace('data-testid="lowest-price"', 'data-testid="suggested-price"'),
+                        html.replace('>Şimdi Al</button>', ' disabled>Şimdi Al</button>')]:
+            self.assertIsNone(parse_catalog_listing(changed, URL, NAME, SPECS)[0])
+
+    def test_unknown_memory_attribute_requires_explicit_unambiguous_selected_heading_capacity(self):
+        from tr_price_scraper import TRPriceScraper
+        changes = {('state', 'product', 'attributes', 0, 'value', 'name'): 'Yok'}
+        offer, reason = parse_catalog_listing(document(changes), URL, NAME, SPECS)
+        self.assertIsNotNone(offer, reason)
+        self.assertEqual(offer['ram_gb'], 8)
+        self.assertTrue(TRPriceScraper().has_observed_offer_evidence(NAME, offer, SPECS))
+        for title in [NAME + ' 128GB Grafit', NAME + ' 8+8GB RAM 128GB',
+                      NAME + ' 8+128GB Grafit', NAME + ' 12GB RAM 128GB',
+                      NAME + ' RAM 6/8GB 128GB', NAME + ' 8GB Sanal RAM 128GB']:
+            changed = {**changes, ('title',): title, ('state', 'product', 'name'): title.removeprefix('Samsung '),
+                       ('schema', 'name'): title}
+            self.assertIsNone(parse_catalog_listing(document(changed), URL, NAME, SPECS)[0], title)
+        for value in ['', None, 'Belirtilmemiş', '12 GB']:
+            self.assertIsNone(parse_catalog_listing(document({
+                ('state', 'product', 'attributes', 0, 'value', 'name'): value}), URL, NAME, SPECS)[0])
+
     def test_plus_capacity_heading_survives_selected_source_and_ingestion_preparation(self):
         from tr_price_scraper import TRPriceScraper
         for title in [NAME + ' 8+128 GB ROM Grafit', NAME + ' 8GB+128GB Grafit']:

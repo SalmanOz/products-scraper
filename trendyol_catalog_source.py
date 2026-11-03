@@ -93,11 +93,21 @@ def parse_catalog_listing(html, url, name, specs):
                 return None, 'selected_attributes_ambiguous'
             features[key] = row['value'].get('name')
     physical = {}
+    heading_ram, heading_storage, ambiguous_heading = matcher._unambiguous_listing_capacities(title)
     for key, label in (('ram_gb', 'RAM Kapasitesi'), ('storage_gb', 'Dahili Hafıza')):
         match = re.fullmatch(r'(\d{1,4})\s*GB', str(features.get(label) or ''), re.I)
-        if not match or int(match[1]) != matcher._spec_int(specs.get(key)):
+        actual = int(match[1]) if match else None
+        # The live S26 Ultra template supplies literal "Yok" for RAM despite
+        # an explicit physical RAM amount in its selected heading. Unknown is
+        # not a contradictory capacity: use only that heading's actual amount,
+        # which must still agree with selected state, schema, SKU and catalog.
+        # No missing field, arbitrary malformed value, virtual RAM or catalog
+        # fallback can establish a capacity here.
+        if actual is None and features.get(label) == 'Yok' and not ambiguous_heading:
+            actual = heading_ram if key == 'ram_gb' else heading_storage
+        if actual is None or actual != matcher._spec_int(specs.get(key)):
             return None, 'selected_memory_mismatch'
-        physical[key] = int(match[1])
+        physical[key] = actual
     radio = str(features.get('Mobil Bağlantı Hızı') or '').casefold()
     if radio not in {'5g', '4g', '4.5g', '4,5g'}:
         return None, 'selected_radio_missing'
@@ -152,6 +162,11 @@ def parse_catalog_listing(html, url, name, specs):
             or offer.get('availability') != 'https://schema.org/InStock'):
         return None, 'schema_selected_offer_mismatch'
     prices = soup.select('[data-testid="normal-price"] .discounted')
+    for block in soup.select('button.price.lowest-price[data-testid="lowest-price"]'):
+        labels = block.select('.lowest-price-label')
+        if (len(labels) == 1 and re.fullmatch(r'Son [1-9]\d? Günün En Düşük Fiyatı!',
+                _normalized(labels[0].get_text(' ', strip=True)))):
+            prices.extend(block.select('span.discounted'))
     visible = _normalized(prices[0].get_text(' ', strip=True)) if len(prices) == 1 else ''
     match = re.fullmatch(r'(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?)\s*(?:TL|₺)', visible)
     if not match or _amount(match[1].replace('.', '').replace(',', '.')) != price:
