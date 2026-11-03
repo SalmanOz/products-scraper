@@ -91,6 +91,23 @@ Aynı satıcı/URL/fiyat son 30 dakikada zaten yayımlanmış ve mevcut ticari
 filtrede görünüyorsa yeniden yazılmaz. Yeni kabul edilen her satırın da ticari
 filtrede aynı URL, gerçek satıcı ve fiyatla göründüğü geri okunur.
 
+Bu çalışma sırasında mevcut zamanlama ayrıca
+[Daily Price & Data Sync #223](https://github.com/SalmanOz/products-scraper/actions/runs/41618023370)
+işini başlattı. Yeni genel okuyucularla 69 teklif kabul edildi (0 eski, 0
+varyant reddi); o turda canlı doğrulanan kapsam 35/109 olduğundan %50 eşiği
+yine geçilmedi. Manuel olarak ikinci bir genel tur başlatılmadı. Güncel kamu
+kataloğu 42/110 fiyatlı ürüne çıktı: A54 ve Galaxy S25 fiyatlandı, Camon 40'ın
+en düşüğü 18.897 TL'den 16.999 TL'ye indi. Teklifler elle eklenmedi.
+
+Bağımsız satıcı sayımında noktalama farkı düzeltilince çok satıcılı ürün sayısı
+21 oldu (başlangıç 19). A54'ün Hepsiburada ve Trendyol'daki `MOBİLSTORE.33` /
+`MOBİLSTORE33` teklifleri iki ayrı bağımsız satıcı sayılmaz; iki platformun
+teklifleri görünmeye devam eder ve platform adı gerçek satıcıdan ayrı gösterilir.
+[Son otomatik aday tamamlayıcısı](https://github.com/SalmanOz/products-scraper/actions/runs/41622434431)
+32 ipucunu yeniden örnekledi; o örneklemde yeni geçerli aday çıkmadığı için
+hiç fiyat yazmadı. n11 erişimi ve Teknosa'nın mevcut stok/satıcı kanıtı açıkları
+çözülmüş sayılmaz.
+
 403/429/challenge cevabında o mağaza için aynı çalışmada devre kesici açılır.
 İncelenmiş Vatan ve MediaMarkt tam ürün bağlantılarında normal GET 403 dönerse
 `robots.txt` izni doğrulanarak mevcut FlareSolverr ile salt GET denenir;
