@@ -25,6 +25,7 @@ from tr_price_scraper import TRPriceScraper
 from public_retailer_sources import PublicRetailerSources, SOURCES, public_source
 from pazarama_category_source import PazaramaCategorySource, pazarama_product_url
 from vatan_reviewed_source import VatanReviewedSource
+from vatan_sitemap_source import VatanSitemapSource
 from mediamarkt_source import MediaMarktSource, product_url as mediamarkt_product_url
 from mediamarkt_marketplace_source import (MediaMarktMarketplaceSource,
                                            PROFILES as MEDIAMARKT_MARKETPLACE_PROFILES,
@@ -154,8 +155,8 @@ _JSON_REVIEW_BODY = re.compile(r'("reviewBody"\s*:\s*")((?:\\.|[^"\\])*)(")', re
 _RAW_JSON_CONTROL = re.compile(r'[\x00-\x1f]')
 
 
-def _vivo_review_jsonld(raw):
-    """Repair only raw control characters in this PDP's customer review text.
+def _vatan_review_jsonld(raw):
+    """Escape raw control characters only inside Vatan customer review text.
 
     Vatan currently emits literal line breaks inside JSON-LD reviewBody
     strings. This does not change Product, Offer or variant fields; the parsed
@@ -175,13 +176,20 @@ def _schema_nodes(soup, final_url=None):
         try:
             pending = [json.loads(script.get_text())]
         except (TypeError, ValueError):
-            if final_url != VIVO_X300_VATAN_PDP:
+            if not VatanSitemapSource._safe_product_url(final_url):
                 continue
             try:
-                repaired = _vivo_review_jsonld(script.get_text())
+                repaired = _vatan_review_jsonld(script.get_text())
             except (TypeError, ValueError):
                 continue
-            if repaired is None:
+            # Only the selected-SKU parser can consume repaired metadata. It
+            # still proves the exact URL, seller, visible cash, SKU and cart;
+            # this cannot open the generic no-variant JSON-LD path.
+            if (not isinstance(repaired, dict) or not _type_is(repaired, 'Product')
+                    or not isinstance(repaired.get('hasVariant'), list)
+                    or not repaired['hasVariant']
+                    or not isinstance(repaired.get('offers'), dict)
+                    or not _type_is(repaired['offers'], 'Offer')):
                 continue
             pending = [repaired]
         # Traverse document lists/@graph only, not arbitrary recommendation or

@@ -118,7 +118,7 @@ class VatanCategoryTests(unittest.TestCase):
         soup = BeautifulSoup(html, 'html.parser')
         self.assertEqual([node.get('sku') for node in _schema_nodes(soup, profile['url'])
                           if node.get('@type') == 'Product'], ['154791'])
-        self.assertEqual([node for node in _schema_nodes(soup, PROFILES[0]['url'])
+        self.assertEqual([node for node in _schema_nodes(soup, 'https://www.amazon.com.tr/dp/B123456789')
                           if node.get('@type') == 'Product'], [])
         class NoReviewedVatan:
             @staticmethod

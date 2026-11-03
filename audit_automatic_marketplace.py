@@ -1,4 +1,5 @@
 """Exercise automatic catalog -> sitemap -> PDP -> ingestion preparation, GET only."""
+import argparse
 import json
 from pathlib import Path
 from datetime import datetime, timezone
@@ -13,24 +14,42 @@ from offer_target_selection import select_offer_targets
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--retailer', choices=('all', 'vatan'), default='all')
+    parser.add_argument('--priced-only', action='store_true',
+                        help='Inspect additional sellers for currently priced catalog models')
+    parser.add_argument('--offset', type=int, default=0)
+    args = parser.parse_args()
+    if not 0 <= args.offset <= 1000:
+        parser.error('offset must be between 0 and 1000')
     client = OfferIngestionClient.from_env()
     products = client.get_published_products()
     status = client.get_public_price_priority()
     reader = RetailerOfferRefresher()
     updater = PriceUpdater(ingestion_client=client, offer_refresher=reader)
     vatan = VatanSitemapSource()
-    reader.vatan_reviewed_source.configure_catalog_budget(12)
+    reader.vatan_reviewed_source.configure_catalog_budget(24)
     products.sort(key=lambda p: (status.get(p['id'], ('', False))[1], -p['id']))
     queue = []
     for product in products:
+        if args.priced_only and not status.get(product['id'], ('', False))[1]:
+            continue
         specs = with_reviewed_radio(product, updater.get_expected_specs(product.get('attributes')))
-        targets = reader.mediamarkt_source.discover(product['name'], specs)
+        targets = (reader.mediamarkt_source.discover(product['name'], specs)
+                   if args.retailer == 'all' else [])
         # Some current compact PDPs are stored destinations but absent from
         # the advertised sitemap. Exercise those automatically selected hints too.
         compact_stored = [row for row in product.get('offer_targets', [])
                           if isinstance(row, dict) and product_url(row.get('source_url'))
-                          and _phone_hint_path(urlparse(row['source_url']).path)]
+                          and _phone_hint_path(urlparse(row['source_url']).path)
+                          and args.retailer == 'all']
         vatan_targets = vatan.discover(product['name'], specs)
+        if args.retailer == 'vatan':
+            vatan_targets += [row for row in product.get('offer_targets', [])
+                             if isinstance(row, dict)
+                             and VatanSitemapSource._safe_product_url(row.get('source_url'))
+                             and VatanSitemapSource._variant_matches(
+                                 urlparse(row['source_url']).path, product['name'], specs)]
         targets = list({row['source_url']: row for row in targets + compact_stored + vatan_targets}.values())
         if not targets:
             continue
@@ -44,7 +63,7 @@ def main():
         2 if not status.get(item[0]['id'], ('', False))[1] else 3,
         -item[0]['id']))
     rows = []
-    for product, specs, targets, compact in queue[:12]:
+    for product, specs, targets, compact in queue[args.offset:args.offset + 12]:
         selected_targets = select_offer_targets(targets, maximum=2)
         observed = reader.refresh_existing_offer_targets(product['name'], selected_targets, specs)
         proof_report = {}
@@ -60,12 +79,14 @@ def main():
                      'rejected_by_catalog_or_seller': len(observed) - len(accepted),
                      'attempts': reader.target_report(product['name'], selected_targets, specs)})
     report = {'writes': False, 'catalog_count': len(products), 'rows': rows,
+              'retailer': args.retailer, 'priced_only': args.priced_only, 'offset': args.offset,
               'source': reader.mediamarkt_source.report(),
               'vatan_sitemap': vatan.report(), 'vatan_pdp': reader.vatan_reviewed_source.report()}
     Path('automatic-marketplace-audit.json').write_text(json.dumps(report, ensure_ascii=False, indent=2))
     summary = ['### Automatic retailer pipeline (GET only)',
                f'Catalog: {len(products)}; candidate products: {len(rows)}; '
                f'prepared offers: {sum(row["prepared_count"] for row in rows)}',
+               f'Retailer: {args.retailer}; priced only: {args.priced_only}; offset: {args.offset}',
                '', '| Model | Candidates | Observed | Prepared |', '|---|---:|---:|---:|']
     summary += [f'| {r["slug"]} | {r["candidate_count"]} | {r["observed"]} | {r["prepared_count"]} |' for r in rows]
     for row in rows:
