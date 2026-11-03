@@ -271,6 +271,9 @@ class TRPriceScraper:
             try:
                 resp = cffi_requests.get(url, impersonate=browser, timeout=15, headers=headers)
                 logging.warning(f"  🔍 curl_cffi ({browser}): HTTP {resp.status_code} for {url} ({len(resp.text)} bytes)")
+                if resp.status_code in {403, 429}:
+                    self.dead_domains.add(urlparse(url).netloc)
+                    return None
                 if resp.status_code == 200 and len(resp.text) > 1000:
                     if 'Just a moment...' not in resp.text and 'cf-browser-verification' not in resp.text:
                         return resp.text, str(resp.url)
@@ -332,6 +335,9 @@ class TRPriceScraper:
                 return {'response': html, 'url': final_url}
             return html
 
+        if domain in self.dead_domains:
+            return None
+
         # Slow path: FlareSolverr headless browser
         for attempt in range(1, max_retries + 1):
             try:
@@ -343,6 +349,16 @@ class TRPriceScraper:
                 response = requests.post(self.flaresolverr_url, json=payload, timeout=30)
                 res_data = response.json()
                 if res_data.get('status') == 'ok':
+                    solution = res_data.get('solution') or {}
+                    status = solution.get('status')
+                    if status in {403, 429}:
+                        self.dead_domains.add(domain)
+                        return None
+                    html = solution.get('response')
+                    if (status != 200 or not isinstance(html, str)
+                            or re.search(r'<title>[^<]*(?:just a moment|captcha|access denied)|cf-browser-verification', html, re.I)):
+                        self._record_domain_result(domain, False)
+                        return None
                     self._record_domain_result(domain, True)
                     if return_solution:
                         return res_data['solution']
