@@ -153,15 +153,17 @@ def parse_exact_buy_box(html: str, final_url: str = URL, *, scope=None):
     if not isinstance(product, dict):
         return None, 'redux_product_missing'
     stock = product.get('stockInformation')
+    generic = scope.get('generic_catalog') is True
     if (product.get('productId') != scope['PRODUCT_ID'] or product.get('sku') != scope['SKU']
             or product.get('listingId') != scope['LISTING_ID']
-            or product.get('merchantName') != scope['SELLER']
-            or product.get('merchantId') != scope['MERCHANT_ID']
-            or product.get('isInStock') is not True
-            or not isinstance(stock, dict) or stock.get('isInStock') is not True
-            or product.get('isProductLive') is not True
-            or product.get('isClosedProduct') is not False
-            or product.get('isPreOrder') is not False):
+            or product.get('merchantName') not in ((None, scope['SELLER']) if generic else (scope['SELLER'],))
+            or product.get('merchantId') not in ((None, scope['MERCHANT_ID']) if generic else (scope['MERCHANT_ID'],))
+            or (product.get('isInStock') is not True and not (generic and product.get('isInStock') is None))
+            or (not (generic and stock is None) and (not isinstance(stock, dict) or
+                stock.get('isInStock') is not True and not (generic and stock.get('isInStock') is None)))
+            or (product.get('isProductLive') is not True and not (generic and product.get('isProductLive') is None))
+            or (product.get('isClosedProduct') is not False and not (generic and product.get('isClosedProduct') is None))
+            or (product.get('isPreOrder') is not False and not (generic and product.get('isPreOrder') is None))):
         return None, 'selected_redux_offer_mismatch'
     merchant = product.get('merchant')
     if (not isinstance(merchant, dict) or merchant.get('id') != scope['MERCHANT_ID']
@@ -173,13 +175,19 @@ def parse_exact_buy_box(html: str, final_url: str = URL, *, scope=None):
         return None, 'selected_redux_variant_mismatch'
 
     prices = product.get('prices')
-    if not isinstance(prices, list) or len(prices) != 1 or not isinstance(prices[0], dict):
-        return None, 'selected_redux_price_missing'
-    price = _amount(prices[0].get('value'))
-    if (price is None or _amount(variant['price']) != price
-            or prices[0].get('formattedPrice') !=
-               f'{price:,.2f}'.replace(',', '_').replace('.', ',').replace('_', '.')):
-        return None, 'selected_redux_price_mismatch'
+    if generic:
+        # The installment/loyalty price container is not the selected cash
+        # offer. Its layout differs across categories. The SKU's own price
+        # must still agree with JSON-LD, visible cash and both buy-box events.
+        price = _amount(variant['price'])
+    else:
+        if not isinstance(prices, list) or len(prices) != 1 or not isinstance(prices[0], dict):
+            return None, 'selected_redux_price_missing'
+        price = _amount(prices[0].get('value'))
+        if (price is None or _amount(variant['price']) != price
+                or prices[0].get('formattedPrice') !=
+                   f'{price:,.2f}'.replace(',', '_').replace('.', ',').replace('_', '.')):
+            return None, 'selected_redux_price_mismatch'
 
     schema_products = [node for node in _nodes(soup)
                        if node.get('@type') == 'Product' and node.get('sku') == scope['SKU']]

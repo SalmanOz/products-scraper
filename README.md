@@ -63,6 +63,9 @@ eksik sayfalar elenir. Trendyol'un 301 yanıtı satıcı seçicisini düşürdü
 eski seçicinin satıcısı güncel seçili satıcı kabul edilmez. n11'de belge
 okuma servisinin 500 hatası henüz çözülmüş sayılmaz. Her kaynakta robots,
 istek aralığı, boyut/kota ve erişim hatası devre kesicisi uygulanır.
+Tam katalog işinde bu okuyucuların kotası katalog büyüklüğüne ayarlanır
+(mutlak üst sınır 200 belge); 110 ürünlük iş 60 belge sınırında kesilmez.
+Salt okunur örneklem ve tek ürün varsayılan kotaları artırılmaz.
 
 3 Kasım dördüncü üretim turu:
 [Daily Price & Data Sync #222](https://github.com/SalmanOz/products-scraper/actions/runs/41610758334)
@@ -84,6 +87,9 @@ sayfasını tekrar okur, fiyat/SKU/satıcı/barkod değişimini reddeder, tam sa
 hedefi ve varyant kontrollerinden geçenleri tek atomik HTTPS isteğinde yayımlar.
 Yeni ürün, teknik özellik veya elle telefon profili oluşturmaz. A37 bu akışa
 alınmaz. Kabul edilen teklifler sonrası mevcut puanlar yeniden hesaplanır.
+Aynı satıcı/URL/fiyat son 30 dakikada zaten yayımlanmış ve mevcut ticari
+filtrede görünüyorsa yeniden yazılmaz. Yeni kabul edilen her satırın da ticari
+filtrede aynı URL, gerçek satıcı ve fiyatla göründüğü geri okunur.
 
 403/429/challenge cevabında o mağaza için aynı çalışmada devre kesici açılır.
 İncelenmiş Vatan ve MediaMarkt tam ürün bağlantılarında normal GET 403 dönerse

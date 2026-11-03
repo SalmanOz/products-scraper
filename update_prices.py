@@ -231,6 +231,7 @@ class PriceUpdater:
             from trendyol_catalog_source import catalog_offer_matches
             if (host != 'www.trendyol.com'
                     or not catalog_offer_matches(offer, product['name'], expected_specs)
+                    or not self.offer_matcher.has_observed_offer_evidence(product['name'], offer, expected_specs)
                     or not no_merchant_collision(self._collision_product(product, offer),
                          {'seller_name': merchant}, offer['url'], expected_host=host)):
                 return False
@@ -238,6 +239,7 @@ class PriceUpdater:
             from hepsiburada_catalog_source import catalog_offer_matches
             if (host != 'www.hepsiburada.com'
                     or not catalog_offer_matches(offer, product['name'], expected_specs)
+                    or not self.offer_matcher.has_observed_offer_evidence(product['name'], offer, expected_specs)
                     or not no_merchant_collision(self._collision_product(product, offer),
                          {'seller_name': merchant}, offer['url'], expected_host=host)):
                 return False

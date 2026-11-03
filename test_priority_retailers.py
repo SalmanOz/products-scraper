@@ -76,6 +76,18 @@ class PriorityRetailerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             queue(products, {}, maximum=60)
 
+    def test_full_catalog_budget_does_not_stop_after_sixty_of_110_products(self):
+        source = PriorityRetailerTransport(sleep=lambda _: None, get=lambda url, **_:
+            Response(url, 'User-agent: *\nAllow: /\n' if url.endswith('robots.txt') else '<h1>Phone</h1>'))
+        source.configure_catalog_budget(110)
+        for number in range(110):
+            self.assertEqual(source.read_document(URLS[1] + str(number))[1], 'document_read')
+        self.assertEqual(source.report()['Trendyol']['pdp_requests'], 110)
+        self.assertEqual(source.read_document(URLS[1] + 'extra')[1], 'invalid_priority_pdp')
+        self.assertEqual(source.read_document(URLS[1] + '110')[1], 'pdp_budget_exhausted')
+        with self.assertRaises(RuntimeError):
+            source.configure_catalog_budget(200)
+
     def test_robots_denial_challenge_and_budget_prevent_further_reads(self):
         for policy, body, expected in (
             ('User-agent: *\nDisallow: /\n', '<h1>Phone</h1>', 'robots_disallowed'),

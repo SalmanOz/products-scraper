@@ -20,7 +20,7 @@ def document(changes=None):
                      (SKU, 'HBCV0000TEST01'), (PRODUCT_ID, 'HBC0000TEST00'),
                      (COLOR, 'Antrasit'), (GTIN13, '8806094821437')):
         html = html.replace(old, new)
-    return html
+    return html.replace('128GB Antrasit', '128 GB 8 GB RAM Antrasit')
 
 
 class HepsiburadaCatalogTests(unittest.TestCase):
@@ -112,6 +112,26 @@ class HepsiburadaCatalogTests(unittest.TestCase):
         self.assertEqual(status, 200)
         # Direct seller-scoped parsing still rejects a changed selected seller.
         self.assertIsNone(parse_catalog_buy_box(document(), hint, NAME, SPECS)[0])
+
+    def test_generic_selected_cash_does_not_depend_on_redundant_apple_summary_flags(self):
+        changes = {('redux', 'productState', 'product', key): None for key in (
+            'merchantName', 'merchantId', 'isInStock', 'stockInformation',
+            'isProductLive', 'isClosedProduct', 'isPreOrder', 'prices')}
+        self.assertIsNotNone(parse_catalog_buy_box(document(changes), TARGET, NAME, SPECS)[0])
+        for path, value in (
+            (('redux', 'productState', 'product', 'isInStock'), False),
+            (('redux', 'productState', 'product', 'isClosedProduct'), True),
+            (('redux', 'productState', 'product', 'isProductLive'), False),
+            (('redux', 'productState', 'product', 'isPreOrder'), True),
+            (('redux', 'productState', 'product', 'variants', 0, 'isInStock'), False),
+            (('redux', 'productState', 'product', 'variants', 0, 'price'), 99999),
+            (('events', 0, 'data', 'price'), '99999'),
+            (('schema', '@graph', 0, 'offers', 'price'), '99999'),
+            (('visible_price',), '99.999,00 TL'),
+            (('cart_disabled',), True),
+        ):
+            with self.subTest(path=path):
+                self.assertIsNone(parse_catalog_buy_box(document({**changes, path: value}), TARGET, NAME, SPECS)[0])
 
 
 if __name__ == '__main__':

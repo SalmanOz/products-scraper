@@ -69,7 +69,7 @@ def challenge_document(html):
 class PriorityRetailerTransport:
     def __init__(self, *, get=None, post=None, sleep=time.sleep, clock=time.monotonic,
                  maximum_per_host=2):
-        if type(maximum_per_host) is not int or not 1 <= maximum_per_host <= 60:
+        if type(maximum_per_host) is not int or not 1 <= maximum_per_host <= 200:
             raise ValueError('Invalid priority retailer request budget')
         self._get, self._post = get, post
         self._sleep, self._clock = sleep, clock
@@ -84,7 +84,7 @@ class PriorityRetailerTransport:
         with self._lock:
             if self._states:
                 raise RuntimeError('Configure before source reads')
-            self._maximum = max(self._maximum, min(60, count))
+            self._maximum = max(self._maximum, min(200, count))
 
     def _read(self, url, limit, accept, state, allow_redirect=True):
         last = state.get('last')
