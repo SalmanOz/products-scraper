@@ -43,7 +43,11 @@ Trendyol'da seçili ürün/satıcı/ilan, iki seçili varyant listesi, barkod, t
 alanlar, JSON-LD, görünen fiyat ve açık satın alma düğmesi birlikte doğrulanır.
 Eski Hepsiburada `magaza=` ipucu, aynı SKU'nun sorgusuz ana sayfasından güncel
 satıcıyı keşfetmek için kullanılır; dönen teklifin URL'si ve satıcısı yeni
-gözlemden gelir. Eski satıcı adına fiyat aktarılmaz. Trendyol'da yalnız aynı
+gözlemden gelir. Eski satıcı adına fiyat aktarılmaz. Trendyol'un eski
+`merchantId`/`boutiqueId`/`v=tek-ebat` keşif ipuçları da aynı ürün kimliğinin
+sorgusuz PDP'sine çevrilir; güncel satıcı yeni seçili ilan kaydından kanıtlanır.
+Doğrudan satıcıya özel parser çağrısında seçici hâlâ zorunludur.
+Trendyol'da yalnız aynı
 ürün kimliğini ve seçilmiş satıcıyı koruyan bir yönlendirme izlenebilir; bu
 ikinci istek de mevcut kaynak kotasından düşer ve yeniden robots kontrolünden
 geçer. İkinci yönlendirme veya değişen satıcı/ürün kimliği kabul edilmez.
@@ -55,7 +59,8 @@ mağaza 1001, SKU, EAN13, stok ve koşulsuz fiyat aynı olduğunda teklif hazır
 `Priority Retailer Catalog Read-only Audit`, katalogdan kaynak başına en çok
 sekiz mevcut adresi otomatik örnekler. Bu denetim ürün, fiyat, puan veya
 IndexNow yazmaz. HTTP 200 tek başına teklif değildir; stok veya varyant kanıtı
-eksik sayfalar elenir. Trendyol'da 301 veren eski adresler ve n11'de belge
+eksik sayfalar elenir. Trendyol'un 301 yanıtı satıcı seçicisini düşürdüğünden,
+eski seçicinin satıcısı güncel seçili satıcı kabul edilmez. n11'de belge
 okuma servisinin 500 hatası henüz çözülmüş sayılmaz. Her kaynakta robots,
 istek aralığı, boyut/kota ve erişim hatası devre kesicisi uygulanır.
 

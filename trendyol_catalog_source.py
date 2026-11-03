@@ -29,6 +29,17 @@ def _product_id(url):
     return re.search(r'-p-(\d+)$', urlparse(url).path)[1]
 
 
+def catalog_request_url(url):
+    """Historical seller/campaign hints discover a product, not a current seller.
+
+    Fetch its canonical PDP and publish only the seller proven by the new
+    selected listing. Direct seller-scoped parser calls keep their selector.
+    """
+    if _product_id(url) is None:
+        return None
+    return urlparse(url)._replace(query='').geturl()
+
+
 def _selected(rows):
     if not isinstance(rows, list):
         return None
@@ -195,10 +206,11 @@ class TrendyolCatalogSource:
         profile = self._profiles.get(url)
         if profile is None or url in self._ambiguous:
             return None, 'unmatched_catalog_pdp', None
-        html, reason, status = self.transport.read_document(url)
+        observed_url = catalog_request_url(url)
+        html, reason, status = self.transport.read_document(observed_url)
         if html is None:
             return None, reason, status
-        final_url = self.transport.resolved_url(url) if hasattr(self.transport, 'resolved_url') else url
+        final_url = self.transport.resolved_url(observed_url) if hasattr(self.transport, 'resolved_url') else observed_url
         offer, reason = parse_catalog_listing(html, final_url, profile['name'], profile['specs'])
         return offer, reason, status
 

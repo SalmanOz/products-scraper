@@ -115,6 +115,22 @@ class TrendyolCatalogTests(unittest.TestCase):
         source.register_catalog_targets('Samsung Galaxy A54', [{'source_url': URL}], SPECS)
         self.assertEqual(source.read_offer(URL)[1], 'unmatched_catalog_pdp')
 
+    def test_stored_seller_selector_discovers_canonical_pdp_and_new_selected_seller(self):
+        calls = []
+        class Transport:
+            def read_document(self, url):
+                calls.append(url)
+                return document(), 'document_read', 200
+        source = TrendyolCatalogSource(transport=Transport())
+        hint = URL.replace('657799', '123')
+        source.register_catalog_targets(NAME, [{'source_url': hint}], SPECS)
+        offer, reason, status = source.read_offer(hint)
+        self.assertEqual(calls, [URL.split('?')[0]])
+        self.assertEqual(offer['url'], URL.split('?')[0])
+        self.assertEqual(offer['merchant_id'], 657799)
+        self.assertEqual((reason, status), ('selected_new_cash_offer_observed', 200))
+        self.assertIsNone(parse_catalog_listing(document(), hint, NAME, SPECS)[0])
+
 
 if __name__ == '__main__':
     unittest.main()

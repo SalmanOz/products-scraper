@@ -83,6 +83,9 @@ def main():
             if host == 'www.hepsiburada.com':
                 from hepsiburada_catalog_source import catalog_request_url
                 observed_url = catalog_request_url(url)
+            elif host == 'www.trendyol.com':
+                from trendyol_catalog_source import catalog_request_url
+                observed_url = catalog_request_url(url)
             html, reason, status = transport.read_document(observed_url)
             row = {'retailer': HOSTS[host], 'slug': product['slug'], 'url': url,
                    'observed_url': observed_url, 'reason': reason, 'http_status': status}
@@ -102,7 +105,7 @@ def main():
                 if host == 'www.trendyol.com':
                     from trendyol_catalog_source import parse_catalog_listing
                     specs = with_reviewed_radio(product, PriceUpdater.get_expected_specs(product.get('attributes')))
-                    final_url = transport.resolved_url(url)
+                    final_url = transport.resolved_url(observed_url)
                     offer, why = parse_catalog_listing(html, final_url, product['name'], specs)
                     row['resolved_url'] = final_url
                     row.update(reader_reason=why, prepared_offer=offer)
