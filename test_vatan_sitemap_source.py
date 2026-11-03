@@ -46,6 +46,15 @@ class Fetch:
 
 
 class VatanSitemapSourceTests(unittest.TestCase):
+    def test_storage_before_ram_is_a_hint_without_accepting_a_capacity_conflict(self):
+        specs = {'ram_gb': 8, 'storage_gb': 128, 'network_generation': '5g'}
+        for path in ('/samsung-galaxy-a57-5g-128gb-8gb',
+                     '/samsung-galaxy-a57-5g-8gb-ram128gb-hafiza-android-telefon'):
+            self.assertTrue(VatanSitemapSource._variant_matches(path, 'Samsung Galaxy A57 5G', specs))
+            self.assertFalse(VatanSitemapSource._variant_matches(path, 'Samsung Galaxy A57 5G',
+                             {**specs, 'ram_gb': 6}))
+            self.assertFalse(VatanSitemapSource._variant_matches(path, 'Samsung Galaxy A57 5G',
+                             {**specs, 'storage_gb': 256}))
     def test_chrome_xml_viewer_yields_only_bounded_original_sitemap_hints(self):
         exact = 'https://www.vatanbilgisayar.com/xiaomi-17t-12-256gb-akilli-telefon-siyah.html'
         xml = sitemap(exact).decode().split('?>', 1)[1]

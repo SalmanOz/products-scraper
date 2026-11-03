@@ -143,6 +143,14 @@ class PasajSourceTest(unittest.TestCase):
             source.register_catalog_targets('Samsung Galaxy A54 5G', [{'source_url': url}], specs)
             self.assertFalse(source.is_catalog_target(url))
 
+    def test_reversed_memory_url_reaches_the_same_selected_offer_parser(self):
+        from test_pasaj_unreviewed_candidates import selected_page, URL
+        url = URL.replace('8gb-128-gb', '128gb-8gb')
+        specs = {'ram_gb': 8, 'storage_gb': 128, 'network_generation': '5g'}
+        source = PasajSource()
+        source.register_catalog_targets('Samsung Galaxy A54 5G', [{'source_url': url}], specs)
+        self.assertEqual(source.parse_offer(selected_page(url=url), url)['price'], 19499)
+
     def test_exact_cash_offer(self):
         offer = _selected_offer(page(), IPHONE17_256_URL)
         self.assertEqual((offer['merchant'], offer['price'], offer['currency'],

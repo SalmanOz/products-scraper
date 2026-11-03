@@ -227,6 +227,7 @@ class VatanSitemapSource:
         if not storage or storage < 32:
             return False
         slug = unquote(path).lower().removesuffix('.html').strip('/')
+        slug = re.sub(r'ram(?=\d)', 'ram-', slug)
         title = slug.replace('-', ' ').replace('_', ' ')
         matcher = TRPriceScraper()
         if not matcher.is_strict_match(product_name, title, expected_specs):
@@ -240,8 +241,9 @@ class VatanSitemapSource:
             if not ram:
                 return False
             pair = rf'(?:^|[-_]){ram}(?:[-_]?gb)?[-_]{storage}(?:[-_]?gb)(?:[-_]|$)'
+            reversed_pair = rf'(?:^|[-_]){storage}[-_]?gb[-_]{ram}[-_]?gb(?:[-_]|$)'
             labelled = rf'(?:^|[-_]){ram}[-_]?gb[-_]?ram(?:[-_]|$)|(?:^|[-_])ram[-_]?{ram}[-_]?gb(?:[-_]|$)'
-            if not (re.search(pair, slug) or re.search(labelled, slug)):
+            if not (re.search(pair, slug) or re.search(reversed_pair, slug) or re.search(labelled, slug)):
                 return False
         # Catalog summaries often omit Connectivity. A sitemap URL is only a
         # hint: the PDP reader later requires the observed title/offer to pass
