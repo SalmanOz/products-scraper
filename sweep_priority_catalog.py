@@ -199,7 +199,8 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                               'reason': reason, 'http_status': status, 'new_targets': []}
                 result['discovery'].append(diagnostic)
                 if html is not None:
-                    candidates = discover_catalog_targets(html, product['name'], specs)
+                    candidates = discover_catalog_targets(html, product['name'], specs,
+                                                          excluded_urls=inspected)
                     for candidate in candidates:
                         url = candidate['source_url']
                         if url in inspected:

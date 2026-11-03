@@ -25,6 +25,16 @@ def document(change=None):
 
 
 class N11CatalogTests(unittest.TestCase):
+    def test_already_inspected_top_search_hits_do_not_hide_new_lower_destinations(self):
+        title = NAME + ' 8 GB 256 GB (Samsung Türkiye Garantili)'
+        urls = [URL.replace('123382026', str(123382026 + n)) for n in range(5)]
+        html = ''.join(f'<a href="{u}"><h2 class="product-item-title">{title}</h2><b>1 TL</b></a>'
+                       for u in urls)
+        rows = discover_catalog_targets(html, NAME, SPECS,
+                                       excluded_urls=[urls[0] + '?magaza=old', urls[1], urls[2]])
+        self.assertEqual([r['source_url'] for r in rows], urls[3:])
+        self.assertTrue(all('price' not in r for r in rows))
+
     def test_real_server_html_placeholder_keeps_selected_sku_cash_and_stock_proof(self):
         html = Path(__file__).with_name('fixtures').joinpath('n11-selected-ssr-cash.html').read_text()
         offer, reason = parse_catalog_listing(html, URL, NAME, SPECS)

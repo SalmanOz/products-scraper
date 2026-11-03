@@ -26,13 +26,14 @@ def catalog_request_url(url):
     return urlparse(url)._replace(query='').geturl() if product_host(url) == 'www.n11.com' else None
 
 
-def discover_catalog_targets(html, name, specs, maximum=2):
+def discover_catalog_targets(html, name, specs, maximum=2, *, excluded_urls=()):
     """Search cards discover destinations only; their prices are never offers."""
     if (not isinstance(html, str) or len(html.encode()) > 5 * 1024 * 1024
             or type(maximum) is not int or not 1 <= maximum <= 2):
         return []
     soup, matcher = BeautifulSoup(html, 'html.parser'), TRPriceScraper()
-    result, seen = [], set()
+    result, seen = [], {canonical for url in excluded_urls
+                        if (canonical := catalog_request_url(url)) is not None}
     for anchor in soup.select('a[href]'):
         headings = anchor.select('h2.product-item-title')
         if len(headings) != 1:

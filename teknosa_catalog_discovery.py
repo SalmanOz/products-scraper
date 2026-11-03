@@ -92,6 +92,14 @@ def match_catalog_destinations(cards, products, *, maximum_per_model=2):
     candidates = {}
     for card in sorted(cards, key=lambda c: (not c['stock_priority'], c['source_url'])):
         title = card['discovery_title']
+        if product_host(card['source_url']) == 'www.trendyol.com':
+            # Category cards can contain cases under brands such as Valoris or
+            # Genel Markalar while naming a phone in their title. This observed
+            # brand path is a negative discovery hint, never positive SKU proof.
+            brand = urlparse(card['source_url']).path.split('/')[1]
+            aliases = {a for names in matcher.PHONE_BRAND_ALIASES.values() for a in names}
+            if brand not in aliases:
+                continue
         # Capacity punctuation is observed on the category card itself.
         title = re.sub(r'(?<=\d)GB[/_](?=\d)', ' GB ', title, flags=re.I)
         owners = [p for p in products if matcher.is_strict_match(p['name'], title, specs[p['id']])]

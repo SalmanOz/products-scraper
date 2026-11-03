@@ -631,7 +631,7 @@ class TRPriceScraper:
             
         # 2. Avoid accessories, refurbished, and non-phone items
         bad_keywords = [
-            "kılıf", "case", "cam", "protector", "adaptör", "şarj", "kablo", "kulaklık", "earbuds", 
+            "kılıf", "kılıfı", "kılıflı", "case", "cam", "protector", "adaptör", "şarj", "kablo", "kulaklık", "earbuds", 
             "watch", "saat", "askı", "zincir", "koruyucu", "kapak", "film", "çanta", "stand", 
             "lens", "kordon", "askısı", "başlığı", "outlet", "teşhir", "yenilenmiş", "ikinci el",
             "revizyonlu", "refurbished", "kullanılmış", "tamirli", "b kalite", "a kalite", "c kalite",

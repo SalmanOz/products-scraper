@@ -31,6 +31,15 @@ PRODUCT = {'id': 1, 'slug': 'apple-iphone-15', 'name': 'Apple iPhone 15',
 
 
 class DiscoveryTests(unittest.TestCase):
+    def test_accessory_brand_destinations_do_not_take_a_phone_discovery_slot(self):
+        rows = [{'source_url': f'https://www.trendyol.com/{brand}/iphone-15-128gb-p-{10000+i}',
+                 'discovery_title': title, 'stock_priority': True}
+                for i, brand, title in [(0, 'valoris', 'Valoris iPhone 15 Telefon Kılıfı'),
+                                       (1, 'genel-markalar', 'Genel Markalar Apple iPhone 15 Volet Silikon'),
+                                       (2, 'apple', 'Apple iPhone 15 128GB Mavi')]]
+        found = match_catalog_destinations(rows, [PRODUCT])[1]
+        self.assertEqual([r['source_url'] for r in found], [rows[2]['source_url']])
+
     def test_explicit_matching_memory_hints_precede_omitted_memory_within_stock_priority(self):
         product = deepcopy(PRODUCT)
         product.update(name='Samsung Galaxy A36', attributes={'ram_gb': 6, 'storage_gb': 128})
