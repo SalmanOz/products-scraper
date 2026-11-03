@@ -1,4 +1,4 @@
-"""Bounded browser reads for reviewed Vatan PDPs when ordinary GET is denied.
+"""Bounded browser reads for catalog-matched Vatan PDPs after a denied GET.
 
 This module only returns HTML. The retailer reader must still prove the
 selected Product, its own Offer, visible cash price and current stock.
@@ -73,9 +73,32 @@ class VatanReviewedSource:
         self._robots_status = 'not_loaded'
         self._browser_requests = 0
         self._browser_successes = 0
+        self._catalog_urls = set()
+        self._browser_limit = MAX_BROWSER_REQUESTS
+        self._browser_failures = 0
+        self._browser_blocked = False
 
     def is_reviewed(self, url):
-        return url in self._urls
+        return url in self._urls or url in self._catalog_urls
+
+    def register_catalog_targets(self, product_name, targets, expected_specs):
+        """Admit exact catalog-matching URL hints; HTML still needs live proof."""
+        candidates = set()
+        for row in targets:
+            url = row.get('source_url') if isinstance(row, dict) else None
+            parsed = VatanSitemapSource._safe_product_url(url)
+            if parsed and VatanSitemapSource._variant_matches(parsed.path, product_name, expected_specs):
+                candidates.add(url)
+        with self._lock:
+            self._catalog_urls.update(candidates)
+
+    def configure_catalog_budget(self, product_count):
+        if type(product_count) is not int or product_count < 1:
+            raise ValueError('Catalog product count must be a positive integer')
+        with self._lock:
+            if self._last_site_request is not None or self._browser_requests:
+                raise RuntimeError('Configure the catalog budget before source requests')
+            self._browser_limit = max(MAX_BROWSER_REQUESTS, min(80, product_count))
 
     def _load_robots(self):
         if self._loaded:
@@ -116,7 +139,7 @@ class VatanReviewedSource:
                 self._robots_status = 'crawl_delay_exceeds_budget'
                 return
             self._rules = rules
-            self._delay = delay
+            self._delay = max(0.5, delay)
             self._robots_status = 'ready'
         except (requests.RequestException, ValueError, UnicodeError):
             self._robots_status = 'unavailable'
@@ -125,9 +148,11 @@ class VatanReviewedSource:
                 response.close()
 
     def prepare(self, url):
-        """Authorize and pace a reviewed exact PDP request, including direct GET."""
+        """Authorize and pace a registered exact PDP, including direct GET."""
         with self._lock:
-            if url not in self._urls:
+            if self._browser_blocked:
+                return False, 'source_circuit_open'
+            if not self.is_reviewed(url):
                 return False, 'not_reviewed'
             self._load_robots()
             if self._rules is None:
@@ -147,7 +172,7 @@ class VatanReviewedSource:
         if not allowed:
             return None, reason
         with self._lock:
-            if self._browser_requests >= MAX_BROWSER_REQUESTS:
+            if self._browser_requests >= self._browser_limit:
                 return None, 'browser_budget_exhausted'
             self._browser_requests += 1
         response = None
@@ -169,6 +194,10 @@ class VatanReviewedSource:
             if not isinstance(solution, dict):
                 return None, 'invalid_solution'
             if solution.get('status') != 200:
+                if solution.get('status') in (403, 429, 500, 502, 503, 504):
+                    with self._lock:
+                        self._browser_failures += 1
+                        self._browser_blocked = self._browser_failures >= 2
                 return None, f"site_http_{solution.get('status')}"
             if solution.get('url') != url:
                 return None, 'unexpected_final_url'
@@ -177,8 +206,12 @@ class VatanReviewedSource:
                 return None, 'invalid_or_oversized_html'
             with self._lock:
                 self._browser_successes += 1
+                self._browser_failures = 0
             return html, 'browser_html_ready'
         except (requests.RequestException, ValueError, TypeError, UnicodeError):
+            with self._lock:
+                self._browser_failures += 1
+                self._browser_blocked = self._browser_failures >= 2
             return None, 'browser_unavailable'
         finally:
             if response is not None:
@@ -188,5 +221,8 @@ class VatanReviewedSource:
         with self._lock:
             return {'robots_status': self._robots_status,
                     'reviewed_urls': len(self._urls),
+                    'catalog_discovered_urls': len(self._catalog_urls),
                     'browser_requests': self._browser_requests,
+                    'browser_request_limit': self._browser_limit,
+                    'source_circuit_open': self._browser_blocked,
                     'browser_html_responses': self._browser_successes}

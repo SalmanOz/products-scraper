@@ -38,6 +38,47 @@ def solver_result(url=VATAN_URL, html=None, status=200):
 
 
 class VatanReviewedSourceTests(unittest.TestCase):
+    def test_enlarged_catalog_budget_stops_after_two_real_browser_denials(self):
+        calls = []
+        def post(url, **_kwargs):
+            calls.append(url)
+            return solver_result(status=403)
+        source = VatanReviewedSource(get=lambda url, **_: response(url, ROBOTS),
+                                     post=post, sleep=lambda _: None)
+        source.configure_catalog_budget(110)
+        self.assertEqual(source.browser_get(VATAN_URL), (None, 'site_http_403'))
+        self.assertEqual(source.browser_get(VATAN_URL), (None, 'site_http_403'))
+        self.assertEqual(source.browser_get(VATAN_URL), (None, 'source_circuit_open'))
+        self.assertEqual(len(calls), 2)
+
+    def test_unlisted_catalog_variant_gets_live_browser_validation_without_a_profile(self):
+        url = VATAN_URL.replace('beyaz', 'siyah')
+        self.assertNotEqual(url, VATAN_URL)
+        calls = []
+        def get(target, **_):
+            return response(target, ROBOTS if target == ROBOTS_URL else 'denied',
+                            200 if target == ROBOTS_URL else 403)
+        body = vatan_variant_page(vatan_variant_schema()).replace(VATAN_URL, url)
+        def post(_url, **kwargs):
+            calls.append(kwargs['json']['url'])
+            return solver_result(url=url, html=body)
+        source = VatanReviewedSource(get=get, post=post, sleep=lambda _: None)
+        self.assertFalse(source.is_reviewed(url))
+        source.configure_catalog_budget(110)
+        source._browser_requests = MAX_BROWSER_REQUESTS
+        reader = RetailerOfferRefresher(fetch=get, vatan_source=source)
+        offers = reader.refresh_existing_offer_targets('Apple iPhone 17',
+                                                       [{'source_url': url}], SPECS)
+        self.assertEqual([(o['price'], o['url']) for o in offers], [(89999, url)])
+        self.assertEqual(calls, [url])
+        self.assertTrue(source.is_reviewed(url))
+        self.assertEqual(source.report()['browser_request_limit'], 80)
+        self.assertEqual(reader.refresh_existing_offer_targets('Apple iPhone 17',
+                     [{'source_url': url}], {**SPECS, 'storage_gb': 128}), [])
+        source.register_catalog_targets('Apple iPhone 17',
+                     [{'source_url': url.replace('256', '512')}], SPECS)
+        self.assertFalse(source.is_reviewed(url.replace('256', '512')))
+
     def test_only_exact_new_variant_vatan_url_is_browser_reviewed(self):
         source = VatanReviewedSource()
         self.assertTrue(source.is_reviewed(S25_FE_256_VATAN_URL))
@@ -120,7 +161,7 @@ class VatanReviewedSourceTests(unittest.TestCase):
         self.assertEqual(source.browser_get(VATAN_URL), (None, 'browser_budget_exhausted'))
         self.assertEqual(len(calls), MAX_BROWSER_REQUESTS)
 
-    def test_unreviewed_vatan_403_does_not_call_browser(self):
+    def test_catalog_candidate_with_unavailable_robots_does_not_reach_pdp_or_browser(self):
         calls = []
         def get(url, **_):
             calls.append(url)
@@ -130,7 +171,7 @@ class VatanReviewedSourceTests(unittest.TestCase):
         url = 'https://www.vatanbilgisayar.com/iphone-17-256-gb-akilli-telefon-siyah.html'
         self.assertEqual(reader.refresh_existing_offer_targets(
             'Apple iPhone 17', [{'source_url': url}], SPECS), [])
-        self.assertEqual(calls, [url])
+        self.assertEqual(calls, [ROBOTS_URL])
 
 
 if __name__ == '__main__':

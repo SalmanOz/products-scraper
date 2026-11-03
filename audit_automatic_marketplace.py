@@ -8,6 +8,8 @@ from retailer_offer_refresh import RetailerOfferRefresher
 from reviewed_offer_targets import with_reviewed_radio
 from update_prices import PriceUpdater
 from mediamarkt_source import _phone_hint_path, product_url
+from vatan_sitemap_source import VatanSitemapSource
+from offer_target_selection import select_offer_targets
 
 
 def main():
@@ -16,6 +18,8 @@ def main():
     status = client.get_public_price_priority()
     reader = RetailerOfferRefresher()
     updater = PriceUpdater(ingestion_client=client, offer_refresher=reader)
+    vatan = VatanSitemapSource()
+    reader.vatan_reviewed_source.configure_catalog_budget(12)
     products.sort(key=lambda p: (status.get(p['id'], ('', False))[1], -p['id']))
     queue = []
     for product in products:
@@ -26,7 +30,8 @@ def main():
         compact_stored = [row for row in product.get('offer_targets', [])
                           if isinstance(row, dict) and product_url(row.get('source_url'))
                           and _phone_hint_path(urlparse(row['source_url']).path)]
-        targets = list({row['source_url']: row for row in targets + compact_stored}.values())
+        vatan_targets = vatan.discover(product['name'], specs)
+        targets = list({row['source_url']: row for row in targets + compact_stored + vatan_targets}.values())
         if not targets:
             continue
         compact = any(_phone_hint_path(urlparse(t['source_url']).path) for t in targets)
@@ -37,7 +42,8 @@ def main():
                                  not item[3], -item[0]['id']))
     rows = []
     for product, specs, targets, compact in queue[:12]:
-        observed = reader.refresh_existing_offer_targets(product['name'], targets[:2], specs)
+        selected_targets = select_offer_targets(targets, maximum=2)
+        observed = reader.refresh_existing_offer_targets(product['name'], selected_targets, specs)
         proof_report = {}
         updater.hydrate_marketplace_target_proof(product, observed, proof_report)
         accepted = [offer for offer in observed if updater.live_offer_is_valid(product, offer, specs)]
@@ -49,16 +55,18 @@ def main():
                      'candidate_count': len(targets), 'observed': len(observed),
                      'prepared_count': len(prepared), 'prepared': prepared,
                      'rejected_by_catalog_or_seller': len(observed) - len(accepted),
-                     'attempts': reader.target_report(product['name'], targets[:2], specs)})
+                     'attempts': reader.target_report(product['name'], selected_targets, specs)})
     report = {'writes': False, 'catalog_count': len(products), 'rows': rows,
-              'source': reader.mediamarkt_source.report()}
+              'source': reader.mediamarkt_source.report(),
+              'vatan_sitemap': vatan.report(), 'vatan_pdp': reader.vatan_reviewed_source.report()}
     Path('automatic-marketplace-audit.json').write_text(json.dumps(report, ensure_ascii=False, indent=2))
     summary = ['### Automatic retailer pipeline (GET only)',
                f'Catalog: {len(products)}; candidate products: {len(rows)}; '
                f'prepared offers: {sum(row["prepared_count"] for row in rows)}',
                '', '| Model | Candidates | Observed | Prepared |', '|---|---:|---:|---:|']
     summary += [f'| {r["slug"]} | {r["candidate_count"]} | {r["observed"]} | {r["prepared_count"]} |' for r in rows]
-    summary += ['', json.dumps(report['source']), '', 'No ingestion or IndexNow calls.']
+    summary += ['', json.dumps(report['source']), json.dumps(report['vatan_sitemap']),
+                json.dumps(report['vatan_pdp']), '', 'No ingestion or IndexNow calls.']
     Path('automatic-marketplace-audit.md').write_text('\n'.join(summary))
     print('\n'.join(summary))
     return 0 if rows else 1

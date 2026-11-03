@@ -787,9 +787,8 @@ class RetailerOfferRefresher:
                 host = parsed.hostname.removeprefix('www.')
                 blocked = (host in self._blocked_hosts
                            or self._transient_blocked_until.get(host, 0) > self._clock())
-            # Generic discovery URLs can trip the retailer-wide circuit after
-            # a 403. Reviewed Vatan PDPs have their own exact-URL robots gate
-            # and bounded browser fallback, so keep those six independent.
+            # Vatan catalog-matched PDPs use their own robots gate, bounded
+            # browser fallback and failure circuit after a denied direct GET.
             if blocked and not reviewed_vatan:
                 self._record_attempt(source_url, 'host_circuit_open')
                 break
@@ -874,6 +873,9 @@ class RetailerOfferRefresher:
             return []
         from offer_target_selection import select_offer_targets
         selected_targets = select_offer_targets(targets, self.MAX_TARGETS_PER_REFRESH)
+        if isinstance(self.vatan_reviewed_source, VatanReviewedSource):
+            self.vatan_reviewed_source.register_catalog_targets(
+                product_name, selected_targets, expected_specs)
         urls = [row['source_url'] for row in selected_targets]
         by_merchant = {}
         for target in targets:
