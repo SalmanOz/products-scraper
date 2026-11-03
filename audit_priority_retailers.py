@@ -8,7 +8,7 @@ from bs4 import BeautifulSoup
 
 from offer_ingestion_client import OfferIngestionClient
 from priority_retailer_transport import HOSTS, PriorityRetailerTransport, product_host
-from retailer_offer_refresh import _schema_nodes, _type_is
+from retailer_offer_refresh import _safe_url, _schema_nodes, _type_is
 
 
 def queue(products, prices):
@@ -31,10 +31,29 @@ def queue(products, prices):
 def document_evidence(html, url):
     soup = BeautifulSoup(html, 'html.parser')
     products = [p for p in _schema_nodes(soup, url) if _type_is(p, 'Product')]
+    selected = []
+    for product in products[:2]:
+        offer = product.get('offers')
+        seller = offer.get('seller') if isinstance(offer, dict) else None
+        selected.append({**{key: product.get(key) for key in ('name', 'sku', 'gtin13')},
+                         'price': offer.get('price') if isinstance(offer, dict) else None,
+                         'schema_seller': seller.get('name') if isinstance(seller, dict) else seller})
+    carts = soup.select('#addToCartButton[data-product-id]')
+    cart = {key: carts[0].get(key) for key in ('data-product-id', 'data-product-ean',
+            'data-shop-name', 'data-product-shop-id', 'data-product-stock',
+            'data-product-stock-status', 'data-product-price')} if len(carts) == 1 else None
+    events = []
+    for node in soup.select('[data-hbus]'):
+        try:
+            data = json.loads(node['data-hbus']).get('data', {})
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if data.get('placement') == 'buybox' and data.get('component') in ('variant', 'Key Features'):
+            events.append({key: data.get(key) for key in ('component', 'merchant_name',
+                           'merchant_id', 'product_id', 'page_value', 'price')})
     return {'heading': [n.get_text(' ', strip=True)[:300] for n in soup.select('h1')][:2],
             'product_schemas': len(products),
-            'selected_schemas': [{key: p.get(key) for key in ('name', 'sku', 'gtin13')}
-                                 for p in products[:2]],
+            'selected_schemas': selected, 'teknosa_cart': cart, 'hb_selected_events': events,
             'hb_buy_box_events': len(soup.select('[data-hbus]')),
             'hb_redux': len(soup.select('script#reduxStore')),
             'teknosa_carts': len(soup.select('#addToCartButton[data-product-id]')),
@@ -58,6 +77,14 @@ def main():
             rows.append(row)
     report = {'purpose': 'automatic_priority_retailer_diagnosis', 'writes': False,
               'catalog_count': len(products), 'rows': rows, 'sources': transport.report()}
+    inventory = {host: [] for host in HOSTS}
+    for product in products:
+        for target in product.get('offer_targets', []):
+            url = target.get('source_url') if isinstance(target, dict) else None
+            parsed = _safe_url(url)
+            if parsed and parsed.hostname in inventory and len(inventory[parsed.hostname]) < 3:
+                inventory[parsed.hostname].append({'slug': product['slug'], 'url': url})
+    report['hint_inventory_sample'] = inventory
     Path('priority-retailer-audit.json').write_text(json.dumps(report, ensure_ascii=False, indent=2))
     lines = ['## Priority retailer catalog audit (GET only)',
              f'Catalog: {len(products)}; selected PDP hints: {len(rows)}; writes: false.',
@@ -70,6 +97,12 @@ def main():
     for row in rows:
         if row.get('heading'):
             lines.append(f"- {row['slug']}: " + '; '.join(row['heading']))
+            lines.append('  - Selected metadata: ' + json.dumps(row['selected_schemas'], ensure_ascii=False))
+            if row.get('teknosa_cart'):
+                lines.append('  - Selected cart: ' + json.dumps(row['teknosa_cart'], ensure_ascii=False))
+            if row.get('hb_selected_events'):
+                lines.append('  - Selected buy box: ' + json.dumps(row['hb_selected_events'], ensure_ascii=False))
+    lines += ['', 'Safe catalog hint sample: ' + json.dumps(inventory, ensure_ascii=False)]
     lines += ['', json.dumps(report['sources'], ensure_ascii=False),
               '', 'No catalog, price, score, or IndexNow writes. Documents are not offers.']
     Path('priority-retailer-audit.md').write_text('\n'.join(lines))
