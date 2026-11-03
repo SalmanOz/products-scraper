@@ -111,6 +111,12 @@ class PriceUpdater:
             if (not reviewed_marketplace_offer(offer, product['name'], expected_specs, product)
                     or not no_merchant_collision(product, profile, offer['url'])):
                 return False
+        elif offer.get('platform') == 'MediaMarkt':
+            from mediamarkt_marketplace_audit import generic_marketplace_offer
+            if (host != 'www.mediamarkt.com.tr'
+                    or not generic_marketplace_offer(offer, product['name'], expected_specs)
+                    or not no_merchant_collision(product, {'seller_name': merchant}, offer['url'])):
+                return False
         else:
             expected_merchant = self.offer_matcher._standardize_merchant_name(ALLOWED_HOSTS[host])
             if not merchant or merchant.casefold() != expected_merchant.casefold():

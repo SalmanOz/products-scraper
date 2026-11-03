@@ -646,6 +646,9 @@ class RetailerOfferRefresher:
         return rows
 
     def _offer_identity_matches(self, product_name, offer, expected_specs):
+        if offer.get('platform') == 'MediaMarkt' and offer.get('url') not in ALL_MARKETPLACE_PROFILES:
+            from mediamarkt_marketplace_audit import generic_marketplace_offer
+            return generic_marketplace_offer(offer, product_name, expected_specs)
         if offer.get('url') in ALL_MARKETPLACE_PROFILES:
             return reviewed_marketplace_offer(offer, product_name, expected_specs)
         return (self._scraper.is_strict_match(product_name, offer['source_title'], expected_specs)
@@ -869,26 +872,15 @@ class RetailerOfferRefresher:
     def refresh_existing_offer_targets(self, product_name, targets, expected_specs):
         if not isinstance(targets, (list, tuple)):
             return []
+        from offer_target_selection import select_offer_targets
+        selected_targets = select_offer_targets(targets, self.MAX_TARGETS_PER_REFRESH)
+        urls = [row['source_url'] for row in selected_targets]
         by_merchant = {}
-        seen = set()
         for target in targets:
             url = target.get('source_url') if isinstance(target, dict) else target
             parsed = _safe_url(url)
-            if parsed and url not in seen:
-                seen.add(url)
+            if parsed:
                 by_merchant.setdefault(ALLOWED_HOSTS[parsed.hostname], []).append(url)
-        # Search results often contain many colors from one retailer before the
-        # next retailer. Spend the bounded PDP budget across distinct merchants
-        # first, then try additional colors from each merchant in source order.
-        urls = []
-        for index in range(self.MAX_TARGETS_PER_REFRESH):
-            for bucket in by_merchant.values():
-                if index < len(bucket):
-                    urls.append(bucket[index])
-                    if len(urls) == self.MAX_TARGETS_PER_REFRESH:
-                        break
-            if len(urls) == self.MAX_TARGETS_PER_REFRESH:
-                break
         if not urls:
             return []
         selected = set(urls)

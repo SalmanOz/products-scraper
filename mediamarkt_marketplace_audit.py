@@ -429,3 +429,24 @@ def selected_marketplace_offer(html, final_url, *,
     if require_gtin_variant:
         result['selected_variant_sku'] = selected_variant_sku
     return result
+
+
+def generic_marketplace_offer(offer, product_name, expected_specs):
+    """Validate an automatically discovered selected seller, without SKU lists."""
+    if not isinstance(offer, dict) or not product_url(offer.get('url')):
+        return False
+    seller = offer.get('seller_name')
+    if (offer.get('platform') != 'MediaMarkt' or offer.get('condition') != 'new'
+            or not isinstance(seller, str) or not seller.strip() or len(seller) > 100
+            or re.search(r'[\x00-\x1f\x7f]', seller)
+            or offer.get('merchant') != seller
+            or not re.fullmatch(r'\d{1,15}', str(offer.get('seller_id', '')))
+            or not re.fullmatch(r'\d{1,15}', str(offer.get('offer_id', '')))
+            or not re.fullmatch(r'\d{6,12}', str(offer.get('sku', '')))
+            or not offer['url'].endswith('-' + str(offer['sku']) + '.html')
+            or _gtin13(offer.get('gtin13')) is None
+            or offer.get('currency') != 'TRY'
+            or offer.get('availability') not in {'in_stock', 'limited'}
+            or _price(offer.get('price'), allow_cents=True) is None):
+        return False
+    return catalog_variant_matches(offer, product_name, expected_specs)

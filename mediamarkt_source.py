@@ -394,6 +394,15 @@ class MediaMarktSource:
                 elif reason != 'ready':
                     return None, reason, status
                 offer = _selected_offer(body, current)
+                if offer is None:
+                    # The same fetched document can contain a selected marketplace
+                    # seller. Preserve that identity instead of calling it MediaMarkt.
+                    from mediamarkt_marketplace_audit import selected_marketplace_offer
+                    evidence = (selected_marketplace_offer(body, current) or
+                                selected_marketplace_offer(body, current, allow_cents=True))
+                    if evidence is not None:
+                        offer = {**evidence, 'merchant': evidence['seller_name'],
+                                 'observed_at': self._now().isoformat().replace('+00:00', 'Z')}
                 if offer is None and self._rejected_offer_observer is not None:
                     try:
                         self._rejected_offer_observer(current, body)

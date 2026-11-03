@@ -84,16 +84,9 @@ def daily_offer_targets(product, expected_specs):
         same_radio = expected_specs.get('network_generation') == profile.get('network_generation')
         if same_memory and same_radio:
             seeds.extend(profile['targets'])
-    stored = [row.get('source_url') for row in product.get('offer_targets', [])
-              if isinstance(row, dict)]
-    urls = list(dict.fromkeys(u for u in [*seeds, *stored] if _safe_url(u)))
-    first, rest, merchants = [], [], set()
-    for url in urls:
-        merchant = ALLOWED_HOSTS[_safe_url(url).hostname]
-        row = {'merchant_name': merchant, 'source_url': url}
-        if merchant in merchants:
-            rest.append(row)
-        else:
-            first.append(row)
-            merchants.add(merchant)
-    return (first + rest)[:12]
+    # Stored seller identities must survive planning; platform-only grouping
+    # otherwise spends the budget on old colors before a second real seller.
+    from offer_target_selection import select_offer_targets
+    return select_offer_targets(
+        [{'source_url': url} for url in seeds] +
+        [row for row in product.get('offer_targets', []) if isinstance(row, dict)])

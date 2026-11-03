@@ -1,0 +1,44 @@
+name: Automatic Retailer Pipeline Audit
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: teknoskor-automatic-retailer-readonly-audit
+  cancel-in-progress: false
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python -m unittest -q test_automatic_marketplace_refresh test_reviewed_offer_targets test_retailer_offer_refresh test_price_refresh_orchestration test_mediamarkt_source test_mediamarkt_marketplace_audit
+      - name: Start existing browser GET transport
+        run: |
+          docker run -d --name=retailer-audit-browser -p 8191:8191 -e LOG_LEVEL=info ghcr.io/flaresolverr/flaresolverr:latest
+          for attempt in {1..30}; do
+            if curl --fail --silent http://localhost:8191/ > /dev/null; then exit 0; fi
+            sleep 2
+          done
+          exit 1
+      - name: Automatically discover catalog candidates and verify PDPs without writing
+        env:
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+        run: python audit_automatic_marketplace.py
+      - if: always()
+        run: |
+          if test -f automatic-marketplace-audit.md; then cat automatic-marketplace-audit.md >> "$GITHUB_STEP_SUMMARY"; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: automatic-retailer-audit-${{ github.run_id }}
+          path: automatic-marketplace-audit.*
+          retention-days: 14
