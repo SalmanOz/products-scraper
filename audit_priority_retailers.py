@@ -109,6 +109,9 @@ def inspect_target(transport, url, product):
     elif host == 'www.n11.com':
         from n11_catalog_source import catalog_request_url
         observed_url = catalog_request_url(url)
+    elif host == 'www.teknosa.com':
+        from teknosa_seller_cards import canonical_document_url
+        observed_url = canonical_document_url(url)
     html, reason, status = transport.read_document(observed_url)
     row = {'retailer': HOSTS[host], 'slug': product['slug'], 'url': url,
            'observed_url': observed_url, 'reason': reason, 'http_status': status}
@@ -125,6 +128,10 @@ def inspect_target(transport, url, product):
             offer, why = parse_catalog_offer(html, url,
                 {'name': product['name'], 'specs': specs})
             row.update(reader_reason=why, prepared_offer=offer)
+            if offer is not None and url == observed_url:
+                from teknosa_seller_cards import public_seller_offers
+                row['additional_prepared_offers'] = public_seller_offers(html, observed_url,
+                    {'name': product['name'], 'specs': specs}, maximum=3)
         if host == 'www.hepsiburada.com':
             from hepsiburada_catalog_source import parse_catalog_buy_box
             specs = with_reviewed_radio(product, PriceUpdater.get_expected_specs(product.get('attributes')))

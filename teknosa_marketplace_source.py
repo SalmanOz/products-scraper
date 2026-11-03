@@ -126,7 +126,9 @@ def catalog_offer_matches(offer, name, specs):
             and offer.get('merchant') == offer.get('selected_teknosa_seller')
             and offer.get('merchant_id') == offer.get('selected_teknosa_shop_id')
             and product_host(offer.get('url')) == 'www.teknosa.com'
-            and offer.get('url', '').endswith('-p-' + str(offer.get('sku')))
+            and urlparse(offer.get('url', '')).path.endswith('-p-' + str(offer.get('sku')))
+            and (not urlparse(offer['url']).query or
+                 urlparse(offer['url']).query == 'shopId=' + str(offer.get('merchant_id')))
             and _gtin13(offer.get('gtin13')) is not None
             and offer.get('currency') == 'TRY' and offer.get('condition') == 'new'
             and offer.get('availability') == 'in_stock'

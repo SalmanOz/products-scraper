@@ -60,6 +60,9 @@ def product_host(url):
                 allowed = {'magaza'} if parsed.netloc == 'www.hepsiburada.com' else {'magaza', 'renk', 'dahili-hafiza'}
                 if key not in allowed or not re.fullmatch(r'[\w .&()-]{1,100}', value):
                     return None
+            elif parsed.netloc == 'www.teknosa.com':
+                if key != 'shopId' or not re.fullmatch(r'[1-9]\d{2,9}', value):
+                    return None
             else:
                 return None
         return parsed.netloc

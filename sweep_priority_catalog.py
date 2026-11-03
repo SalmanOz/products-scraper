@@ -27,6 +27,9 @@ def observed_url(url):
     if host == 'www.n11.com':
         from n11_catalog_source import catalog_request_url
         return catalog_request_url(url)
+    if host == 'www.teknosa.com':
+        from teknosa_seller_cards import canonical_document_url
+        return canonical_document_url(url)
     return url
 
 
@@ -70,9 +73,14 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
               'rows': [], 'accepted': 0, 'discovery': [], 'models_without_priority_hints': sorted(
                   {p['slug'] for p in products} - {p['slug'] for _, p in targets})}
     publication_failed = False
-    def process_target(url, product):
+    processed = set()
+    def process_target(url, product, audited_row=None):
         nonlocal publication_failed
-        row = inspect_target(transport, url, product)
+        if (product['slug'], url) in processed:
+            return
+        processed.add((product['slug'], url))
+        row = audited_row if audited_row is not None else inspect_target(transport, url, product)
+        extra_offers = row.pop('additional_prepared_offers', [])
         row['expected_specs'] = product.get('attributes') and {
             key: value for key, value in PriceUpdater.get_expected_specs(
                 product['attributes']).items() if key in ('ram_gb', 'storage_gb')}
@@ -104,6 +112,17 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
         result['sources'] = transport.report()
         if checkpoint:
             checkpoint(result)
+        for offer in extra_offers:
+            destination = offer.get('url')
+            if ((product['slug'], destination) in processed or product_host(destination) != 'www.teknosa.com'
+                    or offer.get('source_offer_scope') != 'public_other_seller_row'
+                    or offer.get('source_document_url') != row.get('observed_url')):
+                continue
+            result['queued'] += 1
+            process_target(destination, product, audited_row={
+                'slug': product['slug'], 'retailer': 'Teknosa', 'url': destination,
+                'observed_url': offer['source_document_url'], 'reason': 'document_read', 'http_status': 200,
+                'document_reused': True, 'reader_reason': 'observed_public_seller_card', 'prepared_offer': offer})
     try:
         for url, product in targets:
             process_target(url, product)
@@ -182,7 +201,8 @@ def coverage_readback(result, current):
     priced = sum(row[1] is True for row in current.values())
     return {'catalog': len(current), 'priced': priced, 'ratio': priced / len(current),
             'minimum_ratio': 0.5, 'passed': priced / len(current) >= 0.5,
-            'documents_read': sum(row.get('reason') == 'document_read' for row in result['rows']),
+            'documents_read': sum(row.get('reason') == 'document_read' and not row.get('document_reused')
+                                  for row in result['rows']),
             'source_cooldown_skips': sum(row.get('reason') == 'source_cooldown' for row in result['rows']),
             'source_circuit_skips': sum(row.get('reason') == 'source_circuit_open' for row in result['rows'])}
 

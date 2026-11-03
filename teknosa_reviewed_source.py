@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from urllib.parse import urlparse
 import time
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
@@ -186,6 +187,9 @@ def parse_exact_first_party_offer(html: str, final_url: str = URL, catalog_profi
 
 
 def parse_catalog_offer(html, url, profile):
+    if urlparse(url).query:
+        from teknosa_seller_cards import parse_seller_destination
+        return parse_seller_destination(html, url, profile)
     offer, reason = parse_exact_first_party_offer(html, url, profile)
     if offer is not None:
         offer['platform'] = 'Teknosa'
@@ -201,6 +205,7 @@ class TeknosaCatalogSource:
         self.transport = transport or PriorityRetailerTransport(get=get, post=post, maximum_per_host=6)
         self._profiles = {}
         self._ambiguous = set()
+        self._documents = {}
 
     def register_catalog_targets(self, name, targets, specs):
         from priority_retailer_transport import product_host
@@ -221,10 +226,31 @@ class TeknosaCatalogSource:
     def read_offer(self, url):
         if url not in self._profiles or url in self._ambiguous:
             return None, 'unmatched_catalog_pdp', None
-        html, reason, status = self.transport.read_document(url)
+        from teknosa_seller_cards import canonical_document_url
+        document_url = canonical_document_url(url)
+        if document_url is None:
+            return None, 'invalid_catalog_pdp', None
+        cached = self._documents.get(document_url)
+        if cached is not None:
+            html, observed_at, status = cached
+            age = (datetime.now(timezone.utc) - datetime.fromisoformat(observed_at)).total_seconds()
+            if not 0 <= age <= 60:
+                return None, 'source_document_observation_expired', status
+        else:
+            html, reason, status = self.transport.read_document(document_url)
+            observed_at = datetime.now(timezone.utc).isoformat()
+            if html is not None:
+                for key, entry in list(self._documents.items()):
+                    if (datetime.now(timezone.utc) - datetime.fromisoformat(entry[1])).total_seconds() > 60:
+                        self._documents.pop(key)
+                if len(self._documents) >= 8:
+                    self._documents.pop(next(iter(self._documents)))
+                self._documents[document_url] = (html, observed_at, status)
         if html is None:
             return None, reason, status
         offer, reason = parse_catalog_offer(html, url, self._profiles[url])
+        if offer is not None:
+            offer['observed_at'] = observed_at
         return offer, reason, status
 
     def report(self):
