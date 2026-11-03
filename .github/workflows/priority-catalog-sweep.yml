@@ -1,0 +1,59 @@
+name: Priority Retailer Full Catalog Recovery
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Reverify and publish proven existing-catalog offers during this one sweep'
+        type: boolean
+        required: true
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: ${{ inputs.publish && 'teknoskor-daily-data-sync' || 'teknoskor-priority-catalog-sweep-audit' }}
+  cancel-in-progress: false
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Test full queue and live publication boundaries
+        run: python -m unittest -q test_priority_catalog_sweep test_priority_candidates test_priority_retailers test_hepsiburada_catalog_source test_trendyol_catalog_source test_teknosa_catalog_source test_raw_seller_collision_proof
+      - name: Start existing public document GET service
+        run: |
+          docker run -d --name=priority-sweep-browser -p 8191:8191 -e LOG_LEVEL=info ghcr.io/flaresolverr/flaresolverr:latest
+          for attempt in {1..30}; do
+            if curl --fail --silent http://localhost:8191/ > /dev/null; then exit 0; fi
+            sleep 2
+          done
+          exit 1
+      - name: Inspect the entire priority catalog queue and optionally publish fresh proven offers
+        env:
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+          PUBLISH: ${{ inputs.publish }}
+        run: |
+          if test "$PUBLISH" = true; then
+            python -u sweep_priority_catalog.py --publish
+          else
+            python -u sweep_priority_catalog.py
+          fi
+      - name: Summarize queue coverage and remaining reasons
+        if: always()
+        run: |
+          if test -f priority-catalog-sweep.md; then cat priority-catalog-sweep.md >> "$GITHUB_STEP_SUMMARY"; fi
+          docker logs priority-sweep-browser 2>&1 | tail -200
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: priority-catalog-sweep-${{ github.run_id }}
+          path: priority-catalog-sweep.*
+          retention-days: 30

@@ -61,7 +61,32 @@ def document_evidence(html, url):
         if isinstance(data, dict) and data.get('placement') == 'buybox' and data.get('component') in ('variant', 'Key Features'):
             events.append({key: data.get(key) for key in ('component', 'merchant_name',
                            'merchant_id', 'product_id', 'page_value', 'price')})
+    # Product facts only: never copy entire scripts, customer/session state,
+    # merchant legal contacts, or tracking values into the diagnostic report.
+    physical = {'hb_technical': [n.get_text(' ', strip=True)[:2500]
+                                for n in soup.select('#techSpecs[data-test-id="KeyFeaturesTable"]')][:1]}
+    for script in soup.select('script'):
+        body = script.get_text()
+        marker = 'window["__envoy__SHARED_PROPS"]'
+        if marker not in body:
+            continue
+        import re
+        match = re.search(re.escape(marker) + r'\s*=\s*', body)
+        if not match:
+            continue
+        try:
+            state, _ = json.JSONDecoder().raw_decode(body[match.end():])
+            product = state.get('product', {})
+            physical['trendyol_attributes'] = [
+                {'key': item['key']['name'], 'value': item['value'].get('name')}
+                for item in product.get('attributes', [])
+                if isinstance(item, dict) and isinstance(item.get('key'), dict)
+                and isinstance(item.get('value'), dict) and item['key'].get('name') in
+                ('RAM Kapasitesi', 'Dahili Hafıza', 'Mobil Bağlantı Hızı')][:8]
+        except (ValueError, TypeError, AttributeError, KeyError):
+            pass
     return {'heading': [n.get_text(' ', strip=True)[:300] for n in soup.select('h1')][:2],
+            'physical_facts': physical,
             'product_schemas': len(products),
             'selected_schemas': selected, 'teknosa_cart': cart, 'hb_selected_events': events,
             'hb_buy_box_events': len(soup.select('[data-hbus]')),
@@ -72,6 +97,41 @@ def document_evidence(html, url):
             'n11_price_nodes': len(soup.select('[itemprop="price"], #newPrice, .newPrice'))}
 
 
+def inspect_target(transport, url, product):
+    host = product_host(url)
+    observed_url = url
+    if host == 'www.hepsiburada.com':
+        from hepsiburada_catalog_source import catalog_request_url
+        observed_url = catalog_request_url(url)
+    elif host == 'www.trendyol.com':
+        from trendyol_catalog_source import catalog_request_url
+        observed_url = catalog_request_url(url)
+    html, reason, status = transport.read_document(observed_url)
+    row = {'retailer': HOSTS[host], 'slug': product['slug'], 'url': url,
+           'observed_url': observed_url, 'reason': reason, 'http_status': status}
+    if html is not None:
+        row.update(document_evidence(html, url))
+        if host == 'www.teknosa.com':
+            from teknosa_reviewed_source import parse_exact_first_party_offer
+            specs = with_reviewed_radio(product, PriceUpdater.get_expected_specs(product.get('attributes')))
+            offer, why = parse_exact_first_party_offer(html, url,
+                {'name': product['name'], 'specs': specs})
+            row.update(reader_reason=why, prepared_offer=offer)
+        if host == 'www.hepsiburada.com':
+            from hepsiburada_catalog_source import parse_catalog_buy_box
+            specs = with_reviewed_radio(product, PriceUpdater.get_expected_specs(product.get('attributes')))
+            offer, why = parse_catalog_buy_box(html, observed_url, product['name'], specs)
+            row.update(reader_reason=why, prepared_offer=offer)
+        if host == 'www.trendyol.com':
+            from trendyol_catalog_source import parse_catalog_listing
+            specs = with_reviewed_radio(product, PriceUpdater.get_expected_specs(product.get('attributes')))
+            final_url = transport.resolved_url(observed_url)
+            offer, why = parse_catalog_listing(html, final_url, product['name'], specs)
+            row['resolved_url'] = final_url
+            row.update(reader_reason=why, prepared_offer=offer)
+    return row
+
+
 def main():
     client = OfferIngestionClient.from_env()
     products, prices = client.get_published_products(), client.get_public_price_priority()
@@ -79,36 +139,7 @@ def main():
     rows = []
     for host, targets in queue(products, prices, maximum=8, spread=True).items():
         for url, product in targets:
-            observed_url = url
-            if host == 'www.hepsiburada.com':
-                from hepsiburada_catalog_source import catalog_request_url
-                observed_url = catalog_request_url(url)
-            elif host == 'www.trendyol.com':
-                from trendyol_catalog_source import catalog_request_url
-                observed_url = catalog_request_url(url)
-            html, reason, status = transport.read_document(observed_url)
-            row = {'retailer': HOSTS[host], 'slug': product['slug'], 'url': url,
-                   'observed_url': observed_url, 'reason': reason, 'http_status': status}
-            if html is not None:
-                row.update(document_evidence(html, url))
-                if host == 'www.teknosa.com':
-                    from teknosa_reviewed_source import parse_exact_first_party_offer
-                    specs = with_reviewed_radio(product, PriceUpdater.get_expected_specs(product.get('attributes')))
-                    offer, why = parse_exact_first_party_offer(html, url,
-                        {'name': product['name'], 'specs': specs})
-                    row.update(reader_reason=why, prepared_offer=offer)
-                if host == 'www.hepsiburada.com':
-                    from hepsiburada_catalog_source import parse_catalog_buy_box
-                    specs = with_reviewed_radio(product, PriceUpdater.get_expected_specs(product.get('attributes')))
-                    offer, why = parse_catalog_buy_box(html, observed_url, product['name'], specs)
-                    row.update(reader_reason=why, prepared_offer=offer)
-                if host == 'www.trendyol.com':
-                    from trendyol_catalog_source import parse_catalog_listing
-                    specs = with_reviewed_radio(product, PriceUpdater.get_expected_specs(product.get('attributes')))
-                    final_url = transport.resolved_url(observed_url)
-                    offer, why = parse_catalog_listing(html, final_url, product['name'], specs)
-                    row['resolved_url'] = final_url
-                    row.update(reader_reason=why, prepared_offer=offer)
+            row = inspect_target(transport, url, product)
             rows.append(row)
     report = {'purpose': 'automatic_priority_retailer_diagnosis', 'writes': False,
               'catalog_count': len(products), 'rows': rows, 'sources': transport.report()}
