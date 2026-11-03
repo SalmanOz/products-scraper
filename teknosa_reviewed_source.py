@@ -50,9 +50,22 @@ def _cash_price(text):
     return _amount(match[1].replace('.', '').replace(',', '.')) if match else None
 
 
-def parse_exact_first_party_offer(html: str, final_url: str = URL):
+def parse_exact_first_party_offer(html: str, final_url: str = URL, catalog_profile=None):
     """Return an offer only when the selected first-party buy box is provable."""
-    if (final_url != URL or not isinstance(html, str)
+    generic = catalog_profile is not None
+    name, specs, product_id = NAME, SPECS, PRODUCT_ID
+    if generic:
+        from priority_retailer_transport import product_host
+        if (not isinstance(catalog_profile, dict)
+                or product_host(final_url) != 'www.teknosa.com'):
+            return None, 'wrong_or_oversized_pdp'
+        name, specs = catalog_profile.get('name'), catalog_profile.get('specs')
+        if (not isinstance(name, str) or not isinstance(specs, dict)
+                or not TRPriceScraper._spec_int(specs.get('ram_gb'))
+                or not TRPriceScraper._spec_int(specs.get('storage_gb'))):
+            return None, 'catalog_variant_missing'
+        product_id = final_url.rsplit('-p-', 1)[1]
+    if ((not generic and final_url != URL) or not isinstance(html, str)
             or len(html.encode('utf-8')) > MAX_HTML_BYTES):
         return None, 'wrong_or_oversized_pdp'
     soup = BeautifulSoup(html, 'html.parser')
@@ -64,8 +77,8 @@ def parse_exact_first_party_offer(html: str, final_url: str = URL):
         return None, 'selected_title_missing'
     title = headings[0].get_text(' ', strip=True)
     matcher = TRPriceScraper()
-    if (not matcher.is_strict_match(NAME, title, SPECS)
-            or not re.search(r'\bBeyaz\b', title, re.I)
+    if (not matcher.is_strict_match(name, title, specs)
+            or not generic and not re.search(r'\bBeyaz\b', title, re.I)
             or re.search(r'outlet|teşhir|teshir|yenilen|ikinci el', title, re.I)):
         return None, 'selected_variant_mismatch'
 
@@ -87,18 +100,18 @@ def parse_exact_first_party_offer(html: str, final_url: str = URL):
             if isinstance(graph, list):
                 products.extend(item for item in graph if isinstance(item, dict)
                                 and item.get('@type') == 'Product')
-    products = [node for node in products if node.get('sku') == PRODUCT_ID]
-    if (len(pages) != 1 or pages[0].get('url') != URL
+    products = [node for node in products if str(node.get('sku')) == product_id]
+    if (len(pages) != 1 or pages[0].get('url') != final_url
             or len(products) != 1):
         return None, 'schema_identity_missing'
     product = products[0]
     if (product.get('name') != title
-            or not matcher.is_strict_match(NAME, str(product.get('name') or ''), SPECS)):
+            or not matcher.is_strict_match(name, str(product.get('name') or ''), specs)):
         return None, 'schema_variant_mismatch'
     offer = product.get('offers')
     seller = offer.get('seller') if isinstance(offer, dict) else None
     if (not isinstance(offer, dict) or offer.get('@type') != 'Offer'
-            or offer.get('url') != URL or offer.get('priceCurrency') != 'TRY'
+            or offer.get('url') != final_url or offer.get('priceCurrency') != 'TRY'
             or not str(offer.get('availability', '')).rstrip('/').endswith('/InStock')
             or not str(offer.get('itemCondition', '')).rstrip('/').endswith('/NewCondition')
             or not isinstance(seller, dict) or seller.get('name') != 'TEKNOSA'):
@@ -123,12 +136,19 @@ def parse_exact_first_party_offer(html: str, final_url: str = URL):
     if len(carts) != 1:
         return None, 'selected_cart_missing'
     cart = carts[0]
+    ean = EAN
+    if generic:
+        from mediamarkt_marketplace_audit import _gtin13
+        ean = _gtin13(cart.get('data-product-ean'))
+        if ean is None or any(product.get(key) is not None and str(product[key]) != ean
+                              for key in ('gtin', 'gtin13')):
+            return None, 'selected_gtin_missing_or_conflicting'
     if (cart.has_attr('disabled') or cart.get('aria-disabled') == 'true'
             or cart.get_text(' ', strip=True) != 'Sepete Ekle'
-            or cart.get('data-product-id') != PRODUCT_ID
-            or cart.get('data-product-ean') != EAN
+            or cart.get('data-product-id') != product_id
+            or cart.get('data-product-ean') != ean
             or cart.get('data-product-name') != title
-            or cart.get('data-product-url') != '/' + URL.split('/', 3)[3]
+            or cart.get('data-product-url') != '/' + final_url.split('/', 3)[3]
             or cart.get('data-shop-name') != 'TEKNOSA'
             or cart.get('data-product-shop-id') != '1001'
             or cart.get('data-product-stock') != 'Y'
@@ -137,11 +157,48 @@ def parse_exact_first_party_offer(html: str, final_url: str = URL):
             or _amount(cart.get('data-product-discounted-price')) != price):
         return None, 'selected_cart_offer_mismatch'
     result = {'merchant': 'Teknosa', 'price': float(price), 'currency': 'TRY',
-              'availability': 'in_stock', 'source_title': title, 'url': URL,
+              'availability': 'in_stock', 'source_title': title, 'url': final_url,
               'observed_at': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')}
-    if not matcher.has_observed_offer_evidence(NAME, result, SPECS):
+    if not matcher.has_observed_offer_evidence(name, result, specs):
         return None, 'catalog_variant_mismatch'
     return result, 'observed_exact_first_party_cash_offer'
+
+
+class TeknosaCatalogSource:
+    """Catalog-selected SKU URLs; no per-phone profile or remembered price."""
+    def __init__(self, get=None, post=None, transport=None):
+        from priority_retailer_transport import PriorityRetailerTransport
+        self.transport = transport or PriorityRetailerTransport(get=get, post=post, maximum_per_host=6)
+        self._profiles = {}
+        self._ambiguous = set()
+
+    def register_catalog_targets(self, name, targets, specs):
+        from priority_retailer_transport import product_host
+        matcher = TRPriceScraper()
+        for target in targets:
+            url = target.get('source_url') if isinstance(target, dict) else None
+            if (url == URL or product_host(url) != 'www.teknosa.com'
+                    or not matcher.is_strict_match(name, url.split('/', 3)[3].replace('-', ' '), specs)):
+                continue
+            profile = {'name': name, 'specs': dict(specs)}
+            if url in self._profiles and self._profiles[url] != profile:
+                self._ambiguous.add(url)
+            self._profiles[url] = profile
+
+    def configure_catalog_budget(self, count):
+        self.transport.configure_catalog_budget(count)
+
+    def read_offer(self, url):
+        if url not in self._profiles or url in self._ambiguous:
+            return None, 'unmatched_catalog_pdp', None
+        html, reason, status = self.transport.read_document(url)
+        if html is None:
+            return None, reason, status
+        offer, reason = parse_exact_first_party_offer(html, url, self._profiles[url])
+        return offer, reason, status
+
+    def report(self):
+        return self.transport.report()
 
 
 class TeknosaReviewedSource:

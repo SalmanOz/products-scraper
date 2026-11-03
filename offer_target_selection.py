@@ -1,6 +1,8 @@
 """Bounded refresh planning across checkout platforms and actual sellers."""
 from retailer_offer_refresh import ALLOWED_HOSTS, _safe_url
 
+PRIORITY_RETAILERS = {'Hepsiburada': 0, 'Trendyol': 1, 'n11': 2, 'Teknosa': 3}
+
 
 def select_offer_targets(targets, maximum=12):
     unique = {}
@@ -29,4 +31,5 @@ def select_offer_targets(targets, maximum=12):
         else:
             variants.append(row)
         seen_sellers.add(identity)
+    platforms.sort(key=lambda row: PRIORITY_RETAILERS.get(row['merchant_name'], 4))
     return (platforms + sellers + variants)[:maximum]

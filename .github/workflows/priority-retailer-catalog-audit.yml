@@ -19,7 +19,7 @@ jobs:
           python-version: '3.11'
           cache: pip
       - run: pip install -r requirements.txt
-      - run: python -m unittest -q test_priority_retailers
+      - run: python -m unittest -q test_priority_retailers test_teknosa_catalog_source test_teknosa_reviewed_source
       - name: Start existing public document GET transport
         run: |
           docker run -d --name=priority-retailer-browser -p 8191:8191 -e LOG_LEVEL=info ghcr.io/flaresolverr/flaresolverr:latest

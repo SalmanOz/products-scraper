@@ -99,8 +99,8 @@ class ReviewedDailyTargetTests(unittest.TestCase):
         specs = {key: profile[key] for key in ('ram_gb', 'storage_gb', 'network_generation')}
         targets = daily_offer_targets(product, specs)
         self.assertEqual([row['source_url'] for row in targets], [
-            profile['targets'][0], profile['targets'][1],
-            profile['targets'][2], profile['targets'][3],
+            profile['targets'][2], profile['targets'][0],
+            profile['targets'][1], profile['targets'][3],
         ])
         self.assertEqual({row['merchant_name'] for row in targets[:3]},
                          {'MediaMarkt', 'Vatan Bilgisayar', 'Hepsiburada'})

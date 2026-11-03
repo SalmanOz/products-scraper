@@ -74,6 +74,14 @@ class PriorityRetailerTransport:
         self._states = {}
         self._lock = RLock()
 
+    def configure_catalog_budget(self, count):
+        if type(count) is not int or count < 1:
+            raise ValueError('Invalid catalog size')
+        with self._lock:
+            if self._states:
+                raise RuntimeError('Configure before source reads')
+            self._maximum = max(self._maximum, min(60, count))
+
     def _read(self, url, limit, accept, state):
         last = state.get('last')
         if last is not None:

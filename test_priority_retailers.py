@@ -15,6 +15,14 @@ URLS = (
 
 
 class PriorityRetailerTests(unittest.TestCase):
+    def test_refresh_budget_reserves_the_four_requested_retailers_first(self):
+        from offer_target_selection import select_offer_targets
+        other = [{'source_url': 'https://www.idefix.com/phone-p-123'},
+                 {'source_url': 'https://www.mediamarkt.com.tr/tr/product/_phone-123456.html'}]
+        selected = select_offer_targets(other + [{'source_url': url} for url in reversed(URLS)], maximum=4)
+        self.assertEqual([row['merchant_name'] for row in selected],
+                         ['Hepsiburada', 'Trendyol', 'n11', 'Teknosa'])
+
     def test_only_exact_priority_pdp_shapes_and_bounded_seller_queries(self):
         for url in URLS:
             self.assertIsNotNone(product_host(url))

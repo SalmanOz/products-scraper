@@ -274,7 +274,7 @@ class PriceRefreshOrchestrationTests(unittest.TestCase):
         self.assertEqual(len(discovery.calls), 1)
         self.assertEqual(client.submissions, [])
         self.assertEqual(client.catalog, catalog_before)
-        self.assertEqual([r['source_url'] for r in refresher.calls[0][1]],
+        self.assertCountEqual([r['source_url'] for r in refresher.calls[0][1]],
                          [r['source_url'] for r in catalog_before[0]['offer_targets']])
 
     def test_search_price_alone_cannot_renew_or_replace_a_real_offer(self):

@@ -9,6 +9,8 @@ from bs4 import BeautifulSoup
 from offer_ingestion_client import OfferIngestionClient
 from priority_retailer_transport import HOSTS, PriorityRetailerTransport, product_host
 from retailer_offer_refresh import _safe_url, _schema_nodes, _type_is
+from reviewed_offer_targets import with_reviewed_radio
+from update_prices import PriceUpdater
 
 
 def queue(products, prices):
@@ -48,7 +50,7 @@ def document_evidence(html, url):
             data = json.loads(node['data-hbus']).get('data', {})
         except (TypeError, ValueError, AttributeError):
             continue
-        if data.get('placement') == 'buybox' and data.get('component') in ('variant', 'Key Features'):
+        if isinstance(data, dict) and data.get('placement') == 'buybox' and data.get('component') in ('variant', 'Key Features'):
             events.append({key: data.get(key) for key in ('component', 'merchant_name',
                            'merchant_id', 'product_id', 'page_value', 'price')})
     return {'heading': [n.get_text(' ', strip=True)[:300] for n in soup.select('h1')][:2],
@@ -74,6 +76,12 @@ def main():
                    'reason': reason, 'http_status': status}
             if html is not None:
                 row.update(document_evidence(html, url))
+                if host == 'www.teknosa.com':
+                    from teknosa_reviewed_source import parse_exact_first_party_offer
+                    specs = with_reviewed_radio(product, PriceUpdater.get_expected_specs(product.get('attributes')))
+                    offer, why = parse_exact_first_party_offer(html, url,
+                        {'name': product['name'], 'specs': specs})
+                    row.update(reader_reason=why, prepared_offer=offer)
             rows.append(row)
     report = {'purpose': 'automatic_priority_retailer_diagnosis', 'writes': False,
               'catalog_count': len(products), 'rows': rows, 'sources': transport.report()}
@@ -102,6 +110,9 @@ def main():
                 lines.append('  - Selected cart: ' + json.dumps(row['teknosa_cart'], ensure_ascii=False))
             if row.get('hb_selected_events'):
                 lines.append('  - Selected buy box: ' + json.dumps(row['hb_selected_events'], ensure_ascii=False))
+            if row.get('reader_reason'):
+                lines.append('  - Catalog reader: ' + row['reader_reason'] + '; ' +
+                             json.dumps(row.get('prepared_offer'), ensure_ascii=False))
     lines += ['', 'Safe catalog hint sample: ' + json.dumps(inventory, ensure_ascii=False)]
     lines += ['', json.dumps(report['sources'], ensure_ascii=False),
               '', 'No catalog, price, score, or IndexNow writes. Documents are not offers.']

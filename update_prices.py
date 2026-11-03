@@ -545,6 +545,9 @@ class PriceUpdater:
             pasaj_reader = getattr(self.offer_refresher, 'pasaj_source', None)
             if isinstance(pasaj_reader, PasajSource):
                 pasaj_reader.configure_catalog_budget(len(products))
+            teknosa_reader = getattr(self.offer_refresher, 'teknosa_catalog_source', None)
+            if teknosa_reader is not None:
+                teknosa_reader.configure_catalog_budget(len(products))
 
         if (product_id is None and product_slugs is None and not known_pdp_only
                 and hasattr(self.ingestion_client, 'get_public_price_priority')):
