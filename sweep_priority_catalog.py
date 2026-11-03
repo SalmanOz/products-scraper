@@ -56,7 +56,8 @@ def catalog_queue(products, prices):
 
 
 def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None,
-          discover_n11=False, discover_teknosa=False, discover_trendyol=False):
+          discover_n11=False, discover_teknosa=False, discover_trendyol=False,
+          discover_hepsiburada=False):
     products, prices = client.get_published_products(), client.get_public_price_priority()
     if (not products or len(products) > 200 or len({p['id'] for p in products}) != len(products)
             or len({p['slug'] for p in products}) != len(products)):
@@ -128,6 +129,7 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
     def discover_category(retailer, report_key, module, read_category):
         from teknosa_catalog_discovery import match_catalog_destinations
         cards, category_url, category_seen = [], module.CATEGORY_URL, set()
+        pending_branches = []
         discovery = result[report_key] = {'retailer': retailer, 'pages': [],
                                                    'new_targets': [], 'pagination_complete': False}
         for _ in range(module.MAX_CATEGORY_PAGES):
@@ -144,10 +146,17 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
             cards.extend(found)
             if parser.get('status') != 'parsed':
                 break
+            if callable(getattr(module, 'discovery_links', None)):
+                pending_branches.extend(link for link in module.discovery_links(html, category_url, products)
+                                        if link not in category_seen and link not in pending_branches)
+                next_category_url = pending_branches.pop(0) if pending_branches else None
             category_url = next_category_url
             if checkpoint:
                 checkpoint(result)
         discovery['pagination_complete'] = category_url is None
+        if getattr(module, 'DISCOVERY_SCOPE', None):
+            discovery.update(scope=module.DISCOVERY_SCOPE, branch_queue_complete=category_url is None,
+                             pagination_complete=False)
         known = {observed_url(url) for url, _ in targets} | {observed_url(url) for _, url in processed}
         discovery['destinations_seen'] = len(cards)
         matched = match_catalog_destinations([c for c in cards if c['source_url'] not in known], products)
@@ -159,6 +168,10 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                 result['models_without_priority_hints'] = [slug for slug in
                     result['models_without_priority_hints'] if slug != product['slug']]
     try:
+        if discover_hepsiburada:
+            import hepsiburada_catalog_discovery
+            discover_category('Hepsiburada', 'hepsiburada_category_discovery', hepsiburada_catalog_discovery,
+                              transport.read_hepsiburada_category)
         if discover_teknosa:
             import teknosa_catalog_discovery
             discover_category('Teknosa', 'category_discovery', teknosa_catalog_discovery,
@@ -232,12 +245,13 @@ def save_report(result):
             'catalog_queries': len(result['discovery']),
             'search_documents_read': sum(row['reason'] == 'document_read' for row in result['discovery']),
             'new_targets': sum(len(row['new_targets']) for row in result['discovery'])}, ensure_ascii=False)]
-    for key in ('category_discovery', 'trendyol_category_discovery'):
+    for key in ('category_discovery', 'trendyol_category_discovery', 'hepsiburada_category_discovery'):
         if not result.get(key):
             continue
         discovery = result[key]
         lines += ['', f"Automatic {discovery['retailer']} category discovery: " + json.dumps({
             'pages': len(discovery['pages']), 'pagination_complete': discovery['pagination_complete'],
+            'scope': discovery.get('scope'), 'branch_queue_complete': discovery.get('branch_queue_complete'),
             'destinations_seen': discovery.get('destinations_seen'),
             'new_targets': len(discovery['new_targets'])}, ensure_ascii=False)]
     if result.get('public_coverage'):
@@ -299,7 +313,8 @@ def main():
                 ensure_ascii=False), flush=True)
     client = OfferIngestionClient.from_env()
     result = sweep(client=client, publish=args.publish, checkpoint=checkpoint,
-                   discover_n11=True, discover_teknosa=True, discover_trendyol=True)
+                   discover_n11=True, discover_teknosa=True, discover_trendyol=True,
+                   discover_hepsiburada=True)
     result['public_coverage'] = coverage_readback(result, client.get_public_price_priority())
     save_report(result)
     print(Path('priority-catalog-sweep.md').read_text())

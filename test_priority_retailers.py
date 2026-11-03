@@ -173,6 +173,22 @@ class PriorityRetailerTests(unittest.TestCase):
         source.read_document(URLS[1])
         self.assertEqual(source.read_document(URLS[1] + '1')[1], 'pdp_budget_exhausted')
 
+    def test_category_discovery_does_not_spend_canonical_pdp_redirect_reserve(self):
+        from trendyol_catalog_discovery import CATEGORY_URL
+        original = URLS[1] + '?v=tek-ebat'
+        canonical = URLS[1].replace('128-gb', '128gb')
+        def get(url, **_):
+            response = Response(url, 'User-agent: *\nAllow: /\n' if url.endswith('robots.txt') else '<h1>Phone</h1>')
+            if url == original:
+                response.status_code = 301
+                response.headers['Location'] = canonical
+            return response
+        reader = PriorityRetailerTransport(get=get, sleep=lambda _: None, maximum_per_host=2)
+        self.assertEqual(reader.read_trendyol_category(CATEGORY_URL)[1], 'document_read')
+        self.assertEqual(reader.read_document(original)[1], 'document_read')
+        self.assertEqual(reader.report()['Trendyol']['pdp_requests'], 2)
+        self.assertEqual(reader.read_document(URLS[1] + '1')[1], 'pdp_budget_exhausted')
+
     def test_trendyol_canonical_redirect_keeps_product_seller_robots_and_request_budget(self):
         original = URLS[1] + '?merchantId=123&v=tek-ebat'
         canonical = URLS[1].replace('128-gb', '128gb') + '?merchantId=123'

@@ -124,7 +124,8 @@ class PriorityRetailerTransport:
                         or before.get('merchantId') != after.get('merchantId')
                         or not state['rules'].can_fetch(BOT, target)):
                     return None, 'redirect_identity_or_policy_mismatch', result[2]
-                if target in state['seen'] or state['pdp_requests'] >= self._maximum:
+                if (target in state['seen']
+                        or state['pdp_requests'] - state.get('category_requests', 0) >= self._maximum):
                     return None, 'redirect_budget_or_duplicate', result[2]
                 state['seen'].add(target)
                 state['pdp_requests'] += 1
@@ -158,6 +159,12 @@ class PriorityRetailerTransport:
         if page is None or page >= 40:
             return None, 'invalid_catalog_category', None
         return self._read_document(url, 'www.teknosa.com', category=True)
+
+    def read_hepsiburada_category(self, url):
+        from hepsiburada_catalog_discovery import category_identity
+        if category_identity(url) is None:
+            return None, 'invalid_catalog_category', None
+        return self._read_document(url, 'www.hepsiburada.com', category=True)
 
     def read_trendyol_category(self, url):
         from trendyol_catalog_discovery import category_page_number
