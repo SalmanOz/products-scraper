@@ -607,18 +607,18 @@ class PriceUpdater:
             pasaj_reader = getattr(self.offer_refresher, 'pasaj_source', None)
             if isinstance(pasaj_reader, PasajSource):
                 pasaj_reader.configure_catalog_budget(len(products))
-            teknosa_reader = getattr(self.offer_refresher, 'teknosa_catalog_source', None)
-            if teknosa_reader is not None:
-                teknosa_reader.configure_catalog_budget(len(products))
-            n11_reader = getattr(self.offer_refresher, 'n11_catalog_source', None)
-            if n11_reader is not None:
-                n11_reader.configure_catalog_budget(len(products))
-            hb_reader = getattr(self.offer_refresher, 'hepsiburada_catalog_source', None)
-            if hb_reader is not None:
-                hb_reader.configure_catalog_budget(len(products))
-            trendyol_reader = getattr(self.offer_refresher, 'trendyol_catalog_source', None)
-            if trendyol_reader is not None:
-                trendyol_reader.configure_catalog_budget(len(products))
+            from priority_catalog_budget import priority_catalog_source_budgets
+            budgets = priority_catalog_source_budgets(products)
+            self.last_report['priority_source_request_budgets'] = budgets
+            for attribute, host in (
+                ('teknosa_catalog_source', 'www.teknosa.com'),
+                ('n11_catalog_source', 'www.n11.com'),
+                ('hepsiburada_catalog_source', 'www.hepsiburada.com'),
+                ('trendyol_catalog_source', 'www.trendyol.com'),
+            ):
+                source = getattr(self.offer_refresher, attribute, None)
+                if source is not None:
+                    source.configure_catalog_budget(budgets[host])
 
         if (product_id is None and product_slugs is None and not known_pdp_only
                 and hasattr(self.ingestion_client, 'get_public_price_priority')):
