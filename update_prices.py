@@ -134,15 +134,16 @@ class PriceUpdater:
                 reasons = raw.get('refresh_targets_invalid_reasons', {})
                 total = raw.get('refresh_targets_total')
                 invalid = raw.get('refresh_targets_invalid_count')
+                duplicate = raw.get('refresh_targets_duplicate_count')
                 if (raw.get('purpose') != 'read_only_raw_seller_collision_proof'
                         or raw.get('writes') is not False or raw.get('product_id') != product['id']
                         or raw.get('complete') is not True or raw.get('blocked') is not False
                         or raw.get('reasons') != [] or type(total) is not int or not 0 <= total <= 12
-                        or raw.get('refresh_targets_duplicate_count') != 0
-                        or type(invalid) is not int or invalid < 1
+                        or type(duplicate) is not int or duplicate < 0
+                        or type(invalid) is not int or invalid < 0 or invalid + duplicate < 1
                         or invalid != reasons.get('unsupported_host', -1) + reasons.get('retailer_query_restricted', -1)
-                        or raw.get('stored_rows_checked') != total + invalid
-                        or total + invalid > 60
+                        or raw.get('stored_rows_checked') != total + invalid + duplicate
+                        or total + invalid + duplicate > 60
                         or not isinstance(raw.get('refresh_targets_snapshot'), str)
                         or not re.fullmatch(r'[0-9a-f]{64}', raw['refresh_targets_snapshot'])
                         or raw.get('unknown_seller_rows') != 0 or raw.get('invalid_url_rows') != 0
@@ -153,7 +154,7 @@ class PriceUpdater:
                 if (any(inspected.get(field) != product.get(field) for field in ('id', 'slug', 'name', 'attributes'))
                         or inspected.get('offer_targets_total') != total
                         or inspected.get('offer_targets_invalid_count') != invalid
-                        or inspected.get('offer_targets_duplicate_count') != 0
+                        or inspected.get('offer_targets_duplicate_count') != duplicate
                         or inspected.get('offer_targets_truncated') is not True
                         or inspected.get('offer_targets_snapshot') != raw.get('refresh_targets_snapshot')
                         or inspected.get('offer_targets_invalid_reasons') != reasons
@@ -169,7 +170,7 @@ class PriceUpdater:
                     raise ValueError('seller_collision_in_refresh_targets')
                 self._raw_target_products[key] = {'product': verified, 'checked_at': self.utc_timestamp()}
                 record.update(status='ready', raw_rows_checked=raw['stored_rows_checked'],
-                              rejected_refresh_hints=invalid)
+                              rejected_refresh_hints=invalid, duplicate_rows_checked=duplicate)
             except Exception as error:
                 record['reason'] = (str(error) if isinstance(error, ValueError) and str(error) in {
                     'raw_seller_or_target_rejection', 'raw_target_snapshot_or_catalog_changed',
@@ -208,7 +209,8 @@ class PriceUpdater:
                 else type(error).__name__)
             product_report['complete_target_proof'] = {
                 'status': 'unavailable', 'reason': safe_reason}
-            if safe_reason.startswith('Complete target source has invalid rows '):
+            if safe_reason.startswith(('Complete target source has invalid rows ',
+                                       'Complete target source has duplicate rows ')):
                 product_report['complete_target_proof']['raw_check_needed'] = True
                 self._resolve_raw_target_proofs(product, offers, product_report)
 

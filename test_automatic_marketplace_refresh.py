@@ -61,6 +61,27 @@ class AutomaticMarketplaceTests(unittest.TestCase):
         key = updater._raw_target_key(product, offers[0])
         updater._raw_target_products[key]['checked_at'] = '2000-01-01T00:00:00Z'
         self.assertFalse(updater.live_offer_is_valid(product, offers[0], specs))
+        # Duplicate hint rows do not hide an actual seller: the independent raw
+        # proof must account for every row and match the complete inspection.
+        for invalid_count in (0, 1):
+            duplicate_reasons = {**reasons, 'unsupported_host': invalid_count}
+            with_duplicates = {**raw, 'stored_rows_checked': 2 + invalid_count,
+                'refresh_targets_invalid_count': invalid_count,
+                'refresh_targets_duplicate_count': 1, 'refresh_targets_invalid_reasons': duplicate_reasons}
+            duplicate_inspection = {**inspection, 'offer_targets_invalid_count': invalid_count,
+                'offer_targets_duplicate_count': 1, 'offer_targets_invalid_reasons': duplicate_reasons}
+            allowed, duplicate_client = make_updater(with_duplicates, duplicate_inspection)
+            duplicate_client.get_complete_offer_targets.side_effect = IngestionClientError(
+                f'Complete target source has duplicate rows (total=1, invalid={invalid_count}, duplicate=1)')
+            duplicate_report = {}
+            allowed.hydrate_marketplace_target_proof(product, offers, duplicate_report)
+            self.assertTrue(allowed.live_offer_is_valid(product, offers[0], specs))
+            self.assertEqual(duplicate_report['raw_target_proofs'][0]['duplicate_rows_checked'], 1)
+            # A new URL for the proposed seller is still a collision, even if
+            # all duplicate counts and snapshots agree.
+            collided, _ = make_updater({**with_duplicates, 'proposed_seller_other_url_rows': 1}, duplicate_inspection)
+            collided.hydrate_marketplace_target_proof(product, offers, {})
+            self.assertFalse(collided.live_offer_is_valid(product, offers[0], specs))
         unsafe_reasons = {**reasons, 'unsupported_host': 0, 'sensitive_query': 1}
         for changes in ({'unknown_seller_rows': 1}, {'invalid_url_rows': 1},
                         {'invalid_row_identity_rows': 1}, {'proposed_seller_other_url_rows': 1},
