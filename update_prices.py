@@ -118,8 +118,13 @@ class PriceUpdater:
             product_report['complete_target_proof'] = {
                 'status': 'ready', 'target_count': len(product['offer_targets'])}
         except Exception as error:
+            message = str(error)
+            safe_reason = (message if re.fullmatch(
+                r'Complete target source has (?:invalid|duplicate) rows '
+                r'\(total=\d+, invalid=\d+, duplicate=\d+\)', message)
+                else type(error).__name__)
             product_report['complete_target_proof'] = {
-                'status': 'unavailable', 'reason': type(error).__name__}
+                'status': 'unavailable', 'reason': safe_reason}
 
     def live_offer_is_valid(self, product, offer, expected_specs):
         if not isinstance(offer, dict) or not _safe_url(offer.get('url')):

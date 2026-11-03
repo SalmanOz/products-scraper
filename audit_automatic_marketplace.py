@@ -68,6 +68,13 @@ def main():
                f'prepared offers: {sum(row["prepared_count"] for row in rows)}',
                '', '| Model | Candidates | Observed | Prepared |', '|---|---:|---:|---:|']
     summary += [f'| {r["slug"]} | {r["candidate_count"]} | {r["observed"]} | {r["prepared_count"]} |' for r in rows]
+    for row in rows:
+        proof = row.get('complete_target_proof', {})
+        offers = '; '.join(f"{o['seller']} {o['price']} TRY" for o in row['prepared'])
+        reasons = ', '.join(sorted({attempt['reason'] for attempt in row['attempts']}))
+        summary.append(f"- {row['slug']}: proof {proof.get('status', 'not_needed')} "
+                       f"{proof.get('reason', '')}; offers {offers or 'none'}; "
+                       f"source reasons {reasons or 'none'}")
     summary += ['', json.dumps(report['source']), json.dumps(report['vatan_sitemap']),
                 json.dumps(report['vatan_pdp']), '', 'No ingestion or IndexNow calls.']
     Path('automatic-marketplace-audit.md').write_text('\n'.join(summary))
