@@ -9,6 +9,7 @@ from offer_target_selection import select_offer_targets
 from mediamarkt_marketplace_audit import generic_marketplace_offer
 from test_mediamarkt_marketplace_audit import fixture, render, URL
 from test_mediamarkt_source import Fetch, ROBOTS
+from mediamarkt_marketplace_source import ALL_PROFILES
 
 
 class AutomaticMarketplaceTests(unittest.TestCase):
@@ -39,6 +40,10 @@ class AutomaticMarketplaceTests(unittest.TestCase):
         updater.hydrate_marketplace_target_proof(hydrated, offers, report)
         client.get_complete_offer_targets.assert_called_once_with(999)
         self.assertEqual(report['complete_target_proof'], {'status': 'ready', 'target_count': 13})
+        known_product = deepcopy(product)
+        updater.hydrate_marketplace_target_proof(known_product,
+            [{**offers[0], 'url': next(iter(ALL_PROFILES))}], {})
+        self.assertFalse(known_product['offer_targets_truncated'])
 
         hidden = deepcopy(complete)
         hidden['offer_targets'][-1] = {'seller_name': offers[0]['merchant'],

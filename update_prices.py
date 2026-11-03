@@ -99,7 +99,7 @@ class PriceUpdater:
         """Resolve a truncated seller snapshot only after a live marketplace read."""
         if ('complete_target_proof' in product_report or
                 not any(isinstance(offer, dict) and offer.get('platform') == 'MediaMarkt'
-                        and offer.get('url') not in ALL_MARKETPLACE_PROFILES for offer in offers)):
+                        for offer in offers)):
             return
         targets = product.get('offer_targets', [])
         if (product.get('offer_targets_truncated') is False or

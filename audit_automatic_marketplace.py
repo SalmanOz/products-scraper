@@ -38,8 +38,11 @@ def main():
         queue.append((product, specs, targets, compact))
     # Exercise newly supported phone URL shapes before repeating known PDPs.
     # All candidates still traverse the ordinary live reader and writer guards.
-    queue.sort(key=lambda item: (status.get(item[0]['id'], ('', False))[1],
-                                 not item[3], -item[0]['id']))
+    queue.sort(key=lambda item: (
+        0 if not status.get(item[0]['id'], ('', False))[1] and item[3] else
+        1 if item[0].get('offer_targets_truncated') is True else
+        2 if not status.get(item[0]['id'], ('', False))[1] else 3,
+        -item[0]['id']))
     rows = []
     for product, specs, targets, compact in queue[:12]:
         selected_targets = select_offer_targets(targets, maximum=2)
