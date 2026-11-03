@@ -188,6 +188,7 @@ def parse_exact_first_party_offer(html: str, final_url: str = URL, catalog_profi
 def parse_catalog_offer(html, url, profile):
     offer, reason = parse_exact_first_party_offer(html, url, profile)
     if offer is not None:
+        offer['platform'] = 'Teknosa'
         return offer, reason
     from teknosa_marketplace_source import parse_selected_marketplace
     return parse_selected_marketplace(html, url, profile)
