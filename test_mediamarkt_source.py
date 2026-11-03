@@ -77,6 +77,26 @@ class Fetch:
 
 
 class MediaMarktSourceTests(unittest.TestCase):
+    def test_full_catalog_can_read_a_verified_offer_after_seed_batch_quota(self):
+        fetch = Fetch({ROBOTS_URL: ROBOTS, URL: Response(URL, status=403)})
+        calls = []
+        def browser(url, **kwargs):
+            calls.append(kwargs['json']['url'])
+            return Response(url, json.dumps({'status': 'ok', 'solution': {
+                'status': 200, 'url': URL, 'response': html().decode()}}).encode())
+        source = MediaMarktSource(get=fetch, post=browser, sleep=lambda _: None)
+        source.configure_catalog_budget(109)
+        source._browser_count = MAX_BROWSER_REQUESTS
+        offer, reason, status = source.read_offer(URL)
+        self.assertEqual((offer['price'], reason, status), (89999, 'observed_exact_offer', 200))
+        self.assertEqual(calls, [URL])
+        self.assertEqual(source.report()['browser_request_limit'], 160)
+        source._browser_count = 160
+        self.assertEqual(source.read_offer(URL), (None, 'browser_budget_exhausted', None))
+        self.assertEqual(calls, [URL])
+        with self.assertRaisesRegex(RuntimeError, 'before source requests'):
+            source.configure_catalog_budget(109)
+
     def test_iphone_16e_exact_first_party_cash_offer_reaches_product_reader(self):
         url = ('https://www.mediamarkt.com.tr/tr/product/'
                '_apple-md1r4tua-iphone-16e-128gb-akilli-telefon-beyaz-1244800.html')

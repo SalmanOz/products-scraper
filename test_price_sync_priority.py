@@ -93,6 +93,7 @@ class PriceSyncPriorityTests(unittest.TestCase):
         self.assertEqual([p['slug'] for p in updater.last_report['products']],
                          ['example-3', 'example-2', 'example-1'])
         self.assertEqual(updater.last_report['discovery_priority']['retailer_candidate_models'], 1)
+        media.configure_catalog_budget.assert_called_once_with(3)
 
     def test_public_snapshot_is_a_bounded_order_hint_without_bearer(self):
         session = _Session([

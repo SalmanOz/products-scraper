@@ -412,6 +412,11 @@ class PriceUpdater:
             products = [p for p in products
                         if p.get('id') != 278 and p.get('slug') != 'samsung-galaxy-a37-5g']
 
+        if product_id is None and product_slugs is None and not known_pdp_only and products:
+            from mediamarkt_source import MediaMarktSource
+            if isinstance(self.mediamarkt_source, MediaMarktSource):
+                self.mediamarkt_source.configure_catalog_budget(len(products))
+
         if (product_id is None and product_slugs is None and not known_pdp_only
                 and hasattr(self.ingestion_client, 'get_public_price_priority')):
             try:

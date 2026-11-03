@@ -39,6 +39,10 @@ MAX_DIRECT_REQUESTS = 80
 # The reviewed-source daily follow-up can cover fourteen MediaMarkt seeds plus
 # currently stored exact Android PDPs in one bounded run.
 MAX_BROWSER_REQUESTS = 24
+# Full-catalog runs need capacity beyond a reviewed seed batch. These are
+# run-wide ceilings, not additional retries; pacing and failure circuits stay.
+MAX_CATALOG_DIRECT_REQUESTS = 320
+MAX_CATALOG_BROWSER_REQUESTS = 160
 MAX_CANDIDATES_PER_PRODUCT = 3
 _NS = '{http://www.sitemaps.org/schemas/sitemap/0.9}'
 _HEADERS = {'User-Agent': BOT + '/1.0 (+https://teknoskor.com)',
@@ -193,6 +197,8 @@ class MediaMarktSource:
         self._last_request = None
         self._direct_count = 0
         self._browser_count = 0
+        self._direct_limit = MAX_DIRECT_REQUESTS
+        self._browser_limit = MAX_BROWSER_REQUESTS
         self._browser_successes = 0
         self._browser_failures = 0
         self._blocked = False
@@ -203,16 +209,28 @@ class MediaMarktSource:
         # the HTML already fetched. Normal price refreshes do no extra work.
         self._rejected_offer_observer = rejected_offer_observer
 
+    def configure_catalog_budget(self, product_count):
+        """Allocate at most two browser PDP reads per published catalog model."""
+        if isinstance(product_count, bool) or not isinstance(product_count, int) or product_count < 1:
+            raise ValueError('Catalog product count must be a positive integer')
+        with self._lock:
+            if self._direct_count or self._browser_count:
+                raise RuntimeError('Configure the catalog budget before source requests')
+            self._direct_limit = min(MAX_CATALOG_DIRECT_REQUESTS,
+                                     max(MAX_DIRECT_REQUESTS, 3 + product_count * 3))
+            self._browser_limit = min(MAX_CATALOG_BROWSER_REQUESTS,
+                                      max(MAX_BROWSER_REQUESTS, product_count * 2))
+
     def _pace(self, browser=False):
         with self._lock:
             if self._blocked:
                 raise SourceCircuitOpen('MediaMarkt circuit open')
             if browser:
-                if self._browser_count >= MAX_BROWSER_REQUESTS:
+                if self._browser_count >= self._browser_limit:
                     raise SourceBudgetExhausted('browser')
                 self._browser_count += 1
             else:
-                if self._direct_count >= MAX_DIRECT_REQUESTS:
+                if self._direct_count >= self._direct_limit:
                     raise SourceBudgetExhausted('direct')
                 self._direct_count += 1
             if self._last_request is not None:
@@ -429,4 +447,6 @@ class MediaMarktSource:
         return {'robots_status': self._robots_status, 'sitemap_status': self._sitemap_status,
                 'eligible_urls': len(self._urls), 'direct_requests': self._direct_count,
                 'browser_requests': self._browser_count,
+                'direct_request_limit': self._direct_limit,
+                'browser_request_limit': self._browser_limit,
                 'browser_html_responses': self._browser_successes}
