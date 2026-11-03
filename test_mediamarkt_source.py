@@ -28,10 +28,10 @@ def sitemap(*urls):
 
 def html(*, seller=None, condition='NewCondition', price=89999,
          visible='₺ 89.999,', disabled='false', marketplace='false', title=None,
-         url=URL, sku='1249222'):
+         url=URL, sku='1249222', brand='APPLE'):
     title = title or 'APPLE iPhone 17 256 GB Akıllı Telefon Beyaz MG6K4TU/A'
     product = {'@type': 'ProductGroup', 'name': title, 'url': url,
-               'sku': sku, 'brand': {'@type': 'Brand', 'name': 'APPLE'},
+               'sku': sku, 'brand': {'@type': 'Brand', 'name': brand},
                'offers': {'@type': 'Offer', 'url': url, 'price': price,
                           'priceCurrency': 'TRY',
                           'itemCondition': 'https://schema.org/' + condition,
@@ -136,14 +136,34 @@ class MediaMarktSourceTests(unittest.TestCase):
         self.assertEqual(len(REVIEWED_COMPACT_PHONE_URLS), 2)
         self.assertTrue(all(product_url(url) for url in REVIEWED_COMPACT_PHONE_URLS))
         compact = next(url for url in REVIEWED_COMPACT_PHONE_URLS if '1249062' in url)
-        self.assertFalse(product_url(compact.replace('8256gb', '8128gb')))
-        self.assertFalse(product_url(compact.replace('1249062', '1249063')))
+        self.assertTrue(product_url(compact.replace('8256gb', '8128gb')))
+        self.assertTrue(product_url(compact.replace('1249062', '1249063')))
         for url in (URL.replace('https:', 'http:'), URL + '?sku=1',
                     URL.replace('www.mediamarkt.com.tr', 'attacker.example'),
                     URL.replace('iphone-17', 'outlet-iphone-17'),
                     'https://www.mediamarkt.com.tr/tr/category/iphone-17.html'):
             with self.subTest(url=url):
                 self.assertFalse(product_url(url))
+
+    def test_compact_unlisted_phone_slugs_are_hints_and_still_require_exact_pdp_variant(self):
+        url = ('https://www.mediamarkt.com.tr/tr/product/'
+               '_honor-600-pro-5g-12512-gb-android-telefon-siyah-1254324.html')
+        wrong = url.replace('12512-gb', '12256-gb').replace('1254324', '1254325')
+        title = 'HONOR 600 Pro 5G 12 GB RAM 512 GB Android Telefon Siyah'
+        fetch = Fetch({ROBOTS_URL: ROBOTS, SITEMAP_URLS[0]: sitemap(url, wrong),
+                       SITEMAP_URLS[1]: sitemap(),
+                       url: html(url=url, sku='1254324', title=title, brand='HONOR')})
+        reader = RetailerOfferRefresher(fetch=fetch)
+        specs = {'ram_gb': 12, 'storage_gb': 512, 'network_generation': '5g'}
+        self.assertEqual(reader.mediamarkt_source.discover('Honor 600 Pro', specs),
+                         [{'source_url': url}])
+        self.assertEqual(len(reader.refresh_existing_offer_targets('Honor 600 Pro',
+                         [{'source_url': url}], specs)), 1)
+        self.assertEqual(reader.refresh_existing_offer_targets('Honor 600 Pro',
+                         [{'source_url': url}], {**specs, 'storage_gb': 256}), [])
+        self.assertFalse(product_url(url.replace('honor-', 'honor-kilif-')))
+        self.assertTrue(product_url(url.replace('honor-600-pro-5g-12512-gb-android-telefon-siyah',
+                                               'vivo-x300-pro-16512-gb-black')))
 
     def test_robots_and_sitemap_are_cached_and_only_variant_hints_return(self):
         wrong_storage = URL.replace('256gb', '512gb')

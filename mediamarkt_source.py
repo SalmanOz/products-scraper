@@ -49,6 +49,20 @@ _HEADERS = {'User-Agent': BOT + '/1.0 (+https://teknoskor.com)',
             'Accept-Language': 'tr-TR,tr;q=0.9'}
 _USED = re.compile(r'outlet|yenilenmi[sş]|refurbish|ikinci[- ]el|te[sş]hir|kullan[iı]lm[iı][sş]', re.I)
 _PRICE = re.compile(r'₺\s*(\d{1,3}(?:\.\d{3})*|\d+),')
+_JOINED_MEMORY = re.compile(r'(?<=-)([1-9]|1\d|2[0-4])(64|128|256|512|1024)-?gb(?=-|\.)')
+
+
+def _phone_hint_path(path):
+    """Compact retailer slugs are discovery hints, never variant evidence."""
+    family = re.match(r'/tr/product/_(?:honor-|vivo-x\d|oppo-(?:find|reno|a\d)|'
+                      r'samsung-galaxy-|xiaomi-|poco-|realme-|tecno-|infinix-)', path)
+    return bool(family and _JOINED_MEMORY.search(path)
+                and not re.search(r'kilif|kapak|koruyucu|aksesuar|sarj|kablo', path))
+
+
+def _variant_hint_path(path):
+    path = _JOINED_MEMORY.sub(lambda m: f'{m[1]}gb-{m[2]}gb', path)
+    return re.sub(r'(galaxy-s\d+)(fe|ultra|plus)(?=-)', r'\1-\2', path)
 
 
 class SourceBudgetExhausted(requests.RequestException):
@@ -78,7 +92,8 @@ def product_url(url):
                     and parsed.username is None and parsed.password is None
                     and parsed.port in (None, 443) and not parsed.query and not parsed.fragment
                     and re.fullmatch(r'/tr/product/_[a-z0-9-]+-\d{6,12}\.html', path)
-                    and ('akilli-telefon' in path or url in REVIEWED_COMPACT_PHONE_URLS)
+                    and ('akilli-telefon' in path or _phone_hint_path(path)
+                         or url in REVIEWED_COMPACT_PHONE_URLS)
                     and not _USED.search(path))
     except (TypeError, ValueError):
         return False
@@ -342,7 +357,7 @@ class MediaMarktSource:
             return []
         candidates = []
         for url in self._urls:
-            if VatanSitemapSource._variant_matches(urlparse(url).path, product_name, expected_specs):
+            if VatanSitemapSource._variant_matches(_variant_hint_path(urlparse(url).path), product_name, expected_specs):
                 candidates.append({'source_url': url})
                 if len(candidates) == MAX_CANDIDATES_PER_PRODUCT:
                     break
