@@ -190,7 +190,7 @@ jobs:
           python -m unittest -q test_legacy_source_circuit
           python -m unittest -q test_pasaj_source test_pasaj_unreviewed_candidates
           python -m unittest -q test_vatan_jsonld_reviews test_vatan_category_unpriced
-          python -m unittest -q test_priority_retailers test_teknosa_catalog_source test_hepsiburada_catalog_source test_hepsiburada_iphone16pm_readonly test_trendyol_catalog_source
+          python -m unittest -q test_priority_retailers test_teknosa_catalog_source test_hepsiburada_catalog_source test_hepsiburada_iphone16pm_readonly test_trendyol_catalog_source test_priority_candidates
           python test_offer_ingestion_client.py
           python test_price_update_resilience.py
           python -m unittest -q test_score_reconciliation

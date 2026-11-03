@@ -41,6 +41,12 @@ elle hazırlanmış profil gerektirmez. Hepsiburada'da seçili Redux SKU/barkod,
 görünen satıcı, teknik tablo, iki satın alma kutusu olayı ve peşin fiyat;
 Trendyol'da seçili ürün/satıcı/ilan, iki seçili varyant listesi, barkod, teknik
 alanlar, JSON-LD, görünen fiyat ve açık satın alma düğmesi birlikte doğrulanır.
+Eski Hepsiburada `magaza=` ipucu, aynı SKU'nun sorgusuz ana sayfasından güncel
+satıcıyı keşfetmek için kullanılır; dönen teklifin URL'si ve satıcısı yeni
+gözlemden gelir. Eski satıcı adına fiyat aktarılmaz. Trendyol'da yalnız aynı
+ürün kimliğini ve seçilmiş satıcıyı koruyan bir yönlendirme izlenebilir; bu
+ikinci istek de mevcut kaynak kotasından düşer ve yeniden robots kontrolünden
+geçer. İkinci yönlendirme veya değişen satıcı/ürün kimliği kabul edilmez.
 Üretici adı pazar yeri satıcısı kabul edilmez. Satıcı başka bir URL'ye zaten
 bağlıysa veya bütün kayıtlı satırlar kontrol edilemiyorsa teklif yayımlanmaz.
 Teknosa'nın genel okuyucusu yalnız seçili TEKNOSA birinci taraf satıcısı,
@@ -61,6 +67,18 @@ Canlı katalogda fiyatlı ürünler 40/110, iki mağazalı ürünler 19'dan 20'y
 Turda yeniden doğrulanan kapsam 33/109 (%30,3) olduğundan %50 kalite eşiği
 başarısız kaldı. Sonradan eklenen öncelikli kaynak okuyucuları bu üretim
 turunun sabitlenmiş sürümünde yoktur; salt okunur denetimleri ayrı raporlanır.
+A37 ayrıca mevcut eşli akışta
+[bir kez denendi](https://github.com/SalmanOz/products-scraper/actions/runs/41617602530);
+satıcı/hedef bütünlüğü ön kontrolü `merchant_name_cross_platform_collision`
+ile durdu, iki tekliften hiçbiri yazılmadı. Genel akışın A37 koruması kaldırılmadı.
+
+`Priority Retailer Automatic Candidate Refresh` zamanlamasız ve varsayılan
+olarak yazımsızdır. `publish=true` ile elle başlatıldığında yalnız o çalışmanın
+otomatik örnekleminden çıkan adayları en çok 24 teklifle sınırlar; her birinin
+sayfasını tekrar okur, fiyat/SKU/satıcı/barkod değişimini reddeder, tam satıcı
+hedefi ve varyant kontrollerinden geçenleri tek atomik HTTPS isteğinde yayımlar.
+Yeni ürün, teknik özellik veya elle telefon profili oluşturmaz. A37 bu akışa
+alınmaz. Kabul edilen teklifler sonrası mevcut puanlar yeniden hesaplanır.
 
 403/429/challenge cevabında o mağaza için aynı çalışmada devre kesici açılır.
 İncelenmiş Vatan ve MediaMarkt tam ürün bağlantılarında normal GET 403 dönerse
