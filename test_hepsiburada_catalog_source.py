@@ -26,6 +26,27 @@ def document(changes=None):
 
 
 class HepsiburadaCatalogTests(unittest.TestCase):
+    def test_closed_catalog_flag_cannot_hide_an_independently_live_selected_merchant(self):
+        # Observed on HB's public Galaxy S23 8/128 AKSOYLU PDP on 2026-11-03:
+        # closed=true, live=true, product+warehouse+selected-SKU stock=true,
+        # InStock/New schema, cash/selection events and enabled checkout.
+        base = {('redux', 'productState', 'product', 'isClosedProduct'): True}
+        offer, _ = parse_catalog_buy_box(document(base), TARGET, NAME, SPECS)
+        self.assertIsNotNone(offer)
+        for path, value in (
+            (('redux', 'productState', 'product', 'isProductLive'), False),
+            (('redux', 'productState', 'product', 'isProductLive'), None),
+            (('redux', 'productState', 'product', 'isInStock'), False),
+            (('redux', 'productState', 'product', 'stockInformation'), None),
+            (('redux', 'productState', 'product', 'stockInformation', 'isInStock'), False),
+            (('redux', 'productState', 'product', 'variants', 0, 'isInStock'), False),
+            (('cart_disabled',), True),
+            (('schema', '@graph', 0, 'offers', 'availability'), 'https://schema.org/OutOfStock'),
+            (('visible_seller',), 'Other seller'),
+        ):
+            with self.subTest(path=path, value=value):
+                self.assertIsNone(parse_catalog_buy_box(document({**base, path: value}), TARGET, NAME, SPECS)[0])
+
     def test_live_new_table_and_multiple_barcodes_keep_exact_sku_without_inventing_one_gtin(self):
         html = Path(__file__).with_name('fixtures').joinpath('hepsiburada-selected-multiple-barcodes.html').read_text()
         url = 'https://www.hepsiburada.com/apple-iphone-13-128-gb-siyah-p-HBCV00000ODHHF'

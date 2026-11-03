@@ -156,6 +156,14 @@ def parse_exact_buy_box(html: str, final_url: str = URL, *, scope=None):
         return None, 'redux_product_missing'
     stock = product.get('stockInformation')
     generic = scope.get('generic_catalog') is True
+    # Public HB S23/S24 listings can carry isClosedProduct=true while their
+    # selected merchant is live, all stock layers are positive and checkout is
+    # enabled. This catalog flag alone is not the merchant's availability.
+    # Only the generic reader may handle that case; every independent selected
+    # SKU, stock, new-condition, price, seller, event and cart gate below remains.
+    closed_but_live_selected_listing = (generic and product.get('isClosedProduct') is True
+        and product.get('isProductLive') is True and product.get('isInStock') is True
+        and isinstance(stock, dict) and stock.get('isInStock') is True)
     if (product.get('productId') != scope['PRODUCT_ID'] or product.get('sku') != scope['SKU']
             or product.get('listingId') != scope['LISTING_ID']
             or product.get('merchantName') not in ((None, scope['SELLER']) if generic else (scope['SELLER'],))
@@ -164,7 +172,9 @@ def parse_exact_buy_box(html: str, final_url: str = URL, *, scope=None):
             or (not (generic and stock is None) and (not isinstance(stock, dict) or
                 stock.get('isInStock') is not True and not (generic and stock.get('isInStock') is None)))
             or (product.get('isProductLive') is not True and not (generic and product.get('isProductLive') is None))
-            or (product.get('isClosedProduct') is not False and not (generic and product.get('isClosedProduct') is None))
+            or (product.get('isClosedProduct') is not False
+                and not (generic and product.get('isClosedProduct') is None)
+                and not closed_but_live_selected_listing)
             or (product.get('isPreOrder') is not False and not (generic and product.get('isPreOrder') is None))):
         return None, 'selected_redux_offer_mismatch'
     merchant = product.get('merchant')
