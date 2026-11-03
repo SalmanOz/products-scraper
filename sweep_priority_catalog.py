@@ -149,6 +149,8 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
             if callable(getattr(module, 'discovery_links', None)):
                 pending_branches.extend(link for link in module.discovery_links(html, category_url, products)
                                         if link not in category_seen and link not in pending_branches)
+                if next_category_url and next_category_url not in category_seen and next_category_url not in pending_branches:
+                    pending_branches.append(next_category_url)
                 next_category_url = pending_branches.pop(0) if pending_branches else None
             category_url = next_category_url
             if checkpoint:

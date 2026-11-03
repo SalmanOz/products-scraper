@@ -28,7 +28,7 @@ class HepsiburadaDiscoveryTests(unittest.TestCase):
         self.assertNotIn('price', cards[0])
         self.assertNotIn('seller', cards[0])
         self.assertIsNone(next_page)
-        self.assertEqual(diagnostic['scope'], 'observed_category_and_brand_first_pages')
+        self.assertEqual(diagnostic['scope'], 'bounded_observed_category_and_brand_pages')
         self.assertEqual(discovery_links(document(), CATEGORY_URL, [{'name': 'Samsung Galaxy S26'}]), [SAMSUNG])
         self.assertEqual(discovery_links(document(), CATEGORY_URL, [PRODUCT]), [])
         self.assertEqual(len(parse_category_document(document(True), SAMSUNG)[0]), 1)
@@ -39,10 +39,25 @@ class HepsiburadaDiscoveryTests(unittest.TestCase):
                         document().replace('title="Apple', 'title="Samsung'),
                         document().replace('<h1>', '<h3>').replace('</h1>', '</h3>')]:
             self.assertEqual(parse_category_document(changed, CATEGORY_URL)[0], [])
-        for url in [CATEGORY_URL + '?sayfa=2', CATEGORY_URL + '#x', SAMSUNG + '?filtreler=satici:x',
+        for url in [CATEGORY_URL + '?sayfa=02', CATEGORY_URL + '#x', SAMSUNG + '?filtreler=satici:x',
                     SAMSUNG.replace('www.hepsiburada.com', 'evil.test'), SAMSUNG.replace('371965', '123456'),
                     SAMSUNG.replace('samsung-', 'colezium-')]:
             self.assertIsNone(category_identity(url))
+
+    def test_real_protocol_relative_rel_next_follows_only_the_same_immediate_category_page(self):
+        html = document() + '<link rel="next" href="//www.hepsiburada.com/cep-telefonlari-c-371965?sayfa=2">'
+        self.assertEqual(parse_category_document(html, CATEGORY_URL)[1], CATEGORY_URL + '?sayfa=2')
+        for changed in [html.replace('sayfa=2', 'sayfa=3'),
+                        html.replace('//www.hepsiburada.com/', '//evil.test/'),
+                        html.replace('sayfa=2', 'sayfa=2&amp;filtreler=satici:x')]:
+            diagnostic = {}
+            self.assertIsNone(parse_category_document(changed, CATEGORY_URL, diagnostic)[1])
+            self.assertEqual(diagnostic['status'], 'continuation_unrecognized')
+        self.assertEqual(parse_category_document(html.replace('sayfa=2', 'sayfa=3'),
+                         CATEGORY_URL + '?sayfa=2')[1], CATEGORY_URL + '?sayfa=3')
+        actual_second = html.replace('Cep Telefonu Fiyatları ve Modelleri', 'Cep Telefonu').replace('sayfa=2', 'sayfa=3')
+        self.assertEqual(parse_category_document(actual_second, CATEGORY_URL + '?sayfa=2')[1], CATEGORY_URL + '?sayfa=3')
+        self.assertEqual(parse_category_document(actual_second, CATEGORY_URL)[0], [])
 
     def test_separate_category_budget_and_robots_denial(self):
         t = PriorityRetailerTransport(get=lambda url, **_: Response(url,
@@ -68,7 +83,12 @@ class HepsiburadaDiscoveryTests(unittest.TestCase):
         class Transport:
             def read_hepsiburada_category(self, url):
                 visited.append(url)
-                return document(url == SAMSUNG), 'document_read', 200
+                html = document(url == SAMSUNG)
+                if url == CATEGORY_URL:
+                    html += '<link rel="next" href="//www.hepsiburada.com/cep-telefonlari-c-371965?sayfa=2">'
+                elif url == CATEGORY_URL + '?sayfa=2':
+                    html = html.replace('Cep Telefonu Fiyatları ve Modelleri', 'Cep Telefonu')
+                return html, 'document_read', 200
             def report(self):
                 return {}
         row = {'slug': PRODUCT['slug'], 'retailer': 'Hepsiburada', 'url': PDP, 'observed_url': PDP,
@@ -78,7 +98,7 @@ class HepsiburadaDiscoveryTests(unittest.TestCase):
                     'status': 'completed', 'writes': True, 'ingestion': {'accepted': 1}}) as publish:
             result = sweep(client=client, publish=True, reader=sweep_reader(), transport=Transport(),
                            discover_hepsiburada=True)
-        self.assertEqual(visited, [CATEGORY_URL, SAMSUNG])
+        self.assertEqual(visited, [CATEGORY_URL, SAMSUNG, CATEGORY_URL + '?sayfa=2'])
         inspect.assert_called_once()
         publish.assert_called_once()
         self.assertEqual(result['accepted'], 1)
