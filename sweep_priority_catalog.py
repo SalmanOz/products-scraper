@@ -52,7 +52,7 @@ def catalog_queue(products, prices):
     return [(url, product) for _, url, product in rows]
 
 
-def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None):
+def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None, discover_n11=False):
     products, prices = client.get_published_products(), client.get_public_price_priority()
     if (not products or len(products) > 200 or len({p['id'] for p in products}) != len(products)
             or len({p['slug'] for p in products}) != len(products)):
@@ -66,37 +66,71 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
     targets = catalog_queue(products, prices)
     result = {'purpose': 'systematic_priority_catalog_recovery', 'catalog_count': len(products),
               'publish': publish, 'writes': False, 'status': 'running', 'queued': len(targets),
-              'rows': [], 'accepted': 0, 'models_without_priority_hints': sorted(
+              'rows': [], 'accepted': 0, 'discovery': [], 'models_without_priority_hints': sorted(
                   {p['slug'] for p in products} - {p['slug'] for _, p in targets})}
     publication_failed = False
+    def process_target(url, product):
+        nonlocal publication_failed
+        row = inspect_target(transport, url, product)
+        row['expected_specs'] = product.get('attributes') and {
+            key: value for key, value in PriceUpdater.get_expected_specs(
+                product['attributes']).items() if key in ('ram_gb', 'storage_gb')}
+        result['rows'].append(row)
+        if row.get('prepared_offer') is not None and publish and not publication_failed:
+            if product['slug'] == 'samsung-galaxy-a37-5g':
+                row['publication'] = {'status': 'protected_paired_workflow_required'}
+            else:
+                audit = {'purpose': 'automatic_priority_retailer_diagnosis', 'writes': False,
+                         'catalog_count': len(products), 'rows': [row]}
+                # Re-read immediately, hydrate current complete seller targets, atomically
+                # ingest only this observation, and verify the commercial readback.
+                try:
+                    refreshed = refresh_candidates(audit, client=client, reader=reader)
+                except CandidatePublicationError as error:
+                    # Stop ALL further price writes, but finish the independent
+                    # GET-only diagnosis so the rest of the catalog is not lost.
+                    refreshed = error.result
+                    publication_failed = True
+                row['publication'] = refreshed
+                result['accepted'] += refreshed.get('ingestion', {}).get('accepted', 0)
+                result['writes'] |= refreshed['writes']
+        result['sources'] = transport.report()
+        if checkpoint:
+            checkpoint(result)
     try:
         for url, product in targets:
-            row = inspect_target(transport, url, product)
-            row['expected_specs'] = product.get('attributes') and {
-                key: value for key, value in PriceUpdater.get_expected_specs(
-                    product['attributes']).items() if key in ('ram_gb', 'storage_gb')}
-            result['rows'].append(row)
-            if row.get('prepared_offer') is not None and publish and not publication_failed:
-                if product['slug'] == 'samsung-galaxy-a37-5g':
-                    row['publication'] = {'status': 'protected_paired_workflow_required'}
-                else:
-                    audit = {'purpose': 'automatic_priority_retailer_diagnosis', 'writes': False,
-                             'catalog_count': len(products), 'rows': [row]}
-                    # Re-read immediately, hydrate current complete seller targets, atomically
-                    # ingest only this observation, and verify the commercial readback.
-                    try:
-                        refreshed = refresh_candidates(audit, client=client, reader=reader)
-                    except CandidatePublicationError as error:
-                        # Stop ALL further price writes, but finish the independent
-                        # GET-only diagnosis so the rest of the catalog is not lost.
-                        refreshed = error.result
-                        publication_failed = True
-                    row['publication'] = refreshed
-                    result['accepted'] += refreshed.get('ingestion', {}).get('accepted', 0)
-                    result['writes'] |= refreshed['writes']
-            result['sources'] = transport.report()
-            if checkpoint:
-                checkpoint(result)
+            process_target(url, product)
+        if discover_n11:
+            from n11_catalog_source import discover_catalog_targets
+            from reviewed_offer_targets import with_reviewed_radio
+            from tr_price_scraper import TRPriceScraper
+            inspected = {row['observed_url'] for row in result['rows']}
+            for product in sorted(products, key=lambda p: (prices.get(p['id'], ('', True))[1], p['id'])):
+                specs = with_reviewed_radio(product, PriceUpdater.get_expected_specs(product.get('attributes')))
+                storage = specs.get('storage_gb')
+                model = TRPriceScraper._catalog_model_name(product['name'], specs)
+                if not model or not storage:
+                    continue
+                query = f'{model} {storage} GB'
+                html, reason, status = transport.read_n11_search(query)
+                diagnostic = {'slug': product['slug'], 'retailer': 'n11', 'query': query,
+                              'reason': reason, 'http_status': status, 'new_targets': []}
+                result['discovery'].append(diagnostic)
+                if html is not None:
+                    candidates = discover_catalog_targets(html, product['name'], specs)
+                    for candidate in candidates:
+                        url = candidate['source_url']
+                        if url in inspected:
+                            continue
+                        inspected.add(url)
+                        diagnostic['new_targets'].append(candidate)
+                        result['queued'] += 1
+                        process_target(url, product)
+                    if diagnostic['new_targets']:
+                        result['models_without_priority_hints'] = [slug for slug in
+                            result['models_without_priority_hints'] if slug != product['slug']]
+                if checkpoint:
+                    checkpoint(result)
         result['status'] = 'publication_failed' if publication_failed else 'completed'
     except Exception as error:
         result.update(status='failed', error_type=type(error).__name__)
@@ -124,6 +158,11 @@ def save_report(result):
     lines += ['', 'Reasons: ' + json.dumps(counts, ensure_ascii=False), '',
               'Sources: ' + json.dumps(result.get('sources'), ensure_ascii=False), '',
               'No-hint models: ' + ', '.join(result['models_without_priority_hints'])]
+    if result.get('discovery'):
+        lines += ['', 'Automatic n11 discovery: ' + json.dumps({
+            'catalog_queries': len(result['discovery']),
+            'search_documents_read': sum(row['reason'] == 'document_read' for row in result['discovery']),
+            'new_targets': sum(len(row['new_targets']) for row in result['discovery'])}, ensure_ascii=False)]
     if result.get('public_coverage'):
         lines += ['', 'Public coverage: ' + json.dumps(result['public_coverage'], ensure_ascii=False)]
     Path('priority-catalog-sweep.md').write_text('\n'.join(lines))
@@ -158,7 +197,7 @@ def main():
                 'physical_facts': row.get('physical_facts'), 'publication': row.get('publication')},
                 ensure_ascii=False), flush=True)
     client = OfferIngestionClient.from_env()
-    result = sweep(client=client, publish=args.publish, checkpoint=checkpoint)
+    result = sweep(client=client, publish=args.publish, checkpoint=checkpoint, discover_n11=True)
     result['public_coverage'] = coverage_readback(result, client.get_public_price_priority())
     save_report(result)
     print(Path('priority-catalog-sweep.md').read_text())

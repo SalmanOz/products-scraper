@@ -26,6 +26,27 @@ def sweep_reader():
 
 
 class SweepTests(unittest.TestCase):
+    def test_missing_catalog_hint_is_discovered_automatically_without_creating_products_or_prices(self):
+        client = Client()
+        client.product['offer_targets'] = []
+        client.get_public_price_priority = lambda: {}
+        url = 'https://www.n11.com/urun/samsung-galaxy-a36-5g-8gb-128gb-12345678'
+        class SearchTransport(Transport):
+            def read_n11_search(self, query):
+                return (f'<a href="{url}"><h2 class="product-item-title">'
+                        f'{client.product["name"]} 8 GB RAM 128 GB</h2><b>1 TL</b></a>',
+                        'document_read', 200)
+        row = {'slug': client.product['slug'], 'retailer': 'n11', 'url': url,
+               'observed_url': url, 'http_status': 200, 'reason': 'document_read', 'prepared_offer': None}
+        with patch('sweep_priority_catalog.inspect_target', return_value=row) as inspect, \
+                patch('sweep_priority_catalog.refresh_candidates') as writer:
+            result = sweep(client=client, transport=SearchTransport(), discover_n11=True)
+        writer.assert_not_called()
+        inspect.assert_called_once()
+        self.assertEqual(result['queued'], 1)
+        self.assertEqual(result['models_without_priority_hints'], [])
+        self.assertEqual(result['discovery'][0]['new_targets'][0]['source_url'], url)
+
     def test_exhausting_the_queue_cannot_pass_when_public_price_coverage_is_below_half(self):
         result = {'catalog_count': 110, 'rows': [{'reason': 'document_read'},
                                                {'reason': 'source_circuit_open'}]}

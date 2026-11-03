@@ -16,6 +16,24 @@ URLS = (
 
 
 class PriorityRetailerTests(unittest.TestCase):
+    def test_n11_discovery_search_obeys_robots_and_shared_document_budget(self):
+        calls = []
+        def get(url, **_):
+            calls.append(url)
+            return Response(url, 'User-agent: *\nAllow: /\n' if url.endswith('robots.txt') else '<h1>Search</h1>')
+        source = PriorityRetailerTransport(get=get, sleep=lambda _: None, maximum_per_host=2)
+        self.assertEqual(source.read_n11_search('Samsung Galaxy A57 256 GB')[1], 'document_read')
+        self.assertEqual(source.read_document(URLS[2])[1], 'document_read')
+        self.assertEqual(source.read_n11_search('Samsung Galaxy A56 256 GB')[1], 'pdp_budget_exhausted')
+        self.assertEqual(source.report()['n11']['search_requests'], 1)
+        self.assertEqual(source.report()['n11']['pdp_requests'], 1)
+        self.assertEqual(source.report()['n11']['document_requests'], 2)
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(source.read_n11_search('bad\nquery')[1], 'invalid_catalog_query')
+        denied = PriorityRetailerTransport(get=lambda url, **_: Response(url,
+            'User-agent: *\nDisallow: /arama\n'), sleep=lambda _: None)
+        self.assertEqual(denied.read_n11_search('Samsung Galaxy A57 256 GB')[1], 'robots_disallowed')
+
     def test_compatible_http_retains_bot_identity_robots_streaming_and_no_redirects(self):
         calls = []
         def get(url, **kwargs):

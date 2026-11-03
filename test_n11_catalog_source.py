@@ -5,7 +5,7 @@ import unittest
 
 from bs4 import BeautifulSoup
 
-from n11_catalog_source import N11CatalogSource, catalog_offer_matches, parse_catalog_listing
+from n11_catalog_source import N11CatalogSource, catalog_offer_matches, discover_catalog_targets, parse_catalog_listing
 from retailer_offer_refresh import RetailerOfferRefresher
 from update_prices import PriceUpdater
 
@@ -25,6 +25,19 @@ def document(change=None):
 
 
 class N11CatalogTests(unittest.TestCase):
+    def test_search_discovers_only_matching_new_phone_destinations_and_never_card_prices(self):
+        title = 'Samsung Galaxy A57 8 GB 256 GB (Samsung Türkiye Garantili)'
+        def card(url, name=title):
+            return f'<a href="{url}"><h2 class="product-item-title">{name}</h2><h3>1 TL</h3></a>'
+        html = (card(URL + '?magaza=mediamarkt&renk=gri') + card(URL)
+                + card(URL.replace('123382026', '123382027'), title.replace('A57', 'A56'))
+                + card(URL, 'Yenilenmiş ' + title) + card(URL, title + ' Kılıf')
+                + card(URL, title.replace('256', '128')) + card(URL + '?token=secret')
+                + card(URL.replace('www.n11.com', 'attacker.example')))
+        result = discover_catalog_targets(html, NAME, SPECS)
+        self.assertEqual(result, [{'source_url': URL, 'discovery_title': title}])
+        self.assertNotIn('price', result[0])
+
     def test_live_ordinary_sale_uses_selected_shop_and_cash_not_old_price(self):
         offer, reason = parse_catalog_listing(document(), URL, NAME, SPECS)
         self.assertEqual(reason, 'selected_n11_cash_offer')

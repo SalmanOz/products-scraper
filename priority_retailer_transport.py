@@ -7,7 +7,7 @@ must independently prove the selected SKU, seller, cash price and stock.
 import re
 import time
 from threading import RLock
-from urllib.parse import parse_qsl, urljoin, urlparse
+from urllib.parse import parse_qsl, urlencode, urljoin, urlparse
 from urllib.robotparser import RobotFileParser
 
 from bs4 import BeautifulSoup
@@ -137,9 +137,20 @@ class PriorityRetailerTransport:
         host = product_host(url)
         if host is None:
             return None, 'invalid_priority_pdp', None
+        return self._read_document(url, host)
+
+    def read_n11_search(self, query):
+        if (not isinstance(query, str) or not 1 <= len(query) <= 180
+                or re.search(r'[\x00-\x1f]', query)):
+            return None, 'invalid_catalog_query', None
+        url = 'https://www.n11.com/arama?' + urlencode({'q': query})
+        return self._read_document(url, 'www.n11.com')
+
+    def _read_document(self, url, host):
         with self._lock:
             state = self._states.setdefault(host, {'rules': None, 'robots': 'not_loaded',
-                'pdp_requests': 0, 'browser_requests': 0, 'delay': 0.5, 'blocked': False, 'seen': set()})
+                'pdp_requests': 0, 'search_requests': 0, 'browser_requests': 0,
+                'delay': 0.5, 'blocked': False, 'seen': set()})
             if state['blocked']:
                 return None, 'source_circuit_open', None
             try:
@@ -169,6 +180,8 @@ class PriorityRetailerTransport:
                     return None, 'pdp_budget_exhausted', None
                 state['seen'].add(url)
                 state['pdp_requests'] += 1
+                if urlparse(url).path == '/arama':
+                    state['search_requests'] += 1
                 raw, reason, status = self._read(url, MAX_HTML_BYTES, 'text/html', state)
                 if reason != 'ready':
                     if status in (403, 429, 500, 502, 503, 504):
@@ -184,6 +197,8 @@ class PriorityRetailerTransport:
                 return None, 'transport_error', None
 
     def report(self):
-        return {HOSTS[host]: {key: value for key, value in state.items()
-                              if key in {'robots', 'pdp_requests', 'browser_requests', 'blocked'}}
+        return {HOSTS[host]: {**{key: value for key, value in state.items()
+                              if key in {'robots', 'browser_requests', 'blocked', 'search_requests'}},
+                              'pdp_requests': state['pdp_requests'] - state['search_requests'],
+                              'document_requests': state['pdp_requests']}
                 for host, state in self._states.items()}
