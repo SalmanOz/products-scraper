@@ -52,6 +52,19 @@ def document(changes=None):
 
 
 class TrendyolCatalogTests(unittest.TestCase):
+    def test_checksum_valid_upc_preserves_raw_selected_barcode_and_equivalent_gtin(self):
+        from tr_price_scraper import TRPriceScraper
+        p = ('state', 'product')
+        paths = [p + ('variants', 0, 'barcode'), p + ('merchantListing', 'variants', 0, 'barcode'),
+                 p + ('merchantListing', 'winnerVariant', 'barcode')]
+        offer, reason = parse_catalog_listing(document({path: '195949018916' for path in paths}), URL, NAME, SPECS)
+        self.assertIsNotNone(offer, reason)
+        self.assertEqual((offer['gtin13'], offer['observed_barcode']), ('0195949018916', '195949018916'))
+        self.assertTrue(TRPriceScraper().has_observed_offer_evidence(NAME, offer, SPECS))
+        for barcode in ['195949018917', '19594901891', '00195949018916', ' 195949018916']:
+            self.assertIsNone(parse_catalog_listing(document({path: barcode for path in paths}), URL, NAME, SPECS)[0])
+        self.assertIsNone(parse_catalog_listing(document({paths[0]: '195949018916'}), URL, NAME, SPECS)[0])
+
     def test_selected_brand_cannot_be_an_accessory_brand_prefixing_a_phone_name(self):
         for brand in ['Valoris', 'Genel Markalar']:
             title = brand + ' ' + TITLE

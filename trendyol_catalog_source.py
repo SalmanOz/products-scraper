@@ -10,6 +10,7 @@ from bs4 import BeautifulSoup
 from hepsiburada_s25_fe_source import _nodes, _normalized
 from mediamarkt_marketplace_audit import _gtin13, catalog_variant_matches
 from priority_retailer_transport import PriorityRetailerTransport, product_host
+from retailer_barcode import retailer_gtin13
 from tr_price_scraper import TRPriceScraper
 
 
@@ -137,7 +138,7 @@ def parse_catalog_listing(html, url, name, specs):
             or not isinstance(winner.get('listingId'), str)
             or not re.fullmatch(r'[a-f0-9]{32}', winner['listingId'])
             or type(winner.get('itemNumber')) is not int or winner['itemNumber'] <= 0
-            or _gtin13(winner.get('barcode')) is None
+            or retailer_gtin13(winner.get('barcode')) is None
             or winner.get('sellable') is not True or winner.get('inStock') is not True
             or type(winner.get('stockStatus')) is not int or winner['stockStatus'] != 1):
         return None, 'selected_merchant_or_stock_mismatch'
@@ -191,7 +192,8 @@ def parse_catalog_listing(html, url, name, specs):
     return {'platform': 'Trendyol', 'merchant': seller, 'merchant_id': seller_id,
             'selected_trendyol_seller': seller, 'selected_trendyol_merchant_id': seller_id,
             'product_id': identity, 'listing_id': winner['listingId'], 'item_number': winner['itemNumber'],
-            'gtin13': winner['barcode'], 'selected_trendyol_variant_verified': True,
+            'gtin13': retailer_gtin13(winner['barcode']), 'observed_barcode': winner['barcode'],
+            'selected_trendyol_variant_verified': True,
             'price': float(price), 'currency': 'TRY', 'condition': 'new', 'availability': 'in_stock',
             'url': url, 'source_title': title, **physical,
             'observed_at': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')}, 'selected_new_cash_offer_observed'
