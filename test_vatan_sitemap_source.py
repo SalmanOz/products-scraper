@@ -46,6 +46,35 @@ class Fetch:
 
 
 class VatanSitemapSourceTests(unittest.TestCase):
+    def test_chrome_xml_viewer_yields_only_bounded_original_sitemap_hints(self):
+        exact = 'https://www.vatanbilgisayar.com/xiaomi-17t-12-256gb-akilli-telefon-siyah.html'
+        xml = sitemap(exact).decode().split('?>', 1)[1]
+        source_html = ('<!DOCTYPE html><html><body><div id="viewer">'
+                       + ' ' * (3 * 1024 * 1024) + '</div>'
+                       + '<div id="webkit-xml-viewer-source-xml">' + xml + '</div>'
+                       + '</body></html>')
+        for document, expected in (
+            (source_html, 'ready'),
+            (source_html.replace('schemas/sitemap/0.9', 'schemas/other/0.9'),
+             'sitemap_browser_invalid_xml_wrapper'),
+            (source_html.replace('</body>', '<div id="webkit-xml-viewer-source-xml"></div></body>'),
+             'sitemap_browser_invalid_xml_wrapper'),
+            (source_html.replace('<urlset ', '<!ENTITY x "bad"><urlset '), 'unsafe_xml'),
+        ):
+            with self.subTest(expected=expected):
+                fetch = Fetch({ROBOTS_URL: ROBOTS,
+                               SITEMAP_URL: Response(SITEMAP_URL, b'denied', status=403)})
+                def post(url, **_kwargs):
+                    return Response(url, json.dumps({'status': 'ok', 'solution': {
+                        'status': 200, 'url': SITEMAP_URL, 'response': document}}).encode())
+                source = VatanSitemapSource(fetch=fetch, post=post, sleep=lambda _: None)
+                hints = source.discover('Xiaomi 17T', {'ram_gb': 12, 'storage_gb': 256})
+                self.assertEqual(source.report()['status'], expected)
+                self.assertEqual(hints, [{'source_url': exact}] if expected == 'ready' else [])
+                self.assertEqual(source.report()['browser_requests'], 1)
+                if expected == 'ready':
+                    self.assertTrue(source.report()['browser_xml_viewer_unwrapped'])
+
     def test_robots_allowed_sitemap_403_uses_one_bounded_browser_get(self):
         exact = 'https://www.vatanbilgisayar.com/xiaomi-17t-12-256gb-akilli-telefon-siyah.html'
         direct = Fetch({ROBOTS_URL: ROBOTS,

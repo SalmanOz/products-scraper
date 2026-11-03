@@ -14,6 +14,7 @@ from urllib.parse import unquote, urlparse
 from urllib.robotparser import RobotFileParser
 
 import requests
+from bs4 import BeautifulSoup, Tag
 
 from tr_price_scraper import TRPriceScraper
 
@@ -24,7 +25,10 @@ SITEMAP_URL = f'https://{HOST}/sitemap.axd'
 BOT = 'TeknoskorPriceBot'
 MAX_ROBOTS_BYTES = 64 * 1024
 MAX_SITEMAP_BYTES = 3 * 1024 * 1024
-MAX_SOLVER_BYTES = 8 * 1024 * 1024
+# Chrome's measured XML viewer is ~10.7 MiB; the original XML is much smaller.
+# Bound the browser envelope separately from the source sitemap.
+MAX_SOLVER_BYTES = 16 * 1024 * 1024
+MAX_BROWSER_DOCUMENT_BYTES = 12 * 1024 * 1024
 MAX_SITEMAP_URLS = 20_000
 MAX_PRODUCT_CANDIDATES = 4
 MAX_BROWSER_REQUESTS = 1
@@ -49,6 +53,7 @@ class VatanSitemapSource:
         self._sitemap_transport = 'not_attempted'
         self._sitemap_direct_status = None
         self._browser_requests = 0
+        self._browser_xml_unwrapped = False
 
     def _browser_sitemap(self):
         """One exact-URL retry, only after a robots-approved sitemap GET is 403."""
@@ -85,6 +90,20 @@ class VatanSitemapSource:
         if not isinstance(xml, str):
             raise ValueError('sitemap_browser_missing_xml')
         body = xml.encode('utf-8')
+        if len(body) > MAX_BROWSER_DOCUMENT_BYTES:
+            raise ValueError('sitemap_browser_oversized')
+        if 'webkit-xml-viewer-source-xml' in xml:
+            if re.search(r'<!DOCTYPE(?!\s+html\b)|<!ENTITY', xml, re.I):
+                raise ValueError('unsafe_xml')
+            soup = BeautifulSoup(xml, 'html.parser')
+            containers = soup.select('#webkit-xml-viewer-source-xml')
+            roots = ([node for node in containers[0].children if isinstance(node, Tag)]
+                     if len(containers) == 1 else [])
+            if (len(roots) != 1 or roots[0].name != 'urlset' or
+                    roots[0].get('xmlns') != _SITEMAP_NS[1:-1]):
+                raise ValueError('sitemap_browser_invalid_xml_wrapper')
+            body = str(roots[0]).encode('utf-8')
+            self._browser_xml_unwrapped = True
         if len(body) > MAX_SITEMAP_BYTES:
             raise ValueError('sitemap_browser_oversized')
         self._sitemap_transport = 'browser'
@@ -252,5 +271,6 @@ class VatanSitemapSource:
                 'sitemap_transport': self._sitemap_transport,
                 'sitemap_direct_http_status': self._sitemap_direct_status,
                 'browser_requests': self._browser_requests,
+                'browser_xml_viewer_unwrapped': self._browser_xml_unwrapped,
                 'failed_stage': self._failed_stage,
                 'http_status': self._http_status if self._failed_stage else None}

@@ -121,8 +121,8 @@ def main():
     source = VatanSitemapSource()
     report = run_audit(source)
     # A second GET exists only in this read-only pilot, after the production
-    # source has proved that robots allows the exact sitemap URL. Never widen
-    # the daily production reader's 8 MiB bound based on an unknown response.
+    # source has proved that robots allows the exact sitemap URL. Diagnostics
+    # never change the production reader's byte bounds.
     if (report['sitemap']['status'] in {'sitemap_solver_oversized', 'ParseError'}
             and source._rules is not None and source._rules.can_fetch(BOT, SITEMAP_URL)):
         report['solver_diagnostic'] = diagnose_solver_response()
