@@ -234,7 +234,7 @@ def coverage_readback(result, current):
         return {'passed': False, 'reason': 'public_catalog_readback_changed_or_incomplete'}
     priced = sum(row[1] is True for row in current.values())
     return {'catalog': len(current), 'priced': priced, 'ratio': priced / len(current),
-            'minimum_ratio': 0.5, 'passed': priced / len(current) >= 0.5,
+            'minimum_ratio': 0.8, 'passed': priced / len(current) >= 0.8,
             'documents_read': sum(row.get('reason') == 'document_read' and not row.get('document_reused')
                                   for row in result['rows']),
             'source_cooldown_skips': sum(row.get('reason') == 'source_cooldown' for row in result['rows']),

@@ -47,7 +47,7 @@ class SweepTests(unittest.TestCase):
         self.assertEqual(result['models_without_priority_hints'], [])
         self.assertEqual(result['discovery'][0]['new_targets'][0]['source_url'], url)
 
-    def test_exhausting_the_queue_cannot_pass_when_public_price_coverage_is_below_half(self):
+    def test_exhausting_the_queue_is_insufficient_until_four_fifths_have_live_prices(self):
         result = {'catalog_count': 110, 'rows': [{'reason': 'document_read'},
                                                {'reason': 'source_circuit_open'}]}
         current = {i: (str(i), i < 48) for i in range(110)}
@@ -55,7 +55,10 @@ class SweepTests(unittest.TestCase):
         self.assertFalse(report['passed'])
         self.assertEqual((report['priced'], report['documents_read'], report['source_circuit_skips']), (48, 1, 1))
         current.update({i: (str(i), True) for i in range(55)})
+        self.assertFalse(coverage_readback(result, current)['passed'])
+        current.update({i: (str(i), True) for i in range(88)})
         self.assertTrue(coverage_readback(result, current)['passed'])
+        self.assertEqual(coverage_readback(result, current)['minimum_ratio'], 0.8)
         self.assertFalse(coverage_readback(result, {})['passed'])
 
     def test_all_110_models_are_visited_before_any_second_color(self):
