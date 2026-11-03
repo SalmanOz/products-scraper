@@ -761,7 +761,8 @@ class RetailerOfferRefresher:
                 self._cache[source_url] = candidate
             return candidate
         if parsed.hostname.removeprefix('www.') == 'turkcell.com.tr':
-            if pasaj_product_url(source_url):
+            if (pasaj_product_url(source_url) or isinstance(self.pasaj_source, PasajSource)
+                    and self.pasaj_source.is_catalog_target(source_url)):
                 candidate, reason, status = self.pasaj_source.read_offer(source_url)
             else:
                 candidate, reason, status = None, 'unreviewed_pasaj_pdp', None
@@ -876,6 +877,8 @@ class RetailerOfferRefresher:
         if isinstance(self.vatan_reviewed_source, VatanReviewedSource):
             self.vatan_reviewed_source.register_catalog_targets(
                 product_name, selected_targets, expected_specs)
+        if isinstance(self.pasaj_source, PasajSource):
+            self.pasaj_source.register_catalog_targets(product_name, selected_targets, expected_specs)
         urls = [row['source_url'] for row in selected_targets]
         by_merchant = {}
         for target in targets:

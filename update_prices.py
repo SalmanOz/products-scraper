@@ -446,11 +446,15 @@ class PriceUpdater:
         if product_id is None and product_slugs is None and not known_pdp_only and products:
             from mediamarkt_source import MediaMarktSource
             from vatan_reviewed_source import VatanReviewedSource
+            from pasaj_source import PasajSource
             if isinstance(self.mediamarkt_source, MediaMarktSource):
                 self.mediamarkt_source.configure_catalog_budget(len(products))
             vatan_reader = getattr(self.offer_refresher, 'vatan_reviewed_source', None)
             if isinstance(vatan_reader, VatanReviewedSource):
                 vatan_reader.configure_catalog_budget(len(products))
+            pasaj_reader = getattr(self.offer_refresher, 'pasaj_source', None)
+            if isinstance(pasaj_reader, PasajSource):
+                pasaj_reader.configure_catalog_budget(len(products))
 
         if (product_id is None and product_slugs is None and not known_pdp_only
                 and hasattr(self.ingestion_client, 'get_public_price_priority')):

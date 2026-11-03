@@ -10,6 +10,7 @@ from decimal import Decimal, InvalidOperation
 import json
 import re
 import time
+from urllib.parse import urlparse
 from threading import RLock
 from urllib.robotparser import RobotFileParser
 
@@ -43,6 +44,21 @@ MAX_ROBOTS_BYTES = 64 * 1024
 MAX_HTML_BYTES = 2 * 1024 * 1024
 MAX_PDP_REQUESTS = 6
 SELLER = 'Turkcell Satış A.Ş.'
+_CATALOG_PATH = re.compile(r'/pasaj/cep-telefonu/(?:android-telefonlar|ios-telefonlar|'
+                           r'yapay-zeka-telefonlar)/(?:[a-z0-9-]+/){0,2}[a-z0-9-]+')
+_USED = re.compile(r'outlet|yenilenmi[sş]|refurbish|ikinci[- ]el|te[sş]hir|kullan[iı]lm[iı][sş]', re.I)
+
+
+def catalog_product_url(url):
+    if not isinstance(url, str) or len(url) > 500 or re.search(r'[\x00-\x20\\%]', url):
+        return False
+    try:
+        parsed = urlparse(url)
+        return bool(parsed.scheme == 'https' and parsed.netloc == 'www.turkcell.com.tr'
+                    and not parsed.query and not parsed.fragment and _CATALOG_PATH.fullmatch(parsed.path)
+                    and not _USED.search(parsed.path))
+    except ValueError:
+        return False
 
 
 def product_url(url):
@@ -92,16 +108,38 @@ def _iphone16_ram_in_exact_faq(soup):
     return memory == ['8 GB LPDDR5 RAM ile donatılmıştır.']
 
 
-def _selected_offer(html, url):
-    if not product_url(url):
+def _selected_offer(html, url, catalog_profile=None):
+    generic = not product_url(url)
+    if generic and (not isinstance(catalog_profile, dict) or not catalog_product_url(url)):
         return None
-    reviewed = REVIEWED[url]
     soup = BeautifulSoup(html, 'html.parser')
     if re.search(r'captcha|access denied|just a moment',
                  ' '.join(n.get_text(' ', strip=True) for n in soup.select('title,h1')), re.I):
         return None
     canonical = soup.select('link[rel="canonical"]')
     headings = [n.get_text(' ', strip=True) for n in soup.select('h1') if n.get_text(' ', strip=True)]
+    if generic:
+        from tr_price_scraper import TRPriceScraper
+        matcher = TRPriceScraper()
+        if (len(headings) != 1 or _USED.search(headings[0]) or
+                not matcher.has_observed_offer_evidence(catalog_profile['name'],
+                    {'source_title': headings[0], 'url': url}, catalog_profile['specs'])):
+            return None
+        reviewed = {'title': headings[0], 'brand': catalog_profile['brand'],
+                    'ram': f"{catalog_profile['specs']['ram_gb']} GB",
+                    'storage': f"{catalog_profile['specs']['storage_gb']} GB",
+                    'selected_color': True}
+        ram_values = [_feature(soup, label) for label in ('Ram (bellek) Kapasitesi', 'Bellek Ram')]
+        ram_values = [value for value in ram_values if value is not None]
+        ram_feature = ram_values[0] if len(set(ram_values)) == 1 else None
+        radio_feature = _feature(soup, 'Hücresel Plan')
+        observed_radio = matcher._radio_generation(radio_feature or '')
+        expected_radio = catalog_profile['specs'].get('network_generation')
+        if observed_radio and expected_radio and observed_radio != expected_radio:
+            return None
+    else:
+        reviewed = REVIEWED[url]
+        ram_feature = _feature(soup, 'Ram (bellek) Kapasitesi')
     if (len(canonical) != 1 or canonical[0].get('href') != url or
             headings != [reviewed['title']] or
             _feature(soup, 'Dahili Hafıza') != reviewed['storage'] or
@@ -109,7 +147,7 @@ def _selected_offer(html, url):
                 not _iphone16_ram_in_exact_faq(soup) or
                 _feature(soup, 'Ram (bellek) Kapasitesi') not in (None, reviewed['ram']))) or
             (url != IPHONE16_128_URL and
-             _feature(soup, 'Ram (bellek) Kapasitesi') != reviewed['ram']) or
+             ram_feature != reviewed['ram']) or
             ('network' in reviewed and
              _feature(soup, 'Hücresel Plan') != reviewed['network'])):
         return None
@@ -124,10 +162,16 @@ def _selected_offer(html, url):
     if len(products) != 1:
         return None
     product = products[0]
+    brand_matches = (product.get('brand') == {'@type': 'Brand', 'name': reviewed['brand']})
+    if generic:
+        brand = product.get('brand')
+        brand_matches = (isinstance(brand, dict) and brand.get('@type') == 'Brand'
+                         and str(brand.get('name', '')).casefold() == reviewed['brand'].casefold())
     if (product.get('name') != headings[0] or product.get('url') != url or
             not re.fullmatch(r'[1-9]\d{3,10}', str(product.get('sku', ''))) or
             ('sku' in reviewed and str(product.get('sku')) != reviewed['sku']) or
-            product.get('brand') != {'@type': 'Brand', 'name': reviewed['brand']}):
+            not brand_matches or (generic and product.get('itemCondition') not in
+                (None, 'https://schema.org/NewCondition', 'http://schema.org/NewCondition'))):
         return None
     aggregate = product.get('offers')
     if not isinstance(aggregate, dict) or aggregate.get('@type') != 'AggregateOffer':
@@ -141,11 +185,14 @@ def _selected_offer(html, url):
     offer = offers[0]
     if (not isinstance(offer, dict) or offer.get('@type') != 'Offer' or
             offer.get('priceCurrency') != 'TRY' or
+            (generic and offer.get('itemCondition') not in
+                (None, 'https://schema.org/NewCondition', 'http://schema.org/NewCondition')) or
             offer.get('offeredBy') != {'@type': 'Organization', 'name': SELLER}):
         return None
     price = _money(offer.get('price'))
     if (price is None or price != _money(aggregate.get('lowPrice')) or
-            price != _money(aggregate.get('highPrice'))):
+            ((not generic or aggregate.get('highPrice') is not None)
+             and price != _money(aggregate.get('highPrice')))):
         return None
     # Scope all visible evidence to the selected cash option in the same
     # purchase form as the enabled single-product basket button.
@@ -197,6 +244,43 @@ class PasajSource:
         self._pdp_requests = 0
         self._blocked = False
         self._robots_status = 'not_loaded'
+        self._catalog_profiles = {}
+        self._pdp_limit = MAX_PDP_REQUESTS
+
+    def configure_catalog_budget(self, product_count):
+        if type(product_count) is not int or product_count < 1:
+            raise ValueError('Catalog product count must be a positive integer')
+        if self._pdp_requests or self._rules is not None:
+            raise RuntimeError('Configure the catalog budget before source requests')
+        self._pdp_limit = max(MAX_PDP_REQUESTS, min(60, product_count))
+
+    def register_catalog_targets(self, product_name, targets, expected_specs):
+        from vatan_sitemap_source import VatanSitemapSource
+        from tr_price_scraper import TRPriceScraper
+        matcher = TRPriceScraper()
+        specs = {key: matcher._spec_int(expected_specs.get(key)) for key in ('ram_gb', 'storage_gb')}
+        specs['network_generation'] = expected_specs.get('network_generation') or matcher._radio_generation(product_name)
+        if not specs['ram_gb'] or not specs['storage_gb']:
+            return
+        brands = {'apple': 'Apple', 'samsung': 'Samsung', 'xiaomi': 'Xiaomi', 'poco': 'POCO',
+                  'honor': 'Honor', 'oppo': 'OPPO', 'vivo': 'Vivo', 'realme': 'realme',
+                  'tecno': 'Tecno', 'infinix': 'Infinix'}
+        brand = brands.get(product_name.split()[0].casefold()) if product_name else None
+        if not brand:
+            return
+        with self._lock:
+            for row in targets:
+                url = row.get('source_url') if isinstance(row, dict) else None
+                if (not product_url(url) and catalog_product_url(url)
+                        and VatanSitemapSource._variant_matches(urlparse(url).path, product_name, specs)):
+                    self._catalog_profiles[url] = {'name': product_name, 'brand': brand, 'specs': specs}
+
+    def is_catalog_target(self, url):
+        return url in self._catalog_profiles
+
+    def parse_offer(self, html, url):
+        """Use the same parser for a live GET and a GET-only coverage audit."""
+        return _selected_offer(html, url, self._catalog_profiles.get(url))
 
     def _request(self, url, limit):
         if self._blocked or (self._rules and not self._rules.can_fetch(BOT, url)):
@@ -254,18 +338,18 @@ class PasajSource:
         self._robots_status = 'allowed'
 
     def read_offer(self, url):
-        if not product_url(url):
+        if not product_url(url) and not self.is_catalog_target(url):
             return None, 'unreviewed_pasaj_pdp', None
         with self._lock:
             try:
                 self._ensure_robots(url)
-                if self._pdp_requests >= MAX_PDP_REQUESTS:
+                if self._pdp_requests >= self._pdp_limit:
                     return None, 'pdp_budget_exhausted', None
                 self._pdp_requests += 1
                 body, reason, status = self._request(url, MAX_HTML_BYTES)
                 if reason != 'ok':
                     return None, reason, status
-                offer = _selected_offer(body, url)
+                offer = self.parse_offer(body, url)
                 return offer, 'observed_exact_cash_offer' if offer else 'no_selected_cash_offer', 200
             except ValueError as error:
                 return None, str(error), None
@@ -274,4 +358,5 @@ class PasajSource:
 
     def report(self):
         return {'robots_status': self._robots_status, 'pdp_requests': self._pdp_requests,
-                'blocked': self._blocked, 'reviewed_pdp_count': len(REVIEWED)}
+                'blocked': self._blocked, 'reviewed_pdp_count': len(REVIEWED),
+                'catalog_discovered_urls': len(self._catalog_profiles), 'pdp_request_limit': self._pdp_limit}

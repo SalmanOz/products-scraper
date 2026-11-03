@@ -20,6 +20,7 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt
       - run: python -m unittest -q test_automatic_marketplace_refresh test_reviewed_offer_targets test_retailer_offer_refresh test_price_refresh_orchestration test_mediamarkt_source test_mediamarkt_marketplace_audit
+      - run: python -m unittest -q test_pasaj_source test_pasaj_unreviewed_candidates
       - name: Start existing browser GET transport
         run: |
           docker run -d --name=retailer-audit-browser -p 8191:8191 -e LOG_LEVEL=info ghcr.io/flaresolverr/flaresolverr:latest

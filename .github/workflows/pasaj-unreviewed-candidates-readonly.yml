@@ -8,6 +8,11 @@ on:
         type: number
         required: true
         default: 0
+      priced_catalog:
+        description: 'Audit additional sellers for models that already have a current price'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -39,9 +44,14 @@ jobs:
           SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
           PASAJ_CANDIDATE_AUDIT_OUTPUT_DIR: ${{ runner.temp }}
           PASAJ_CANDIDATE_OFFSET: ${{ inputs.offset }}
+          PASAJ_PRICED_CATALOG: ${{ inputs.priced_catalog }}
         run: |
           : "${SCRAPER_INGESTION_SECRET:?SCRAPER_INGESTION_SECRET is required}"
-          python audit_pasaj_unreviewed_candidates.py --offset "$PASAJ_CANDIDATE_OFFSET"
+          if [[ "$PASAJ_PRICED_CATALOG" == 'true' ]]; then
+            python audit_pasaj_unreviewed_candidates.py --offset "$PASAJ_CANDIDATE_OFFSET" --priced
+          else
+            python audit_pasaj_unreviewed_candidates.py --offset "$PASAJ_CANDIDATE_OFFSET"
+          fi
       - name: Summarize read-only evidence
         if: always()
         run: |

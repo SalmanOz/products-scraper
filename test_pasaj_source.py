@@ -94,6 +94,55 @@ class Response:
 
 
 class PasajSourceTest(unittest.TestCase):
+    def test_catalog_variant_without_a_manual_profile_uses_selected_cash_and_memory_features(self):
+        from test_pasaj_unreviewed_candidates import selected_page, URL
+        from update_prices import PriceUpdater
+        specs = {'ram_gb': 8, 'storage_gb': 128, 'network_generation': '5g'}
+        html = selected_page().replace('Ram (bellek) Kapasitesi', 'Bellek Ram')
+        html = html.replace('"highPrice": 19499, ', '')
+        calls = []
+        def get(url, **kwargs):
+            calls.append(url)
+            if url == ROBOTS_URL:
+                return Response(url, 'User-agent: *\nAllow: /pasaj\n', content_type='text/plain')
+            return Response(url, html)
+        source = PasajSource(get=get, sleep=lambda _: None)
+        source.configure_catalog_budget(110)
+        source._pdp_requests = 6
+        reader = RetailerOfferRefresher(fetch=get, pasaj_source=source)
+        observed = reader.refresh_existing_offer_targets('Samsung Galaxy A54 5G',
+                                                       [{'source_url': URL}], specs)
+        self.assertEqual([(o['price'], o['merchant']) for o in observed], [(19499, 'Pasaj')])
+        updater = PriceUpdater(ingestion_client=object(), offer_refresher=reader)
+        product = {'id': 999, 'slug': 'samsung-galaxy-a54-5g', 'name': 'Samsung Galaxy A54 5G'}
+        self.assertTrue(updater.live_offer_is_valid(product, observed[0], specs))
+        self.assertEqual(len(updater.prepare_product_offers(product, observed,
+                             updater.utc_timestamp(), updater.utc_timestamp())), 1)
+        self.assertEqual(calls, [ROBOTS_URL, URL])
+        self.assertEqual(source.report()['pdp_request_limit'], 60)
+        self.assertEqual(reader.refresh_existing_offer_targets('Samsung Galaxy A54 5G',
+                         [{'source_url': URL}], {**specs, 'storage_gb': 256}), [])
+
+    def test_automatic_catalog_reader_rejects_variant_stock_seller_and_cash_conflicts(self):
+        from test_pasaj_unreviewed_candidates import selected_page, URL
+        specs = {'ram_gb': 8, 'storage_gb': 128, 'network_generation': '5g'}
+        source = PasajSource()
+        source.register_catalog_targets('Samsung Galaxy A54 5G', [{'source_url': URL}], specs)
+        profile = source._catalog_profiles[URL]
+        for html in (selected_page(ram='6 GB'), selected_page(storage='256 GB'),
+                     selected_page(network='4G'), selected_page(seller='Other'),
+                     selected_page(availability='https://schema.org/OutOfStock'),
+                     selected_page(cash='18.499'), selected_page(button='Stokta Yok'),
+                     selected_page().replace('data-stock-available="true"', 'data-stock-available="false"'),
+                     selected_page().replace('"priceCurrency": "TRY"', '"priceCurrency": "USD"'),
+                     selected_page().replace('"@type": "Offer",', '"@type": "Offer", "itemCondition": "https://schema.org/RefurbishedCondition",')):
+            self.assertIsNone(_selected_offer(html, URL, profile))
+        for url in (URL+'?seller=other', URL.replace('https:', 'http:'),
+                    URL.replace('www.turkcell.com.tr', 'attacker.example'),
+                    URL.replace('128-gb', '256-gb')):
+            source.register_catalog_targets('Samsung Galaxy A54 5G', [{'source_url': url}], specs)
+            self.assertFalse(source.is_catalog_target(url))
+
     def test_exact_cash_offer(self):
         offer = _selected_offer(page(), IPHONE17_256_URL)
         self.assertEqual((offer['merchant'], offer['price'], offer['currency'],

@@ -149,6 +149,15 @@ class PasajCandidateTests(unittest.TestCase):
         report = run_audit(client=Client(rows, prices), source=source)
         self.assertEqual(report['source_verified'], 1)
         self.assertEqual(source.urls, [URL])
+        priced = run_audit(client=Client(rows, prices), source=Source(), priced=True)
+        self.assertEqual([row['slug'] for row in priced['candidates']], ['samsung-galaxy-a55-5g'])
+
+    def test_same_live_document_reaches_automatic_preparation_without_writes(self):
+        report = run_audit(client=Client(), source=Source())
+        self.assertFalse(report['writes'])
+        self.assertEqual(report['automatic_prepared_offers'], 1)
+        self.assertEqual(report['candidates'][0]['automatic_prepared'][0]['seller'], 'Pasaj')
+        self.assertIn('automatic prepared offers: 1', summary(report))
 
     def test_same_clean_url_on_two_catalog_products_is_not_probed(self):
         rows = [product(), product(2, 'samsung-galaxy-a55-5g',

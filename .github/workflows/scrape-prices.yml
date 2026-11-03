@@ -188,6 +188,7 @@ jobs:
           python test_matching.py
           python test_price_scraper_sources.py
           python -m unittest -q test_legacy_source_circuit
+          python -m unittest -q test_pasaj_source test_pasaj_unreviewed_candidates
           python test_offer_ingestion_client.py
           python test_price_update_resilience.py
           python -m unittest -q test_score_reconciliation

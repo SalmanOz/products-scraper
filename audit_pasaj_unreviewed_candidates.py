@@ -87,7 +87,7 @@ def _candidate_priority(product, url):
             1 if '/android-telefonlar/' in path else 2)
 
 
-def _queue(products, prices):
+def _queue(products, prices, priced=False):
     """Exact unpriced catalog IDs only; no target URL is treated as an offer."""
     by_url = {}
     excluded_query = 0
@@ -95,7 +95,7 @@ def _queue(products, prices):
         if (not isinstance(product, dict) or type(product.get('id')) is not int
                 or not isinstance(product.get('slug'), str)
                 or not isinstance(product.get('name'), str)
-                or prices.get(product['id']) != (product['slug'], False)):
+                or prices.get(product['id']) != (product['slug'], priced)):
             continue
         targets = product.get('offer_targets')
         if not isinstance(targets, list):
@@ -216,15 +216,15 @@ def selected_cash_evidence(html, url, product):
             'availability': 'in_stock', 'expected_specs': specs}
 
 
-def run_audit(*, client=None, source=None, offset=0):
+def run_audit(*, client=None, source=None, offset=0, priced=False):
     if type(offset) is not int or not 0 <= offset <= 1000:
         raise ValueError('offset_must_be_0_to_1000')
     report = {'purpose': PURPOSE, 'writes': False, 'status': 'failed',
               'checked_at': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
-              'offset': offset, 'probe_budget': MAX_PDP_REQUESTS,
+              'offset': offset, 'priced_catalog': priced, 'probe_budget': MAX_PDP_REQUESTS,
               'candidate_urls': 0, 'query_urls_excluded': 0,
               'ambiguous_urls': [], 'probed': 0, 'source_verified': 0,
-              'candidates': [], 'source': {}}
+              'automatic_prepared_offers': 0, 'candidates': [], 'source': {}}
     try:
         client = client or OfferIngestionClient.from_env()
         source = source or PasajCandidateSource()
@@ -232,7 +232,9 @@ def run_audit(*, client=None, source=None, offset=0):
         prices = client.get_public_price_priority()
         if not isinstance(products, list) or not isinstance(prices, dict):
             raise ValueError('catalog_unavailable')
-        queue, ambiguous, query_count = _queue(products, prices)
+        queue, ambiguous, query_count = _queue(products, prices, priced=priced)
+        parser = PasajSource()
+        updater = PriceUpdater(ingestion_client=client)
         report.update(candidate_urls=len(queue), ambiguous_urls=ambiguous,
                       query_urls_excluded=query_count)
         for url, product in queue[offset:offset + MAX_PDP_REQUESTS]:
@@ -240,9 +242,17 @@ def run_audit(*, client=None, source=None, offset=0):
             evidence = (selected_cash_evidence(html, url, product)
                         if reason == 'document_read' and status == 200 else
                         {'status': reason})
+            specs = PriceUpdater.get_expected_specs(product.get('attributes'))
+            parser.register_catalog_targets(product['name'], [{'source_url': url}], specs)
+            automatic = parser.parse_offer(html, url) if reason == 'document_read' and status == 200 else None
+            accepted = ([automatic] if automatic and updater.live_offer_is_valid(product, automatic, specs)
+                        else [])
+            now = datetime.now(timezone.utc).isoformat()
+            prepared = updater.prepare_product_offers(product, accepted, now, now)
+            report['automatic_prepared_offers'] += len(prepared)
             report['candidates'].append({
                 'id': product['id'], 'slug': product['slug'], 'url': url,
-                'http_status': status, **evidence})
+                'http_status': status, **evidence, 'automatic_prepared': prepared})
         report['probed'] = len(report['candidates'])
         report['source_verified'] = sum(row['status'] ==
                                         'source_verified_pending_manual_review'
@@ -264,12 +274,15 @@ def summary(report):
              f"{report['candidate_urls']}; query URLs excluded: "
              f"{report['query_urls_excluded']}; page offset {report['offset']}; "
              f"probed {report['probed']}/{report['probe_budget']}; "
-             f"source verified for manual review: {report['source_verified']}.",
+             f"legacy proof verified: {report['source_verified']}; "
+             f"automatic prepared offers: {report.get('automatic_prepared_offers', 0)}; "
+             f"priced catalog: {report.get('priced_catalog', False)}.",
              f"Robots: {source.get('robots_status', 'unavailable')}; "
              f"PDP requests: {source.get('pdp_requests', 0)}."]
     for row in report['candidates']:
+        prepared = '; '.join(f"{o['seller']} {o['price']} TRY" for o in row.get('automatic_prepared', []))
         lines.append(f"- {row['slug']}: {row['status']} (HTTP {row['http_status']}); "
-                     f"{row['url']}")
+                     f"automatic offers {prepared or 'none'}; {row['url']}")
     if report.get('error'):
         lines.append('Error: ' + report['error'])
     lines.append('No price, catalog, or score writes; no automatic publish.')
@@ -279,8 +292,9 @@ def summary(report):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--offset', type=int, default=0)
+    parser.add_argument('--priced', action='store_true')
     args = parser.parse_args()
-    report = run_audit(offset=args.offset)
+    report = run_audit(offset=args.offset, priced=args.priced)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     (OUTPUT_DIR / 'pasaj-candidates.json').write_text(
         json.dumps(report, ensure_ascii=False, indent=2) + '\n')
