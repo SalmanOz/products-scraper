@@ -42,6 +42,24 @@ MERCHANT_ID = 'c9df3cfc-5c33-49a0-a730-3c2e5bf0007d'
 LISTING_ID = '72c6883a-067c-4819-b62b-07ccaaee7a08'
 SPECS = {'ram_gb': 8, 'storage_gb': 256, 'network_generation': '5g'}
 
+# The legacy audit retains its exact identity. Catalog readers supply a fresh,
+# URL-bound selection and reuse the same cross-layer proof instead of a SKU list.
+DEFAULT_REVIEWED_TARGET = {
+    'CATALOG': CATALOG,
+    'COLOR': COLOR,
+    'GTIN13': GTIN13,
+    'LISTING_ID': LISTING_ID,
+    'MERCHANT_ID': MERCHANT_ID,
+    'MERCHANT_POSTFIX': 'bsz-elektronik',
+    'PRODUCT_ID': PRODUCT_ID,
+    'SCHEMA_URL': SCHEMA_URL,
+    'SELLER': SELLER,
+    'SELLER_URL': SELLER_URL,
+    'SKU': SKU,
+    'SPECS': SPECS,
+    'URL': URL,
+}
+
 
 def _amount(value):
     if isinstance(value, bool):
@@ -60,7 +78,8 @@ def _valid_gtin13(value):
     return (10 - (sum(digits[:12:2]) + 3 * sum(digits[1:12:2])) % 10) % 10 == digits[12]
 
 
-def _selected_variant(product):
+def _selected_variant(product, scope=None):
+    scope = DEFAULT_REVIEWED_TARGET if scope is None else scope
     variants = product.get('variants')
     if not isinstance(variants, list):
         return None
@@ -68,7 +87,7 @@ def _selected_variant(product):
            for item in variants) != 1:
         return None
     selected = [variant for variant in variants if isinstance(variant, dict)
-                and variant.get('sku') == SKU and variant.get('isDefault') is True]
+                and variant.get('sku') == scope['SKU'] and variant.get('isDefault') is True]
     if len(selected) != 1:
         return None
     variant = selected[0]
@@ -84,27 +103,28 @@ def _selected_variant(product):
             return None
         values[name] = prop['valueObject'].get('actualValue')
     barcodes = variant.get('barcodes')
-    # A synthetic barcode may also appear, but only the selected variant's
-    # independently reviewed, checksum-valid Apple GTIN is used as evidence.
+    # Synthetic barcodes may coexist; the selected variant must have exactly
+    # one numeric EAN13 and it must match the caller's checksum-validated proof.
     gtins = [barcode for barcode in barcodes if isinstance(barcode, str)
              and re.fullmatch(r'\d{13}', barcode)] if isinstance(barcodes, list) else []
-    if (values != {'Renk': COLOR, 'Kapasite': '256 GB'}
-            or gtins != [GTIN13]
-            or not _valid_gtin13(GTIN13)
+    if (values != {'Renk': scope['COLOR'], 'Kapasite': str(scope['SPECS']['storage_gb']) + ' GB'}
+            or gtins != [scope['GTIN13']]
+            or not _valid_gtin13(scope['GTIN13'])
             or variant.get('isInStock') is not True
             or variant.get('isPreOrder') is not False
             or _amount(variant.get('price')) is None
-            or not TRPriceScraper().is_strict_match(CATALOG['name'],
-                                                   str(variant.get('name') or ''), SPECS)
+            or not TRPriceScraper().is_strict_match(scope['CATALOG']['name'],
+                                                   str(variant.get('name') or ''), scope['SPECS'])
             or re.search(r'yenilenmi[sş]|refurbished|ikinci\s*el',
                          str(variant.get('name') or ''), re.I)):
         return None
     return variant
 
 
-def parse_exact_buy_box(html: str, final_url: str = URL):
-    """Return (observed offer, reason) or fail closed on a changed buy box."""
-    if (final_url != URL or not isinstance(html, str)
+def parse_exact_buy_box(html: str, final_url: str = URL, *, scope=None):
+    """Reconcile all selected buy-box layers; default to the reviewed audit SKU."""
+    scope = DEFAULT_REVIEWED_TARGET if scope is None else scope
+    if (final_url != scope['URL'] or not isinstance(html, str)
             or len(html.encode('utf-8')) > MAX_HTML_BYTES):
         return None, 'wrong_or_oversized_pdp'
     soup = BeautifulSoup(html, 'html.parser')
@@ -116,8 +136,8 @@ def parse_exact_buy_box(html: str, final_url: str = URL):
         return None, 'selected_title_missing'
     title = _normalized(headings[0].get_text(' ', strip=True))
     matcher = TRPriceScraper()
-    if (not matcher.is_strict_match(CATALOG['name'], title, SPECS)
-            or COLOR.casefold() not in title.casefold()
+    if (not matcher.is_strict_match(scope['CATALOG']['name'], title, scope['SPECS'])
+            or scope['COLOR'].casefold() not in title.casefold()
             or re.search(r'yenilenmi[sş]|refurbished|ikinci\s*el', title, re.I)):
         return None, 'selected_variant_mismatch'
 
@@ -133,10 +153,10 @@ def parse_exact_buy_box(html: str, final_url: str = URL):
     if not isinstance(product, dict):
         return None, 'redux_product_missing'
     stock = product.get('stockInformation')
-    if (product.get('productId') != PRODUCT_ID or product.get('sku') != SKU
-            or product.get('listingId') != LISTING_ID
-            or product.get('merchantName') != SELLER
-            or product.get('merchantId') != MERCHANT_ID
+    if (product.get('productId') != scope['PRODUCT_ID'] or product.get('sku') != scope['SKU']
+            or product.get('listingId') != scope['LISTING_ID']
+            or product.get('merchantName') != scope['SELLER']
+            or product.get('merchantId') != scope['MERCHANT_ID']
             or product.get('isInStock') is not True
             or not isinstance(stock, dict) or stock.get('isInStock') is not True
             or product.get('isProductLive') is not True
@@ -144,11 +164,11 @@ def parse_exact_buy_box(html: str, final_url: str = URL):
             or product.get('isPreOrder') is not False):
         return None, 'selected_redux_offer_mismatch'
     merchant = product.get('merchant')
-    if (not isinstance(merchant, dict) or merchant.get('id') != MERCHANT_ID
-            or merchant.get('name') != SELLER
-            or merchant.get('urlPostfix') != 'bsz-elektronik'):
+    if (not isinstance(merchant, dict) or merchant.get('id') != scope['MERCHANT_ID']
+            or merchant.get('name') != scope['SELLER']
+            or merchant.get('urlPostfix') != scope['MERCHANT_POSTFIX']):
         return None, 'selected_redux_merchant_mismatch'
-    variant = _selected_variant(product)
+    variant = _selected_variant(product, scope)
     if variant is None:
         return None, 'selected_redux_variant_mismatch'
 
@@ -162,38 +182,38 @@ def parse_exact_buy_box(html: str, final_url: str = URL):
         return None, 'selected_redux_price_mismatch'
 
     schema_products = [node for node in _nodes(soup)
-                       if node.get('@type') == 'Product' and node.get('sku') == SKU]
-    if len(schema_products) != 1 or schema_products[0].get('color') != COLOR:
+                       if node.get('@type') == 'Product' and node.get('sku') == scope['SKU']]
+    if len(schema_products) != 1 or schema_products[0].get('color') != scope['COLOR']:
         return None, 'schema_selected_variant_mismatch'
     schema_offer = schema_products[0].get('offers')
     if (not isinstance(schema_offer, dict) or schema_offer.get('@type') != 'Offer'
-            or schema_offer.get('url') != SCHEMA_URL
+            or schema_offer.get('url') != scope['SCHEMA_URL']
             or schema_offer.get('priceCurrency') != 'TRY'
             or _amount(schema_offer.get('price')) != price
             or not str(schema_offer.get('availability', '')).rstrip('/').endswith('/InStock')
             or not str(schema_offer.get('itemCondition', '')).rstrip('/').endswith('/NewCondition')):
         return None, 'schema_cash_new_stock_mismatch'
-    # JSON-LD seller and gtin are intentionally not read: both are wrong on
-    # this reviewed PDP. The visible/Redux/event seller and variant GTIN rule.
+    # Some PDPs label the manufacturer as seller and expose a synthetic GTIN.
+    # The visible/Redux/event seller and selected variant barcode identify it.
 
     sellers = [link for link in soup.select('a[href]')
-               if link.get('href') == SELLER_URL and link.get('title') == SELLER
-               and _normalized(link.get_text(' ', strip=True)) == SELLER
+               if link.get('href') == scope['SELLER_URL'] and link.get('title') == scope['SELLER']
+               and _normalized(link.get_text(' ', strip=True)) == scope['SELLER']
                and link.parent is not None
                and re.search(r'\bSatıcı\s*:', _normalized(link.parent.get_text(' ', strip=True)))]
     if len(sellers) != 1:
         return None, 'selected_visible_seller_mismatch'
-    controls = (('Kapasite', '256 GB'), ('Renk', COLOR))
+    controls = (('Kapasite', str(scope['SPECS']['storage_gb']) + ' GB'), ('Renk', scope['COLOR']))
     for kind, value in controls:
         buttons = soup.select(f'button[data-test-id="variant-box-{kind}-{value}"]')
         if len(buttons) != 1 or buttons[0].get('aria-label') != f'Seçili {kind} {value}':
             return None, 'selected_controls_mismatch'
     technical = soup.select('#techSpecs[data-test-id="KeyFeaturesTable"]')
     detail = _normalized(technical[0].get_text(' ', strip=True)) if len(technical) == 1 else ''
-    if (not re.search(r'\bDahili Hafıza\s+256 GB\b', detail)
-            or not re.search(r'\bRAM Kapasitesi\s+8 GB RAM\b', detail)
-            or not re.search(r'\bMobil Bağlantı Hızı\s+5G\b', detail)
-            or not re.search(r'\bStok Kodu\s+' + SKU + r'\b', detail)):
+    if (not re.search(rf"\bDahili Hafıza\s+{scope['SPECS']['storage_gb']} GB\b", detail)
+            or not re.search(rf"\bRAM Kapasitesi\s+{scope['SPECS']['ram_gb']} GB(?: RAM)?\b", detail)
+            or not re.search((r'\bMobil Bağlantı Hızı\s+5G\b' if scope['SPECS']['network_generation'] == '5g' else r'\bMobil Bağlantı Hızı\s+4(?:[.,]5)?G\b'), detail)
+            or not re.search(r'\bStok Kodu\s+' + scope['SKU'] + r'\b', detail)):
         return None, 'technical_variant_mismatch'
 
     price_regions = soup.select('[data-test-id="default-price"]')
@@ -224,11 +244,11 @@ def parse_exact_buy_box(html: str, final_url: str = URL):
             return None, 'selected_buy_box_event_missing'
         event = found[0]
         if (event.get('page_type') != 'pdp'
-                or event.get('page_value') != SKU
-                or event.get('product_id') != PRODUCT_ID
-                or event.get('listing_id') != LISTING_ID
-                or event.get('merchant_id') != MERCHANT_ID
-                or event.get('merchant_name') != SELLER
+                or event.get('page_value') != scope['SKU']
+                or event.get('product_id') != scope['PRODUCT_ID']
+                or event.get('listing_id') != scope['LISTING_ID']
+                or event.get('merchant_id') != scope['MERCHANT_ID']
+                or event.get('merchant_name') != scope['SELLER']
                 or _amount(event.get('price')) != price):
             return None, 'selected_buy_box_event_mismatch'
     carts = soup.select('button[data-test-id="addToCart"]')
@@ -237,13 +257,17 @@ def parse_exact_buy_box(html: str, final_url: str = URL):
             or _normalized(carts[0].get_text(' ', strip=True)).casefold() != 'sepete ekle'):
         return None, 'selected_cart_unavailable'
 
-    offer = {'merchant': SELLER, 'merchant_id': MERCHANT_ID,
-             'listing_id': LISTING_ID, 'product_id': PRODUCT_ID, 'sku': SKU,
-             'gtin13': GTIN13, 'price': float(price), 'currency': 'TRY',
+    offer = {'merchant': scope['SELLER'], 'merchant_id': scope['MERCHANT_ID'],
+             'listing_id': scope['LISTING_ID'], 'product_id': scope['PRODUCT_ID'], 'sku': scope['SKU'],
+             'gtin13': scope['GTIN13'], 'price': float(price), 'currency': 'TRY',
              'availability': 'in_stock', 'condition': 'new',
-             'source_title': title, 'url': URL,
+             'source_title': title, 'url': scope['URL'],
              'observed_at': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')}
-    if not matcher.has_observed_offer_evidence(CATALOG['name'], offer, SPECS):
+    from mediamarkt_marketplace_audit import catalog_variant_matches
+    matches = (catalog_variant_matches({'source_title': title, **scope['SPECS']},
+                    scope['CATALOG']['name'], scope['SPECS']) if scope.get('generic_catalog') is True else
+               matcher.has_observed_offer_evidence(scope['CATALOG']['name'], offer, scope['SPECS']))
+    if not matches:
         return None, 'catalog_variant_mismatch'
     return offer, 'selected_new_cash_offer_observed'
 

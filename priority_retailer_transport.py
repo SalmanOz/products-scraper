@@ -23,7 +23,7 @@ MAX_HTML_BYTES = 5 * 1024 * 1024
 
 
 def product_host(url):
-    if not isinstance(url, str) or len(url) > 1000 or re.search(r'[\x00-\x20\\%]', url):
+    if not isinstance(url, str) or len(url) > 1000 or re.search(r'[\x00-\x20\\]', url):
         return None
     try:
         parsed = urlparse(url)
@@ -43,10 +43,13 @@ def product_host(url):
             return None
         for key, value in pairs:
             if parsed.netloc == 'www.trendyol.com':
+                if key == 'v' and value == 'tek-ebat':
+                    continue
                 if key not in {'merchantId', 'boutiqueId'} or not re.fullmatch(r'[1-9]\d{0,11}', value):
                     return None
             elif parsed.netloc in {'www.hepsiburada.com', 'www.n11.com'}:
-                if key != 'magaza' or not re.fullmatch(r'[a-zA-Z0-9_-]{1,100}', value):
+                allowed = {'magaza'} if parsed.netloc == 'www.hepsiburada.com' else {'magaza', 'renk', 'dahili-hafiza'}
+                if key not in allowed or not re.fullmatch(r'[\w .&()-]{1,100}', value):
                     return None
             else:
                 return None

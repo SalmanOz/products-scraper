@@ -32,6 +32,10 @@ class PriorityRetailerTests(unittest.TestCase):
                 self.assertIsNone(product_host(bad))
         self.assertIsNone(product_host('https://www.trendyol.com/sr?q=Samsung'))
         self.assertIsNotNone(product_host(URLS[1] + '?merchantId=1234&boutiqueId=61'))
+        self.assertIsNotNone(product_host(URLS[1] + '?merchantId=1234&v=tek-ebat'))
+        self.assertIsNone(product_host(URLS[1] + '?merchantId=1234&v=512-gb'))
+        self.assertIsNotNone(product_host(URLS[0] + '?magaza=OnePlus+T%C3%BCrkiye'))
+        self.assertIsNone(product_host(URLS[0] + '?magaza=%00'))
         self.assertIsNone(product_host(URLS[1] + '?merchantId=1&merchantId=2'))
 
     def test_catalog_queue_prefers_unpriced_deduplicates_and_never_exceeds_two_per_host(self):

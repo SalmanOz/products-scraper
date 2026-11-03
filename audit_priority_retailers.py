@@ -82,6 +82,11 @@ def main():
                     offer, why = parse_exact_first_party_offer(html, url,
                         {'name': product['name'], 'specs': specs})
                     row.update(reader_reason=why, prepared_offer=offer)
+                if host == 'www.hepsiburada.com':
+                    from hepsiburada_catalog_source import parse_catalog_buy_box
+                    specs = with_reviewed_radio(product, PriceUpdater.get_expected_specs(product.get('attributes')))
+                    offer, why = parse_catalog_buy_box(html, url, product['name'], specs)
+                    row.update(reader_reason=why, prepared_offer=offer)
             rows.append(row)
     report = {'purpose': 'automatic_priority_retailer_diagnosis', 'writes': False,
               'catalog_count': len(products), 'rows': rows, 'sources': transport.report()}

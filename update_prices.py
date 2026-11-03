@@ -117,7 +117,7 @@ class PriceUpdater:
     def _resolve_raw_target_proofs(self, product, offers, product_report):
         """Inspect every raw seller when only unsupported refresh hints were rejected."""
         for offer in offers:
-            if not isinstance(offer, dict) or offer.get('platform') != 'MediaMarkt':
+            if not isinstance(offer, dict) or offer.get('platform') not in {'MediaMarkt', 'Hepsiburada'}:
                 continue
             key = self._raw_target_key(product, offer)
             if key in self._raw_target_attempts:
@@ -163,7 +163,8 @@ class PriceUpdater:
                 verified = {**product, 'offer_targets': targets, 'offer_targets_total': total,
                             'offer_targets_snapshot': inspected['offer_targets_snapshot'],
                             'offer_targets_truncated': False}
-                if not no_merchant_collision(verified, {'seller_name': seller}, offer['url']):
+                if not no_merchant_collision(verified, {'seller_name': seller}, offer['url'],
+                                             expected_host=urlparse(offer['url']).hostname):
                     raise ValueError('seller_collision_in_refresh_targets')
                 self._raw_target_products[key] = {'product': verified, 'checked_at': self.utc_timestamp()}
                 record.update(status='ready', raw_rows_checked=raw['stored_rows_checked'],
@@ -175,7 +176,7 @@ class PriceUpdater:
 
     def hydrate_marketplace_target_proof(self, product, offers, product_report):
         """Resolve a truncated seller snapshot only after a live marketplace read."""
-        if not any(isinstance(offer, dict) and offer.get('platform') == 'MediaMarkt'
+        if not any(isinstance(offer, dict) and offer.get('platform') in {'MediaMarkt', 'Hepsiburada'}
                    for offer in offers):
             return
         if 'complete_target_proof' in product_report:
@@ -225,6 +226,13 @@ class PriceUpdater:
             profile = ALL_MARKETPLACE_PROFILES[offer['url']]
             if (not reviewed_marketplace_offer(offer, product['name'], expected_specs, product)
                     or not no_merchant_collision(self._collision_product(product, offer), profile, offer['url'])):
+                return False
+        elif offer.get('platform') == 'Hepsiburada':
+            from hepsiburada_catalog_source import catalog_offer_matches
+            if (host != 'www.hepsiburada.com'
+                    or not catalog_offer_matches(offer, product['name'], expected_specs)
+                    or not no_merchant_collision(self._collision_product(product, offer),
+                         {'seller_name': merchant}, offer['url'], expected_host=host)):
                 return False
         elif offer.get('platform') == 'MediaMarkt':
             from mediamarkt_marketplace_audit import generic_marketplace_offer
@@ -548,6 +556,9 @@ class PriceUpdater:
             teknosa_reader = getattr(self.offer_refresher, 'teknosa_catalog_source', None)
             if teknosa_reader is not None:
                 teknosa_reader.configure_catalog_budget(len(products))
+            hb_reader = getattr(self.offer_refresher, 'hepsiburada_catalog_source', None)
+            if hb_reader is not None:
+                hb_reader.configure_catalog_budget(len(products))
 
         if (product_id is None and product_slugs is None and not known_pdp_only
                 and hasattr(self.ingestion_client, 'get_public_price_priority')):

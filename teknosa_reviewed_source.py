@@ -105,7 +105,11 @@ def parse_exact_first_party_offer(html: str, final_url: str = URL, catalog_profi
             or len(products) != 1):
         return None, 'schema_identity_missing'
     product = products[0]
-    if (product.get('name') != title
+    # The schema replaces the displayed slash with a space (12/512 -> 12 512).
+    # Compare the same observed numbers; the actual heading remains unchanged.
+    schema_title = re.sub(r'(?<=\d)/(?=\d)', ' ', str(product.get('name') or ''))
+    selected_title = re.sub(r'(?<=\d)/(?=\d)', ' ', title)
+    if ((schema_title != selected_title if generic else product.get('name') != title)
             or not matcher.is_strict_match(name, str(product.get('name') or ''), specs)):
         return None, 'schema_variant_mismatch'
     offer = product.get('offers')

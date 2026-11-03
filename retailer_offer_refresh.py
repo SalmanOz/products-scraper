@@ -44,6 +44,7 @@ from hepsiburada_s25_fe_source import (
     HepsiburadaS25FeSource, URL as HEPSIBURADA_S25_FE_256_URL,
 )
 from hepsiburada_apple_source import HepsiburadaAppleSource, BY_URL as HEPSIBURADA_APPLE_PDPS
+from hepsiburada_catalog_source import HepsiburadaCatalogSource
 from teknosa_reviewed_source import TeknosaReviewedSource, TeknosaCatalogSource, URL as TEKNOSA_FIRST_PARTY_URL
 
 
@@ -587,6 +588,7 @@ class RetailerOfferRefresher:
                  hepsiburada_s25_fe_source=None, hepsiburada_apple_source=None,
                  teknosa_reviewed_source=None, mediamarkt_marketplace_source=None,
                  teknosa_catalog_source=None,
+                 hepsiburada_catalog_source=None,
                  allow_a37_readonly=False):
         self._fetch = fetch or (session.get if session is not None else requests.get)
         self.public_sources = PublicRetailerSources(fetch=self._fetch)
@@ -604,6 +606,7 @@ class RetailerOfferRefresher:
         self.hepsiburada_apple_source = (
             hepsiburada_apple_source or HepsiburadaAppleSource(get=self._fetch)
         )
+        self.hepsiburada_catalog_source = hepsiburada_catalog_source or HepsiburadaCatalogSource(get=self._fetch)
         self.teknosa_reviewed_source = (
             teknosa_reviewed_source or TeknosaReviewedSource(get=self._fetch)
         )
@@ -656,6 +659,9 @@ class RetailerOfferRefresher:
         return rows
 
     def _offer_identity_matches(self, product_name, offer, expected_specs):
+        if offer.get('selected_hb_variant_verified') is True:
+            from hepsiburada_catalog_source import catalog_offer_matches
+            return catalog_offer_matches(offer, product_name, expected_specs)
         if offer.get('selected_pasaj_variant_verified') is True:
             from pasaj_source import catalog_offer_matches
             return catalog_offer_matches(offer, product_name, expected_specs)
@@ -737,6 +743,12 @@ class RetailerOfferRefresher:
             return candidate
         if source_url in HEPSIBURADA_APPLE_PDPS:
             candidate, reason, status = self.hepsiburada_apple_source.read_offer(source_url)
+            self._record_attempt(source_url, reason, status)
+            with self._lock:
+                self._cache[source_url] = candidate
+            return candidate
+        if parsed.hostname == 'www.hepsiburada.com':
+            candidate, reason, status = self.hepsiburada_catalog_source.read_offer(source_url)
             self._record_attempt(source_url, reason, status)
             with self._lock:
                 self._cache[source_url] = candidate
@@ -899,6 +911,7 @@ class RetailerOfferRefresher:
         if isinstance(self.pasaj_source, PasajSource):
             self.pasaj_source.register_catalog_targets(product_name, selected_targets, expected_specs)
         self.teknosa_catalog_source.register_catalog_targets(product_name, selected_targets, expected_specs)
+        self.hepsiburada_catalog_source.register_catalog_targets(product_name, selected_targets, expected_specs)
         urls = [row['source_url'] for row in selected_targets]
         by_merchant = {}
         for target in targets:
