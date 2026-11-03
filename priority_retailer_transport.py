@@ -81,7 +81,7 @@ def challenge_document(html):
 class PriorityRetailerTransport:
     def __init__(self, *, get=None, post=None, sleep=time.sleep, clock=time.monotonic,
                  maximum_per_host=2, n11_collector=None):
-        if type(maximum_per_host) is not int or not 1 <= maximum_per_host <= 200:
+        if type(maximum_per_host) is not int or not 1 <= maximum_per_host <= 400:
             raise ValueError('Invalid priority retailer request budget')
         self._get, self._post = get or compatible_get, post
         self._n11_collector = n11_collector
@@ -97,7 +97,7 @@ class PriorityRetailerTransport:
         with self._lock:
             if self._states:
                 raise RuntimeError('Configure before source reads')
-            self._maximum = max(self._maximum, min(200, count))
+            self._maximum = max(self._maximum, min(400, count))
 
     def _read(self, url, limit, accept, state, allow_redirect=True):
         last = state.get('last')
@@ -159,6 +159,13 @@ class PriorityRetailerTransport:
             return None, 'invalid_catalog_category', None
         return self._read_document(url, 'www.teknosa.com', category=True)
 
+    def read_trendyol_category(self, url):
+        from trendyol_catalog_discovery import category_page_number
+        page = category_page_number(url)
+        if page is None or page > 100:
+            return None, 'invalid_catalog_category', None
+        return self._read_document(url, 'www.trendyol.com', category=True)
+
     def _read_document(self, url, host, category=False):
         with self._lock:
             state = self._states.setdefault(host, {'rules': None, 'robots': 'not_loaded',
@@ -192,7 +199,8 @@ class PriorityRetailerTransport:
                 if url in state['seen']:
                     return None, 'already_read', None
                 category_count = state.get('category_requests', 0)
-                if category and category_count >= 40:
+                category_limit = 100 if host == 'www.trendyol.com' else 40
+                if category and category_count >= category_limit:
                     return None, 'category_budget_exhausted', None
                 if not category and state['pdp_requests'] - category_count >= self._maximum:
                     return None, 'pdp_budget_exhausted', None

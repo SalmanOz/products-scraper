@@ -56,18 +56,18 @@ def catalog_queue(products, prices):
 
 
 def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None,
-          discover_n11=False, discover_teknosa=False):
+          discover_n11=False, discover_teknosa=False, discover_trendyol=False):
     products, prices = client.get_published_products(), client.get_public_price_priority()
     if (not products or len(products) > 200 or len({p['id'] for p in products}) != len(products)
             or len({p['slug'] for p in products}) != len(products)):
         raise ValueError('invalid_or_oversized_catalog')
     collector = getattr(client, 'n11_document_get', None)
-    transport = transport or PriorityRetailerTransport(maximum_per_host=200, n11_collector=collector)
+    transport = transport or PriorityRetailerTransport(maximum_per_host=350, n11_collector=collector)
     reader = reader or RetailerOfferRefresher(n11_document_get=collector)
     if publish:
         for source in (reader.hepsiburada_catalog_source, reader.trendyol_catalog_source,
                        reader.teknosa_catalog_source, reader.n11_catalog_source):
-            source.configure_catalog_budget(200)
+            source.configure_catalog_budget(350)
     targets = catalog_queue(products, prices)
     result = {'purpose': 'systematic_priority_catalog_recovery', 'catalog_count': len(products),
               'publish': publish, 'writes': False, 'status': 'running', 'queued': len(targets),
@@ -124,40 +124,48 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                 'slug': product['slug'], 'retailer': 'Teknosa', 'url': destination,
                 'observed_url': offer['source_document_url'], 'reason': 'document_read', 'http_status': 200,
                 'document_reused': True, 'reader_reason': 'observed_public_seller_card', 'prepared_offer': offer})
+    def discover_category(retailer, report_key, module, read_category):
+        from teknosa_catalog_discovery import match_catalog_destinations
+        cards, category_url, category_seen = [], module.CATEGORY_URL, set()
+        discovery = result[report_key] = {'retailer': retailer, 'pages': [],
+                                                   'new_targets': [], 'pagination_complete': False}
+        for _ in range(module.MAX_CATEGORY_PAGES):
+            if not category_url or category_url in category_seen:
+                break
+            category_seen.add(category_url)
+            html, reason, status = read_category(category_url)
+            discovery['pages'].append({'url': category_url, 'reason': reason, 'http_status': status})
+            if html is None:
+                break
+            parser = {}
+            found, next_category_url = module.parse_category_document(html, category_url, diagnostic=parser)
+            discovery['pages'][-1]['parser'] = parser
+            cards.extend(found)
+            if parser.get('status') != 'parsed':
+                break
+            category_url = next_category_url
+            if checkpoint:
+                checkpoint(result)
+        discovery['pagination_complete'] = category_url is None
+        known = {observed_url(url) for url, _ in targets} | {observed_url(url) for _, url in processed}
+        discovery['destinations_seen'] = len(cards)
+        matched = match_catalog_destinations([c for c in cards if c['source_url'] not in known], products)
+        for product in sorted(products, key=lambda p: (prices.get(p['id'], ('', True))[1], p['id'])):
+            for candidate in matched.get(product['id'], []):
+                discovery['new_targets'].append({'slug': product['slug'], **candidate})
+                result['queued'] += 1
+                process_target(candidate['source_url'], product)
+                result['models_without_priority_hints'] = [slug for slug in
+                    result['models_without_priority_hints'] if slug != product['slug']]
     try:
         if discover_teknosa:
-            from teknosa_catalog_discovery import (CATEGORY_URL, MAX_CATEGORY_PAGES,
-                                                   parse_category_document, match_catalog_destinations)
-            cards, category_url, category_seen = [], CATEGORY_URL, set()
-            discovery = result['category_discovery'] = {'retailer': 'Teknosa', 'pages': [],
-                                                       'new_targets': [], 'pagination_complete': False}
-            for _ in range(MAX_CATEGORY_PAGES):
-                if not category_url or category_url in category_seen:
-                    break
-                category_seen.add(category_url)
-                html, reason, status = transport.read_teknosa_category(category_url)
-                discovery['pages'].append({'url': category_url, 'reason': reason, 'http_status': status})
-                if html is None:
-                    break
-                parser = {}
-                found, next_category_url = parse_category_document(html, category_url, diagnostic=parser)
-                discovery['pages'][-1]['parser'] = parser
-                cards.extend(found)
-                if parser.get('status') != 'parsed':
-                    break
-                category_url = next_category_url
-                if checkpoint:
-                    checkpoint(result)
-            discovery['pagination_complete'] = category_url is None
-            known = {observed_url(url) for url, _ in targets}
-            matched = match_catalog_destinations([c for c in cards if c['source_url'] not in known], products)
-            for product in sorted(products, key=lambda p: (prices.get(p['id'], ('', True))[1], p['id'])):
-                for candidate in matched.get(product['id'], []):
-                    discovery['new_targets'].append({'slug': product['slug'], **candidate})
-                    result['queued'] += 1
-                    process_target(candidate['source_url'], product)
-                    result['models_without_priority_hints'] = [slug for slug in
-                        result['models_without_priority_hints'] if slug != product['slug']]
+            import teknosa_catalog_discovery
+            discover_category('Teknosa', 'category_discovery', teknosa_catalog_discovery,
+                              transport.read_teknosa_category)
+        if discover_trendyol:
+            import trendyol_catalog_discovery
+            discover_category('Trendyol', 'trendyol_category_discovery', trendyol_catalog_discovery,
+                              transport.read_trendyol_category)
         for url, product in targets:
             process_target(url, product)
         if discover_n11:
@@ -223,10 +231,13 @@ def save_report(result):
             'catalog_queries': len(result['discovery']),
             'search_documents_read': sum(row['reason'] == 'document_read' for row in result['discovery']),
             'new_targets': sum(len(row['new_targets']) for row in result['discovery'])}, ensure_ascii=False)]
-    if result.get('category_discovery'):
-        discovery = result['category_discovery']
-        lines += ['', 'Automatic Teknosa category discovery: ' + json.dumps({
+    for key in ('category_discovery', 'trendyol_category_discovery'):
+        if not result.get(key):
+            continue
+        discovery = result[key]
+        lines += ['', f"Automatic {discovery['retailer']} category discovery: " + json.dumps({
             'pages': len(discovery['pages']), 'pagination_complete': discovery['pagination_complete'],
+            'destinations_seen': discovery.get('destinations_seen'),
             'new_targets': len(discovery['new_targets'])}, ensure_ascii=False)]
     if result.get('public_coverage'):
         lines += ['', 'Public coverage: ' + json.dumps(result['public_coverage'], ensure_ascii=False)]
@@ -287,7 +298,7 @@ def main():
                 ensure_ascii=False), flush=True)
     client = OfferIngestionClient.from_env()
     result = sweep(client=client, publish=args.publish, checkpoint=checkpoint,
-                   discover_n11=True, discover_teknosa=True)
+                   discover_n11=True, discover_teknosa=True, discover_trendyol=True)
     result['public_coverage'] = coverage_readback(result, client.get_public_price_priority())
     save_report(result)
     print(Path('priority-catalog-sweep.md').read_text())
