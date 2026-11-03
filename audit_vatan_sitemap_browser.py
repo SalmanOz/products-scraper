@@ -8,6 +8,7 @@ from pathlib import Path
 from tempfile import gettempdir
 
 import requests
+from bs4 import BeautifulSoup
 
 from audit_vatan_source import PROFILES
 from vatan_sitemap_source import (
@@ -61,6 +62,15 @@ def diagnose_solver_response(post=None):
         result['response_kind'] = ('raw_xml' if prefix.startswith((b'<?xml', b'<urlset'))
                                    else 'html' if prefix.startswith((b'<!doctype html', b'<html'))
                                    else 'other')
+        if result['response_kind'] == 'html':
+            soup = BeautifulSoup(body, 'html.parser')
+            result['browser_xml_structure'] = {
+                'source_containers': len(soup.select('#webkit-xml-viewer-source-xml')),
+                'urlset_nodes': len(soup.find_all('urlset')),
+                'xml_pre_blocks': sum(node.get_text().lstrip().startswith(('<?xml', '<urlset'))
+                                      for node in soup.select('body > pre')),
+                'sitemap_namespace_present': 'http://www.sitemaps.org/schemas/sitemap/0.9' in body,
+            }
         if (result['response_kind'] != 'raw_xml' or len(encoded) > MAX_SITEMAP_BYTES
                 or b'<!DOCTYPE' in encoded.upper() or b'<!ENTITY' in encoded.upper()):
             return {**result, 'status': 'measured'}
@@ -113,7 +123,7 @@ def main():
     # A second GET exists only in this read-only pilot, after the production
     # source has proved that robots allows the exact sitemap URL. Never widen
     # the daily production reader's 8 MiB bound based on an unknown response.
-    if (report['sitemap']['status'] == 'sitemap_solver_oversized'
+    if (report['sitemap']['status'] in {'sitemap_solver_oversized', 'ParseError'}
             and source._rules is not None and source._rules.can_fetch(BOT, SITEMAP_URL)):
         report['solver_diagnostic'] = diagnose_solver_response()
     OUT.mkdir(parents=True, exist_ok=True)
