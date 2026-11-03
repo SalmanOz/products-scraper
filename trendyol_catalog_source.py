@@ -76,6 +76,16 @@ def parse_catalog_listing(html, url, name, specs):
     brand = product.get('brand')
     state_title = _normalized(str(brand.get('name') or '') + ' ' + str(product.get('name') or '')) if isinstance(brand, dict) else ''
     matcher = TRPriceScraper()
+    expected_words = set(matcher._identity_words(name))
+    expected_brands = {key for key, aliases in matcher.PHONE_BRAND_ALIASES.items()
+                       if expected_words & aliases}
+    if expected_brands & {'redmi', 'poco'}:
+        expected_brands.add('xiaomi')
+    allowed_brand_names = {alias for key in expected_brands
+                           for alias in matcher.PHONE_BRAND_ALIASES[key]}
+    if (not isinstance(brand, dict) or not allowed_brand_names
+            or matcher._normalize_words(brand.get('name')) not in allowed_brand_names):
+        return None, 'selected_brand_mismatch'
     if (not title or matcher._normalize_words(title) != matcher._normalize_words(state_title)
             or not matcher.is_strict_match(name, title, specs)
             or re.search(r'yenilenmi[sş]|refurbished|ikinci\s*el', title, re.I)):

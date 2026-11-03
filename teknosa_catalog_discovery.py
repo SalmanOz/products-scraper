@@ -89,6 +89,7 @@ def match_catalog_destinations(cards, products, *, maximum_per_model=2):
     matched, owned = {}, {}
     specs = {p['id']: with_reviewed_radio(p, PriceUpdater.get_expected_specs(p.get('attributes')))
              for p in products}
+    candidates = {}
     for card in sorted(cards, key=lambda c: (not c['stock_priority'], c['source_url'])):
         title = card['discovery_title']
         # Capacity punctuation is observed on the category card itself.
@@ -101,7 +102,16 @@ def match_catalog_destinations(cards, products, *, maximum_per_model=2):
         if url in owned:
             continue
         owned[url] = product['id']
-        group = matched.setdefault(product['id'], [])
-        if len(group) < maximum_per_model:
-            group.append(card)
+        ram, storage, ambiguous = matcher._unambiguous_listing_capacities(title)
+        expected = specs[product['id']]
+        # Spend the small PDP budget on explicit matching capacities before
+        # headings which omit them. A category hint never establishes a price
+        # or physical variant; the selected PDP must prove both again.
+        specificity = 0 if ambiguous else sum(
+            actual is not None and actual == matcher._spec_int(expected.get(key))
+            for key, actual in (('ram_gb', ram), ('storage_gb', storage)))
+        candidates.setdefault(product['id'], []).append((card, specificity))
+    for product_id, group in candidates.items():
+        group.sort(key=lambda row: (not row[0]['stock_priority'], -row[1], row[0]['source_url']))
+        matched[product_id] = [row[0] for row in group[:maximum_per_model]]
     return matched

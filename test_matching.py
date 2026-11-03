@@ -244,6 +244,10 @@ def test_gsmarena_is_title_match():
 
 
 if __name__ == '__main__':
+    matcher = TRPriceScraper()
+    specs = {'ram_gb': 12, 'storage_gb': 512, 'network_generation': '5g'}
+    assert not matcher.is_strict_match('Xiaomi 17 Pro Max', 'Xiaomi Note 17 Pro Max 5G 12GB RAM 512GB', specs)
+    assert matcher.is_strict_match('Xiaomi Redmi Note 15 Pro', 'Xiaomi Redmi Note 15 Pro 5G 12GB RAM 512GB', specs)
     test_is_strict_match()
     print(f'✅ All {len(CASES)} is_strict_match cases passed')
     test_capacity_matching()

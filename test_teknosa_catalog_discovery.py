@@ -31,6 +31,20 @@ PRODUCT = {'id': 1, 'slug': 'apple-iphone-15', 'name': 'Apple iPhone 15',
 
 
 class DiscoveryTests(unittest.TestCase):
+    def test_explicit_matching_memory_hints_precede_omitted_memory_within_stock_priority(self):
+        product = deepcopy(PRODUCT)
+        product.update(name='Samsung Galaxy A36', attributes={'ram_gb': 6, 'storage_gb': 128})
+        rows = [{'source_url': f'https://www.trendyol.com/samsung/phone-p-{i}',
+                 'stock_priority': stock, 'discovery_title': title}
+                for i, title, stock in [
+                    (1, 'Samsung Galaxy A36 Telefon', True),
+                    (2, 'Samsung Galaxy A36 128GB Telefon', True),
+                    (3, 'Samsung Galaxy A36 6GB RAM 128GB Telefon', True),
+                    (4, 'Samsung Galaxy A36 6GB RAM 128GB Telefon', False),
+                    (5, 'Samsung Galaxy A36 8GB RAM 128GB Telefon', True)]]
+        found = match_catalog_destinations(rows, [product])[1]
+        self.assertEqual([r['source_url'].rsplit('-', 1)[-1] for r in found], ['3', '2'])
+
     def test_observed_card_identifiers_and_next_link_are_destinations_not_offers(self):
         rows, next_url = parse_category_document(document(card() + '<b>1 TL</b>'), CATEGORY_URL)
         self.assertEqual(len(rows), 1)

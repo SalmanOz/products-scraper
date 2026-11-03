@@ -663,7 +663,7 @@ class TRPriceScraper:
             return False
 
         # 3. Handle Pro/Max/Ultra variations strictly
-        variations = ["pro", "max", "plus", "ultra", "lite", "fe", "mini", "se", "e", "edge"]
+        variations = ["pro", "max", "plus", "ultra", "lite", "fe", "mini", "se", "e", "edge", "note"]
         def model_variations(words):
             return {word for index, word in enumerate(words) if word in variations and not (
                 word == 'plus' and index > 0 and index + 1 < len(words)
@@ -793,7 +793,7 @@ class TRPriceScraper:
             return False
         if re.search(r'\b(?:kilif|case|protector|yenilenmis|refurbished|ikinci el|2 el|outlet|teshir|yedek parca)\b', ' '.join(url_words)):
             return False
-        qualifiers = {'pro', 'max', 'plus', 'ultra', 'lite', 'fe', 'mini', 'se', 'e', 'edge'}
+        qualifiers = {'pro', 'max', 'plus', 'ultra', 'lite', 'fe', 'mini', 'se', 'e', 'edge', 'note'}
         if (set(url_words) & qualifiers) - (set(product_words) & qualifiers):
             return False
         if (self._has_numeric_model_conflict(product_words, url_words) or

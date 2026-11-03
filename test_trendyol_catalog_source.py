@@ -52,6 +52,16 @@ def document(changes=None):
 
 
 class TrendyolCatalogTests(unittest.TestCase):
+    def test_selected_brand_cannot_be_an_accessory_brand_prefixing_a_phone_name(self):
+        for brand in ['Valoris', 'Genel Markalar']:
+            title = brand + ' ' + TITLE
+            changes = {('state', 'product', 'brand', 'name'): brand,
+                       ('state', 'product', 'name'): TITLE, ('title',): title,
+                       ('schema', 'name'): title}
+            offer, reason = parse_catalog_listing(document(changes), URL, NAME, SPECS)
+            self.assertIsNone(offer)
+            self.assertEqual(reason, 'selected_brand_mismatch')
+
     def test_public_lowest_price_template_still_requires_one_visible_cash_price_and_all_selected_proof(self):
         original = '<div data-testid="normal-price"><span class="discounted">34.997 TL</span></div>'
         # Public template observed on S26 Ultra Nov 4 2026. Its struck original
