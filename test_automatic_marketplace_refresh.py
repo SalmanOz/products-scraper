@@ -1,6 +1,7 @@
 import unittest
 from copy import deepcopy
 from datetime import datetime, timezone
+from unittest.mock import Mock
 from mediamarkt_source import ROBOTS_URL
 from retailer_offer_refresh import RetailerOfferRefresher
 from update_prices import PriceUpdater
@@ -11,6 +12,49 @@ from test_mediamarkt_source import Fetch, ROBOTS
 
 
 class AutomaticMarketplaceTests(unittest.TestCase):
+    def test_truncated_catalog_fetches_complete_proof_and_detects_a_hidden_seller_collision(self):
+        url = URL.replace('166438395', '166438396')
+        document = fixture()
+        document['action']['object']['gtin13'] = '4006381333931'
+        body = render(document).replace('166438395', '166438396').encode()
+        reader = RetailerOfferRefresher(fetch=Fetch({ROBOTS_URL: ROBOTS, url: body}))
+        specs = {'ram_gb': 12, 'storage_gb': 256, 'network_generation': '5g'}
+        offers = reader.refresh_existing_offer_targets('Samsung Galaxy S25 Ultra',
+                                                       [{'source_url': url}], specs)
+        targets = [{'seller_name': f'Other {i}', 'merchant_name': 'MediaMarkt',
+                    'source_url': url.replace('166438396', str(266438396 + i))}
+                   for i in range(13)]
+        product = {'id': 999, 'slug': 'new-catalog-sku', 'name': 'Samsung Galaxy S25 Ultra',
+                   'offer_targets': targets[:12], 'offer_targets_truncated': True}
+        complete = {**product, 'offer_targets': targets, 'offer_targets_truncated': False,
+                    'offer_targets_total': 13, 'offer_targets_snapshot': 'a' * 64}
+        client = Mock()
+        client.get_complete_offer_targets.return_value = complete
+        updater = PriceUpdater(ingestion_client=client, offer_refresher=reader)
+        hydrated = deepcopy(product)
+        report = {}
+        self.assertFalse(updater.live_offer_is_valid(hydrated, offers[0], specs))
+        updater.hydrate_marketplace_target_proof(hydrated, offers, report)
+        self.assertTrue(updater.live_offer_is_valid(hydrated, offers[0], specs))
+        updater.hydrate_marketplace_target_proof(hydrated, offers, report)
+        client.get_complete_offer_targets.assert_called_once_with(999)
+        self.assertEqual(report['complete_target_proof'], {'status': 'ready', 'target_count': 13})
+
+        hidden = deepcopy(complete)
+        hidden['offer_targets'][-1] = {'seller_name': offers[0]['merchant'],
+                                      'source_url': 'https://www.hepsiburada.com/phone-p-HBC123'}
+        client.get_complete_offer_targets.return_value = hidden
+        hydrated = deepcopy(product)
+        updater.hydrate_marketplace_target_proof(hydrated, offers, {})
+        self.assertFalse(updater.live_offer_is_valid(hydrated, offers[0], specs))
+
+        for response in ({**complete, 'slug': 'different-catalog-product'}, None):
+            client.get_complete_offer_targets.return_value = response
+            hydrated = deepcopy(product)
+            updater.hydrate_marketplace_target_proof(hydrated, offers, {})
+            self.assertEqual(hydrated, product)
+            self.assertFalse(updater.live_offer_is_valid(hydrated, offers[0], specs))
+
     def test_unlisted_sku_flows_from_live_document_to_existing_ingestion_contract(self):
         url = URL.replace('166438395', '166438396')
         document = fixture()

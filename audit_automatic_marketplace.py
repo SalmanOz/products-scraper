@@ -7,7 +7,7 @@ from offer_ingestion_client import OfferIngestionClient
 from retailer_offer_refresh import RetailerOfferRefresher
 from reviewed_offer_targets import with_reviewed_radio
 from update_prices import PriceUpdater
-from mediamarkt_source import _phone_hint_path
+from mediamarkt_source import _phone_hint_path, product_url
 
 
 def main():
@@ -21,6 +21,12 @@ def main():
     for product in products:
         specs = with_reviewed_radio(product, updater.get_expected_specs(product.get('attributes')))
         targets = reader.mediamarkt_source.discover(product['name'], specs)
+        # Some current compact PDPs are stored destinations but absent from
+        # the advertised sitemap. Exercise those automatically selected hints too.
+        compact_stored = [row for row in product.get('offer_targets', [])
+                          if isinstance(row, dict) and product_url(row.get('source_url'))
+                          and _phone_hint_path(urlparse(row['source_url']).path)]
+        targets = list({row['source_url']: row for row in targets + compact_stored}.values())
         if not targets:
             continue
         compact = any(_phone_hint_path(urlparse(t['source_url']).path) for t in targets)
@@ -32,11 +38,14 @@ def main():
     rows = []
     for product, specs, targets, compact in queue[:12]:
         observed = reader.refresh_existing_offer_targets(product['name'], targets[:2], specs)
+        proof_report = {}
+        updater.hydrate_marketplace_target_proof(product, observed, proof_report)
         accepted = [offer for offer in observed if updater.live_offer_is_valid(product, offer, specs)]
         now = datetime.now(timezone.utc).isoformat()
         prepared = updater.prepare_product_offers(product, accepted, now, now)
         rows.append({'slug': product['slug'], 'currently_priced': status.get(product['id'], ('', False))[1],
                      'compact_phone_path': compact,
+                     **proof_report,
                      'candidate_count': len(targets), 'observed': len(observed),
                      'prepared_count': len(prepared), 'prepared': prepared,
                      'rejected_by_catalog_or_seller': len(observed) - len(accepted),

@@ -95,6 +95,32 @@ class PriceUpdater:
     def utc_timestamp():
         return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
+    def hydrate_marketplace_target_proof(self, product, offers, product_report):
+        """Resolve a truncated seller snapshot only after a live marketplace read."""
+        if ('complete_target_proof' in product_report or
+                not any(isinstance(offer, dict) and offer.get('platform') == 'MediaMarkt'
+                        and offer.get('url') not in ALL_MARKETPLACE_PROFILES for offer in offers)):
+            return
+        targets = product.get('offer_targets', [])
+        if (product.get('offer_targets_truncated') is False or
+                product.get('offer_targets_truncated') is not True and len(targets) < 12):
+            return
+        try:
+            complete = self.ingestion_client.get_complete_offer_targets(product['id'])
+            if (not isinstance(complete, dict) or
+                    any(complete.get(key) != product.get(key) for key in ('id', 'slug', 'name'))):
+                raise ValueError('Complete target catalog identity changed')
+            # The ingestion client verifies every page, completeness and stable
+            # snapshot; the usual collision guard still checks the full result.
+            product.update({key: complete[key] for key in (
+                'offer_targets', 'offer_targets_truncated', 'offer_targets_total',
+                'offer_targets_snapshot')})
+            product_report['complete_target_proof'] = {
+                'status': 'ready', 'target_count': len(product['offer_targets'])}
+        except Exception as error:
+            product_report['complete_target_proof'] = {
+                'status': 'unavailable', 'reason': type(error).__name__}
+
     def live_offer_is_valid(self, product, offer, expected_specs):
         if not isinstance(offer, dict) or not _safe_url(offer.get('url')):
             return False
@@ -516,6 +542,8 @@ class PriceUpdater:
                     logging.info('  🔎 Existing retailer destinations: %s observed offer(s)', len(refreshed))
                 # Reuse successful discovery work. A stored URL alone never
                 # counts; every refreshed offer must pass the current matcher.
+                await asyncio.to_thread(self.hydrate_marketplace_target_proof,
+                                        p, refreshed, product_report)
                 accepted_refresh = [offer for offer in refreshed if self.live_offer_is_valid(p, offer, expected_specs)]
                 product_report['rejected_live_observations'] += len(refreshed) - len(accepted_refresh)
                 refreshed = accepted_refresh
@@ -588,6 +616,8 @@ class PriceUpdater:
                     ) if discovery_targets else []
                     targets = targets + discovery_targets
                     product_report['targets'] = targets
+                await asyncio.to_thread(self.hydrate_marketplace_target_proof,
+                                        p, discovered, product_report)
                 accepted_discovery = [offer for offer in discovered if self.live_offer_is_valid(p, offer, expected_specs)]
                 product_report['rejected_live_observations'] += len(discovered) - len(accepted_discovery)
                 discovered = accepted_discovery
