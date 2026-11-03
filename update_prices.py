@@ -47,7 +47,8 @@ class PriceUpdater:
         )
         self.price_scraper = price_scraper or TRPriceScraper()
         self.offer_matcher = TRPriceScraper()
-        self.offer_refresher = offer_refresher or RetailerOfferRefresher()
+        self.offer_refresher = offer_refresher or RetailerOfferRefresher(
+            n11_document_get=getattr(self.ingestion_client, 'n11_document_get', None))
         self.vatan_sitemap_source = vatan_sitemap_source or VatanSitemapSource()
         self.pazarama_source = getattr(self.offer_refresher, 'pazarama_source', None)
         self.mediamarkt_source = getattr(self.offer_refresher, 'mediamarkt_source', None)

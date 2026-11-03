@@ -77,10 +77,11 @@ def challenge_document(html):
 
 class PriorityRetailerTransport:
     def __init__(self, *, get=None, post=None, sleep=time.sleep, clock=time.monotonic,
-                 maximum_per_host=2):
+                 maximum_per_host=2, n11_collector=None):
         if type(maximum_per_host) is not int or not 1 <= maximum_per_host <= 200:
             raise ValueError('Invalid priority retailer request budget')
         self._get, self._post = get or compatible_get, post
+        self._n11_collector = n11_collector
         self._sleep, self._clock = sleep, clock
         self._maximum = maximum_per_host
         self._states = {}
@@ -100,9 +101,11 @@ class PriorityRetailerTransport:
         if last is not None:
             self._sleep(max(0, state['delay'] - (self._clock() - last)))
         state['last'] = self._clock()
-        transport = HepsiburadaS25FeSource(get=self._get, post=self._post, sleep=self._sleep)
+        dedicated = self._n11_collector if urlparse(url).hostname == 'www.n11.com' else None
+        transport = HepsiburadaS25FeSource(get=dedicated or self._get, post=self._post, sleep=self._sleep)
         try:
-            result = transport._read_with_fallback(url, limit, accept=accept)
+            result = (transport._read(url, limit, accept=accept) if dedicated else
+                      transport._read_with_fallback(url, limit, accept=accept))
             location = transport._redirect_location
             if (allow_redirect and accept == 'text/html' and result[2] in (301, 302, 307, 308)
                     and isinstance(location, str) and len(location) <= 1000

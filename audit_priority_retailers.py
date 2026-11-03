@@ -143,7 +143,8 @@ def inspect_target(transport, url, product):
 def main():
     client = OfferIngestionClient.from_env()
     products, prices = client.get_published_products(), client.get_public_price_priority()
-    transport = PriorityRetailerTransport(maximum_per_host=8)
+    transport = PriorityRetailerTransport(maximum_per_host=8,
+                                         n11_collector=getattr(client, 'n11_document_get', None))
     rows = []
     for host, targets in queue(products, prices, maximum=8, spread=True).items():
         for url, product in targets:

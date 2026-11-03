@@ -66,7 +66,7 @@ def refresh_candidates(audit, *, client, reader=None):
     products = {p['slug']: p for p in catalog}
     if len(products) != len(catalog) or len(catalog) != audit.get('catalog_count'):
         raise ValueError('catalog_changed')
-    reader = reader or RetailerOfferRefresher()
+    reader = reader or RetailerOfferRefresher(n11_document_get=getattr(client, 'n11_document_get', None))
     updater = PriceUpdater(ingestion_client=client, offer_refresher=reader)
     result = {'purpose': 'single_manual_priority_candidate_refresh', 'writes': False,
               'status': 'prepared', 'candidates': len(rows), 'rows': [], 'prepared_offers': []}

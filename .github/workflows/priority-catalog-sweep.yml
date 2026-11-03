@@ -2,6 +2,14 @@ name: Priority Retailer Full Catalog Recovery
 on:
   workflow_dispatch:
     inputs:
+      mode:
+        description: 'Full catalog recovery or read-only dedicated n11 collector preflight'
+        type: choice
+        options:
+          - full
+          - n11-preflight
+        default: full
+        required: true
       publish:
         description: 'Reverify and publish proven existing-catalog offers during this one sweep'
         type: boolean
@@ -40,8 +48,11 @@ jobs:
           TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
           SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
           PUBLISH: ${{ inputs.publish }}
+          MODE: ${{ inputs.mode }}
         run: |
-          if test "$PUBLISH" = true; then
+          if test "$MODE" = n11-preflight; then
+            python -u sweep_priority_catalog.py --n11-preflight
+          elif test "$PUBLISH" = true; then
             python -u sweep_priority_catalog.py --publish
           else
             python -u sweep_priority_catalog.py

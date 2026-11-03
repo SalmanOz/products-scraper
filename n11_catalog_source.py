@@ -200,8 +200,9 @@ def catalog_offer_matches(offer, name, specs):
 
 
 class N11CatalogSource:
-    def __init__(self, get=None, post=None, transport=None):
-        self.transport = transport or PriorityRetailerTransport(get=get, post=post, maximum_per_host=6)
+    def __init__(self, get=None, post=None, transport=None, collector=None):
+        self.transport = transport or PriorityRetailerTransport(get=get, post=post, maximum_per_host=6,
+                                                               n11_collector=collector)
         self._profiles, self._ambiguous = {}, set()
 
     def configure_catalog_budget(self, count):

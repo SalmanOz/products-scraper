@@ -3,6 +3,7 @@ import math
 import os
 import re
 import time
+from datetime import datetime, timezone
 from urllib.parse import parse_qsl, urljoin, urlparse
 
 import requests
@@ -22,6 +23,20 @@ TARGET_INVALID_REASONS = (
 
 class IngestionClientError(RuntimeError):
     pass
+
+
+class PublicDocumentResponse:
+    def __init__(self, url, status, document, content_type):
+        self.url, self.status_code = url, status
+        self._body = document.encode('utf-8')
+        self.headers = {'Content-Type': content_type, 'Content-Length': str(len(self._body))}
+
+    def iter_content(self, chunk_size=65536):
+        for offset in range(0, len(self._body), chunk_size):
+            yield self._body[offset:offset + chunk_size]
+
+    def close(self):
+        self._body = b''
 
 
 class OfferIngestionClient:
@@ -601,6 +616,40 @@ class OfferIngestionClient:
                 or not isinstance(identity.get('productCoverage'), list)):
             raise IngestionClientError('Offer identity readiness response is invalid')
         return identity
+
+    def n11_document_get(self, url, **_transport_options):
+        """Read a public document from the website's dedicated collector.
+
+        The ingestion credential goes only to our existing application host;
+        the collector never forwards it or visitor cookies to the retailer.
+        """
+        from priority_retailer_transport import product_host
+        parsed = urlparse(url)
+        query = parse_qsl(parsed.query, keep_blank_values=True)
+        if (parsed.scheme != 'https' or parsed.netloc != 'www.n11.com' or parsed.fragment
+                or not (product_host(url) == 'www.n11.com' and not parsed.query
+                        or parsed.path == '/robots.txt' and not parsed.query
+                        or parsed.path == '/arama' and len(query) == 1 and query[0][0] == 'q'
+                        and 1 <= len(query[0][1]) <= 180 and not re.search(r'[\x00-\x1f]', query[0][1]))):
+            raise requests.RequestException('Invalid public n11 collector destination')
+        try:
+            body = self._request_json('POST', '/api/ingestion/n11-document',
+                headers={'Authorization': f'Bearer {self.secret}', 'Accept': 'application/json'},
+                json={'url': url})
+            stamp = datetime.fromisoformat(body['observed_at'].replace('Z', '+00:00'))
+            maximum = 64 * 1024 if parsed.path == '/robots.txt' else 5 * 1024 * 1024
+            if (body.get('purpose') != 'public_n11_document' or body.get('writes') is not False
+                    or body.get('url') != url or type(body.get('source_status')) is not int
+                    or not 100 <= body['source_status'] <= 599
+                    or not isinstance(body.get('document'), str)
+                    or len(body['document'].encode('utf-8')) > maximum
+                    or not isinstance(body.get('content_type'), str) or len(body['content_type']) > 200
+                    or stamp.tzinfo is None
+                    or not -60 <= (datetime.now(timezone.utc) - stamp).total_seconds() <= 60):
+                raise ValueError('Unbound or stale public document response')
+            return PublicDocumentResponse(url, body['source_status'], body['document'], body['content_type'])
+        except (IngestionClientError, ValueError, TypeError, KeyError, AttributeError) as error:
+            raise requests.RequestException('Dedicated public source collector unavailable') from error
 
     def ingest_offers(self, offers, *, require_all_accepted=False):
         if type(require_all_accepted) is not bool:

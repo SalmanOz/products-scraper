@@ -57,8 +57,9 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
     if (not products or len(products) > 200 or len({p['id'] for p in products}) != len(products)
             or len({p['slug'] for p in products}) != len(products)):
         raise ValueError('invalid_or_oversized_catalog')
-    transport = transport or PriorityRetailerTransport(maximum_per_host=200)
-    reader = reader or RetailerOfferRefresher()
+    collector = getattr(client, 'n11_document_get', None)
+    transport = transport or PriorityRetailerTransport(maximum_per_host=200, n11_collector=collector)
+    reader = reader or RetailerOfferRefresher(n11_document_get=collector)
     if publish:
         for source in (reader.hepsiburada_catalog_source, reader.trendyol_catalog_source,
                        reader.teknosa_catalog_source, reader.n11_catalog_source):
@@ -189,7 +190,29 @@ def coverage_readback(result, current):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--publish', action='store_true')
+    parser.add_argument('--n11-preflight', action='store_true')
     args = parser.parse_args()
+    if args.n11_preflight:
+        if args.publish:
+            raise ValueError('The collector preflight is read-only')
+        client = OfferIngestionClient.from_env()
+        products = client.get_published_products()
+        candidate = next((row for row in catalog_queue(products, {})
+                          if product_host(row[0]) == 'www.n11.com'), None)
+        if candidate is None:
+            raise ValueError('No catalog n11 destination available')
+        transport = PriorityRetailerTransport(maximum_per_host=1,
+                                             n11_collector=client.n11_document_get)
+        row = inspect_target(transport, candidate[0], candidate[1])
+        result = {'purpose': 'n11_collector_readonly_preflight', 'catalog_count': len(products),
+                  'status': 'completed' if row['reason'] == 'document_read' else 'failed',
+                  'publish': False, 'writes': False, 'accepted': 0, 'queued': 1, 'rows': [row],
+                  'models_without_priority_hints': [], 'sources': transport.report()}
+        save_report(result)
+        print(Path('priority-catalog-sweep.md').read_text())
+        if result['status'] != 'completed':
+            raise SystemExit('Dedicated source collector preflight failed; no writes')
+        return
     visited = 0
     def checkpoint(result):
         nonlocal visited

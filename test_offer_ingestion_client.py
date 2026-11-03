@@ -10,6 +10,8 @@ from offer_ingestion_client import (
 from update_prices import PriceUpdater
 from retailer_offer_refresh import ALLOWED_HOSTS
 from urllib.parse import urlparse
+from datetime import datetime, timedelta, timezone
+import requests
 
 
 TEST_SECRET = "s" * 32
@@ -48,6 +50,45 @@ def test_transient_catalog_gateway_520_retries_instead_of_aborting_the_catalog_s
         assert client._request_json('GET', '/api/ingestion/catalog') == {'products': []}
         assert delays == [1]
         assert len(session.calls) == 2
+
+
+def test_dedicated_n11_collector_keeps_authentication_on_our_host_and_binds_fresh_source_response():
+    from priority_retailer_transport import PriorityRetailerTransport
+    target = 'https://www.n11.com/urun/samsung-galaxy-a57-256-gb-12345678'
+    def body(url, document, status=200):
+        return {'purpose': 'public_n11_document', 'writes': False, 'url': url,
+                'source_status': status, 'observed_at': datetime.now(timezone.utc).isoformat(),
+                'document': document, 'content_type': 'text/html'}
+    session = FakeSession([
+        FakeResponse(200, body('https://www.n11.com/robots.txt', 'User-agent: *\nAllow: /\n')),
+        FakeResponse(200, body(target, 'denied', 403)),
+    ])
+    client = OfferIngestionClient('https://teknoskor.com', TEST_SECRET, session=session)
+    def forbidden(*args, **kwargs):
+        raise AssertionError('No direct or alternate browser request after a dedicated collector denial')
+    transport = PriorityRetailerTransport(get=forbidden, post=forbidden, sleep=lambda _: None,
+                                         n11_collector=client.n11_document_get)
+    assert transport.read_document(target)[1:] == ('http_403', 403)
+    assert transport.read_document(target + '1')[1] == 'source_circuit_open'
+    assert len(session.calls) == 2
+    for method, url, options in session.calls:
+        assert method == 'POST'
+        assert url == 'https://teknoskor.com/api/ingestion/n11-document'
+        assert options['headers']['Authorization'] == 'Bearer ' + TEST_SECRET
+        assert set(options['json']) == {'url'}
+    for change in (
+        {'url': 'https://attacker.example/'}, {'source_status': True}, {'writes': True},
+        {'observed_at': (datetime.now(timezone.utc) - timedelta(minutes=2)).isoformat()},
+        {'purpose': 'other'},
+    ):
+        session = FakeSession([FakeResponse(200, {**body(target, '<h1>Phone</h1>'), **change})])
+        client = OfferIngestionClient('https://teknoskor.com', TEST_SECRET, session=session)
+        try:
+            client.n11_document_get(target)
+        except requests.RequestException:
+            pass
+        else:
+            raise AssertionError('Unbound collector response accepted')
 
 
 

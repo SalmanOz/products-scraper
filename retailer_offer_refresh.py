@@ -593,6 +593,7 @@ class RetailerOfferRefresher:
                  hepsiburada_catalog_source=None,
                  trendyol_catalog_source=None,
                  n11_catalog_source=None,
+                 n11_document_get=None,
                  allow_a37_readonly=False):
         self._fetch = fetch or (session.get if session is not None else requests.get)
         self.public_sources = PublicRetailerSources(fetch=self._fetch)
@@ -612,7 +613,7 @@ class RetailerOfferRefresher:
         )
         self.hepsiburada_catalog_source = hepsiburada_catalog_source or HepsiburadaCatalogSource(get=self._fetch)
         self.trendyol_catalog_source = trendyol_catalog_source or TrendyolCatalogSource(get=self._fetch)
-        self.n11_catalog_source = n11_catalog_source or N11CatalogSource(get=self._fetch)
+        self.n11_catalog_source = n11_catalog_source or N11CatalogSource(get=self._fetch, collector=n11_document_get)
         self.teknosa_reviewed_source = (
             teknosa_reviewed_source or TeknosaReviewedSource(get=self._fetch)
         )
