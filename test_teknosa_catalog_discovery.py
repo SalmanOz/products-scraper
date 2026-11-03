@@ -68,6 +68,36 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(parse_category_document(document(card(), 40), CATEGORY_URL + '?page=39')[1],
                          CATEGORY_URL + '?page=40')
 
+    def test_real_nested_pagination_text_keeps_following_the_entire_category(self):
+        html = ('<h1 class="plp-title">Cep Telefonu Fiyatları ve Modelleri</h1>' + card() +
+                '<a href="/cep-telefonu-c-100001?page=1" rel="next" class="plp-paging-load-more" '
+                'title="Daha Fazla Ürün Gör (1 / 35)"><span>Daha Fazla Ürün Gör ('
+                '<span class="plp-paging-current-btn">1</span> / 35) </span></a>')
+        self.assertEqual(parse_category_document(html, CATEGORY_URL)[1], CATEGORY_URL + '?page=1')
+        self.assertEqual(parse_category_document(html.replace('page=1', 'page=2').replace(
+            'current-btn">1', 'current-btn">2'), CATEGORY_URL + '?page=1')[1], CATEGORY_URL + '?page=2')
+        self.assertIsNone(parse_category_document(html.replace('current-btn">1', 'current-btn">9'), CATEGORY_URL)[1])
+        diagnostic = {}
+        parse_category_document(html.replace('current-btn">1', 'current-btn">9'), CATEGORY_URL, diagnostic)
+        self.assertEqual(diagnostic['status'], 'continuation_unrecognized')
+        parse_category_document(html.replace('h1 class="plp-title"', 'h1'), CATEGORY_URL, diagnostic)
+        self.assertEqual(diagnostic['status'], 'category_identity_missing')
+
+    def test_sweep_does_not_claim_complete_pagination_after_an_unrecognized_next_template(self):
+        from sweep_priority_catalog import sweep
+        from test_priority_candidates import Client
+        client = Client()
+        client.get_published_products = lambda: [deepcopy(PRODUCT)]
+        client.get_public_price_priority = lambda: {}
+        class Transport:
+            def read_teknosa_category(self, url):
+                return document('', None) + '<a rel="next" href="/invalid-next">More</a>', 'document_read', 200
+            def report(self):
+                return {}
+        result = sweep(client=client, transport=Transport(), discover_teknosa=True)
+        self.assertFalse(result['category_discovery']['pagination_complete'])
+        self.assertEqual(result['category_discovery']['pages'][0]['parser']['status'], 'continuation_unrecognized')
+
     def test_exact_catalog_variant_unique_owner_and_stock_hint_order(self):
         rows, _ = parse_category_document(document(card(stock='N') + card(
             url=URL.replace('125079197', '125079200'), sku='125079200')), CATEGORY_URL)

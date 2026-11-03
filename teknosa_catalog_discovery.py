@@ -29,13 +29,17 @@ def category_page_number(url):
     return int(match[1]) if match else None
 
 
-def parse_category_document(html, url):
+def parse_category_document(html, url, diagnostic=None):
+    if isinstance(diagnostic, dict):
+        diagnostic['status'] = 'invalid_category_document'
     page = category_page_number(url)
     if page is None or not isinstance(html, str) or len(html.encode()) > MAX_HTML_BYTES:
         return [], None
     soup = BeautifulSoup(html, 'html.parser')
     titles = soup.select('h1.plp-title')
     if len(titles) != 1 or titles[0].get_text(' ', strip=True) != 'Cep Telefonu Fiyatları ve Modelleri':
+        if isinstance(diagnostic, dict):
+            diagnostic['status'] = 'category_identity_missing'
         return [], None
     cards, seen = [], set()
     for node in soup.select('[data-product-url][data-product-name]'):
@@ -59,6 +63,7 @@ def parse_category_document(html, url):
                       'stock_priority': node.get('data-product-stock') == 'Y'})
     # Follow the actual visible next-page link, never synthesize a page grid.
     next_urls = set()
+    continuation_visible = bool(soup.select('a[rel~="next"], a.plp-paging-load-more'))
     for anchor in soup.select('a[href]'):
         try:
             target = urljoin(CATEGORY_URL, anchor['href'])
@@ -66,8 +71,11 @@ def parse_category_document(html, url):
             continue
         label = anchor.get_text(' ', strip=True)
         if (category_page_number(target) == page + 1
-                and re.fullmatch(r'Daha Fazla Ürün Gör \(\d+ / \d+\)', label)):
+                and re.fullmatch(rf'Daha Fazla Ürün Gör\s*\(\s*{page + 1}\s*/\s*[1-9]\d{{0,2}}\s*\)', label)):
             next_urls.add(target)
+    if isinstance(diagnostic, dict):
+        diagnostic.update(status='continuation_unrecognized' if continuation_visible and len(next_urls) != 1 else 'parsed',
+                          destinations=len(cards))
     return cards, next(iter(next_urls)) if len(next_urls) == 1 else None
 
 

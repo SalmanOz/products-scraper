@@ -139,8 +139,13 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                 discovery['pages'].append({'url': category_url, 'reason': reason, 'http_status': status})
                 if html is None:
                     break
-                found, category_url = parse_category_document(html, category_url)
+                parser = {}
+                found, next_category_url = parse_category_document(html, category_url, diagnostic=parser)
+                discovery['pages'][-1]['parser'] = parser
                 cards.extend(found)
+                if parser.get('status') != 'parsed':
+                    break
+                category_url = next_category_url
                 if checkpoint:
                     checkpoint(result)
             discovery['pagination_complete'] = category_url is None
