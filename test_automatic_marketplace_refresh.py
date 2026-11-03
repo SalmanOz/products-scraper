@@ -82,6 +82,31 @@ class AutomaticMarketplaceTests(unittest.TestCase):
             collided, _ = make_updater({**with_duplicates, 'proposed_seller_other_url_rows': 1}, duplicate_inspection)
             collided.hydrate_marketplace_target_proof(product, offers, {})
             self.assertFalse(collided.live_offer_is_valid(product, offers[0], specs))
+        wide_targets = product['offer_targets'] + [
+            {'merchant_name': 'MediaMarkt', 'seller_name': f'Other Seller {index}',
+             'source_url': url.replace('166438396', str(266438396 + index))}
+            for index in range(12)]
+        wide_product = {**product, 'offer_targets': wide_targets[:12]}
+        wide_raw = {**raw, 'stored_rows_checked': 15, 'refresh_targets_total': 13,
+                    'refresh_targets_duplicate_count': 1}
+        wide_inspection = {**inspection, 'offer_targets': wide_targets, 'offer_targets_total': 13,
+                           'offer_targets_duplicate_count': 1}
+        paginated, page_client = make_updater(wide_raw, wide_inspection)
+        page_client.get_complete_offer_target_inspection.return_value = wide_inspection
+        wide_report = {}
+        paginated.hydrate_marketplace_target_proof(wide_product, offers, wide_report)
+        self.assertTrue(paginated.live_offer_is_valid(wide_product, offers[0], specs))
+        page_client.get_complete_offer_target_inspection.assert_called_once_with(999)
+        page_client.get_offer_target_inspection.assert_not_called()
+        self.assertEqual(wide_report['raw_target_proofs'][0]['raw_rows_checked'], 15)
+        # A seller collision on page two remains blocking independently of the
+        # aggregate proof. The first twelve rows alone cannot establish safety.
+        changed_page = deepcopy(wide_inspection)
+        changed_page['offer_targets'][-1]['seller_name'] = offers[0]['merchant']
+        blocked_page, blocked_client = make_updater(wide_raw, changed_page)
+        blocked_client.get_complete_offer_target_inspection.return_value = changed_page
+        blocked_page.hydrate_marketplace_target_proof(wide_product, offers, {})
+        self.assertFalse(blocked_page.live_offer_is_valid(wide_product, offers[0], specs))
         unsafe_reasons = {**reasons, 'unsupported_host': 0, 'sensitive_query': 1}
         for changes in ({'unknown_seller_rows': 1}, {'invalid_url_rows': 1},
                         {'invalid_row_identity_rows': 1}, {'proposed_seller_other_url_rows': 1},

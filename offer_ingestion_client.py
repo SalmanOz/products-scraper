@@ -418,12 +418,46 @@ class OfferIngestionClient:
         raise IngestionClientError('Complete target page limit exceeded')
 
     def get_offer_target_inspection(self, product_id):
+        """Retain the strict single-page contract used by scoped legacy audits."""
+        return self._get_offer_target_inspection_page(product_id)
+
+    def get_complete_offer_target_inspection(self, product_id):
+        """Read every safe target plus stable aggregate rejects, at most 60 raw rows.
+
+        This is diagnostic data, not a collision clearance. The caller must bind
+        the exact snapshot to the independent raw seller proof before writing.
+        """
+        first, gathered, seen = None, [], set()
+        stable = ('id', 'slug', 'name', 'attributes', 'offer_targets_total',
+                  'offer_targets_invalid_count', 'offer_targets_duplicate_count',
+                  'offer_targets_invalid_reasons', 'offer_targets_snapshot')
+        for page in range(1, MAX_COMPLETE_TARGET_PAGES + 1):
+            current = self._get_offer_target_inspection_page(product_id, page, multiple=True)
+            if first is None:
+                first = current
+            elif any(first.get(key) != current.get(key) for key in stable):
+                raise IngestionClientError('Complete inspection snapshot or product identity changed')
+            for target in current['offer_targets']:
+                if target['source_url'] in seen:
+                    raise IngestionClientError('Complete inspection target repeated across pages')
+                seen.add(target['source_url'])
+                gathered.append(target)
+            if len(gathered) == current['offer_targets_total']:
+                result = {**first, 'offer_targets': gathered,
+                          'offer_targets_truncated': bool(first['offer_targets_invalid_count']
+                                                         or first['offer_targets_duplicate_count'])}
+                result.pop('offer_targets_page', None)
+                return result
+        raise IngestionClientError('Complete inspection page limit exceeded')
+
+    def _get_offer_target_inspection_page(self, product_id, page=1, multiple=False):
         """Read one authenticated diagnostic page, including aggregate rejects.
 
         The exact one-off Redmi gate only accepts a single full page. Rejected
         rows are counted and categorized by the server, never returned as URLs.
         """
-        if type(product_id) is not int or product_id <= 0:
+        if (type(product_id) is not int or product_id <= 0 or type(page) is not int
+                or not 1 <= page <= MAX_COMPLETE_TARGET_PAGES):
             raise IngestionClientError('Target inspection product id is invalid')
         body = self._request_json(
             'GET', '/api/ingestion/catalog',
@@ -431,7 +465,7 @@ class OfferIngestionClient:
                      'Accept': 'application/json'},
             params={'include_offer_targets': '1',
                     'offer_target_product_id': str(product_id),
-                    'offer_target_page': '1'},
+                    'offer_target_page': str(page)},
         )
         rows = body.get('products') if isinstance(body, dict) else None
         if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict):
@@ -446,13 +480,13 @@ class OfferIngestionClient:
         if (type(product.get('id')) is not int or product['id'] != product_id
                 or not isinstance(product.get('slug'), str) or not product['slug']
                 or not isinstance(product.get('name'), str) or not product['name']
-                or type(total) is not int or not 0 <= total <= 12
+                or type(total) is not int or not 0 <= total <= (60 if multiple else 12)
                 or type(invalid) is not int or not 0 <= invalid <= 60
                 or type(duplicate) is not int or not 0 <= duplicate <= 60
                 or type(product.get('offer_targets_page')) is not int
-                or product['offer_targets_page'] != 1
+                or product['offer_targets_page'] != page
                 or product.get('offer_targets_truncated') is not
-                bool(invalid or duplicate)
+                bool(invalid or duplicate or multiple and page * COMPLETE_TARGET_PAGE_SIZE < total)
                 or not isinstance(snapshot, str)
                 or not re.fullmatch(r'[0-9a-f]{64}', snapshot)
                 or not isinstance(reasons, dict)
@@ -460,7 +494,10 @@ class OfferIngestionClient:
                 or any(type(reasons[key]) is not int or reasons[key] < 0
                        for key in TARGET_INVALID_REASONS)
                 or sum(reasons.values()) != invalid
-                or not isinstance(targets, list) or len(targets) != total):
+                or not isinstance(targets, list) or len(targets) != (
+                    min(COMPLETE_TARGET_PAGE_SIZE, max(0, total - (page - 1) * COMPLETE_TARGET_PAGE_SIZE))
+                    if multiple else total)
+                or multiple and total + invalid + duplicate > 60):
             raise IngestionClientError('Target inspection metadata is invalid')
         seen_urls = set()
         safe_targets = []
@@ -501,7 +538,8 @@ class OfferIngestionClient:
                 'offer_targets_duplicate_count': duplicate,
                 'offer_targets_invalid_reasons': reasons,
                 'offer_targets_truncated': product['offer_targets_truncated'],
-                'offer_targets_snapshot': snapshot}
+                'offer_targets_snapshot': snapshot,
+                **({'offer_targets_page': page} if multiple else {})}
 
     def get_raw_seller_collision_proof(self, product_id, seller_name, source_url):
         """Read a separate authenticated proof over raw stored seller/URL rows.

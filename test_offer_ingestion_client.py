@@ -961,3 +961,57 @@ def test_our_collector_gateway_failure_keeps_bounded_cooldown_instead_of_permane
     assert response.url == target
     assert b''.join(response.iter_content()) == b''
     assert len(session.calls) == 1
+
+from unittest import TestCase
+
+
+class CompleteTargetInspectionTests(TestCase):
+    @staticmethod
+    def pages():
+        from offer_ingestion_client import TARGET_INVALID_REASONS
+        reasons = {key: int(key == 'unsupported_host') for key in TARGET_INVALID_REASONS}
+        targets = [{'merchant_name': 'n11', 'seller_name': f'Other Seller {i}',
+                    'source_url': f'https://www.n11.com/urun/samsung-galaxy-s26-128-gb-{10000000+i}',
+                    'checked_at': '2026-11-03T10:00:00Z'} for i in range(14)]
+        common = {'id': 238, 'name': 'Samsung Galaxy S26', 'slug': 'samsung-galaxy-s26',
+                  'attributes': {'ram_gb': 12, 'storage_gb': 128}, 'offer_targets_total': 14,
+                  'offer_targets_invalid_count': 1, 'offer_targets_duplicate_count': 1,
+                  'offer_targets_invalid_reasons': reasons, 'offer_targets_snapshot': 'a' * 64,
+                  'offer_targets_truncated': True}
+        return [{'products': [{**common, 'offer_targets_page': page,
+                    'offer_targets': targets[(page-1)*12:page*12]}]} for page in (1, 2)]
+
+    def test_all_diagnostic_pages_are_bound_before_returning_the_complete_target_set(self):
+        session = FakeSession([FakeResponse(200, body) for body in self.pages()])
+        client = OfferIngestionClient('https://teknoskor.com', TEST_SECRET, session=session)
+        result = client.get_complete_offer_target_inspection(238)
+        self.assertEqual(len(result['offer_targets']), 14)
+        self.assertEqual(result['offer_targets_invalid_count'], 1)
+        self.assertEqual(result['offer_targets_duplicate_count'], 1)
+        self.assertTrue(result['offer_targets_truncated'])  # Raw proof is still mandatory.
+        self.assertEqual([call[2]['params']['offer_target_page'] for call in session.calls], ['1', '2'])
+
+    def test_legacy_scoped_inspection_keeps_its_strict_single_page_contract(self):
+        session = FakeSession([FakeResponse(200, self.pages()[0])])
+        client = OfferIngestionClient('https://teknoskor.com', TEST_SECRET, session=session)
+        with self.assertRaises(IngestionClientError):
+            client.get_offer_target_inspection(238)
+        self.assertEqual(len(session.calls), 1)
+
+    def test_changed_missing_repeated_or_incomplete_second_page_cannot_clear_the_guard(self):
+        for kind in ['snapshot', 'identity', 'attributes', 'total', 'duplicate_url', 'missing_row', 'reject_counts', 'truncated']:
+            with self.subTest(kind=kind):
+                bodies = self.pages()
+                row = bodies[1]['products'][0]
+                if kind == 'snapshot': row['offer_targets_snapshot'] = 'b' * 64
+                elif kind == 'identity': row['slug'] = 'other-phone'
+                elif kind == 'attributes': row['attributes'] = {'ram_gb': 8, 'storage_gb': 128}
+                elif kind == 'total': row['offer_targets_total'] = 13
+                elif kind == 'duplicate_url': row['offer_targets'][0] = bodies[0]['products'][0]['offer_targets'][0]
+                elif kind == 'missing_row': row['offer_targets'].pop()
+                elif kind == 'reject_counts': row['offer_targets_invalid_count'] = 2
+                else: row['offer_targets_truncated'] = False
+                client = OfferIngestionClient('https://teknoskor.com', TEST_SECRET,
+                    session=FakeSession([FakeResponse(200, body) for body in bodies]))
+                with self.assertRaises(IngestionClientError):
+                    client.get_complete_offer_target_inspection(238)

@@ -130,7 +130,10 @@ class PriceUpdater:
             try:
                 raw = self.ingestion_client.get_raw_seller_collision_proof(
                     product['id'], seller, offer['url'])
-                inspected = self.ingestion_client.get_offer_target_inspection(product['id'])
+                raw_total = raw.get('refresh_targets_total')
+                inspected = (self.ingestion_client.get_complete_offer_target_inspection(product['id'])
+                    if type(raw_total) is int and raw_total > 12 else
+                    self.ingestion_client.get_offer_target_inspection(product['id']))
                 reasons = raw.get('refresh_targets_invalid_reasons', {})
                 total = raw.get('refresh_targets_total')
                 invalid = raw.get('refresh_targets_invalid_count')
@@ -138,7 +141,7 @@ class PriceUpdater:
                 if (raw.get('purpose') != 'read_only_raw_seller_collision_proof'
                         or raw.get('writes') is not False or raw.get('product_id') != product['id']
                         or raw.get('complete') is not True or raw.get('blocked') is not False
-                        or raw.get('reasons') != [] or type(total) is not int or not 0 <= total <= 12
+                        or raw.get('reasons') != [] or type(total) is not int or not 0 <= total <= 60
                         or type(duplicate) is not int or duplicate < 0
                         or type(invalid) is not int or invalid < 0 or invalid + duplicate < 1
                         or invalid != reasons.get('unsupported_host', -1) + reasons.get('retailer_query_restricted', -1)
@@ -159,7 +162,7 @@ class PriceUpdater:
                         or inspected.get('offer_targets_snapshot') != raw.get('refresh_targets_snapshot')
                         or inspected.get('offer_targets_invalid_reasons') != reasons
                         or not isinstance(targets, list) or len(targets) != total
-                        or product.get('offer_targets') != targets
+                        or product.get('offer_targets') != targets[:min(total, 12)]
                         or product.get('offer_targets_truncated') is not True):
                     raise ValueError('raw_target_snapshot_or_catalog_changed')
                 verified = {**product, 'offer_targets': targets, 'offer_targets_total': total,
