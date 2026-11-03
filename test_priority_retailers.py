@@ -95,6 +95,45 @@ class PriorityRetailerTests(unittest.TestCase):
         source.read_document(URLS[1])
         self.assertEqual(source.read_document(URLS[1] + '1')[1], 'pdp_budget_exhausted')
 
+    def test_trendyol_canonical_redirect_keeps_product_seller_robots_and_request_budget(self):
+        original = URLS[1] + '?merchantId=123&v=tek-ebat'
+        canonical = URLS[1].replace('128-gb', '128gb') + '?merchantId=123'
+        for destination, expected in (
+            (canonical, 'document_read'),
+            (canonical.replace('merchantId=123', 'merchantId=999'), 'redirect_identity_or_policy_mismatch'),
+            (canonical.split('?')[0], 'redirect_identity_or_policy_mismatch'),
+            (canonical.replace('676507062', '676507063'), 'redirect_identity_or_policy_mismatch'),
+            ('https://attacker.example/phone', 'redirect_identity_or_policy_mismatch'),
+        ):
+            calls = []
+            def get(url, **kwargs):
+                calls.append(url)
+                self.assertFalse(kwargs['allow_redirects'])
+                response = Response(url, 'User-agent: *\nAllow: /\n' if url.endswith('robots.txt') else '<h1>Phone</h1>')
+                if url == original:
+                    response.status_code = 301
+                    response.headers['Location'] = destination
+                return response
+            reader = PriorityRetailerTransport(get=get, sleep=lambda _: None)
+            with self.subTest(destination=destination):
+                self.assertEqual(reader.read_document(original)[1], expected)
+                self.assertEqual(len(calls), 3 if expected == 'document_read' else 2)
+                if expected == 'document_read':
+                    self.assertEqual(reader.resolved_url(original), canonical)
+        destination = canonical
+        reader = PriorityRetailerTransport(get=get, sleep=lambda _: None, maximum_per_host=1)
+        self.assertEqual(reader.read_document(original)[1], 'redirect_budget_or_duplicate')
+
+        def looping_get(url, **_):
+            if url.endswith('robots.txt'):
+                return Response(url, 'User-agent: *\nAllow: /\n')
+            result = Response(url, '', status=301)
+            result.headers['Location'] = canonical if url == original else original
+            return result
+        reader = PriorityRetailerTransport(get=looping_get, sleep=lambda _: None, maximum_per_host=8)
+        self.assertEqual(reader.read_document(original)[1], 'http_301')
+        self.assertEqual(reader.report()['Trendyol']['pdp_requests'], 2)
+
 
 if __name__ == '__main__':
     unittest.main()

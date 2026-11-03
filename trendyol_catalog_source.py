@@ -198,7 +198,8 @@ class TrendyolCatalogSource:
         html, reason, status = self.transport.read_document(url)
         if html is None:
             return None, reason, status
-        offer, reason = parse_catalog_listing(html, url, profile['name'], profile['specs'])
+        final_url = self.transport.resolved_url(url) if hasattr(self.transport, 'resolved_url') else url
+        offer, reason = parse_catalog_listing(html, final_url, profile['name'], profile['specs'])
         return offer, reason, status
 
     def configure_catalog_budget(self, count):

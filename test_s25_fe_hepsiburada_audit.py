@@ -183,7 +183,10 @@ class HepsiburadaS25FeAuditTests(unittest.TestCase):
         altered_url = URL + '?seller=other'
         self.assertEqual(reader.refresh_existing_offer_targets(
             NAME, [{'source_url': altered_url}], SPECS), [])
-        self.assertEqual(ordinary_requests, [altered_url])
+        # Unknown seller selectors are not routed to a generic JSON-LD reader.
+        self.assertEqual(ordinary_requests, [])
+        self.assertEqual(reader.target_report(NAME, [{'source_url': altered_url}], SPECS)[0]['reason'],
+                         'unmatched_catalog_pdp')
         self.assertEqual(dedicated.calls, 1)
 
 

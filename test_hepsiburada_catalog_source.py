@@ -95,6 +95,24 @@ class HepsiburadaCatalogTests(unittest.TestCase):
         source.register_catalog_targets('Samsung Galaxy A36', [{'source_url': TARGET}], SPECS)
         self.assertEqual(source.read_offer(TARGET)[1], 'unmatched_catalog_pdp')
 
+    def test_stale_seller_hint_fetches_sku_default_and_never_labels_it_as_historical_seller(self):
+        calls = []
+        class Transport:
+            def read_document(self, url):
+                calls.append(url)
+                return document(), 'document_read', 200
+        source = HepsiburadaCatalogSource(transport=Transport())
+        hint = TARGET + '?magaza=Historical+Seller'
+        source.register_catalog_targets(NAME, [{'source_url': hint}], SPECS)
+        offer, reason, status = source.read_offer(hint)
+        self.assertEqual(calls, [TARGET])
+        self.assertEqual(offer['url'], TARGET)
+        self.assertNotEqual(offer['merchant'], 'Historical Seller')
+        self.assertEqual(reason, 'selected_new_cash_offer_observed')
+        self.assertEqual(status, 200)
+        # Direct seller-scoped parsing still rejects a changed selected seller.
+        self.assertIsNone(parse_catalog_buy_box(document(), hint, NAME, SPECS)[0])
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -186,7 +186,9 @@ class HepsiburadaAppleAuditTests(unittest.TestCase):
         generic_calls = []
         def generic_get(url, **_):
             generic_calls.append(url)
-            return response(url, 'denied', 403)
+            if url.endswith('/robots.txt'):
+                return response(url, 'User-agent: *\nDisallow: /\n')
+            raise AssertionError('Robots denial must prevent a generic PDP read')
         reader = RetailerOfferRefresher(fetch=generic_get,
                                         hepsiburada_apple_source=dedicated)
         for target in REVIEWED_PDPS:
@@ -208,7 +210,9 @@ class HepsiburadaAppleAuditTests(unittest.TestCase):
         self.assertEqual(dedicated.calls, [item.url for item in REVIEWED_PDPS])
         self.assertEqual(reader.refresh_existing_offer_targets(
             target.name, [{'source_url': target.schema_url}], target.specs), [])
-        self.assertEqual(generic_calls, [target.schema_url])
+        self.assertEqual(generic_calls, ['https://www.hepsiburada.com/robots.txt'])
+        self.assertEqual(reader.target_report(target.name, [{'source_url': target.schema_url}], target.specs)[0]['reason'],
+                         'robots_disallowed')
 
 
 if __name__ == '__main__':

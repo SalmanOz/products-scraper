@@ -169,14 +169,18 @@ class HepsiburadaS25FeSource:
         self._post = post or requests.post
         self._sleep = sleep
         self._browser_requests = 0
+        self._redirect_location = None
 
     def _read(self, url, maximum, *, accept):
+        self._redirect_location = None
         response = self._get(url, timeout=(5, 15), allow_redirects=False, stream=True,
                              headers={**HEADERS, 'Accept': accept})
         try:
             if response.url != url:
                 return None, 'unexpected_final_url', response.status_code
             if response.status_code != 200:
+                if response.status_code in (301, 302, 307, 308):
+                    self._redirect_location = response.headers.get('Location')
                 return None, f'http_{response.status_code}', response.status_code
             length = response.headers.get('Content-Length', '')
             if length.isdigit() and int(length) > maximum:

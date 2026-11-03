@@ -79,9 +79,13 @@ def main():
     rows = []
     for host, targets in queue(products, prices, maximum=8, spread=True).items():
         for url, product in targets:
-            html, reason, status = transport.read_document(url)
+            observed_url = url
+            if host == 'www.hepsiburada.com':
+                from hepsiburada_catalog_source import catalog_request_url
+                observed_url = catalog_request_url(url)
+            html, reason, status = transport.read_document(observed_url)
             row = {'retailer': HOSTS[host], 'slug': product['slug'], 'url': url,
-                   'reason': reason, 'http_status': status}
+                   'observed_url': observed_url, 'reason': reason, 'http_status': status}
             if html is not None:
                 row.update(document_evidence(html, url))
                 if host == 'www.teknosa.com':
@@ -93,12 +97,14 @@ def main():
                 if host == 'www.hepsiburada.com':
                     from hepsiburada_catalog_source import parse_catalog_buy_box
                     specs = with_reviewed_radio(product, PriceUpdater.get_expected_specs(product.get('attributes')))
-                    offer, why = parse_catalog_buy_box(html, url, product['name'], specs)
+                    offer, why = parse_catalog_buy_box(html, observed_url, product['name'], specs)
                     row.update(reader_reason=why, prepared_offer=offer)
                 if host == 'www.trendyol.com':
                     from trendyol_catalog_source import parse_catalog_listing
                     specs = with_reviewed_radio(product, PriceUpdater.get_expected_specs(product.get('attributes')))
-                    offer, why = parse_catalog_listing(html, url, product['name'], specs)
+                    final_url = transport.resolved_url(url)
+                    offer, why = parse_catalog_listing(html, final_url, product['name'], specs)
+                    row['resolved_url'] = final_url
                     row.update(reader_reason=why, prepared_offer=offer)
             rows.append(row)
     report = {'purpose': 'automatic_priority_retailer_diagnosis', 'writes': False,

@@ -23,6 +23,18 @@ def _identity(url, product_id, sku):
     return bool(match and match[2] == (product_id if match[1] else sku))
 
 
+def catalog_request_url(url):
+    """A stored seller hint discovers a SKU; fetch its current default buy box.
+
+    The returned offer uses this query-free observed URL and the freshly proven
+    seller, never the historical magaza name. Exact/seller-scoped audit callers
+    can still pass their original URL to the strict parser and require its seller.
+    """
+    if product_host(url) != 'www.hepsiburada.com':
+        return None
+    return urlparse(url)._replace(query='').geturl()
+
+
 def parse_catalog_buy_box(html, url, name, specs):
     from audit_hepsiburada_iphone16pm_readonly import parse_exact_buy_box
     if (product_host(url) != 'www.hepsiburada.com' or not isinstance(html, str)
@@ -143,10 +155,11 @@ class HepsiburadaCatalogSource:
         profile = self._profiles.get(url)
         if profile is None or url in self._ambiguous:
             return None, 'unmatched_catalog_pdp', None
-        html, reason, status = self.transport.read_document(url)
+        observed_url = catalog_request_url(url)
+        html, reason, status = self.transport.read_document(observed_url)
         if html is None:
             return None, reason, status
-        offer, reason = parse_catalog_buy_box(html, url, profile['name'], profile['specs'])
+        offer, reason = parse_catalog_buy_box(html, observed_url, profile['name'], profile['specs'])
         return offer, reason, status
 
     def configure_catalog_budget(self, count):

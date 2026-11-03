@@ -7,7 +7,7 @@ must independently prove the selected SKU, seller, cash price and stock.
 import re
 import time
 from threading import RLock
-from urllib.parse import parse_qsl, urlparse
+from urllib.parse import parse_qsl, urljoin, urlparse
 from urllib.robotparser import RobotFileParser
 
 from bs4 import BeautifulSoup
@@ -75,6 +75,7 @@ class PriorityRetailerTransport:
         self._sleep, self._clock = sleep, clock
         self._maximum = maximum_per_host
         self._states = {}
+        self._resolved = {}
         self._lock = RLock()
 
     def configure_catalog_budget(self, count):
@@ -85,16 +86,43 @@ class PriorityRetailerTransport:
                 raise RuntimeError('Configure before source reads')
             self._maximum = max(self._maximum, min(60, count))
 
-    def _read(self, url, limit, accept, state):
+    def _read(self, url, limit, accept, state, allow_redirect=True):
         last = state.get('last')
         if last is not None:
             self._sleep(max(0, state['delay'] - (self._clock() - last)))
         state['last'] = self._clock()
         transport = HepsiburadaS25FeSource(get=self._get, post=self._post, sleep=self._sleep)
         try:
-            return transport._read_with_fallback(url, limit, accept=accept)
+            result = transport._read_with_fallback(url, limit, accept=accept)
+            location = transport._redirect_location
+            if (allow_redirect and accept == 'text/html' and result[2] in (301, 302, 307, 308)
+                    and isinstance(location, str) and len(location) <= 1000
+                    and product_host(url) == 'www.trendyol.com'):
+                target = urljoin(url, location)
+                original, redirected = urlparse(url), urlparse(target)
+                before, after = dict(parse_qsl(original.query)), dict(parse_qsl(redirected.query))
+                # A slug/one-size canonicalization may not change product or seller.
+                # No cross-host redirect, changed memory selector, second hop or
+                # request beyond the same source's original budget is followed.
+                if (product_host(target) != 'www.trendyol.com'
+                        or original.path.rsplit('-p-', 1)[-1] != redirected.path.rsplit('-p-', 1)[-1]
+                        or before.get('merchantId') != after.get('merchantId')
+                        or not state['rules'].can_fetch(BOT, target)):
+                    return None, 'redirect_identity_or_policy_mismatch', result[2]
+                if target in state['seen'] or state['pdp_requests'] >= self._maximum:
+                    return None, 'redirect_budget_or_duplicate', result[2]
+                state['seen'].add(target)
+                state['pdp_requests'] += 1
+                followed = self._read(target, limit, accept, state, allow_redirect=False)
+                if followed[1] == 'ready':
+                    self._resolved[url] = target
+                return followed
+            return result
         finally:
             state['browser_requests'] += transport._browser_requests
+
+    def resolved_url(self, url):
+        return self._resolved.get(url, url)
 
     def read_document(self, url):
         host = product_host(url)

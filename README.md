@@ -34,6 +34,34 @@ Bir mağazanın çok sayıda renk bağlantısı diğer mağazaları bütçeden d
 önce her mağazadan bir bağlantı, sonra sırayla ek renkler denenir. Bütçe dışında
 kalan güvenli URL'ler günlük raporda `target_budget_skipped` olarak görünür.
 
+Öncelikli kaynaklar Hepsiburada, Trendyol, n11 ve Teknosa sırasıyla ilk URL
+turunda yer alır. Hepsiburada ve Trendyol okuyucuları katalogdaki mevcut
+bağlantılardan model/RAM/depolama profilini türetir; telefon başına yeni bir
+elle hazırlanmış profil gerektirmez. Hepsiburada'da seçili Redux SKU/barkod,
+görünen satıcı, teknik tablo, iki satın alma kutusu olayı ve peşin fiyat;
+Trendyol'da seçili ürün/satıcı/ilan, iki seçili varyant listesi, barkod, teknik
+alanlar, JSON-LD, görünen fiyat ve açık satın alma düğmesi birlikte doğrulanır.
+Üretici adı pazar yeri satıcısı kabul edilmez. Satıcı başka bir URL'ye zaten
+bağlıysa veya bütün kayıtlı satırlar kontrol edilemiyorsa teklif yayımlanmaz.
+Teknosa'nın genel okuyucusu yalnız seçili TEKNOSA birinci taraf satıcısı,
+mağaza 1001, SKU, EAN13, stok ve koşulsuz fiyat aynı olduğunda teklif hazırlar.
+
+`Priority Retailer Catalog Read-only Audit`, katalogdan kaynak başına en çok
+sekiz mevcut adresi otomatik örnekler. Bu denetim ürün, fiyat, puan veya
+IndexNow yazmaz. HTTP 200 tek başına teklif değildir; stok veya varyant kanıtı
+eksik sayfalar elenir. Trendyol'da 301 veren eski adresler ve n11'de belge
+okuma servisinin 500 hatası henüz çözülmüş sayılmaz. Her kaynakta robots,
+istek aralığı, boyut/kota ve erişim hatası devre kesicisi uygulanır.
+
+3 Kasım dördüncü üretim turu:
+[Daily Price & Data Sync #222](https://github.com/SalmanOz/products-scraper/actions/runs/41610758334)
+65 teklifi kabul etti (0 eski gözlem, 0 varyant reddi). Genel iş 109 ürünü
+işledi; A37 mevcut eşli teklif akışına ayrıldığı için bu genel işte atlandı.
+Canlı katalogda fiyatlı ürünler 40/110, iki mağazalı ürünler 19'dan 20'ye çıktı.
+Turda yeniden doğrulanan kapsam 33/109 (%30,3) olduğundan %50 kalite eşiği
+başarısız kaldı. Sonradan eklenen öncelikli kaynak okuyucuları bu üretim
+turunun sabitlenmiş sürümünde yoktur; salt okunur denetimleri ayrı raporlanır.
+
 403/429/challenge cevabında o mağaza için aynı çalışmada devre kesici açılır.
 İncelenmiş Vatan ve MediaMarkt tam ürün bağlantılarında normal GET 403 dönerse
 `robots.txt` izni doğrulanarak mevcut FlareSolverr ile salt GET denenir;
