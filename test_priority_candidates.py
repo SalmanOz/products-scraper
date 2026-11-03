@@ -102,7 +102,7 @@ class PriorityCandidateTests(unittest.TestCase):
             refresh_candidates(audit(), client=client, reader=reader())
         self.assertEqual(len(client.writes), 1)
 
-    def test_sku_radio_proof_cannot_relabel_a_radio_ambiguous_title_as_commercially_matched(self):
+    def test_selected_sku_radio_proof_is_carried_with_the_unchanged_ambiguous_heading(self):
         from test_trendyol_catalog_source import document as ty_document, URL as ty_url
         from trendyol_catalog_source import TrendyolCatalogSource, parse_catalog_listing
         html = ty_document().replace('A54 5G', 'A15').replace('a54-5g', 'a15')
@@ -121,8 +121,12 @@ class PriorityCandidateTests(unittest.TestCase):
         report['rows'] = [{'slug': client.product['slug'], 'retailer': 'Trendyol',
                            'reason': 'document_read', 'http_status': 200, 'prepared_offer': observed}]
         result = refresh_candidates(report, client=client, reader=source)
-        self.assertEqual(result['rows'][0]['reason'], 'commercial_title_identity_not_established')
-        self.assertEqual(client.writes, [])
+        self.assertEqual(result['status'], 'completed')
+        written = client.writes[0][0]
+        self.assertEqual(written['source_title'], observed['source_title'])
+        self.assertNotIn('5G', written['source_title'])
+        self.assertEqual(written['source_variant_evidence']['network_generation'], '5g')
+        self.assertEqual(written['source_variant_evidence']['sku'], str(observed['item_number']))
 
     def test_stale_duplicate_cross_platform_and_protected_a37_candidates_abort_before_writes(self):
         for kind in ('stale', 'duplicate', 'host', 'a37', 'catalog_count', 'writes', 'too_many'):

@@ -703,6 +703,16 @@ class TRPriceScraper:
         if not expected_storage:
             return False
         ram, storage, ambiguous = self._unambiguous_listing_capacities(title)
+        from selected_sku_evidence import selected_sku_evidence
+        selected = selected_sku_evidence(offer)
+        if selected:
+            # Actual selected attributes can establish omitted heading facts;
+            # explicit conflicting/ambiguous heading facts still reject.
+            if ((ram is not None and ram != selected['ram_gb'])
+                    or (storage is not None and storage != selected['storage_gb'])):
+                return False
+            ram = ram if ram is not None else selected['ram_gb']
+            storage = storage if storage is not None else selected['storage_gb']
         # Vatan sometimes omits both GB suffixes on a concrete Android PDP
         # ("OPPO Find X9 Pro 16/512 Akıllı Telefon"). Require the same pair in
         # its exact PDP slug and reject other capacity declarations, so a
@@ -731,6 +741,10 @@ class TRPriceScraper:
             return False
         radio = expected_specs.get('network_generation') or self._radio_generation(product_name)
         observed_radio = self._radio_generation(title)
+        if selected:
+            if observed_radio and observed_radio != selected['network_generation']:
+                return False
+            observed_radio = observed_radio or selected['network_generation']
         # These catalog families have both radio variants. Missing radio in
         # the sale title cannot select the 5G profile merely from its CPU.
         if re.search(r'\bredmi note (?:11|12|13|14|15)\b|\bgalaxy a(?:14|15|16|17)\b|\btecno spark slim\b', self._normalize_words(product_name)):

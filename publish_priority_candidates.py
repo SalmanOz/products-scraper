@@ -96,7 +96,7 @@ def refresh_candidates(audit, *, client, reader=None):
             continue
         fresh = offers[0]
         identity = ('url', 'platform', 'merchant', 'merchant_id', 'price', 'currency', 'condition',
-                    'availability', 'gtin13', 'sku', 'product_id', 'listing_id', 'item_number',
+                    'availability', 'gtin13', 'sku', 'product_id', 'group_id', 'listing_id', 'item_number',
                     'source_title', 'ram_gb', 'storage_gb', 'network_generation', 'observed_gtins')
         if (any(old.get(key) != fresh.get(key) for key in identity)
                 or not _fresh(fresh.get('observed_at'), 60)):

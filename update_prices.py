@@ -376,6 +376,10 @@ class PriceUpdater:
                         f"Observed source title exceeds 1000 characters for {product['slug']}"
                     )
                 record["source_title"] = source_title
+            from selected_sku_evidence import selected_sku_evidence
+            selected = selected_sku_evidence(offer)
+            if selected:
+                record['source_variant_evidence'] = selected
             records.append(record)
         return records
 
