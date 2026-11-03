@@ -46,6 +46,25 @@ class Fetch:
 
 
 class VatanSitemapSourceTests(unittest.TestCase):
+    def test_exact_unitless_phone_pair_reaches_catalog_reader_without_a_profile(self):
+        from vatan_reviewed_source import VatanReviewedSource
+        url = ('https://www.vatanbilgisayar.com/'
+               'oppo-find-x9-pro-16-512-akilli-telefon-titanyum-antrasit.html')
+        specs = {'ram_gb': 16, 'storage_gb': 512, 'network_generation': '5g'}
+        source = VatanSitemapSource(fetch=Fetch({ROBOTS_URL: ROBOTS,
+                                                SITEMAP_URL: sitemap(url)}))
+        targets = source.discover('OPPO Find X9 Pro', specs)
+        self.assertEqual(targets, [{'source_url': url}])
+        reader = VatanReviewedSource()
+        reader.register_catalog_targets('OPPO Find X9 Pro', targets, specs)
+        self.assertTrue(reader.is_reviewed(url))
+        for wrong in ({**specs, 'ram_gb': 12}, {**specs, 'storage_gb': 256}):
+            self.assertEqual(source.discover('OPPO Find X9 Pro', wrong), [])
+        for path in ('/oppo-find-x9-pro-16-512.html',
+                     '/oppo-find-x9-16-512-akilli-telefon.html',
+                     '/oppo-find-x9-pro-512-akilli-telefon.html'):
+            self.assertFalse(source._variant_matches(path, 'OPPO Find X9 Pro', specs))
+
     def test_storage_before_ram_is_a_hint_without_accepting_a_capacity_conflict(self):
         specs = {'ram_gb': 8, 'storage_gb': 128, 'network_generation': '5g'}
         for path in ('/samsung-galaxy-a57-5g-128gb-8gb',

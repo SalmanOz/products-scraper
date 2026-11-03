@@ -232,9 +232,15 @@ class VatanSitemapSource:
         matcher = TRPriceScraper()
         if not matcher.is_strict_match(product_name, title, expected_specs):
             return False
+        # Some Vatan phone slugs publish the exact pair as 16-512-akilli-telefon,
+        # with no GB suffix. This is a discovery hint only: the selected PDP's
+        # actual title/Offer still has to prove both capacities before use.
+        unitless_pair = bool(ram and re.search(
+            rf'(?:^|[-_]){ram}[-_]{storage}[-_]akilli[-_]telefon(?:[-_]|$)', slug))
         # Explicit capacity in the URL prevents a generic family URL from
         # silently selecting the first colour/storage option on the PDP.
-        if not re.search(rf'(?:^|[-_]){storage}(?:[-_]?gb)(?:[-_]|$)', slug):
+        if not (re.search(rf'(?:^|[-_]){storage}(?:[-_]?gb)(?:[-_]|$)', slug)
+                or unitless_pair):
             return False
         is_iphone = 'iphone' in matcher._normalize_words(product_name).split()
         if not is_iphone:
@@ -243,7 +249,8 @@ class VatanSitemapSource:
             pair = rf'(?:^|[-_]){ram}(?:[-_]?gb)?[-_]{storage}(?:[-_]?gb)(?:[-_]|$)'
             reversed_pair = rf'(?:^|[-_]){storage}[-_]?gb[-_]{ram}[-_]?gb(?:[-_]|$)'
             labelled = rf'(?:^|[-_]){ram}[-_]?gb[-_]?ram(?:[-_]|$)|(?:^|[-_])ram[-_]?{ram}[-_]?gb(?:[-_]|$)'
-            if not (re.search(pair, slug) or re.search(reversed_pair, slug) or re.search(labelled, slug)):
+            if not (re.search(pair, slug) or re.search(reversed_pair, slug)
+                    or re.search(labelled, slug) or unitless_pair):
                 return False
         # Catalog summaries often omit Connectivity. A sitemap URL is only a
         # hint: the PDP reader later requires the observed title/offer to pass
