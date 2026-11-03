@@ -477,11 +477,11 @@ class RetailerRefreshTests(unittest.TestCase):
         targets = idefix + [teknosa, n11, idefix[0]]
         reader = RetailerOfferRefresher(fetch=fetch)
         offers = reader.refresh_existing_offer_targets('Samsung Galaxy S25', targets, SPECS)
-        self.assertEqual(len(calls), 11)
-        self.assertEqual(set(calls), set(idefix[:10]) | {n11})
-        # Teknosa is a marketplace. A generic Product schema cannot establish
-        # that the selected seller is Teknosa, even in this budget test.
-        self.assertEqual({row['merchant'] for row in offers}, {'idefix', 'n11'})
+        self.assertEqual(len(calls), 10)
+        self.assertEqual(set(calls), set(idefix[:10]))
+        # These marketplaces require their selected shop/SKU readers. A
+        # generic Product schema cannot label either platform as the seller.
+        self.assertEqual({row['merchant'] for row in offers}, {'idefix'})
         report = reader.target_report('Samsung Galaxy S25', targets, SPECS)
         self.assertIn(n11, [row['source_url'] for row in report])
         self.assertIn(teknosa, [row['source_url'] for row in report])
@@ -529,8 +529,8 @@ class RetailerRefreshTests(unittest.TestCase):
         self.assertEqual(len(offers), 2)
         self.assertEqual([row['url'] for row in offers], urls[3:])
 
-        denied = 'https://www.n11.com/samsung-galaxy-s25-12gb-128gb-p-1'
-        denied_next = 'https://www.n11.com/samsung-galaxy-s25-12gb-128gb-p-2'
+        denied = 'https://www.idefix.com/samsung-galaxy-s25-12gb-128gb-p-1'
+        denied_next = 'https://www.idefix.com/samsung-galaxy-s25-12gb-128gb-p-2'
         def denied_fetch(url, **_kwargs):
             return Response(status=403, url=url)
         denied_reader = RetailerOfferRefresher(fetch=denied_fetch, clock=lambda: now[0])

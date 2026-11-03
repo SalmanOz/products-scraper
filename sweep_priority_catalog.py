@@ -24,6 +24,9 @@ def observed_url(url):
     if host == 'www.trendyol.com':
         from trendyol_catalog_source import catalog_request_url
         return catalog_request_url(url)
+    if host == 'www.n11.com':
+        from n11_catalog_source import catalog_request_url
+        return catalog_request_url(url)
     return url
 
 
@@ -58,7 +61,7 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
     reader = reader or RetailerOfferRefresher()
     if publish:
         for source in (reader.hepsiburada_catalog_source, reader.trendyol_catalog_source,
-                       reader.teknosa_catalog_source):
+                       reader.teknosa_catalog_source, reader.n11_catalog_source):
             source.configure_catalog_budget(200)
     targets = catalog_queue(products, prices)
     result = {'purpose': 'systematic_priority_catalog_recovery', 'catalog_count': len(products),

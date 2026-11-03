@@ -21,7 +21,7 @@ def _time(value):
 
 def no_merchant_collision(product, profile, url, expected_host='www.mediamarkt.com.tr'):
     """A seller name may identify only one platform for this catalog product."""
-    if expected_host not in {'www.mediamarkt.com.tr', 'www.hepsiburada.com', 'www.trendyol.com', 'www.teknosa.com'} or urlparse(url).hostname != expected_host:
+    if expected_host not in {'www.mediamarkt.com.tr', 'www.hepsiburada.com', 'www.trendyol.com', 'www.teknosa.com', 'www.n11.com'} or urlparse(url).hostname != expected_host:
         return False
     targets = product.get('offer_targets')
     truncated = product.get('offer_targets_truncated')

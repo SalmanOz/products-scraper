@@ -106,11 +106,19 @@ def inspect_target(transport, url, product):
     elif host == 'www.trendyol.com':
         from trendyol_catalog_source import catalog_request_url
         observed_url = catalog_request_url(url)
+    elif host == 'www.n11.com':
+        from n11_catalog_source import catalog_request_url
+        observed_url = catalog_request_url(url)
     html, reason, status = transport.read_document(observed_url)
     row = {'retailer': HOSTS[host], 'slug': product['slug'], 'url': url,
            'observed_url': observed_url, 'reason': reason, 'http_status': status}
     if html is not None:
         row.update(document_evidence(html, url))
+        if host == 'www.n11.com':
+            from n11_catalog_source import parse_catalog_listing
+            specs = with_reviewed_radio(product, PriceUpdater.get_expected_specs(product.get('attributes')))
+            offer, why = parse_catalog_listing(html, observed_url, product['name'], specs)
+            row.update(reader_reason=why, prepared_offer=offer)
         if host == 'www.teknosa.com':
             from teknosa_reviewed_source import parse_catalog_offer
             specs = with_reviewed_radio(product, PriceUpdater.get_expected_specs(product.get('attributes')))
