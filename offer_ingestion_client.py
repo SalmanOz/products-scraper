@@ -648,7 +648,12 @@ class OfferIngestionClient:
                     or not -60 <= (datetime.now(timezone.utc) - stamp).total_seconds() <= 60):
                 raise ValueError('Unbound or stale public document response')
             return PublicDocumentResponse(url, body['source_status'], body['document'], body['content_type'])
-        except (IngestionClientError, ValueError, TypeError, KeyError, AttributeError) as error:
+        except IngestionClientError:
+            # Our collector's temporary gateway/restart failure is not a
+            # retailer access denial. The source transport applies its bounded
+            # 503 cooldown/probe policy; it never changes destination or client.
+            return PublicDocumentResponse(url, 503, '', 'text/plain')
+        except (ValueError, TypeError, KeyError, AttributeError) as error:
             raise requests.RequestException('Dedicated public source collector unavailable') from error
 
     def ingest_offers(self, offers, *, require_all_accepted=False):

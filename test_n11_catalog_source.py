@@ -41,6 +41,39 @@ class N11CatalogTests(unittest.TestCase):
                 self.assertIn(before, html)
                 self.assertIsNone(parse_catalog_listing(html.replace(before, after), URL, NAME, SPECS)[0])
 
+    def test_public_basket_price_keeps_its_condition_and_selected_physical_variant(self):
+        html = Path(__file__).with_name('fixtures').joinpath('n11-selected-ssr-basket.html').read_text()
+        url = 'https://www.n11.com/urun/samsung-galaxy-s23-fe-8-gb-128-gb-samsung-turkiye-garantili-44089317'
+        name, specs = 'Samsung Galaxy S23 FE', {'ram_gb': 8, 'storage_gb': 128, 'network_generation': '5g'}
+        offer, reason = parse_catalog_listing(html, url, name, specs)
+        self.assertEqual(reason, 'selected_n11_basket_offer')
+        self.assertEqual((offer['price'], offer['listed_price'], offer['price_kind']), (37439.04, 38999, 'basket'))
+        self.assertTrue(catalog_offer_matches(offer, name, specs))
+        updater = PriceUpdater(ingestion_client=object())
+        record = updater.prepare_product_offers({'id': 999, 'slug': 'samsung-galaxy-s23-fe'},
+            [offer], updater.utc_timestamp(), updater.utc_timestamp())[0]
+        proof = record['source_variant_evidence']
+        self.assertEqual((proof['price_kind'], proof['listed_price'], proof['payable_price']),
+                         ('basket', 38999, 37439.04))
+        self.assertEqual(record['source_title'], offer['source_title'])
+        # A missing heading RAM declaration can be established by actual selected
+        # technical attributes, never by the expected catalog values.
+        no_ram = html.replace('S23 FE 8 GB 128 GB', 'S23 FE 128 GB')
+        self.assertIsNotNone(parse_catalog_listing(no_ram, url, name, specs)[0])
+        for before, after in (
+            ('"sellerHasMinimumCartAmount": false', '"sellerHasMinimumCartAmount": true'),
+            ('"mobileDiscountExist": false', '"mobileDiscountExist": true'),
+            ('"isPrivateProduct": false', '"isPrivateProduct": true'),
+            ('"hasInstantDiscount": false', '"hasInstantDiscount": true'),
+            ('"isShowPrivateProductPrice": false', '"isShowPrivateProductPrice": true'),
+            ('"value": "8 GB"', '"value": "12 GB"'),
+            ('"key": "5G Desteği"', '"key": "Unknown attribute"'),
+            ('"priceFloat": 37439.04', '"priceFloat": 37438.04'),
+        ):
+            with self.subTest(before=before):
+                self.assertIn(before, html)
+                self.assertIsNone(parse_catalog_listing(html.replace(before, after), url, name, specs)[0])
+
     def test_search_discovers_only_matching_new_phone_destinations_and_never_card_prices(self):
         title = 'Samsung Galaxy A57 8 GB 256 GB (Samsung Türkiye Garantili)'
         def card(url, name=title):

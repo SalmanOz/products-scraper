@@ -85,8 +85,7 @@ def parse_catalog_listing(html, url, name, specs):
     heading = main[0].select('h1.title') if len(main) == 1 else []
     title = ' '.join(heading[0].get_text(' ', strip=True).split()) if len(heading) == 1 else ''
     matcher = TRPriceScraper()
-    if (title != product.get('title') or not matcher.is_strict_match(name, title, specs)
-            or not matcher.has_observed_offer_evidence(name, {'source_title': title, 'url': url}, specs)):
+    if (title != product.get('title') or not matcher.is_strict_match(name, title, specs)):
         return None, 'catalog_title_variant_mismatch'
     seller = product.get('seller')
     if not isinstance(seller, dict):
@@ -136,6 +135,24 @@ def parse_catalog_listing(html, url, name, specs):
     if (values.get('Dahili Hafıza') != str(matcher._spec_int(specs.get('storage_gb'))) + ' GB'
             or not isinstance(values.get('Renk'), str) or len(values['Renk']) > 60):
         return None, 'selected_sku_memory_missing'
+    physical = {}
+    technical = {}
+    for attribute in product.get('productAttributes') or []:
+        if not isinstance(attribute, dict):
+            return None, 'selected_technical_attributes_invalid'
+        key = attribute.get('key')
+        if key not in ('Bellek Kapasitesi', '5G Desteği', '4.5G Desteği'):
+            continue
+        if key in technical:
+            return None, 'selected_technical_attributes_ambiguous'
+        technical[key] = attribute.get('value')
+    memory = re.fullmatch(r'([1-9]\d?) GB', str(technical.get('Bellek Kapasitesi') or ''))
+    if memory:
+        physical.update(ram_gb=int(memory[1]), storage_gb=int(values['Dahili Hafıza'].split()[0]))
+    if technical.get('5G Desteği') == 'Var':
+        physical['network_generation'] = '5g'
+    elif technical.get('5G Desteği') == 'Yok' and technical.get('4.5G Desteği') == 'Var':
+        physical['network_generation'] = '4g'
     if query.get('renk', [matcher._normalize_words(values['Renk']).replace(' ', '-')]) != [
             matcher._normalize_words(values['Renk']).replace(' ', '-')]:
         return None, 'selected_query_color_mismatch'
@@ -147,18 +164,27 @@ def parse_catalog_listing(html, url, name, specs):
     choice = choices[0].get_text(' ', strip=True) if len(choices) == 1 else None
     if choice not in (selected_choice, 'Seçim Yap'):
         return None, 'visible_selected_variant_mismatch'
-    price = _amount(product.get('displayPriceFloat'))
+    listed = _amount(product.get('displayPriceFloat'))
     original = _amount(product.get('priceFloat'))
-    if (price is None or _cash(product.get('displayPrice')) != price
-            or _amount(product.get('displayPriceNumber')) != price
-            or _cash(sku.get('displayPrice')) != price or _amount(sku.get('displayPriceNumber')) != price
-            or _cash(meta.get('discountedPrice')) != price
+    if (listed is None or _cash(product.get('displayPrice')) != listed
+            or _amount(product.get('displayPriceNumber')) != listed
+            or _cash(sku.get('displayPrice')) != listed or _amount(sku.get('displayPriceNumber')) != listed
+            or _cash(meta.get('discountedPrice')) != listed
             or original is None or _cash(product.get('price')) != original
             or _cash(sku.get('price')) != original or _amount(meta.get('price')) != original
-            or product.get('hasDiscount') not in (True, False)
-            or (product['hasDiscount'] is False and original != price)
-            or original < price):
+            or product.get('hasDiscount') not in (True, False)):
         return None, 'conditional_or_inconsistent_cash_price'
+    # n11's public PDP distinguishes displayPrice (the listed amount) from
+    # price (the automatic basket amount) when hasDiscount=false. Coupon,
+    # minimum-spend, private/member, mobile and instant-discount flags above
+    # remain disallowed. Never present this separate basket price as plain cash.
+    basket = product['hasDiscount'] is False and original < listed
+    if ((not basket and (original < listed or product['hasDiscount'] is False and original != listed))
+            or (basket and any(product.get(k) is not False for k in
+                               ('isShowPrivateProductPrice', 'showPrivateProductPrice', 'hasOptionPrice')))
+            or (basket and product.get('notPrivateProduct') is not True)):
+        return None, 'conditional_or_inconsistent_cash_price'
+    price = original if basket else listed
     from retailer_offer_refresh import _schema_nodes, _type_is, _is_conditional_price
     schemas = [p for p in _schema_nodes(soup, url) if _type_is(p, 'Product')]
     schema = schemas[0] if len(schemas) == 1 else {}
@@ -175,7 +201,7 @@ def parse_catalog_listing(html, url, name, specs):
     if len(visible) != 1 or len(carts) != 1 or carts[0].get_text(' ', strip=True) != 'Sepete Ekle':
         return None, 'visible_cash_or_selected_cart_mismatch'
     visible_price = visible[0].get_text(' ', strip=True)
-    hydrated = (choice == selected_choice and _cash(visible_price) == price
+    hydrated = (not basket and choice == selected_choice and _cash(visible_price) == price
                 and not carts[0].has_attr('disabled') and carts[0].get('aria-disabled') != 'true')
     # n11's literal server HTML contains this all-or-nothing Vue placeholder,
     # even with an explicit selected seller/color URL. Its serialized product,
@@ -185,16 +211,26 @@ def parse_catalog_listing(html, url, name, specs):
     pending = (choice == 'Seçim Yap' and visible_price == ''
                and carts[0].has_attr('disabled') and 'disabled' in carts[0].get('class', [])
                and state.get('isProductDetailPage') is True)
-    if (not (hydrated or pending) or _is_conditional_price(main[0], offer, float(price))):
+    if (not (hydrated or pending) or (not basket and _is_conditional_price(main[0], offer, float(price)))):
         return None, 'visible_cash_or_selected_cart_mismatch'
-    return {'platform': 'n11', 'merchant': seller_name, 'merchant_id': seller_id,
+    result = {'platform': 'n11', 'merchant': seller_name, 'merchant_id': seller_id,
             'selected_n11_seller': seller_name, 'selected_n11_merchant_id': seller_id,
             'selected_n11_variant_verified': True, 'sku': str(sku['id']),
             'product_id': str(product['id']), 'group_id': group, 'gtin13': gtin,
             'source_render_state': 'ssr_placeholder' if pending else 'hydrated_selected',
             'source_title': title, 'url': canonical, 'price': float(price), 'currency': 'TRY',
             'condition': 'new', 'availability': 'in_stock',
-            'observed_at': datetime.now(timezone.utc).isoformat()}, 'selected_n11_cash_offer'
+            **physical, 'observed_at': datetime.now(timezone.utc).isoformat()}
+    if basket:
+        result.update(price_kind='basket', listed_price=float(listed))
+    from selected_sku_evidence import selected_sku_evidence
+    selected_evidence = selected_sku_evidence(result)
+    expected_radio = specs.get('network_generation') or matcher._radio_generation(name)
+    if (basket and selected_evidence is None or
+            expected_radio and physical.get('network_generation') and expected_radio != physical['network_generation'] or
+            not matcher.has_observed_offer_evidence(name, result, specs)):
+        return None, 'catalog_title_variant_mismatch'
+    return result, 'selected_n11_basket_offer' if basket else 'selected_n11_cash_offer'
 
 
 def catalog_offer_matches(offer, name, specs):

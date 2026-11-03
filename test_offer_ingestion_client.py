@@ -951,3 +951,13 @@ if __name__ == "__main__":
     test_updater_rejection_indices_track_the_full_submitted_offer_sequence()
     test_variant_rejection_marks_run_failure_after_retaining_good_updates()
     print("✅ HTTPS offer ingestion contract tests passed")
+
+def test_our_collector_gateway_failure_keeps_bounded_cooldown_instead_of_permanent_denial():
+    target = 'https://www.n11.com/urun/samsung-galaxy-a57-256-gb-12345678'
+    session = FakeSession([FakeResponse(503, {'error': 'Temporary source error'})])
+    client = OfferIngestionClient('https://teknoskor.com', TEST_SECRET, session=session, max_attempts=1)
+    response = client.n11_document_get(target)
+    assert response.status_code == 503
+    assert response.url == target
+    assert b''.join(response.iter_content()) == b''
+    assert len(session.calls) == 1
