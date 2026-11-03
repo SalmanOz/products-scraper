@@ -17,7 +17,7 @@ from retailer_offer_refresh import ALLOWED_HOSTS, RetailerOfferRefresher, _safe_
 from reviewed_offer_targets import daily_offer_targets, with_reviewed_radio, PROTECTED_TWO_STORE_SLUGS
 from vatan_sitemap_source import VatanSitemapSource
 from xiaomi_17t_preflight import PROFILES as XIAOMI_17T_PREFLIGHT_URLS
-from price_sync_priority import prioritize_unpriced_products
+from price_sync_priority import prioritize_unpriced_products, prioritize_discoverable_products
 from fold8_ultra_preflight import (PROFILE as FOLD8_ULTRA_PROFILE,
                                    URLS as FOLD8_ULTRA_PREFLIGHT_URLS,
                                    load_verified_offers as load_fold8_ultra_offers)
@@ -420,6 +420,21 @@ class PriceUpdater:
                 self.last_report['discovery_priority'] = {
                     'source': 'public_current_price_snapshot', **counts,
                 }
+                # The source-wide PDP budget must not be consumed by speculative
+                # searches for imported/global models before locally sold phones.
+                from mediamarkt_source import MediaMarktSource
+                if isinstance(self.mediamarkt_source, MediaMarktSource):
+                    discovered_slugs = set()
+                    for item in products:
+                        specs = with_reviewed_radio(item, self.get_expected_specs(item.get('attributes')))
+                        candidates = await asyncio.to_thread(
+                            self.mediamarkt_source.discover, item['name'], specs)
+                        if candidates:
+                            discovered_slugs.add(item['slug'])
+                    if discovered_slugs:
+                        products = prioritize_discoverable_products(products, status, discovered_slugs)
+                        self.last_report['discovery_priority']['retailer_candidate_models'] = len(discovered_slugs)
+                        self.last_report['discovery_priority']['order'] = 'unpriced_with_pdp_then_current_then_speculative'
             except Exception as error:
                 # Priority is an efficiency hint; a temporary public API
                 # outage must not stop the source-verified refresh itself.

@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from offer_ingestion_client import OfferIngestionClient
-from price_sync_priority import prioritize_unpriced_products
+from price_sync_priority import prioritize_unpriced_products, prioritize_discoverable_products
 from update_prices import PriceUpdater
 
 
@@ -63,6 +63,37 @@ def _phone(product_id):
 
 
 class PriceSyncPriorityTests(unittest.TestCase):
+    def test_real_unpriced_candidates_and_current_prices_precede_speculative_models(self):
+        products = [_phone(i) for i in (1, 2, 3, 4)]
+        status = {1: ('example-1', False), 2: ('example-2', True),
+                  3: ('example-3', False), 4: ('changed-slug', False)}
+        ordered = prioritize_discoverable_products(products, status, {'example-3', 'example-4'})
+        self.assertEqual([p['id'] for p in ordered], [3, 2, 1, 4])
+        self.assertEqual([p['id'] for p in products], [1, 2, 3, 4])
+
+    def test_full_updater_uses_cached_sitemap_candidates_before_speculative_searches(self):
+        from mediamarkt_source import MediaMarktSource
+        products = [_phone(i) for i in (1, 2, 3)]
+        client = _Catalog(products, {1: ('example-1', False),
+                                     2: ('example-2', True), 3: ('example-3', False)})
+        media = Mock(spec=MediaMarktSource)
+        media.discover.side_effect = lambda name, specs: [{'source_url': 'https://www.mediamarkt.com.tr/tr/product/_phone-123456.html'}] if name == 'Example 3' else []
+        media.report.return_value = {'sitemap_status': 'ready'}
+        reader = _Refresher()
+        reader.mediamarkt_source = media
+        vatan = Mock()
+        vatan.discover.return_value = []
+        vatan.report.return_value = {}
+        updater = PriceUpdater(client, _Discovery(), reader, vatan_sitemap_source=vatan)
+        async def no_delay(_):
+            return None
+        with patch('update_prices.asyncio.sleep', new=no_delay):
+            with self.assertRaisesRegex(RuntimeError, 'coverage 0.0%'):
+                asyncio.run(updater.run_update(dry_run=True))
+        self.assertEqual([p['slug'] for p in updater.last_report['products']],
+                         ['example-3', 'example-2', 'example-1'])
+        self.assertEqual(updater.last_report['discovery_priority']['retailer_candidate_models'], 1)
+
     def test_public_snapshot_is_a_bounded_order_hint_without_bearer(self):
         session = _Session([
             {'id': 1, 'slug': 'a', 'fresh_lowest_price': None, 'fresh_offer_count': 0},

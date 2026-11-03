@@ -25,3 +25,19 @@ def prioritize_unpriced_products(products, public_status: Mapping[int, tuple[str
         'unknown_last': sum(bucket(product) == 2 for product in ordered),
     }
     return ordered, counts
+
+
+def prioritize_discoverable_products(products, public_status, discovered_slugs):
+    """Spend source budgets on unpriced models with actual PDP candidates first.
+
+    Then protect currently priced models before doing speculative searches for
+    catalog models with no local retailer destination. URLs remain hints only.
+    """
+    def bucket(product):
+        identity = public_status.get(product.get('id'))
+        if not identity or identity[0] != product.get('slug'):
+            return 3
+        if identity[1]:
+            return 1
+        return 0 if product.get('slug') in discovered_slugs else 2
+    return sorted(products, key=bucket)
