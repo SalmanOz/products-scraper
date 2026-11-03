@@ -111,6 +111,8 @@ def catalog_offer_matches(offer, name, specs):
             and offer.get('platform') == 'Hepsiburada'
             and offer.get('merchant') == offer.get('selected_hb_seller')
             and offer.get('merchant_id') == offer.get('selected_hb_merchant_id')
+            and offer.get('availability') == 'in_stock' and offer.get('condition') == 'new'
+            and offer.get('currency') == 'TRY'
             and isinstance(offer.get('merchant'), str) and 0 < len(offer['merchant']) <= 100
             and _identity(offer.get('url'), offer.get('product_id'), offer.get('sku'))
             and _valid_gtin13(offer.get('gtin13'))

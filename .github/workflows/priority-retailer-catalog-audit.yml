@@ -19,7 +19,7 @@ jobs:
           python-version: '3.11'
           cache: pip
       - run: pip install -r requirements.txt
-      - run: python -m unittest -q test_priority_retailers test_teknosa_catalog_source test_teknosa_reviewed_source test_hepsiburada_catalog_source test_hepsiburada_iphone16pm_readonly
+      - run: python -m unittest -q test_priority_retailers test_teknosa_catalog_source test_teknosa_reviewed_source test_hepsiburada_catalog_source test_hepsiburada_iphone16pm_readonly test_trendyol_catalog_source
       - name: Start existing public document GET transport
         run: |
           docker run -d --name=priority-retailer-browser -p 8191:8191 -e LOG_LEVEL=info ghcr.io/flaresolverr/flaresolverr:latest
@@ -28,7 +28,7 @@ jobs:
             sleep 2
           done
           exit 1
-      - name: Automatically select two catalog hints per priority retailer without writes
+      - name: Automatically sample up to eight catalog hints per priority retailer without writes
         env:
           TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
           SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}

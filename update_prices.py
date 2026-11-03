@@ -117,7 +117,7 @@ class PriceUpdater:
     def _resolve_raw_target_proofs(self, product, offers, product_report):
         """Inspect every raw seller when only unsupported refresh hints were rejected."""
         for offer in offers:
-            if not isinstance(offer, dict) or offer.get('platform') not in {'MediaMarkt', 'Hepsiburada'}:
+            if not isinstance(offer, dict) or offer.get('platform') not in {'MediaMarkt', 'Hepsiburada', 'Trendyol'}:
                 continue
             key = self._raw_target_key(product, offer)
             if key in self._raw_target_attempts:
@@ -176,7 +176,7 @@ class PriceUpdater:
 
     def hydrate_marketplace_target_proof(self, product, offers, product_report):
         """Resolve a truncated seller snapshot only after a live marketplace read."""
-        if not any(isinstance(offer, dict) and offer.get('platform') in {'MediaMarkt', 'Hepsiburada'}
+        if not any(isinstance(offer, dict) and offer.get('platform') in {'MediaMarkt', 'Hepsiburada', 'Trendyol'}
                    for offer in offers):
             return
         if 'complete_target_proof' in product_report:
@@ -226,6 +226,13 @@ class PriceUpdater:
             profile = ALL_MARKETPLACE_PROFILES[offer['url']]
             if (not reviewed_marketplace_offer(offer, product['name'], expected_specs, product)
                     or not no_merchant_collision(self._collision_product(product, offer), profile, offer['url'])):
+                return False
+        elif offer.get('platform') == 'Trendyol':
+            from trendyol_catalog_source import catalog_offer_matches
+            if (host != 'www.trendyol.com'
+                    or not catalog_offer_matches(offer, product['name'], expected_specs)
+                    or not no_merchant_collision(self._collision_product(product, offer),
+                         {'seller_name': merchant}, offer['url'], expected_host=host)):
                 return False
         elif offer.get('platform') == 'Hepsiburada':
             from hepsiburada_catalog_source import catalog_offer_matches
@@ -559,6 +566,9 @@ class PriceUpdater:
             hb_reader = getattr(self.offer_refresher, 'hepsiburada_catalog_source', None)
             if hb_reader is not None:
                 hb_reader.configure_catalog_budget(len(products))
+            trendyol_reader = getattr(self.offer_refresher, 'trendyol_catalog_source', None)
+            if trendyol_reader is not None:
+                trendyol_reader.configure_catalog_budget(len(products))
 
         if (product_id is None and product_slugs is None and not known_pdp_only
                 and hasattr(self.ingestion_client, 'get_public_price_priority')):

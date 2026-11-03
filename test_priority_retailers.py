@@ -66,6 +66,16 @@ class PriorityRetailerTests(unittest.TestCase):
         self.assertEqual(transport.read_document(url)[1], 'already_read')
         self.assertEqual(len(calls), 2)
 
+    def test_readonly_broad_sample_is_bounded_and_covers_both_ends_without_manual_ids(self):
+        products = [{'id': i, 'slug': str(i), 'offer_targets': [{'source_url': URLS[1] + str(i)}]}
+                    for i in range(1, 21)]
+        selected = queue(products, {}, maximum=8, spread=True)['www.trendyol.com']
+        self.assertEqual(len(selected), 8)
+        self.assertEqual((selected[0][1]['id'], selected[-1][1]['id']), (20, 1))
+        self.assertEqual(len({p['id'] for _, p in selected}), 8)
+        with self.assertRaises(ValueError):
+            queue(products, {}, maximum=60)
+
     def test_robots_denial_challenge_and_budget_prevent_further_reads(self):
         for policy, body, expected in (
             ('User-agent: *\nDisallow: /\n', '<h1>Phone</h1>', 'robots_disallowed'),

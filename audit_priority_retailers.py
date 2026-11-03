@@ -13,7 +13,9 @@ from reviewed_offer_targets import with_reviewed_radio
 from update_prices import PriceUpdater
 
 
-def queue(products, prices):
+def queue(products, prices, maximum=2, spread=False):
+    if type(maximum) is not int or not 1 <= maximum <= 8:
+        raise ValueError('Invalid read-only sample budget')
     groups = {host: {} for host in HOSTS}
     for product in products:
         for target in product.get('offer_targets', []):
@@ -26,7 +28,13 @@ def queue(products, prices):
         unique = [(url, next(iter(matches.values()))) for url, matches in targets.items()
                   if len(matches) == 1]
         unique.sort(key=lambda row: (prices.get(row[1]['id'], ('', True))[1], -row[1]['id'], row[0]))
-        result[host] = unique[:2]
+        # Broader diagnostics sample both ends of the queue rather than
+        # repeatedly inspecting only the newest two unavailable models.
+        if spread and len(unique) > maximum and maximum > 1:
+            result[host] = [unique[round(i * (len(unique) - 1) / (maximum - 1))]
+                            for i in range(maximum)]
+        else:
+            result[host] = unique[:maximum]
     return result
 
 
@@ -67,9 +75,9 @@ def document_evidence(html, url):
 def main():
     client = OfferIngestionClient.from_env()
     products, prices = client.get_published_products(), client.get_public_price_priority()
-    transport = PriorityRetailerTransport()
+    transport = PriorityRetailerTransport(maximum_per_host=8)
     rows = []
-    for host, targets in queue(products, prices).items():
+    for host, targets in queue(products, prices, maximum=8, spread=True).items():
         for url, product in targets:
             html, reason, status = transport.read_document(url)
             row = {'retailer': HOSTS[host], 'slug': product['slug'], 'url': url,
@@ -86,6 +94,11 @@ def main():
                     from hepsiburada_catalog_source import parse_catalog_buy_box
                     specs = with_reviewed_radio(product, PriceUpdater.get_expected_specs(product.get('attributes')))
                     offer, why = parse_catalog_buy_box(html, url, product['name'], specs)
+                    row.update(reader_reason=why, prepared_offer=offer)
+                if host == 'www.trendyol.com':
+                    from trendyol_catalog_source import parse_catalog_listing
+                    specs = with_reviewed_radio(product, PriceUpdater.get_expected_specs(product.get('attributes')))
+                    offer, why = parse_catalog_listing(html, url, product['name'], specs)
                     row.update(reader_reason=why, prepared_offer=offer)
             rows.append(row)
     report = {'purpose': 'automatic_priority_retailer_diagnosis', 'writes': False,
