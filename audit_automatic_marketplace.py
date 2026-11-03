@@ -1,6 +1,7 @@
 """Exercise automatic catalog -> sitemap -> PDP -> ingestion preparation, GET only."""
 import argparse
 import json
+import re
 from pathlib import Path
 from datetime import datetime, timezone
 from urllib.parse import urlparse
@@ -19,9 +20,13 @@ def main():
     parser.add_argument('--priced-only', action='store_true',
                         help='Inspect additional sellers for currently priced catalog models')
     parser.add_argument('--offset', type=int, default=0)
+    parser.add_argument('--unitless-only', action='store_true',
+                        help='Inspect Vatan phone URLs whose memory pair omits GB')
     args = parser.parse_args()
     if not 0 <= args.offset <= 1000:
         parser.error('offset must be between 0 and 1000')
+    if args.unitless_only and args.retailer != 'vatan':
+        parser.error('unitless-only requires retailer vatan')
     client = OfferIngestionClient.from_env()
     products = client.get_published_products()
     status = client.get_public_price_priority()
@@ -51,6 +56,10 @@ def main():
                              and VatanSitemapSource._variant_matches(
                                  urlparse(row['source_url']).path, product['name'], specs)]
         targets = list({row['source_url']: row for row in targets + compact_stored + vatan_targets}.values())
+        if args.unitless_only:
+            targets = [row for row in targets if re.search(
+                r'(?:^|-)\d{1,2}-\d{2,4}-akilli-telefon(?:-|\.html$)',
+                urlparse(row['source_url']).path)]
         if not targets:
             continue
         compact = any(_phone_hint_path(urlparse(t['source_url']).path) for t in targets)
@@ -80,13 +89,15 @@ def main():
                      'attempts': reader.target_report(product['name'], selected_targets, specs)})
     report = {'writes': False, 'catalog_count': len(products), 'rows': rows,
               'retailer': args.retailer, 'priced_only': args.priced_only, 'offset': args.offset,
+              'unitless_only': args.unitless_only,
               'source': reader.mediamarkt_source.report(),
               'vatan_sitemap': vatan.report(), 'vatan_pdp': reader.vatan_reviewed_source.report()}
     Path('automatic-marketplace-audit.json').write_text(json.dumps(report, ensure_ascii=False, indent=2))
     summary = ['### Automatic retailer pipeline (GET only)',
                f'Catalog: {len(products)}; candidate products: {len(rows)}; '
                f'prepared offers: {sum(row["prepared_count"] for row in rows)}',
-               f'Retailer: {args.retailer}; priced only: {args.priced_only}; offset: {args.offset}',
+               f'Retailer: {args.retailer}; priced only: {args.priced_only}; '
+               f'unitless only: {args.unitless_only}; offset: {args.offset}',
                '', '| Model | Candidates | Observed | Prepared |', '|---|---:|---:|---:|']
     summary += [f'| {r["slug"]} | {r["candidate_count"]} | {r["observed"]} | {r["prepared_count"]} |' for r in rows]
     for row in rows:

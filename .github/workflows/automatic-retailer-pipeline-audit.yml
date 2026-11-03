@@ -15,6 +15,10 @@ on:
         description: 'Zero-based offset in the automatic candidate queue (12 per run)'
         type: number
         default: 0
+      unitless_only:
+        description: 'Inspect memory-pair URLs that omit GB (Vatan only)'
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -51,9 +55,11 @@ jobs:
           AUDIT_RETAILER: ${{ inputs.retailer }}
           AUDIT_PRICED_ONLY: ${{ inputs.priced_only }}
           AUDIT_OFFSET: ${{ inputs.offset }}
+          AUDIT_UNITLESS_ONLY: ${{ inputs.unitless_only }}
         run: |
           args=(--retailer "$AUDIT_RETAILER" --offset "$AUDIT_OFFSET")
           if [[ "$AUDIT_PRICED_ONLY" == 'true' ]]; then args+=(--priced-only); fi
+          if [[ "$AUDIT_UNITLESS_ONLY" == 'true' ]]; then args+=(--unitless-only); fi
           python audit_automatic_marketplace.py "${args[@]}"
       - if: always()
         run: |
