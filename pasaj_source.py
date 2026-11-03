@@ -66,6 +66,35 @@ def product_url(url):
     return isinstance(url, str) and url in REVIEWED
 
 
+def catalog_offer_matches(offer, product_name, expected_specs):
+    """Use SKU-scoped feature memory when the actual sale heading omits RAM."""
+    from tr_price_scraper import TRPriceScraper
+    matcher = TRPriceScraper()
+    if (not isinstance(offer, dict) or offer.get('selected_pasaj_variant_verified') is not True
+            or not catalog_product_url(offer.get('url')) or offer.get('merchant') != 'Pasaj'
+            or offer.get('selected_pasaj_seller') != SELLER
+            or not re.fullmatch(r'[1-9]\d{3,10}', str(offer.get('selected_pasaj_sku', '')))
+            or not matcher.is_strict_match(product_name, offer.get('source_title', ''), expected_specs)):
+        return False
+    ram = matcher._spec_int(expected_specs.get('ram_gb'))
+    storage = matcher._spec_int(expected_specs.get('storage_gb'))
+    title_ram, title_storage, ambiguous = matcher._unambiguous_listing_capacities(offer['source_title'])
+    if (not ram or not storage or ambiguous or
+            offer.get('selected_pasaj_ram_gb') != ram or offer.get('selected_pasaj_storage_gb') != storage
+            or title_ram is not None and title_ram != ram
+            or title_storage is not None and title_storage != storage):
+        return False
+    radio = expected_specs.get('network_generation') or matcher._radio_generation(product_name)
+    observed = offer.get('selected_pasaj_network_generation')
+    title_radio = matcher._radio_generation(offer['source_title'])
+    if radio and any(value and value != radio for value in (observed, title_radio)):
+        return False
+    if re.search(r'\bredmi note (?:11|12|13|14|15)\b|\bgalaxy a(?:14|15|16|17)\b|\btecno spark slim\b',
+                 matcher._normalize_words(product_name)):
+        return radio in {'4g', '5g'} and observed == radio
+    return True
+
+
 def _money(value):
     try:
         amount = Decimal(str(value))
@@ -122,8 +151,7 @@ def _selected_offer(html, url, catalog_profile=None):
         from tr_price_scraper import TRPriceScraper
         matcher = TRPriceScraper()
         if (len(headings) != 1 or _USED.search(headings[0]) or
-                not matcher.has_observed_offer_evidence(catalog_profile['name'],
-                    {'source_title': headings[0], 'url': url}, catalog_profile['specs'])):
+                not matcher.is_strict_match(catalog_profile['name'], headings[0], catalog_profile['specs'])):
             return None
         reviewed = {'title': headings[0], 'brand': catalog_profile['brand'],
                     'ram': f"{catalog_profile['specs']['ram_gb']} GB",
@@ -226,9 +254,18 @@ def _selected_offer(html, url, catalog_profile=None):
                 not re.fullmatch(re.escape(str(product['sku'])) + r'-\d+-\d+',
                                  colors[0].get('data-device-product-uid', ''))):
             return None
-    return {'merchant': 'Pasaj', 'price': float(price), 'currency': 'TRY',
+    result = {'merchant': 'Pasaj', 'price': float(price), 'currency': 'TRY',
             'availability': 'in_stock', 'source_title': headings[0], 'url': url,
             'observed_at': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')}
+    if generic:
+        result.update(selected_pasaj_variant_verified=True, selected_pasaj_seller=SELLER,
+                      selected_pasaj_sku=str(product['sku']),
+                      selected_pasaj_ram_gb=int(ram_feature.split()[0]),
+                      selected_pasaj_storage_gb=int(_feature(soup, 'Dahili Hafıza').split()[0]),
+                      selected_pasaj_network_generation=observed_radio or matcher._radio_generation(headings[0]))
+        if not catalog_offer_matches(result, catalog_profile['name'], catalog_profile['specs']):
+            return None
+    return result
 
 
 class PasajSource:

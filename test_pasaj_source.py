@@ -150,6 +150,16 @@ class PasajSourceTest(unittest.TestCase):
         source = PasajSource()
         source.register_catalog_targets('Samsung Galaxy A54 5G', [{'source_url': url}], specs)
         self.assertEqual(source.parse_offer(selected_page(url=url), url)['price'], 19499)
+        no_ram_heading = selected_page(url=url, title='Samsung Galaxy A54 5G 128 GB')
+        offer = source.parse_offer(no_ram_heading, url)
+        self.assertEqual(offer['selected_pasaj_ram_gb'], 8)
+        self.assertEqual(offer['source_title'], 'Samsung Galaxy A54 5G 128 GB')
+        from pasaj_source import catalog_offer_matches
+        self.assertTrue(catalog_offer_matches(offer, 'Samsung Galaxy A54 5G', specs))
+        for changes in ({'selected_pasaj_ram_gb': 6}, {'selected_pasaj_storage_gb': 256},
+                        {'selected_pasaj_sku': ''}, {'selected_pasaj_seller': 'Other'},
+                        {'selected_pasaj_network_generation': '4g'}):
+            self.assertFalse(catalog_offer_matches({**offer, **changes}, 'Samsung Galaxy A54 5G', specs))
 
     def test_exact_cash_offer(self):
         offer = _selected_offer(page(), IPHONE17_256_URL)

@@ -646,6 +646,9 @@ class RetailerOfferRefresher:
         return rows
 
     def _offer_identity_matches(self, product_name, offer, expected_specs):
+        if offer.get('selected_pasaj_variant_verified') is True:
+            from pasaj_source import catalog_offer_matches
+            return catalog_offer_matches(offer, product_name, expected_specs)
         if offer.get('platform') == 'MediaMarkt' and offer.get('url') not in ALL_MARKETPLACE_PROFILES:
             from mediamarkt_marketplace_audit import generic_marketplace_offer
             return generic_marketplace_offer(offer, product_name, expected_specs)

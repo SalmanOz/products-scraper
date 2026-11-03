@@ -56,6 +56,8 @@ class PriceUpdater:
         if isinstance(self.price_scraper, TRPriceScraper):
             self.price_scraper.retailer_offer_refresher = self.offer_refresher
         self.last_report = None
+        self._raw_target_products = {}
+        self._raw_target_attempts = set()
 
     def get_all_products(self):
         return self.ingestion_client.get_published_products()
@@ -95,11 +97,90 @@ class PriceUpdater:
     def utc_timestamp():
         return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
+    def _raw_target_key(self, product, offer):
+        merchant = self.offer_matcher._standardize_merchant_name(str(offer.get('merchant', '')))
+        return (product.get('id'), product.get('slug'), product.get('name'),
+                merchant.casefold(), offer.get('url'))
+
+    def _collision_product(self, product, offer):
+        cached = self._raw_target_products.get(self._raw_target_key(product, offer))
+        if cached:
+            try:
+                age = (datetime.fromisoformat(self.utc_timestamp().replace('Z', '+00:00')) -
+                       datetime.fromisoformat(cached['checked_at'].replace('Z', '+00:00'))).total_seconds()
+                if -60 <= age <= 5 * 60:
+                    return cached['product']
+            except (KeyError, ValueError, TypeError):
+                pass
+        return product
+
+    def _resolve_raw_target_proofs(self, product, offers, product_report):
+        """Inspect every raw seller when only unsupported refresh hints were rejected."""
+        for offer in offers:
+            if not isinstance(offer, dict) or offer.get('platform') != 'MediaMarkt':
+                continue
+            key = self._raw_target_key(product, offer)
+            if key in self._raw_target_attempts:
+                continue
+            self._raw_target_attempts.add(key)
+            seller = self.offer_matcher._standardize_merchant_name(str(offer.get('merchant', '')))
+            record = {'seller': seller, 'url': offer.get('url'), 'status': 'unavailable'}
+            product_report.setdefault('raw_target_proofs', []).append(record)
+            try:
+                raw = self.ingestion_client.get_raw_seller_collision_proof(
+                    product['id'], seller, offer['url'])
+                inspected = self.ingestion_client.get_offer_target_inspection(product['id'])
+                reasons = raw.get('refresh_targets_invalid_reasons', {})
+                total = raw.get('refresh_targets_total')
+                invalid = raw.get('refresh_targets_invalid_count')
+                if (raw.get('purpose') != 'read_only_raw_seller_collision_proof'
+                        or raw.get('writes') is not False or raw.get('product_id') != product['id']
+                        or raw.get('complete') is not True or raw.get('blocked') is not False
+                        or raw.get('reasons') != [] or type(total) is not int or not 0 <= total <= 12
+                        or raw.get('refresh_targets_duplicate_count') != 0
+                        or type(invalid) is not int or invalid < 1
+                        or invalid != reasons.get('unsupported_host', -1) + reasons.get('retailer_query_restricted', -1)
+                        or raw.get('stored_rows_checked') != total + invalid
+                        or total + invalid > 60
+                        or not isinstance(raw.get('refresh_targets_snapshot'), str)
+                        or not re.fullmatch(r'[0-9a-f]{64}', raw['refresh_targets_snapshot'])
+                        or raw.get('unknown_seller_rows') != 0 or raw.get('invalid_url_rows') != 0
+                        or raw.get('invalid_row_identity_rows') != 0
+                        or raw.get('proposed_seller_other_url_rows') != 0):
+                    raise ValueError('raw_seller_or_target_rejection')
+                targets = inspected.get('offer_targets')
+                if (any(inspected.get(field) != product.get(field) for field in ('id', 'slug', 'name', 'attributes'))
+                        or inspected.get('offer_targets_total') != total
+                        or inspected.get('offer_targets_invalid_count') != invalid
+                        or inspected.get('offer_targets_duplicate_count') != 0
+                        or inspected.get('offer_targets_truncated') is not True
+                        or inspected.get('offer_targets_snapshot') != raw.get('refresh_targets_snapshot')
+                        or inspected.get('offer_targets_invalid_reasons') != reasons
+                        or not isinstance(targets, list) or len(targets) != total
+                        or product.get('offer_targets') != targets
+                        or product.get('offer_targets_truncated') is not True):
+                    raise ValueError('raw_target_snapshot_or_catalog_changed')
+                verified = {**product, 'offer_targets': targets, 'offer_targets_total': total,
+                            'offer_targets_snapshot': inspected['offer_targets_snapshot'],
+                            'offer_targets_truncated': False}
+                if not no_merchant_collision(verified, {'seller_name': seller}, offer['url']):
+                    raise ValueError('seller_collision_in_refresh_targets')
+                self._raw_target_products[key] = {'product': verified, 'checked_at': self.utc_timestamp()}
+                record.update(status='ready', raw_rows_checked=raw['stored_rows_checked'],
+                              rejected_refresh_hints=invalid)
+            except Exception as error:
+                record['reason'] = (str(error) if isinstance(error, ValueError) and str(error) in {
+                    'raw_seller_or_target_rejection', 'raw_target_snapshot_or_catalog_changed',
+                    'seller_collision_in_refresh_targets'} else type(error).__name__)
+
     def hydrate_marketplace_target_proof(self, product, offers, product_report):
         """Resolve a truncated seller snapshot only after a live marketplace read."""
-        if ('complete_target_proof' in product_report or
-                not any(isinstance(offer, dict) and offer.get('platform') == 'MediaMarkt'
-                        for offer in offers)):
+        if not any(isinstance(offer, dict) and offer.get('platform') == 'MediaMarkt'
+                   for offer in offers):
+            return
+        if 'complete_target_proof' in product_report:
+            if product_report['complete_target_proof'].get('raw_check_needed'):
+                self._resolve_raw_target_proofs(product, offers, product_report)
             return
         targets = product.get('offer_targets', [])
         if (product.get('offer_targets_truncated') is False or
@@ -125,6 +206,9 @@ class PriceUpdater:
                 else type(error).__name__)
             product_report['complete_target_proof'] = {
                 'status': 'unavailable', 'reason': safe_reason}
+            if safe_reason.startswith('Complete target source has invalid rows '):
+                product_report['complete_target_proof']['raw_check_needed'] = True
+                self._resolve_raw_target_proofs(product, offers, product_report)
 
     def live_offer_is_valid(self, product, offer, expected_specs):
         if not isinstance(offer, dict) or not _safe_url(offer.get('url')):
@@ -140,19 +224,23 @@ class PriceUpdater:
         if offer['url'] in ALL_MARKETPLACE_PROFILES:
             profile = ALL_MARKETPLACE_PROFILES[offer['url']]
             if (not reviewed_marketplace_offer(offer, product['name'], expected_specs, product)
-                    or not no_merchant_collision(product, profile, offer['url'])):
+                    or not no_merchant_collision(self._collision_product(product, offer), profile, offer['url'])):
                 return False
         elif offer.get('platform') == 'MediaMarkt':
             from mediamarkt_marketplace_audit import generic_marketplace_offer
             if (host != 'www.mediamarkt.com.tr'
                     or not generic_marketplace_offer(offer, product['name'], expected_specs)
-                    or not no_merchant_collision(product, {'seller_name': merchant}, offer['url'])):
+                    or not no_merchant_collision(self._collision_product(product, offer), {'seller_name': merchant}, offer['url'])):
                 return False
         else:
             expected_merchant = self.offer_matcher._standardize_merchant_name(ALLOWED_HOSTS[host])
             if not merchant or merchant.casefold() != expected_merchant.casefold():
                 return False
-            if not self.offer_matcher.has_observed_offer_evidence(product['name'], offer, expected_specs):
+            from pasaj_source import catalog_offer_matches
+            identity_matches = (catalog_offer_matches(offer, product['name'], expected_specs)
+                                if offer.get('selected_pasaj_variant_verified') is True else
+                                self.offer_matcher.has_observed_offer_evidence(product['name'], offer, expected_specs))
+            if not identity_matches:
                 return False
         if offer.get('availability') not in PURCHASABLE | {'out_of_stock', 'preorder'}:
             return False
@@ -336,6 +424,8 @@ class PriceUpdater:
 
     async def _run_update(self, product_id=None, phase2_backfill=False, *, dry_run=False,
                           product_slugs=None, known_pdp_only=False):
+        self._raw_target_products.clear()
+        self._raw_target_attempts.clear()
         xiaomi_preflight_only = bool(os.environ.get('XIAOMI_17T_VERIFIED_AUDIT_FILE'))
         fold8_preflight_file = os.environ.get('FOLD8_ULTRA_VERIFIED_AUDIT_FILE')
         fold8_preflight_only = bool(fold8_preflight_file)

@@ -75,6 +75,11 @@ def main():
         summary.append(f"- {row['slug']}: proof {proof.get('status', 'not_needed')} "
                        f"{proof.get('reason', '')}; offers {offers or 'none'}; "
                        f"source reasons {reasons or 'none'}")
+        for raw in row.get('raw_target_proofs', []):
+            summary.append(f"  - Raw seller check: {raw.get('seller')}; {raw['status']}; "
+                           f"rows {raw.get('raw_rows_checked', 0)}; "
+                           f"rejected refresh hints {raw.get('rejected_refresh_hints', 0)}; "
+                           f"{raw.get('reason', '')}")
     summary += ['', json.dumps(report['source']), json.dumps(report['vatan_sitemap']),
                 json.dumps(report['vatan_pdp']), '', 'No ingestion or IndexNow calls.']
     Path('automatic-marketplace-audit.md').write_text('\n'.join(summary))

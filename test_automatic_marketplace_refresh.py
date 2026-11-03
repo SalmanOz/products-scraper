@@ -10,9 +10,67 @@ from mediamarkt_marketplace_audit import generic_marketplace_offer
 from test_mediamarkt_marketplace_audit import fixture, render, URL
 from test_mediamarkt_source import Fetch, ROBOTS
 from mediamarkt_marketplace_source import ALL_PROFILES
+from offer_ingestion_client import IngestionClientError, TARGET_INVALID_REASONS
 
 
 class AutomaticMarketplaceTests(unittest.TestCase):
+    def test_all_raw_sellers_can_prove_an_unrelated_unsupported_refresh_hint_safe(self):
+        url = URL.replace('166438395', '166438396')
+        document = fixture()
+        document['action']['object']['gtin13'] = '4006381333931'
+        body = render(document).replace('166438395', '166438396').encode()
+        reader = RetailerOfferRefresher(fetch=Fetch({ROBOTS_URL: ROBOTS, url: body}))
+        specs = {'ram_gb': 12, 'storage_gb': 256, 'network_generation': '5g'}
+        offers = reader.refresh_existing_offer_targets('Samsung Galaxy S25 Ultra',
+                                                       [{'source_url': url}], specs)
+        product = {'id': 999, 'slug': 'new-catalog-sku', 'name': 'Samsung Galaxy S25 Ultra',
+                   'attributes': specs, 'offer_targets_truncated': True,
+                   'offer_targets': [{'source_url': url, 'merchant_name': 'MediaMarkt',
+                                      'seller_name': offers[0]['merchant']}]}
+        reasons = {reason: 0 for reason in TARGET_INVALID_REASONS}
+        reasons['unsupported_host'] = 1
+        raw = {'purpose': 'read_only_raw_seller_collision_proof', 'writes': False,
+               'product_id': 999, 'complete': True, 'blocked': False, 'reasons': [],
+               'stored_rows_checked': 2, 'unknown_seller_rows': 0, 'invalid_url_rows': 0,
+               'invalid_row_identity_rows': 0, 'proposed_seller_other_url_rows': 0,
+               'refresh_targets_total': 1, 'refresh_targets_invalid_count': 1,
+               'refresh_targets_duplicate_count': 0,
+               'refresh_targets_invalid_reasons': reasons, 'refresh_targets_snapshot': 'b' * 64}
+        inspection = {**product, 'offer_targets_total': 1, 'offer_targets_invalid_count': 1,
+                      'offer_targets_duplicate_count': 0, 'offer_targets_invalid_reasons': reasons,
+                      'offer_targets_snapshot': 'b' * 64}
+        def make_updater(raw_body, inspected):
+            client = Mock()
+            client.get_complete_offer_targets.side_effect = IngestionClientError(
+                'Complete target source has invalid rows (total=1, invalid=1, duplicate=0)')
+            client.get_raw_seller_collision_proof.return_value = raw_body
+            client.get_offer_target_inspection.return_value = inspected
+            return PriceUpdater(ingestion_client=client, offer_refresher=reader), client
+        updater, client = make_updater(raw, inspection)
+        original = deepcopy(product)
+        report = {}
+        updater.hydrate_marketplace_target_proof(product, offers, report)
+        self.assertEqual(product, original)
+        self.assertTrue(updater.live_offer_is_valid(product, offers[0], specs))
+        self.assertEqual(report['raw_target_proofs'][0]['raw_rows_checked'], 2)
+        updater.hydrate_marketplace_target_proof(product, offers, report)
+        client.get_raw_seller_collision_proof.assert_called_once_with(999, offers[0]['merchant'], url)
+        changed_seller = {**offers[0], 'merchant': 'Other Seller', 'seller_name': 'Other Seller'}
+        self.assertFalse(updater.live_offer_is_valid(product, changed_seller, specs))
+        self.assertFalse(updater.live_offer_is_valid(product, {**offers[0], 'gtin13': '0000000000001'}, specs))
+        key = updater._raw_target_key(product, offers[0])
+        updater._raw_target_products[key]['checked_at'] = '2000-01-01T00:00:00Z'
+        self.assertFalse(updater.live_offer_is_valid(product, offers[0], specs))
+        unsafe_reasons = {**reasons, 'unsupported_host': 0, 'sensitive_query': 1}
+        for changes in ({'unknown_seller_rows': 1}, {'invalid_url_rows': 1},
+                        {'invalid_row_identity_rows': 1}, {'proposed_seller_other_url_rows': 1},
+                        {'refresh_targets_duplicate_count': 1}, {'complete': False},
+                        {'blocked': True}, {'refresh_targets_invalid_reasons': unsafe_reasons},
+                        {'refresh_targets_snapshot': 'c' * 64}):
+            blocked, _ = make_updater({**raw, **changes}, inspection)
+            blocked.hydrate_marketplace_target_proof(product, offers, {})
+            self.assertFalse(blocked.live_offer_is_valid(product, offers[0], specs), changes)
+
     def test_truncated_catalog_fetches_complete_proof_and_detects_a_hidden_seller_collision(self):
         url = URL.replace('166438395', '166438396')
         document = fixture()
