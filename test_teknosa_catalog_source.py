@@ -38,6 +38,32 @@ class TeknosaCatalogTests(unittest.TestCase):
         self.assertEqual(reader.refresh_existing_offer_targets(PROFILE['name'], [{'source_url': TARGET}],
                          {**SPECS, 'storage_gb': 256}), [])
 
+    def test_other_seller_cards_never_replace_the_selected_first_party_cart(self):
+        html = '<div id="pdp-main">' + document() + '</div>'
+        html += '<div class="pdp-seller-info">Satıcı: Other Seller</div>'
+        html += '<h1 class="pdp-title">Other Phone</h1><button id="addToCartButton">Stok Yok</button>'
+        html += '<div class="pdp-prices"><div class="pdp-prc2"><span class="prc">1 TL</span></div></div>'
+        offer, reason = parse_exact_first_party_offer(html, TARGET, PROFILE)
+        self.assertEqual(reason, 'observed_exact_first_party_cash_offer')
+        self.assertEqual((offer['merchant'], offer['price']), ('Teknosa', 68999))
+
+    def test_generic_upc_and_known_pending_cart_keep_all_selected_stock_proof(self):
+        from retailer_barcode import retailer_gtin13
+        self.assertEqual(retailer_gtin13('195950638851'), '0195950638851')
+        self.assertEqual(retailer_gtin13('0195950638851'), '0195950638851')
+        for bad in ('195950638852', '0195950638852', '123', 195950638851, ' 195950638851'):
+            self.assertIsNone(retailer_gtin13(bad))
+        html = document().replace('8806094821437', '195950638851').replace(
+            '<button id="addToCartButton"', '<button disabled="disabled" class="js-enable-btn" id="addToCartButton"')
+        offer, reason = parse_exact_first_party_offer(html, TARGET, PROFILE)
+        self.assertEqual(reason, 'observed_exact_first_party_cash_offer')
+        self.assertEqual(offer['gtin13'], '0195950638851')
+        self.assertEqual(offer['observed_barcode'], '195950638851')
+        for before, after in (('js-enable-btn', 'not-pending'), ('data-product-stock="Y"', 'data-product-stock="N"'),
+                              ('data-product-shop-id="1001"', 'data-product-shop-id="3973"'),
+                              ('195950638851', '195950638852')):
+            self.assertIsNone(parse_exact_first_party_offer(html.replace(before, after), TARGET, PROFILE)[0])
+
     def test_selected_cart_seller_stock_gtin_sku_and_price_cannot_drift(self):
         self.assertEqual(parse_exact_first_party_offer(document(), TARGET, PROFILE)[1],
                          'observed_exact_first_party_cash_offer')

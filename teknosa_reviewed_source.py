@@ -69,13 +69,23 @@ def parse_exact_first_party_offer(html: str, final_url: str = URL, catalog_profi
             or len(html.encode('utf-8')) > MAX_HTML_BYTES):
         return None, 'wrong_or_oversized_pdp'
     soup = BeautifulSoup(html, 'html.parser')
+    mains = soup.select('#pdp-main') if generic else []
+    if len(mains) > 1:
+        return None, 'selected_main_ambiguous'
+    commercial = mains[0] if mains else soup
     if re.search(r'captcha|just a moment|access denied|you have been blocked',
                  soup.title.get_text(' ', strip=True) if soup.title else '', re.I):
         return None, 'challenge_page'
-    headings = soup.select('h1.pdp-title')
+    headings = commercial.select('h1.pdp-title')
     if len(headings) != 1:
         return None, 'selected_title_missing'
     title = headings[0].get_text(' ', strip=True)
+    if generic:
+        selected_carts = commercial.select('button#addToCartButton')
+        partials = headings[0].select('.replaceName')
+        observed_titles = {title, *(part.get_text(' ', strip=True) for part in partials)}
+        if len(selected_carts) == 1 and selected_carts[0].get('data-product-name') in observed_titles:
+            title = selected_carts[0]['data-product-name']
     matcher = TRPriceScraper()
     if (not matcher.is_strict_match(name, title, specs)
             or not generic and not re.search(r'\bBeyaz\b', title, re.I)
@@ -124,33 +134,37 @@ def parse_exact_first_party_offer(html: str, final_url: str = URL, catalog_profi
     if price is None:
         return None, 'schema_price_invalid'
 
-    visible_sellers = soup.select('.pdp-seller-info')
+    visible_sellers = commercial.select('.pdp-seller-info')
     if (len(visible_sellers) != 1
             or ' '.join(visible_sellers[0].get_text(' ', strip=True).split()) != 'Satıcı: TEKNOSA'):
         return None, 'selected_visible_seller_mismatch'
-    visible_prices = soup.select('.pdp-prices .pdp-prc2 .prc')
+    visible_prices = commercial.select('.pdp-prices .pdp-prc2 .prc')
+    if generic and not visible_prices:
+        visible_prices = commercial.select('.pdp-prices .prd-prc2 .prc-third')
     if not 1 <= len(visible_prices) <= 2 or any(
             _cash_price(node.get_text(' ', strip=True)) != price
             for node in visible_prices):
         return None, 'visible_cash_price_mismatch'
     from retailer_offer_refresh import _is_conditional_price
-    if _is_conditional_price(soup, offer, float(price)):
+    if _is_conditional_price(commercial, offer, float(price)):
         return None, 'conditional_price'
-    carts = soup.select('#addToCartButton')
+    carts = commercial.select('#addToCartButton')
     if len(carts) != 1:
         return None, 'selected_cart_missing'
     cart = carts[0]
+    pending_cart = (generic and cart.has_attr('disabled') and cart.get('disabled') in ('', 'disabled')
+                    and 'js-enable-btn' in cart.get('class', []) and cart.get('aria-disabled') != 'true')
     ean = EAN
     if generic:
-        from mediamarkt_marketplace_audit import _gtin13
-        ean = _gtin13(cart.get('data-product-ean'))
-        if ean is None or any(product.get(key) is not None and str(product[key]) != ean
+        from retailer_barcode import retailer_gtin13
+        ean = retailer_gtin13(cart.get('data-product-ean'))
+        if ean is None or any(product.get(key) is not None and retailer_gtin13(str(product[key])) != ean
                               for key in ('gtin', 'gtin13')):
             return None, 'selected_gtin_missing_or_conflicting'
-    if (cart.has_attr('disabled') or cart.get('aria-disabled') == 'true'
+    if ((cart.has_attr('disabled') and not pending_cart) or cart.get('aria-disabled') == 'true'
             or cart.get_text(' ', strip=True) != 'Sepete Ekle'
             or cart.get('data-product-id') != product_id
-            or cart.get('data-product-ean') != ean
+            or (retailer_gtin13(cart.get('data-product-ean')) != ean if generic else cart.get('data-product-ean') != ean)
             or cart.get('data-product-name') != title
             or cart.get('data-product-url') != '/' + final_url.split('/', 3)[3]
             or cart.get('data-shop-name') != 'TEKNOSA'
@@ -163,6 +177,9 @@ def parse_exact_first_party_offer(html: str, final_url: str = URL, catalog_profi
     result = {'merchant': 'Teknosa', 'price': float(price), 'currency': 'TRY',
               'availability': 'in_stock', 'source_title': title, 'url': final_url,
               'observed_at': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')}
+    if generic:
+        result.update(gtin13=ean, observed_barcode=cart.get('data-product-ean'),
+                      source_render_state='pending_selected_cart' if pending_cart else 'enabled_selected_cart')
     if not matcher.has_observed_offer_evidence(name, result, specs):
         return None, 'catalog_variant_mismatch'
     return result, 'observed_exact_first_party_cash_offer'

@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 
 from mediamarkt_marketplace_audit import _gtin13
+from retailer_barcode import retailer_gtin13
 from priority_retailer_transport import product_host
 from teknosa_reviewed_source import MAX_HTML_BYTES, _amount, _cash_price
 from tr_price_scraper import TRPriceScraper
@@ -27,19 +28,31 @@ def parse_selected_marketplace(html, url, profile):
     sellers = main.select('.pdp-seller-info')
     if len(headings) != 1 or len(carts) != 1 or len(sellers) != 1:
         return None, 'selected_marketplace_controls_missing'
-    title, cart = headings[0].get_text(' ', strip=True), carts[0]
+    cart = carts[0]
+    full_heading = main.select('h1.pdp-title')
+    observed_titles = {headings[0].get_text(' ', strip=True)}
+    if len(full_heading) == 1:
+        observed_titles.add(full_heading[0].get_text(' ', strip=True))
+    # Some PDPs put the observed brand in a sibling link, others repeat it
+    # inside replaceName. Select only an actual heading spelling agreeing with
+    # the selected cart; never prepend the catalog's brand.
+    title = cart.get('data-product-name') if cart.get('data-product-name') in observed_titles else ''
     sku = url.rsplit('-p-', 1)[1]
     seller_links = sellers[0].find_all('a', recursive=False)
     seller = seller_links[0].get_text(' ', strip=True) if len(seller_links) == 1 else ''
     shop = cart.get('data-product-shop-id')
-    gtin = _gtin13(cart.get('data-product-ean'))
-    if (not seller or len(seller) > 100 or re.search(r'[\x00-\x1f]', seller)
+    raw_barcode = cart.get('data-product-ean')
+    gtin = retailer_gtin13(raw_barcode)
+    pending_cart = (cart.has_attr('disabled') and cart.get('disabled') in ('', 'disabled')
+                    and 'js-enable-btn' in cart.get('class', [])
+                    and cart.get('aria-disabled') != 'true')
+    if (not title or not seller or len(seller) > 100 or re.search(r'[\x00-\x1f]', seller)
             or seller.casefold() == 'teknosa' or not re.fullmatch(r'[1-9]\d{2,9}', str(shop or ''))
             or shop == '1001' or not gtin or cart.get('data-shop-name') != seller
             or not re.fullmatch(r'/magaza/[a-z0-9-]+', str(seller_links[0].get('href') or ''))
             or cart.get('data-product-id') != sku or cart.get('data-product-name') != title
             or cart.get('data-product-url') != urlparse(url).path
-            or cart.has_attr('disabled') or cart.get('aria-disabled') == 'true'
+            or (cart.has_attr('disabled') and not pending_cart) or cart.get('aria-disabled') == 'true'
             or cart.get_text(' ', strip=True) != 'Sepete Ekle'):
         return None, 'selected_marketplace_identity_mismatch'
     shops = main.select('input#shopID')
@@ -53,9 +66,9 @@ def parse_selected_marketplace(html, url, profile):
     # These fields describe Teknosa's own inventory, not the selected shop's
     # offer. For a marketplace-only PDP they are empty and stock is N. Do not
     # use those unrelated analytics fields as this shop's price/stock proof.
-    if (any(cart.get(key) not in ('', None) and _amount(cart.get(key)) != price
-            for key in ('data-product-price', 'data-product-discounted-price'))):
-        return None, 'conflicting_cart_cash_price'
+    # Do not compare another merchant's base inventory price with this selected
+    # shop. Its SKU+shop insider state, listing fields, visible cash, schema and
+    # selected delivery promise must independently agree below.
     states = []
     for script in soup.select('script'):
         for match in re.finditer(r'window\.insider_object\s*=\s*(?=\{)', script.get_text()):
@@ -77,7 +90,8 @@ def parse_selected_marketplace(html, url, profile):
     schema = schemas[0] if len(schemas) == 1 else {}
     offer = schema.get('offers')
     schema_seller = offer.get('seller') if isinstance(offer, dict) else None
-    if (str(schema.get('sku')) != sku or schema.get('name') != title
+    normalize_pair = lambda text: re.sub(r'(?<=\d)/(?=\d)', ' ', str(text or ''))
+    if (str(schema.get('sku')) != sku or normalize_pair(schema.get('name')) != normalize_pair(title)
             or not isinstance(offer, dict) or offer.get('@type') != 'Offer'
             or offer.get('url') != url or offer.get('priceCurrency') != 'TRY'
             or not isinstance(schema_seller, dict) or schema_seller.get('name') != seller
@@ -96,7 +110,9 @@ def parse_selected_marketplace(html, url, profile):
     result = {'platform': 'Teknosa', 'merchant': seller, 'merchant_id': shop,
               'selected_teknosa_seller': seller, 'selected_teknosa_shop_id': shop,
               'selected_teknosa_variant_verified': True, 'listing_id': listing[1],
-              'sku': sku, 'gtin13': gtin, 'source_title': title, 'url': url,
+              'sku': sku, 'gtin13': gtin, 'observed_barcode': raw_barcode,
+              'source_render_state': 'pending_selected_cart' if pending_cart else 'enabled_selected_cart',
+              'source_title': title, 'url': url,
               'currency': 'TRY', 'condition': 'new', 'availability': 'in_stock',
               'price': float(price), 'observed_at': datetime.now(timezone.utc).isoformat()}
     if not catalog_offer_matches(result, profile.get('name'), profile['specs']):

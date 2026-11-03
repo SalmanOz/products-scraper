@@ -26,6 +26,29 @@ class TeknosaMarketplaceTests(unittest.TestCase):
         self.assertEqual(offer['source_title'], 'SAMSUNG GALAXY A26_ 6_128GB AKILLI TELEFON BEYAZ')
         self.assertEqual((offer['gtin13'], offer['listing_id']), ('8806097100676', '1978045'))
 
+    def test_real_pending_selected_shop_ignores_the_other_inventory_price(self):
+        html = Path(__file__).with_name('fixtures').joinpath('teknosa-selected-pending-cart.html').read_text()
+        url = 'https://www.teknosa.com/samsung-galaxy-s26-ultra-5g-12256gb-siyah-akilli-telefon-p-100000061482'
+        profile = {'name': 'Samsung Galaxy S26 Ultra', 'specs': {'ram_gb': 12, 'storage_gb': 256, 'network_generation': '5g'}}
+        offer, reason = parse_selected_marketplace(html, url, profile)
+        self.assertEqual(reason, 'selected_teknosa_marketplace_cash_offer')
+        self.assertEqual((offer['merchant'], offer['price'], offer['source_render_state']),
+                         ('hepsi10line', 88648, 'pending_selected_cart'))
+        self.assertEqual(offer['source_title'], 'Samsung Galaxy S26 Ultra 5G 12/256GB Siyah Akıllı Telefon')
+        self.assertEqual(offer['gtin13'], '8806097866633')
+        for before, after in (
+            ('js-enable-btn', 'not-a-pending-cart'),
+            ('disabled="disabled"', 'disabled="disabled" aria-disabled="true"'),
+            ('"unit_sale_price": 88648.0', '"unit_sale_price": 98999.0'),
+            ('"availability": "https://schema.org/InStock"', '"availability": "https://schema.org/OutOfStock"'),
+            ('iş günü içinde kargoda', 'stok tükendi'),
+            ('data-product-shop-id="3973"', 'data-product-shop-id="1001"'),
+            ('data-product-name="Samsung', 'data-product-name="Other'),
+        ):
+            with self.subTest(before=before):
+                self.assertIn(before, html)
+                self.assertIsNone(parse_selected_marketplace(html.replace(before, after), url, profile)[0])
+
     def test_live_reader_complete_collision_gate_and_writer_use_the_observed_shop(self):
         class Transport:
             def read_document(self, url):
@@ -58,7 +81,7 @@ class TeknosaMarketplaceTests(unittest.TestCase):
             ('"availability": "https://schema.org/InStock"', '"availability": "https://schema.org/OutOfStock"'),
             ('"name": "BittiBitiyor"', '"name": "Other Shop"'),
             ('iş günü içinde kargoda', 'stok tükendi'),
-            ('id="addToCartButton"', 'disabled id="addToCartButton"'),
+            ('id="addToCartButton"', 'aria-disabled="true" id="addToCartButton"'),
             ('SAMSUNG GALAXY A26_ 6_128GB', 'SAMSUNG GALAXY A26_ 8_256GB'),
         ]
         for before, after in changes:
