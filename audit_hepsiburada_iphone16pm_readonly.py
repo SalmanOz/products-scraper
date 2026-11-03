@@ -107,9 +107,11 @@ def _selected_variant(product, scope=None):
     # one numeric EAN13 and it must match the caller's checksum-validated proof.
     gtins = [barcode for barcode in barcodes if isinstance(barcode, str)
              and re.fullmatch(r'\d{13}', barcode)] if isinstance(barcodes, list) else []
+    barcode_matches = (sorted(set(gtins)) == scope['GTIN13S'] and
+                       all(_valid_gtin13(g) for g in gtins)) if scope.get('generic_catalog') is True else (
+                           gtins == [scope['GTIN13']] and _valid_gtin13(scope['GTIN13']))
     if (values != {'Renk': scope['COLOR'], 'Kapasite': str(scope['SPECS']['storage_gb']) + ' GB'}
-            or gtins != [scope['GTIN13']]
-            or not _valid_gtin13(scope['GTIN13'])
+            or not barcode_matches
             or variant.get('isInStock') is not True
             or variant.get('isPreOrder') is not False
             or _amount(variant.get('price')) is None
@@ -218,9 +220,13 @@ def parse_exact_buy_box(html: str, final_url: str = URL, *, scope=None):
             return None, 'selected_controls_mismatch'
     technical = soup.select('#techSpecs[data-test-id="KeyFeaturesTable"]')
     detail = _normalized(technical[0].get_text(' ', strip=True)) if len(technical) == 1 else ''
+    if generic:
+        from hepsiburada_catalog_source import selected_technical_text
+        detail = selected_technical_text(soup, scope['SKU'], scope['PRODUCT_ID'],
+                                         scope['LISTING_ID'], scope['MERCHANT_ID'])
     if (not re.search(rf"\bDahili Hafıza\s+{scope['SPECS']['storage_gb']} GB\b", detail)
             or not re.search(rf"\bRAM Kapasitesi\s+{scope['SPECS']['ram_gb']} GB(?: RAM)?\b", detail)
-            or not re.search((r'\bMobil Bağlantı Hızı\s+5G\b' if scope['SPECS']['network_generation'] == '5g' else r'\bMobil Bağlantı Hızı\s+4(?:[.,]5)?G\b'), detail)
+            or (scope['SPECS']['network_generation'] is not None and not re.search((r'\bMobil Bağlantı Hızı\s+5G\b' if scope['SPECS']['network_generation'] == '5g' else r'\bMobil Bağlantı Hızı\s+4(?:[.,]5)?G\b'), detail))
             or not re.search(r'\bStok Kodu\s+' + scope['SKU'] + r'\b', detail)):
         return None, 'technical_variant_mismatch'
 
@@ -271,10 +277,10 @@ def parse_exact_buy_box(html: str, final_url: str = URL, *, scope=None):
              'availability': 'in_stock', 'condition': 'new',
              'source_title': title, 'url': scope['URL'],
              'observed_at': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')}
-    from mediamarkt_marketplace_audit import catalog_variant_matches
-    matches = (catalog_variant_matches({'source_title': title, **scope['SPECS']},
-                    scope['CATALOG']['name'], scope['SPECS']) if scope.get('generic_catalog') is True else
-               matcher.has_observed_offer_evidence(scope['CATALOG']['name'], offer, scope['SPECS']))
+    if generic:
+        offer['observed_gtins'] = list(scope['GTIN13S'])
+    matches = matcher.has_observed_offer_evidence(scope['CATALOG']['name'], offer,
+                  scope['CATALOG_SPECS'] if generic else scope['SPECS'])
     if not matches:
         return None, 'catalog_variant_mismatch'
     return offer, 'selected_new_cash_offer_observed'

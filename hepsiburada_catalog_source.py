@@ -35,6 +35,28 @@ def catalog_request_url(url):
     return urlparse(url)._replace(query='').geturl()
 
 
+def selected_technical_text(soup, sku, product_id, listing_id, merchant_id):
+    tables = soup.select('#techSpecs[data-test-id="KeyFeaturesTable"]')
+    if tables:
+        return _normalized(tables[0].get_text(' ', strip=True)) if len(tables) == 1 else ''
+    # The newer table has no stable CSS class/id. Its own public component
+    # event must bind the container to this exact selected SKU and listing.
+    found = []
+    for node in soup.select('[data-hbus]'):
+        if _normalized(node.get_text(' ', strip=True)) != 'Ürün özellikleri':
+            continue
+        try:
+            event = json.loads(node['data-hbus']).get('data', {})
+        except (ValueError, TypeError, AttributeError):
+            continue
+        if (isinstance(event, dict) and event.get('component') == 'Error Reporting'
+                and event.get('page_type') == 'pdp' and event.get('page_value') == sku
+                and event.get('product_id') == product_id and event.get('listing_id') == listing_id
+                and event.get('merchant_id') == merchant_id and node.parent is not None):
+            found.append(_normalized(node.parent.get_text(' ', strip=True)))
+    return found[0] if len(found) == 1 else ''
+
+
 def parse_catalog_buy_box(html, url, name, specs):
     from audit_hepsiburada_iphone16pm_readonly import parse_exact_buy_box
     if (product_host(url) != 'www.hepsiburada.com' or not isinstance(html, str)
@@ -78,8 +100,8 @@ def parse_catalog_buy_box(html, url, name, specs):
     colors = [p.get('valueObject', {}).get('actualValue') for p in properties
               if isinstance(p, dict) and p.get('name') == 'Renk' and isinstance(p.get('valueObject'), dict)]
     barcodes = selected[0].get('barcodes')
-    gtins = [g for g in barcodes if _valid_gtin13(g)] if isinstance(barcodes, list) else []
-    if len(colors) != 1 or not isinstance(colors[0], str) or not 0 < len(colors[0]) <= 80 or len(gtins) != 1:
+    gtins = sorted(set(g for g in barcodes if _valid_gtin13(g))) if isinstance(barcodes, list) else []
+    if len(colors) != 1 or not isinstance(colors[0], str) or not 0 < len(colors[0]) <= 80 or not 1 <= len(gtins) <= 8:
         return None, 'selected_color_or_gtin_missing'
     schemas = [p for p in _nodes(soup) if p.get('@type') == 'Product' and p.get('sku') == sku]
     if len(schemas) != 1 or not isinstance(schemas[0].get('offers'), dict):
@@ -93,20 +115,25 @@ def parse_catalog_buy_box(html, url, name, specs):
         if key == 'magaza' and matcher._normalize_words(value) not in {
                 matcher._normalize_words(seller), matcher._normalize_words(postfix)}:
             return None, 'selected_query_seller_mismatch'
-    technical = soup.select('#techSpecs[data-test-id="KeyFeaturesTable"]')
-    text = _normalized(technical[0].get_text(' ', strip=True)) if len(technical) == 1 else ''
+    text = selected_technical_text(soup, sku, product_id, listing_id, merchant_id)
+    if re.search(r'\bKondisyon\s+(?:(?:[ABC]\s*Grade)|yenilen|ikinci|teşhir|teshir)', text, re.I):
+        return None, 'selected_used_condition'
     radios = re.findall(r'\bMobil Bağlantı Hızı\s+(5G|4[.,]5G|4G)\b', text, re.I)
-    if len(radios) != 1:
+    if len(radios) > 1:
+        return None, 'selected_radio_ambiguous'
+    radio = ('5g' if radios[0].casefold() == '5g' else '4g') if radios else None
+    if (radio is None and 'iphone' not in matcher._identity_words(name)
+            and matcher._radio_generation(str(schemas[0].get('name') or '')) is None):
         return None, 'selected_radio_missing'
-    radio = '5g' if radios[0].casefold() == '5g' else '4g'
     expected_radio = specs.get('network_generation') or matcher._radio_generation(name)
-    if expected_radio and expected_radio != radio:
+    if radio and expected_radio and expected_radio != radio:
         return None, 'selected_radio_mismatch'
     physical = {'ram_gb': matcher._spec_int(specs['ram_gb']),
                 'storage_gb': matcher._spec_int(specs['storage_gb']), 'network_generation': radio}
     scope = {'URL': url, 'SCHEMA_URL': schema_url, 'CATALOG': {'name': name},
              'SPECS': physical, 'PRODUCT_ID': product_id, 'SKU': sku,
-             'COLOR': colors[0], 'GTIN13': gtins[0], 'SELLER': seller,
+             'COLOR': colors[0], 'GTIN13': gtins[0] if len(gtins) == 1 else None,
+             'GTIN13S': gtins, 'CATALOG_SPECS': dict(specs), 'SELLER': seller,
              'SELLER_URL': 'https://www.hepsiburada.com/magaza/' + postfix,
              'MERCHANT_ID': merchant_id, 'MERCHANT_POSTFIX': postfix,
              'LISTING_ID': listing_id, 'generic_catalog': True}
@@ -118,7 +145,7 @@ def parse_catalog_buy_box(html, url, name, specs):
 
 
 def catalog_offer_matches(offer, name, specs):
-    from mediamarkt_marketplace_audit import catalog_variant_matches
+    matcher = TRPriceScraper()
     return (isinstance(offer, dict) and offer.get('selected_hb_variant_verified') is True
             and offer.get('platform') == 'Hepsiburada'
             and offer.get('merchant') == offer.get('selected_hb_seller')
@@ -127,8 +154,14 @@ def catalog_offer_matches(offer, name, specs):
             and offer.get('currency') == 'TRY'
             and isinstance(offer.get('merchant'), str) and 0 < len(offer['merchant']) <= 100
             and _identity(offer.get('url'), offer.get('product_id'), offer.get('sku'))
-            and _valid_gtin13(offer.get('gtin13'))
-            and catalog_variant_matches(offer, name, specs))
+            and isinstance(offer.get('observed_gtins'), list) and 1 <= len(offer['observed_gtins']) <= 8
+            and all(_valid_gtin13(g) for g in offer['observed_gtins'])
+            and len(set(offer['observed_gtins'])) == len(offer['observed_gtins'])
+            and offer.get('gtin13') == (offer['observed_gtins'][0] if len(offer['observed_gtins']) == 1 else None)
+            and all(offer.get(k) == matcher._spec_int(specs.get(k)) for k in ('ram_gb', 'storage_gb'))
+            and (not offer.get('network_generation') or not specs.get('network_generation')
+                 or offer['network_generation'] == specs['network_generation'])
+            and matcher.has_observed_offer_evidence(name, offer, specs))
 
 
 class HepsiburadaCatalogSource:

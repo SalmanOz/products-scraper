@@ -1,5 +1,7 @@
 """Catalog-derived HB selected seller proof; no production requests or writes."""
 import unittest
+from pathlib import Path
+from bs4 import BeautifulSoup
 
 from hepsiburada_catalog_source import HepsiburadaCatalogSource, catalog_offer_matches, parse_catalog_buy_box
 from retailer_offer_refresh import RetailerOfferRefresher
@@ -24,6 +26,51 @@ def document(changes=None):
 
 
 class HepsiburadaCatalogTests(unittest.TestCase):
+    def test_live_new_table_and_multiple_barcodes_keep_exact_sku_without_inventing_one_gtin(self):
+        html = Path(__file__).with_name('fixtures').joinpath('hepsiburada-selected-multiple-barcodes.html').read_text()
+        url = 'https://www.hepsiburada.com/apple-iphone-13-128-gb-siyah-p-HBCV00000ODHHF'
+        specs = {'ram_gb': 4, 'storage_gb': 128, 'network_generation': '5g'}
+        offer, reason = parse_catalog_buy_box(html, url, 'Apple iPhone 13', specs)
+        self.assertEqual(reason, 'selected_new_cash_offer_observed')
+        self.assertEqual(offer['merchant'], 'Mobilpasaj')
+        self.assertEqual(offer['observed_gtins'], ['0194252707258', '0194252707289'])
+        self.assertIsNone(offer['gtin13'])
+        self.assertIsNone(offer['network_generation'])  # Not stated by this table.
+        self.assertTrue(catalog_offer_matches(offer, 'Apple iPhone 13', specs))
+        for before, after in (
+            ('128 GB', '256 GB'), ('4 GB RAM', '6 GB RAM'),
+            ('Ürün özellikleri', 'Other table'),
+            ('20ccd78c-21b9-4c68-9943-6ff05e78c18a', '20ccd78c-21b9-4c68-9943-6ff05e78c18b'),
+            ('0194252707289', '0194252707288'),
+            ('data-test-id="addToCart"', 'disabled data-test-id="addToCart"'),
+        ):
+            with self.subTest(before=before):
+                self.assertIn(before, html)
+                # Changing the listing in every layer is not a contradiction;
+                # change its table event alone in that case.
+                changed = html.replace(before, after, 1) if before.startswith('20cc') else html.replace(before, after)
+                self.assertIsNone(parse_catalog_buy_box(changed, url, 'Apple iPhone 13', specs)[0])
+
+    def test_missing_radio_never_creates_radio_evidence_or_selects_a_dual_radio_family(self):
+        soup = BeautifulSoup(document(), 'html.parser')
+        table = soup.select_one('#techSpecs')
+        table.string = table.get_text(' ', strip=True).replace('Mobil Bağlantı Hızı 5G', '')
+        html = str(soup)
+        # The A36 heading explicitly says 5G and all physical SKU proof remains.
+        offer, _ = parse_catalog_buy_box(html, TARGET, NAME, SPECS)
+        self.assertIsNotNone(offer)
+        self.assertIsNone(offer['network_generation'])
+        ambiguous = html.replace('A36 5G', 'A15').replace('a36-5g', 'a15')
+        url = TARGET.replace('a36-5g', 'a15')
+        self.assertIsNone(parse_catalog_buy_box(ambiguous, url, 'Samsung Galaxy A15', SPECS)[0])
+
+    def test_used_technical_condition_cannot_be_overruled_by_new_schema_condition(self):
+        soup = BeautifulSoup(document(), 'html.parser')
+        table = soup.select_one('#techSpecs')
+        table.string = table.get_text(' ', strip=True) + ' Kondisyon C Grade - İyi'
+        html = str(soup)
+        self.assertEqual(parse_catalog_buy_box(html, TARGET, NAME, SPECS)[1], 'selected_used_condition')
+
     def test_automatically_bound_android_variant_preserves_actual_seller_to_preparation(self):
         class Transport:
             def read_document(self, url):

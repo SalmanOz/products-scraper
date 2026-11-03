@@ -11,7 +11,7 @@ from pathlib import Path
 from audit_priority_retailers import inspect_target
 from offer_ingestion_client import OfferIngestionClient
 from priority_retailer_transport import HOSTS, PriorityRetailerTransport, product_host
-from publish_priority_candidates import refresh_candidates
+from publish_priority_candidates import CandidatePublicationError, refresh_candidates
 from retailer_offer_refresh import RetailerOfferRefresher
 from update_prices import PriceUpdater
 
@@ -65,6 +65,7 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
               'publish': publish, 'writes': False, 'status': 'running', 'queued': len(targets),
               'rows': [], 'accepted': 0, 'models_without_priority_hints': sorted(
                   {p['slug'] for p in products} - {p['slug'] for _, p in targets})}
+    publication_failed = False
     try:
         for url, product in targets:
             row = inspect_target(transport, url, product)
@@ -72,7 +73,7 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                 key: value for key, value in PriceUpdater.get_expected_specs(
                     product['attributes']).items() if key in ('ram_gb', 'storage_gb')}
             result['rows'].append(row)
-            if row.get('prepared_offer') is not None and publish:
+            if row.get('prepared_offer') is not None and publish and not publication_failed:
                 if product['slug'] == 'samsung-galaxy-a37-5g':
                     row['publication'] = {'status': 'protected_paired_workflow_required'}
                 else:
@@ -80,14 +81,20 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                              'catalog_count': len(products), 'rows': [row]}
                     # Re-read immediately, hydrate current complete seller targets, atomically
                     # ingest only this observation, and verify the commercial readback.
-                    refreshed = refresh_candidates(audit, client=client, reader=reader)
+                    try:
+                        refreshed = refresh_candidates(audit, client=client, reader=reader)
+                    except CandidatePublicationError as error:
+                        # Stop ALL further price writes, but finish the independent
+                        # GET-only diagnosis so the rest of the catalog is not lost.
+                        refreshed = error.result
+                        publication_failed = True
                     row['publication'] = refreshed
                     result['accepted'] += refreshed.get('ingestion', {}).get('accepted', 0)
                     result['writes'] |= refreshed['writes']
             result['sources'] = transport.report()
             if checkpoint:
                 checkpoint(result)
-        result['status'] = 'completed'
+        result['status'] = 'publication_failed' if publication_failed else 'completed'
     except Exception as error:
         result.update(status='failed', error_type=type(error).__name__)
         if checkpoint:
@@ -136,6 +143,8 @@ def main():
                 ensure_ascii=False), flush=True)
     result = sweep(client=OfferIngestionClient.from_env(), publish=args.publish, checkpoint=checkpoint)
     print(Path('priority-catalog-sweep.md').read_text())
+    if result['status'] != 'completed':
+        raise SystemExit('Publication verification failed; remaining queue inspected without writes')
 
 
 if __name__ == '__main__':

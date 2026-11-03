@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import patch
 
 from sweep_priority_catalog import catalog_queue, sweep
+from publish_priority_candidates import CandidatePublicationError
 from test_priority_candidates import Client, audit, reader
 
 
@@ -88,6 +89,23 @@ class SweepTests(unittest.TestCase):
                 sweep(client=client, publish=True, transport=Transport(), reader=sweep_reader(),
                       checkpoint=lambda value: checkpoints.append(deepcopy(value)))
         self.assertEqual(checkpoints[-1]['status'], 'failed')
+
+    def test_uncertain_write_stops_further_writes_but_finishes_independent_readonly_queue(self):
+        client = Client()
+        catalog = products(2)
+        for row in catalog:
+            row.update(name=client.product['name'], attributes=client.product['attributes'])
+        client.get_published_products = lambda: deepcopy(catalog)
+        client.get_public_price_priority = lambda: {}
+        failure = {'status': 'publication_failed', 'writes': True,
+                   'ingestion': {'committed': True, 'accepted': 1}}
+        with patch('sweep_priority_catalog.inspect_target', return_value=audit()['rows'][0]) as inspect, \
+                patch('sweep_priority_catalog.refresh_candidates',
+                      side_effect=CandidatePublicationError('readback_failed', failure)) as writer:
+            result = sweep(client=client, publish=True, transport=Transport(), reader=sweep_reader())
+        self.assertEqual(inspect.call_count, 4)
+        self.assertEqual(writer.call_count, 1)
+        self.assertEqual((result['status'], result['accepted']), ('publication_failed', 1))
 
 
 if __name__ == '__main__':

@@ -11,6 +11,12 @@ from reviewed_offer_targets import with_reviewed_radio
 from update_prices import PriceUpdater
 
 
+class CandidatePublicationError(ValueError):
+    def __init__(self, reason, result):
+        super().__init__(reason)
+        self.result = result
+
+
 def _fresh(value, seconds=300):
     try:
         stamp = datetime.fromisoformat(value.replace('Z', '+00:00'))
@@ -91,7 +97,7 @@ def refresh_candidates(audit, *, client, reader=None):
         fresh = offers[0]
         identity = ('url', 'platform', 'merchant', 'merchant_id', 'price', 'currency', 'condition',
                     'availability', 'gtin13', 'sku', 'product_id', 'listing_id', 'item_number',
-                    'source_title', 'ram_gb', 'storage_gb', 'network_generation')
+                    'source_title', 'ram_gb', 'storage_gb', 'network_generation', 'observed_gtins')
         if (any(old.get(key) != fresh.get(key) for key in identity)
                 or not _fresh(fresh.get('observed_at'), 60)):
             record['reason'] = 'selected_identity_or_price_changed'
@@ -135,16 +141,25 @@ def refresh_candidates(audit, *, client, reader=None):
     if prepared:
         if any(not _fresh(o.get('observed_at')) for o in prepared):
             raise ValueError('prepared_observation_expired')
-        ingestion = client.ingest_offers(prepared, require_all_accepted=True)
-        result.update(writes=True, ingestion=ingestion)
-        if (ingestion.get('committed') is not True or ingestion.get('accepted') != len(prepared)
-                or ingestion.get('stale_ignored') != 0 or ingestion.get('variant_rejected') != 0):
-            raise ValueError('atomic_acceptance_not_confirmed')
-        result['scoring'] = client.reconcile_scores()
-        current = _matched_rows(client.get_offer_identity_readiness())
-        if any(not _exact_current(record, current.get(record['product_slug'], [])) for record in prepared):
-            raise ValueError('accepted_offer_not_visible_in_commercial_readback')
-        result['commercial_readback_verified'] = True
+        try:
+            ingestion = client.ingest_offers(prepared, require_all_accepted=True)
+            result.update(writes=True, ingestion=ingestion)
+            if (ingestion.get('committed') is not True or ingestion.get('accepted') != len(prepared)
+                    or ingestion.get('stale_ignored') != 0 or ingestion.get('variant_rejected') != 0):
+                raise ValueError('atomic_acceptance_not_confirmed')
+            result['scoring'] = client.reconcile_scores()
+            current = _matched_rows(client.get_offer_identity_readiness())
+            if any(not _exact_current(record, current.get(record['product_slug'], [])) for record in prepared):
+                raise ValueError('accepted_offer_not_visible_in_commercial_readback')
+            result['commercial_readback_verified'] = True
+        except Exception as error:
+            result['status'] = 'publication_failed'
+            result['publication_error'] = (str(error) if type(error) is ValueError and
+                str(error) in {'atomic_acceptance_not_confirmed',
+                               'accepted_offer_not_visible_in_commercial_readback'}
+                else type(error).__name__)
+            result['publication_outcome_unconfirmed'] = True
+            raise CandidatePublicationError(result['publication_error'], result) from error
     result['status'] = ('completed' if prepared else 'already_current' if result['already_current']
                         else 'no_verified_candidates')
     return result
