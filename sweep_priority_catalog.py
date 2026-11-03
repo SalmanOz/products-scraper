@@ -121,7 +121,20 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--publish', action='store_true')
     args = parser.parse_args()
-    result = sweep(client=OfferIngestionClient.from_env(), publish=args.publish, checkpoint=save_report)
+    visited = 0
+    def checkpoint(result):
+        nonlocal visited
+        save_report(result)
+        if len(result['rows']) > visited:
+            visited = len(result['rows'])
+            row = result['rows'][-1]
+            print(json.dumps({'visited': visited, 'queued': result['queued'],
+                'accepted': result['accepted'], 'slug': row['slug'], 'retailer': row['retailer'],
+                'reason': row.get('reader_reason', row['reason']), 'http_status': row['http_status'],
+                'expected_specs': row.get('expected_specs'), 'heading': row.get('heading'),
+                'physical_facts': row.get('physical_facts'), 'publication': row.get('publication')},
+                ensure_ascii=False), flush=True)
+    result = sweep(client=OfferIngestionClient.from_env(), publish=args.publish, checkpoint=checkpoint)
     print(Path('priority-catalog-sweep.md').read_text())
 
 

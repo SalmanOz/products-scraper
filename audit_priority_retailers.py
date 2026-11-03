@@ -112,9 +112,9 @@ def inspect_target(transport, url, product):
     if html is not None:
         row.update(document_evidence(html, url))
         if host == 'www.teknosa.com':
-            from teknosa_reviewed_source import parse_exact_first_party_offer
+            from teknosa_reviewed_source import parse_catalog_offer
             specs = with_reviewed_radio(product, PriceUpdater.get_expected_specs(product.get('attributes')))
-            offer, why = parse_exact_first_party_offer(html, url,
+            offer, why = parse_catalog_offer(html, url,
                 {'name': product['name'], 'specs': specs})
             row.update(reader_reason=why, prepared_offer=offer)
         if host == 'www.hepsiburada.com':

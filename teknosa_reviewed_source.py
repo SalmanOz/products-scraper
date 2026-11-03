@@ -168,6 +168,14 @@ def parse_exact_first_party_offer(html: str, final_url: str = URL, catalog_profi
     return result, 'observed_exact_first_party_cash_offer'
 
 
+def parse_catalog_offer(html, url, profile):
+    offer, reason = parse_exact_first_party_offer(html, url, profile)
+    if offer is not None:
+        return offer, reason
+    from teknosa_marketplace_source import parse_selected_marketplace
+    return parse_selected_marketplace(html, url, profile)
+
+
 class TeknosaCatalogSource:
     """Catalog-selected SKU URLs; no per-phone profile or remembered price."""
     def __init__(self, get=None, post=None, transport=None):
@@ -182,7 +190,7 @@ class TeknosaCatalogSource:
         for target in targets:
             url = target.get('source_url') if isinstance(target, dict) else None
             if (url == URL or product_host(url) != 'www.teknosa.com'
-                    or not matcher.is_strict_match(name, url.split('/', 3)[3].replace('-', ' '), specs)):
+                    or not matcher.is_strict_match(name, url.split('/', 3)[3].replace('-', ' '), {})):
                 continue
             profile = {'name': name, 'specs': dict(specs)}
             if url in self._profiles and self._profiles[url] != profile:
@@ -198,7 +206,7 @@ class TeknosaCatalogSource:
         html, reason, status = self.transport.read_document(url)
         if html is None:
             return None, reason, status
-        offer, reason = parse_exact_first_party_offer(html, url, self._profiles[url])
+        offer, reason = parse_catalog_offer(html, url, self._profiles[url])
         return offer, reason, status
 
     def report(self):

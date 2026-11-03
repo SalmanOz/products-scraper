@@ -662,6 +662,9 @@ class RetailerOfferRefresher:
         return rows
 
     def _offer_identity_matches(self, product_name, offer, expected_specs):
+        if offer.get('selected_teknosa_variant_verified') is True:
+            from teknosa_marketplace_source import catalog_offer_matches
+            return catalog_offer_matches(offer, product_name, expected_specs)
         if offer.get('selected_trendyol_variant_verified') is True:
             from trendyol_catalog_source import catalog_offer_matches
             return catalog_offer_matches(offer, product_name, expected_specs)

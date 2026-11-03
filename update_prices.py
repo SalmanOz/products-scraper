@@ -117,7 +117,7 @@ class PriceUpdater:
     def _resolve_raw_target_proofs(self, product, offers, product_report):
         """Inspect every raw seller when only unsupported refresh hints were rejected."""
         for offer in offers:
-            if not isinstance(offer, dict) or offer.get('platform') not in {'MediaMarkt', 'Hepsiburada', 'Trendyol'}:
+            if not isinstance(offer, dict) or offer.get('platform') not in {'MediaMarkt', 'Hepsiburada', 'Trendyol', 'Teknosa'}:
                 continue
             key = self._raw_target_key(product, offer)
             if key in self._raw_target_attempts:
@@ -176,7 +176,7 @@ class PriceUpdater:
 
     def hydrate_marketplace_target_proof(self, product, offers, product_report):
         """Resolve a truncated seller snapshot only after a live marketplace read."""
-        if not any(isinstance(offer, dict) and offer.get('platform') in {'MediaMarkt', 'Hepsiburada', 'Trendyol'}
+        if not any(isinstance(offer, dict) and offer.get('platform') in {'MediaMarkt', 'Hepsiburada', 'Trendyol', 'Teknosa'}
                    for offer in offers):
             return
         if 'complete_target_proof' in product_report:
@@ -226,6 +226,13 @@ class PriceUpdater:
             profile = ALL_MARKETPLACE_PROFILES[offer['url']]
             if (not reviewed_marketplace_offer(offer, product['name'], expected_specs, product)
                     or not no_merchant_collision(self._collision_product(product, offer), profile, offer['url'])):
+                return False
+        elif offer.get('platform') == 'Teknosa' and offer.get('selected_teknosa_variant_verified') is True:
+            from teknosa_marketplace_source import catalog_offer_matches
+            if (host != 'www.teknosa.com'
+                    or not catalog_offer_matches(offer, product['name'], expected_specs)
+                    or not no_merchant_collision(self._collision_product(product, offer),
+                         {'seller_name': merchant}, offer['url'], expected_host=host)):
                 return False
         elif offer.get('platform') == 'Trendyol':
             from trendyol_catalog_source import catalog_offer_matches

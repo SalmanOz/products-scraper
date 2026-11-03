@@ -467,14 +467,14 @@ class TRPriceScraper:
         ambiguous = bool(re.search(r'\b(?:virtual|sanal|extended)\s*ram\b|\bram\s*(?:virtual|sanal|extended)\b', title))
         amount = r'\d+(?:[.,]\d{1,2})?'
         capacity = rf'{amount}\s*(?:gb|tb)'
-        groups = re.compile(rf'(?<![\w.,])({amount}\s*(?:gb|tb)?(?:\s*[/+]\s*{amount}\s*(?:gb|tb)?)+)(?!\w)', re.I)
+        groups = re.compile(rf'(?<![\w.,])({amount}\s*(?:gb|tb)?(?:\s*[/_+]\s*{amount}\s*(?:gb|tb)?)+)(?!\w)', re.I)
         def mask_group(match):
             nonlocal ambiguous
             group = match.group(0)
             units = re.findall(r'gb|tb', group, re.I)
             if not units:
                 return group
-            pieces = re.split(r'[/+]', group)
+            pieces = re.split(r'[/_+]', group)
             values = [cls._spec_int(part if re.search(r'(?:gb|tb)\s*$', part, re.I) else part + units[-1]) for part in pieces]
             before = title[max(0, match.start() - 24):match.start()]
             after = title[match.end():match.end() + 24]
@@ -742,8 +742,9 @@ class TRPriceScraper:
             if parsed_url.scheme not in {'http', 'https'} or not parsed_url.netloc:
                 return False
             path = unquote(parsed_url.path)
-            if parsed_url.hostname == 'www.mediamarkt.com.tr' and path.startswith('/tr/product/_'):
-                # MediaMarkt joins 8/256 GB as 8256gb in some exact PDP URLs.
+            if ((parsed_url.hostname == 'www.mediamarkt.com.tr' and path.startswith('/tr/product/_'))
+                    or (parsed_url.hostname == 'www.teknosa.com' and re.search(r'-p-[1-9]\d{8,13}$', path))):
+                # Exact retailer PDPs join 8/256 GB as 8256gb in some URLs.
                 # The title must independently establish the same capacities.
                 path = re.sub(
                     r'(?<![a-z0-9])([1-9]|1\d|2[0-4])(64|128|256|512|1024)[-_]?gb(?=$|[-_/.])',
