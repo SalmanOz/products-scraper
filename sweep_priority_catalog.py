@@ -62,6 +62,7 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
             or len({p['slug'] for p in products}) != len(products)):
         raise ValueError('invalid_or_oversized_catalog')
     collector = getattr(client, 'n11_document_get', None)
+    listing_scoped = callable(getattr(type(client), 'ingest_listing_offers', None))
     transport = transport or PriorityRetailerTransport(maximum_per_host=350, n11_collector=collector)
     reader = reader or RetailerOfferRefresher(n11_document_get=collector)
     if publish:
@@ -87,7 +88,7 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                 product['attributes']).items() if key in ('ram_gb', 'storage_gb')}
         result['rows'].append(row)
         if row.get('prepared_offer') is not None and publish and not publication_failed:
-            if product['slug'] == 'samsung-galaxy-a37-5g':
+            if product['slug'] == 'samsung-galaxy-a37-5g' and not listing_scoped:
                 row['publication'] = {'status': 'protected_paired_workflow_required'}
             else:
                 audit = {'purpose': 'automatic_priority_retailer_diagnosis', 'writes': False,

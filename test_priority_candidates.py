@@ -55,6 +55,49 @@ def reader():
 
 
 class PriorityCandidateTests(unittest.TestCase):
+    def test_a37_priority_listing_uses_strict_resource_writer_without_touching_the_paired_mediamarkt_job(self):
+        # The paired MediaMarkt route remains protected. This fixture exercises
+        # an independently observed priority-retailer resource on the same model.
+        from unittest.mock import patch
+        from sweep_priority_catalog import sweep
+        html = document().replace('A36', 'A37').replace('a36', 'a37').replace('8 GB RAM', '6 GB RAM').replace('8-gb-ram', '6-gb-ram')
+        url = TARGET.replace('a36', 'a37').replace('8-gb-ram', '6-gb-ram')
+        name = 'Samsung Galaxy A37 5G'
+        specs = dict(SPECS, ram_gb=6)
+        observed, why = parse_catalog_buy_box(html, url, name, specs)
+        self.assertIsNotNone(observed, why)
+        class ScopedClient(Client):
+            def ingest_listing_offers(self, records, *, require_all_accepted=True):
+                return {**super().ingest_offers(records, require_all_accepted=require_all_accepted),
+                        'offer_identity_contract': 'seller-source-url-v1'}
+            def ingest_offers(self, *args, **kwargs):
+                raise AssertionError('No legacy seller-only writes')
+        client = ScopedClient()
+        client.product.update(id=278, slug='samsung-galaxy-a37-5g', name=name, attributes=specs,
+                              offer_targets=[{'source_url': url, 'merchant_name': 'Hepsiburada'}])
+        client.get_public_price_priority = lambda: {}
+        report = audit()
+        report['rows'] = [{'slug': client.product['slug'], 'retailer': 'Hepsiburada',
+            'reason': 'document_read', 'http_status': 200, 'prepared_offer': observed}]
+        class Transport:
+            def configure_catalog_budget(self, count):
+                pass
+            def read_document(self, target):
+                return html, 'document_read', 200
+            def report(self):
+                return {}
+        source = RetailerOfferRefresher(hepsiburada_catalog_source=HepsiburadaCatalogSource(transport=Transport()))
+        with patch('sweep_priority_catalog.inspect_target', return_value=report['rows'][0]):
+            result = sweep(client=client, publish=True, transport=Transport(), reader=source)
+        self.assertEqual(result['accepted'], 1)
+        self.assertEqual(client.writes[0][0]['source_url'], url)
+        self.assertEqual(client.writes[0][0]['product_id'], 278)
+        legacy = Client()
+        legacy.product = deepcopy(client.product)
+        with self.assertRaisesRegex(ValueError, 'unbound_stale_or_duplicate_candidate'):
+            refresh_candidates(report, client=legacy, reader=source)
+        self.assertEqual(legacy.writes, [])
+
     def test_real_source_reread_and_all_live_gates_precede_one_atomic_batch(self):
         client = Client()
         result = refresh_candidates(audit(), client=client, reader=reader())

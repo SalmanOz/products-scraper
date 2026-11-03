@@ -77,7 +77,7 @@ def refresh_candidates(audit, *, client, reader=None):
         slug = row.get('slug')
         url = old.get('url') if isinstance(old, dict) else None
         host = product_host(url)
-        if (slug not in products or slug == 'samsung-galaxy-a37-5g' or host not in HOSTS
+        if (slug not in products or (slug == 'samsung-galaxy-a37-5g' and not listing_scoped) or host not in HOSTS
                 or row.get('http_status') != 200 or row.get('reason') != 'document_read'
                 or old.get('platform') != HOSTS[host] or row.get('retailer') != HOSTS[host]
                 or not _fresh(old.get('observed_at')) or (slug, url) in seen
