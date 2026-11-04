@@ -21,6 +21,46 @@ def document(brand=False):
 
 
 class HepsiburadaDiscoveryTests(unittest.TestCase):
+    def test_all_observed_run36_heading_failures_parse_without_accepting_another_model(self):
+        import json
+        from pathlib import Path
+        rows = json.loads(Path(__file__).with_name('fixtures').joinpath(
+            'hepsiburada-observed-category-headings.json').read_text())['categories']
+        self.assertEqual(len(rows), 13)
+        for row in rows:
+            diagnostic = {}
+            parse_category_document('<h1>' + row['heading'] + '</h1>', row['url'], diagnostic)
+            self.assertEqual(diagnostic['status'], 'parsed', row)
+        for name in ['Redmi Note 15 Pro Max Özellikleri', 'Redmi Note 14 Pro Özellikleri',
+                     'Redmi Note 15 Özellikleri', 'Samsung Note 15 Pro Özellikleri']:
+            d = {}
+            parse_category_document('<h1>' + name + '</h1>', rows[2]['url'], d)
+            self.assertEqual(d['status'], 'category_identity_missing', name)
+
+    def test_observed_brand_pagination_can_use_equivalent_family_routes_but_not_change_brand(self):
+        cases = [
+            ('https://www.hepsiburada.com/apple-cep-telefonlari-xc-371965-b8849',
+             'Apple Cep Telefonu Fiyatları ve Modelleri',
+             'https://www.hepsiburada.com/iphone-ios-telefonlar-c-60005202?sayfa=2', 'iPhone iOS Telefonlar'),
+            ('https://www.hepsiburada.com/honor-cep-telefonlari-xc-371965-b8852',
+             'HONOR Cep Telefonu Fiyatları ve Modelleri',
+             'https://www.hepsiburada.com/honor-android-telefonlar-xc-60005201-b8852?sayfa=2', 'Honor Android Telefonlar')]
+        for source, title, target, next_title in cases:
+            html = document().replace('Cep Telefonu Fiyatları ve Modelleri', title)
+            html += '<link rel="next" href="' + target + '">'
+            diagnostic = {}
+            self.assertEqual(parse_category_document(html, source, diagnostic)[1], target)
+            self.assertEqual(diagnostic['status'], 'parsed')
+            d = {}
+            parse_category_document('<h1>' + next_title + '</h1>', target, d)
+            self.assertEqual(d['status'], 'parsed')
+            for altered in [target.replace('sayfa=2', 'sayfa=3'), target + '&token=private',
+                            target.replace('www.hepsiburada.com', 'evil.test'),
+                            'https://www.hepsiburada.com/samsung-android-telefonlar-xc-60005201-b8848?sayfa=2']:
+                d = {}
+                self.assertIsNone(parse_category_document(html.replace(target, altered), source, d)[1])
+                self.assertEqual(d['status'], 'continuation_unrecognized')
+
     def test_observed_model_editorial_headings_keep_full_generation_and_pro_max_boundaries(self):
         cases = [
             ('https://www.hepsiburada.com/iphone-16-pro-iphone-ios-telefonlar-xc-60005202-t29',

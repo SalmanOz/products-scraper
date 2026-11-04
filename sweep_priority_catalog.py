@@ -238,6 +238,13 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                     discovery.setdefault('incomplete_pages', []).append(category_url)
                     next_category_url = pending_branches.pop(0) if pending_branches else None
                 source_blocked = transport.report().get(retailer, {}).get('blocked') is True
+                if (not source_blocked and next_category_url and reason in {
+                        'browser_changed_url', 'unexpected_final_url', 'http_404', 'http_410', 'already_read'}):
+                    # An obsolete/duplicate observed branch does not make the
+                    # other queued categories unavailable. Do not retry it or
+                    # accept its changed URL; visit the next observed branch.
+                    category_url = next_category_url
+                    continue
                 if (resume is None and transient and not source_blocked and next_category_url
                         and len(discovery['pages']) < module.MAX_CATEGORY_PAGES
                         and callable(getattr(module, 'discovery_links', None))):

@@ -20,6 +20,34 @@ class Transport:
 
 
 class CategoryDiagnosticTests(unittest.TestCase):
+    def test_one_changed_category_url_does_not_starve_other_observed_branches_or_override_a_source_block(self):
+        root = 'https://www.hepsiburada.com/cep-telefonlari-c-371965'
+        changed = 'https://www.hepsiburada.com/samsung-galaxy-s25-fe-android-telefonlar-xc-60005201-b8848-t6765'
+        healthy = 'https://www.hepsiburada.com/samsung-cep-telefonlari-xc-371965-b8848'
+        for blocked in (False, True):
+            client = Client();client.get_public_price_priority = lambda: {}
+            calls = []
+            class CategoryTransport(Transport):
+                def read_hepsiburada_category(self, url):
+                    calls.append(url)
+                    return (None, 'browser_changed_url', 200) if url == changed else (url, 'document_read', 200)
+                def report(self):
+                    return {'Hepsiburada': {'blocked': blocked and changed in calls}}
+            def parse(html, url, diagnostic=None):
+                diagnostic.update(status='parsed')
+                return [], None
+            with patch('hepsiburada_catalog_discovery.parse_category_document', side_effect=parse), \
+                    patch('hepsiburada_catalog_discovery.discovery_links',
+                          side_effect=lambda html, url, products: [changed, healthy] if url == root else []), \
+                    patch('sweep_priority_catalog.inspect_target') as pdp, \
+                    patch('sweep_priority_catalog.refresh_candidates') as writer:
+                result = sweep(client=client, transport=CategoryTransport(), discover_hepsiburada=True,
+                               category_audit_only=True)
+            self.assertEqual(calls, [root, changed] if blocked else [root, changed, healthy])
+            self.assertEqual(result['hepsiburada_category_discovery']['incomplete_pages'], [changed])
+            self.assertFalse(result['hepsiburada_category_discovery']['branch_queue_complete'])
+            pdp.assert_not_called();writer.assert_not_called()
+
     def test_readonly_category_probe_uses_same_routing_without_any_pdp_read_or_publication(self):
         client = Client()
         client.get_public_price_priority = lambda: {}

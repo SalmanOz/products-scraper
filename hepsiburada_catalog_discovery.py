@@ -66,12 +66,40 @@ def category_identity(url):
         return None
     if parsed.path == '/cep-telefonlari-c-371965':
         return ''
+    if parsed.path == '/iphone-ios-telefonlar-c-60005202':
+        return 'apple'
+    if parsed.path == '/android-telefonlar-c-60005201':
+        return 'android'
     model = _model_taxonomy(parsed.path)
     if model:
         return model[0]
+    family_brand = re.fullmatch(r'/([a-z]+)-(android|iphone-ios)-telefonlar-xc-'
+                               r'(60005201|60005202)-b[1-9]\d{0,7}', parsed.path)
+    if family_brand:
+        brand, family, category = family_brand.groups()
+        aliases = {a for names in TRPriceScraper.PHONE_BRAND_ALIASES.values() for a in names}
+        return brand if brand in aliases and (
+            family == 'android' and category == '60005201' and brand not in {'apple', 'iphone'} or
+            family == 'iphone-ios' and category == '60005202' and brand in {'apple', 'iphone'}) else None
     found = re.fullmatch(r'/([a-z]+)-cep-telefonlari-xc-371965-b([1-9]\d{0,7})', parsed.path)
     aliases = {a for names in TRPriceScraper.PHONE_BRAND_ALIASES.values() for a in names}
     return found[1] if found and found[1] in aliases else None
+
+
+def category_scope(url):
+    """Equivalent observed phone category routes, never product identities."""
+    identity = category_identity(url)
+    if identity is None:
+        return None
+    path = urlparse(url).path
+    model = _model_taxonomy(path)
+    if model:
+        return ('model', *model)
+    if path == '/cep-telefonlari-c-371965':
+        return ('all_phones',)
+    if path == '/android-telefonlar-c-60005201':
+        return ('android_phones',)
+    return ('brand', identity)
 
 
 def _category_soup(html, url):
@@ -81,17 +109,32 @@ def _category_soup(html, url):
     soup = BeautifulSoup(html, 'html.parser')
     headings = soup.select('h1')
     title = TRPriceScraper._normalize_words(headings[0].get_text(' ', strip=True)) if len(headings) == 1 else ''
+    path = urlparse(url).path
     expected = ({'cep telefonu fiyatlari ve modelleri'} if brand == '' else {
-        brand + ' telefonlar', brand + ' cep telefonu fiyatlari ve modelleri'})
-    model = _model_taxonomy(urlparse(url).path)
+        brand + ' telefonlar', brand + ' cep telefonu fiyatlari ve modelleri',
+        brand + ' cep telefonu indirimleri', brand + ' cep telefonlari',
+        brand + (' iphone ios telefonlar' if brand in {'apple', 'iphone'} else ' android telefonlar')})
+    if path == '/iphone-ios-telefonlar-c-60005202':
+        expected = {'iphone ios telefonlar'}
+    elif path == '/android-telefonlar-c-60005201':
+        expected = {'android telefonlar', 'android telefon modelleri ve ozellikleri'}
+    model = _model_taxonomy(path)
     if model:
         name = TRPriceScraper._normalize_words(model[0].replace('-', ' '))
-        expected = {name + ' indirimleri', name + ' fiyatlari ve modelleri',
-                    name + ' android telefon modelleri ve ozellikleri', name + ' ozellikleri'}
+        labels = {name}
+        if name.startswith('xiaomi redmi ') or name.startswith('xiaomi poco '):
+            labels.add(name.removeprefix('xiaomi '))
+        if name.startswith('samsung galaxy '):
+            labels.add(name.replace('samsung galaxy ', 'samsung ', 1))
+        labels |= {re.sub(r' (?:4g|5g|lte)$', '', label) for label in labels}
+        expected = {label + ' ' + suffix for label in labels for suffix in (
+            'indirimleri', 'fiyatlari', 'fiyatlari ve modelleri', 'fiyatlari ve ozellikleri',
+            'modelleri', 'ozellikleri', 'android telefon modelleri ve ozellikleri',
+            'telefon modelleri ve ozellikleri')}
         # Observed model taxonomies use editorial SEO H1s as well as the
         # ordinary category template. Keep the complete exact model prefix;
         # Pro/Max/Plus and generation words must not be dropped.
-        if re.fullmatch(re.escape(name) + r' modelleri 20\d{2}', title):
+        if any(re.fullmatch(re.escape(label) + r' modelleri 20\d{2}', title) for label in labels):
             expected.add(title)
     if urlparse(url).query:
         expected.add('cep telefonu' if brand == '' else brand + ' cep telefonu')
@@ -130,7 +173,7 @@ def parse_category_document(html, url, diagnostic=None):
     for link in continuation:
         target = urljoin(CATEGORY_URL, link['href'])
         parsed = urlparse(target)
-        if (category_identity(target) == category_identity(url) and parsed.path == current.path
+        if (category_scope(target) is not None and category_scope(target) == category_scope(url)
                 and parsed.query == f'sayfa={page + 1}'):
             next_urls.add(target)
     if continuation and len(next_urls) != 1 and isinstance(diagnostic, dict):
@@ -161,7 +204,7 @@ def discovery_links(html, url, products):
                 if matcher.is_strict_match(product['name'], name, {}):
                     model_links[target] = rank
                     break
-        elif identity in allowed:
+        elif identity in allowed or identity == 'android' and brands - {'apple'}:
             found.add(target)
     return sorted(model_links, key=lambda u: (model_links[u], u)) + sorted(found)
 
