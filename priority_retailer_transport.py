@@ -214,7 +214,7 @@ class PriorityRetailerTransport:
                 if url in state['seen']:
                     return None, 'already_read', None
                 category_count = state.get('category_requests', 0)
-                category_limit = 100 if host == 'www.trendyol.com' else 40
+                category_limit = 100 if host == 'www.trendyol.com' else 80 if host == 'www.hepsiburada.com' else 40
                 if category and category_count >= category_limit:
                     return None, 'category_budget_exhausted', None
                 if not category and state['pdp_requests'] - category_count >= self._maximum:

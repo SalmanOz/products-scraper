@@ -277,6 +277,9 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
             if checkpoint:
                 checkpoint(result)
         discovery['pagination_complete'] = category_url is None
+        discovery['remaining_observed_pages'] = len({pending for pending in
+            ([category_url] if category_url else []) + pending_branches if pending not in category_seen})
+        discovery['category_budget_exhausted'] = bool(category_url and len(discovery['pages']) >= module.MAX_CATEGORY_PAGES)
         if getattr(module, 'DISCOVERY_SCOPE', None):
             discovery.update(scope=module.DISCOVERY_SCOPE,
                              branch_queue_complete=category_url is None and not discovery.get('incomplete_pages'),
@@ -419,6 +422,8 @@ def save_report(result):
             'scope': discovery.get('scope'), 'branch_queue_complete': discovery.get('branch_queue_complete'),
             'deferred_observed_pages': discovery.get('deferred_observed_pages', 0),
             'resume_passes': discovery.get('resume_passes', 0),
+            'remaining_observed_pages': discovery.get('remaining_observed_pages', 0),
+            'category_budget_exhausted': discovery.get('category_budget_exhausted', False),
             'destinations_seen': discovery.get('destinations_seen'),
             'new_targets': len(discovery['new_targets'])}, ensure_ascii=False)]
     if result.get('public_coverage'):

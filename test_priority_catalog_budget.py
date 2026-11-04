@@ -6,6 +6,25 @@ from test_pasaj_source import Response
 
 
 class BudgetTests(unittest.TestCase):
+    def test_expanded_observed_hb_category_budget_stays_bounded_and_preserves_product_quota(self):
+        from hepsiburada_catalog_discovery import CATEGORY_URL, MAX_CATEGORY_PAGES
+        calls = []
+        def get(url, **_):
+            calls.append(url)
+            return Response(url, 'User-agent: *\nAllow: /\n' if url.endswith('robots.txt') else '<h1>Public</h1>')
+        source = PriorityRetailerTransport(get=get, sleep=lambda _: None, maximum_per_host=1)
+        self.assertEqual(MAX_CATEGORY_PAGES, 80)
+        for page in range(1, 81):
+            url = CATEGORY_URL + (f'?sayfa={page}' if page > 1 else '')
+            self.assertEqual(source.read_hepsiburada_category(url)[1], 'document_read')
+        self.assertEqual(source.read_hepsiburada_category(CATEGORY_URL + '?sayfa=81')[1], 'category_budget_exhausted')
+        self.assertEqual(len(calls), 81)  # The 81st category was not requested; robots was.
+        pdp = 'https://www.hepsiburada.com/samsung-galaxy-a54-128gb-p-HBCV0000TEST01'
+        self.assertEqual(source.read_document(pdp)[1], 'document_read')
+        self.assertEqual(source.read_document(pdp + '2')[1], 'pdp_budget_exhausted')
+        self.assertEqual(source.report()['Hepsiburada']['category_requests'], 80)
+        self.assertEqual(source.report()['Hepsiburada']['pdp_requests'], 1)
+
     def test_all_catalog_targets_and_same_product_redirects_have_room_after_discovery(self):
         products = [{'offer_targets': [
             {'source_url': f'https://www.trendyol.com/samsung/galaxy-a54-128gb-p-{100000 + model * 3 + color}'}

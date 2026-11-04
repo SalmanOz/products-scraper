@@ -24,9 +24,12 @@ class HepsiburadaDiscoveryTests(unittest.TestCase):
     def test_all_observed_run36_heading_failures_parse_without_accepting_another_model(self):
         import json
         from pathlib import Path
-        rows = json.loads(Path(__file__).with_name('fixtures').joinpath(
-            'hepsiburada-observed-category-headings.json').read_text())['categories']
-        self.assertEqual(len(rows), 13)
+        rows = []
+        for fixture, count in [('hepsiburada-observed-category-headings.json', 13),
+                               ('hepsiburada-observed-family-headings.json', 11)]:
+            observed = json.loads(Path(__file__).with_name('fixtures').joinpath(fixture).read_text())['categories']
+            self.assertEqual(len(observed), count)
+            rows.extend(observed)
         for row in rows:
             diagnostic = {}
             parse_category_document('<h1>' + row['heading'] + '</h1>', row['url'], diagnostic)
@@ -36,6 +39,12 @@ class HepsiburadaDiscoveryTests(unittest.TestCase):
             d = {}
             parse_category_document('<h1>' + name + '</h1>', rows[2]['url'], d)
             self.assertEqual(d['status'], 'category_identity_missing', name)
+        for brand, title in [('samsung', '2026 Samsung Televizyon Modelleri'),
+                             ('honor', 'Honor Magic8 Telefon Fiyatları'),
+                             ('poco', 'POCO Samsung Telefon Fiyatları'),
+                             ('redmi', 'Xiaomi Telefon Fiyatları')]:
+            url = f'https://www.hepsiburada.com/{brand}-android-telefonlar-xc-60005201-b8852'
+            self.assertEqual(parse_category_document('<h1>' + title + '</h1>', url)[0], [], title)
 
     def test_observed_brand_pagination_can_use_equivalent_family_routes_but_not_change_brand(self):
         cases = [

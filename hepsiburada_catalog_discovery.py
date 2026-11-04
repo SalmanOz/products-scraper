@@ -13,7 +13,7 @@ from priority_retailer_transport import MAX_HTML_BYTES, product_host
 from tr_price_scraper import TRPriceScraper
 
 CATEGORY_URL = 'https://www.hepsiburada.com/cep-telefonlari-c-371965'
-MAX_CATEGORY_PAGES = 40
+MAX_CATEGORY_PAGES = 80
 DISCOVERY_SCOPE = 'bounded_observed_category_brand_and_model_pages'
 
 
@@ -109,15 +109,17 @@ def _category_soup(html, url):
     soup = BeautifulSoup(html, 'html.parser')
     headings = soup.select('h1')
     title = TRPriceScraper._normalize_words(headings[0].get_text(' ', strip=True)) if len(headings) == 1 else ''
+    if not title or len(title) > 250:
+        return None
     path = urlparse(url).path
-    expected = ({'cep telefonu fiyatlari ve modelleri'} if brand == '' else {
-        brand + ' telefonlar', brand + ' cep telefonu fiyatlari ve modelleri',
-        brand + ' cep telefonu indirimleri', brand + ' cep telefonlari',
-        brand + (' iphone ios telefonlar' if brand in {'apple', 'iphone'} else ' android telefonlar')})
-    if path == '/iphone-ios-telefonlar-c-60005202':
-        expected = {'iphone ios telefonlar'}
-    elif path == '/android-telefonlar-c-60005201':
-        expected = {'android telefonlar', 'android telefon modelleri ve ozellikleri'}
+    # SEO headings rearrange these category words and a year. They cannot
+    # supply missing model qualifiers or become positive PDP/SKU evidence.
+    category_words = {'cep', 'telefon', 'telefonu', 'telefonlar', 'telefonlari',
+                      'android', 'iphone', 'ios', 'modelleri', 'fiyatlari', 've',
+                      'ozellikleri', 'indirimleri'}
+    def category_tail(words):
+        return bool(words) and len(words) <= 24 and all(
+            word in category_words or re.fullmatch(r'20\d{2}', word) for word in words)
     model = _model_taxonomy(path)
     if model:
         name = TRPriceScraper._normalize_words(model[0].replace('-', ' '))
@@ -127,18 +129,23 @@ def _category_soup(html, url):
         if name.startswith('samsung galaxy '):
             labels.add(name.replace('samsung galaxy ', 'samsung ', 1))
         labels |= {re.sub(r' (?:4g|5g|lte)$', '', label) for label in labels}
-        expected = {label + ' ' + suffix for label in labels for suffix in (
-            'indirimleri', 'fiyatlari', 'fiyatlari ve modelleri', 'fiyatlari ve ozellikleri',
-            'modelleri', 'ozellikleri', 'android telefon modelleri ve ozellikleri',
-            'telefon modelleri ve ozellikleri')}
-        # Observed model taxonomies use editorial SEO H1s as well as the
-        # ordinary category template. Keep the complete exact model prefix;
-        # Pro/Max/Plus and generation words must not be dropped.
-        if any(re.fullmatch(re.escape(label) + r' modelleri 20\d{2}', title) for label in labels):
-            expected.add(title)
-    if urlparse(url).query:
-        expected.add('cep telefonu' if brand == '' else brand + ' cep telefonu')
-    return soup if title in expected else None
+        candidate = re.sub(r'^20\d{2} ', '', title)
+        return soup if any(candidate.startswith(label + ' ') and
+            category_tail(candidate[len(label) + 1:].split()) for label in labels) else None
+    words = set(title.split())
+    phone_markers = {'telefon', 'telefonu', 'telefonlar', 'telefonlari', 'iphone'}
+    if not words & phone_markers:
+        return None
+    if brand == '':
+        return soup if (title == 'cep telefonu fiyatlari ve modelleri' or
+                        urlparse(url).query and title == 'cep telefonu') else None
+    aliases = next((set(aliases) for key, aliases in TRPriceScraper.PHONE_BRAND_ALIASES.items()
+                    if brand == key or brand in aliases), {brand})
+    if not words & aliases:
+        return None
+    allowed = aliases | ({'xiaomi'} if brand in {'redmi', 'poco'} else set())
+    remainder = [word for word in title.split() if word not in allowed]
+    return soup if category_tail(remainder) else None
 
 
 def parse_category_document(html, url, diagnostic=None):
