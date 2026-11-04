@@ -153,6 +153,13 @@ def parse_catalog_listing(html, url, name, specs):
         return None, 'selected_price_missing'
     selling = price_data.get('sellingPrice')
     price = _amount(selling.get('value')) if isinstance(selling, dict) else None
+    basket = None
+    if soup.select('.campaign-price-content'):
+        from trendyol_basket_price import public_basket_price
+        basket = public_basket_price(soup, listing, winner)
+        if basket is None:
+            return None, 'public_basket_promotion_mismatch'
+        price = _amount(basket['price'])
     if price is None or not isinstance(variant.get('price'), dict) or _amount(variant['price'].get('value')) != price:
         return None, 'selected_price_mismatch'
     # A coupon/member price cannot silently become the unconditional price.
@@ -180,23 +187,29 @@ def parse_catalog_listing(html, url, name, specs):
             prices.extend(block.select('span.discounted'))
     visible = _normalized(prices[0].get_text(' ', strip=True)) if len(prices) == 1 else ''
     match = re.fullmatch(r'(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?)\s*(?:TL|₺)', visible)
-    if not match or _amount(match[1].replace('.', '').replace(',', '.')) != price:
+    if basket is None and (not match or _amount(match[1].replace('.', '').replace(',', '.')) != price):
         return None, 'visible_cash_price_mismatch'
     from retailer_offer_refresh import _is_conditional_price
-    if _is_conditional_price(soup, offer, float(price)):
+    if (any(key in offer for key in ('validForMemberTier', 'eligibleCustomerType', 'eligibleTransactionVolume'))
+            or basket is not None and any(offer.get(key) not in (None, '') for key in ('name', 'description'))
+            or basket is None and _is_conditional_price(soup, offer, float(price))):
         return None, 'conditional_price'
     carts = soup.select('button[data-testid="buy-now-button"]')
     if (len(carts) != 1 or carts[0].has_attr('disabled') or carts[0].get('aria-disabled') == 'true'
             or _normalized(carts[0].get_text(' ', strip=True)) != 'Şimdi Al'):
         return None, 'selected_cart_unavailable'
-    return {'platform': 'Trendyol', 'merchant': seller, 'merchant_id': seller_id,
+    result = {'platform': 'Trendyol', 'merchant': seller, 'merchant_id': seller_id,
             'selected_trendyol_seller': seller, 'selected_trendyol_merchant_id': seller_id,
             'product_id': identity, 'listing_id': winner['listingId'], 'item_number': winner['itemNumber'],
             'gtin13': retailer_gtin13(winner['barcode']), 'observed_barcode': winner['barcode'],
             'selected_trendyol_variant_verified': True,
             'price': float(price), 'currency': 'TRY', 'condition': 'new', 'availability': 'in_stock',
             'url': url, 'source_title': title, **physical,
-            'observed_at': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')}, 'selected_new_cash_offer_observed'
+            'observed_at': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')}
+    if basket is not None:
+        result.update(price_kind='basket', listed_price=basket['listed_price'],
+                      basket_promotion=basket['basket_promotion'])
+    return result, 'selected_trendyol_public_basket_offer' if basket is not None else 'selected_new_cash_offer_observed'
 
 
 def catalog_offer_matches(offer, name, specs):

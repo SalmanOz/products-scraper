@@ -15,15 +15,16 @@ def selected_capacity_title(title, selected):
     """
     if not selected or re.search(r'\b(?:virtual|sanal|extended)\s*ram\b|\bram\s*(?:virtual|sanal|extended)\b', title, re.I):
         return title
-    pair = re.compile(r'(?<![\w.,])([1-9]|1\d|2[0-4])\s*(?:GB)?\s*\+\s*'
-                      r'(64|128|256|512|1024)\s*GB(?!\w)', re.I)
+    pair = re.compile(r'(?<![\w.,])(?P<ram>[1-9]|1\d|2[0-4])\s*(?P<ram_unit>GB)?\s*\+\s*'
+                      r'(?P<storage>64|128|256|512|1024)\s*(?P<storage_unit>GB)?(?!\w)', re.I)
     def replace(match):
         before, after = title[max(0, match.start()-24):match.start()], title[match.end():match.end()+24]
-        if (int(match[1]) != selected['ram_gb'] or int(match[2]) != selected['storage_gb']
+        if (not (match['ram_unit'] or match['storage_unit'])
+                or int(match['ram']) != selected['ram_gb'] or int(match['storage']) != selected['storage_gb']
                 or re.search(r'\b(?:iphone|ram|rom|depolama|haf[ıi]za)\s*:?\s*$', before, re.I)
                 or re.match(r'\s*ram\b', after, re.I)):
             return match[0]
-        return f'{match[1]} GB RAM {match[2]} GB ROM'
+        return f'{match["ram"]} GB RAM {match["storage"]} GB ROM'
     return pair.sub(replace, title)
 
 
@@ -90,9 +91,18 @@ def selected_sku_evidence(offer):
         proof['group_id'] = group
     if offer.get('price_kind') == 'basket':
         listed, payable = offer.get('listed_price'), offer.get('price')
-        if (prefix != 'n11' or type(listed) not in (int, float) or type(payable) not in (int, float)
+        if (prefix not in ('n11', 'trendyol') or type(listed) not in (int, float) or type(payable) not in (int, float)
                 or not 0 < payable < listed <= 1000000
                 or any(abs(p * 100 - round(p * 100)) > 0.00001 for p in (listed, payable))):
             return None
         proof.update(price_kind='basket', listed_price=listed, payable_price=payable)
+        if prefix == 'trendyol':
+            from trendyol_basket_price import valid_basket_promotion
+            if not valid_basket_promotion(offer.get('basket_promotion'), listed, payable):
+                return None
+            proof['basket_promotion'] = dict(offer['basket_promotion'])
+        elif offer.get('basket_promotion') is not None:
+            return None
+    elif offer.get('basket_promotion') is not None:
+        return None
     return proof
