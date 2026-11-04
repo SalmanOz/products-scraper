@@ -308,13 +308,17 @@ class PriorityRetailerTransport:
                     state['blocked'] = True
                     return None, 'challenge_page', status
                 return html, 'document_read', status
-            except (requests.RequestException, CompatibleRequestException, ValueError, TypeError, UnicodeError):
+            except (requests.RequestException, CompatibleRequestException, ValueError, TypeError, UnicodeError) as error:
+                # Record only a class name, never exception text containing
+                # request state. Preserve the existing stop with no retry.
+                state['transport_error_type'] = type(error).__name__[:80]
                 state['blocked'] = True
                 return None, 'transport_error', None
 
     def report(self):
         return {HOSTS[host]: {**{key: value for key, value in state.items()
-                              if key in {'robots', 'browser_requests', 'blocked', 'search_requests', 'category_requests'}},
+                              if key in {'robots', 'browser_requests', 'blocked', 'search_requests', 'category_requests',
+                                         'transport_error_type'}},
                               **({'browser_timeout_sku_count': len(state['browser_timeout_skus']),
                                   'browser_timeout_sku_skips': state['browser_timeout_sku_skips']}
                                  if state['browser_timeout_skus'] else {}),
