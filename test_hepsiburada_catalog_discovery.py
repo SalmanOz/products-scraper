@@ -163,6 +163,91 @@ class HepsiburadaDiscoveryTests(unittest.TestCase):
         self.assertFalse(discovery['branch_queue_complete'])
         self.assertFalse(result['writes'])
 
+    def test_transient_branch_queue_resumes_after_other_retailers_once_with_shared_page_budget(self):
+        from sweep_priority_catalog import sweep
+        from test_priority_candidates import Client
+        from teknosa_catalog_discovery import CATEGORY_URL as TEKNOSA
+        for mode in ['http_503', 'source_cooldown', 'http_403', 'budget', 'later_blocked']:
+            client = Client()
+            client.product.update(name='Samsung Galaxy S26', attributes={'ram_gb': 12, 'storage_gb': 256},
+                                  offer_targets=[])
+            client.get_public_price_priority = lambda: {}
+            visited, independent_work = [], []
+            class Transport:
+                def read_hepsiburada_category(self, url):
+                    visited.append(url)
+                    if url == SAMSUNG and not independent_work:
+                        reason = 'http_503' if mode in ('budget', 'later_blocked') else mode
+                        return None, reason, 503 if reason == 'http_503' else 403 if reason == 'http_403' else None
+                    if url == SAMSUNG:
+                        return document(True), 'document_read', 200
+                    page = 3 if url.endswith('sayfa=2') else 2
+                    html = document().replace('Cep Telefonu Fiyatları ve Modelleri',
+                                             'Cep Telefonu' if '?sayfa=' in url else 'Cep Telefonu Fiyatları ve Modelleri')
+                    if url == CATEGORY_URL or mode == 'budget':
+                        html += f'<link rel="next" href="{CATEGORY_URL}?sayfa={page}">'
+                    return html, 'document_read', 200
+                def read_teknosa_category(self, url):
+                    independent_work.append(url)
+                    visited.append(url)
+                    return '<h1 class="plp-title">Cep Telefonu Fiyatları ve Modelleri</h1>', 'document_read', 200
+                def report(self):
+                    return {'Hepsiburada': {'blocked': mode == 'http_403' or
+                                            mode == 'later_blocked' and bool(independent_work)}}
+            with patch('hepsiburada_catalog_discovery.MAX_CATEGORY_PAGES', 3 if mode == 'budget' else 40):
+                result = sweep(client=client, transport=Transport(), discover_hepsiburada=True, discover_teknosa=True)
+            report = result['hepsiburada_category_discovery']
+            if mode in ('http_403', 'later_blocked'):
+                self.assertEqual(visited, [CATEGORY_URL, SAMSUNG, TEKNOSA])
+                self.assertNotIn('resume_passes', report)
+                if mode == 'later_blocked':
+                    self.assertEqual(report['resume_status'], 'source_blocked')
+            else:
+                expected = [CATEGORY_URL, SAMSUNG, TEKNOSA]
+                if mode == 'source_cooldown':
+                    expected.append(SAMSUNG)  # Previously unrequested, not a repeated failed GET.
+                expected.append(CATEGORY_URL + '?sayfa=2')
+                self.assertEqual(visited, expected)
+                self.assertEqual(report['resume_passes'], 1)
+                self.assertLessEqual(len(report['pages']), 3 if mode == 'budget' else 40)
+            self.assertEqual(report['branch_queue_complete'], mode == 'source_cooldown')
+            self.assertFalse(report['pagination_complete'])
+            self.assertFalse(result['writes'])
+
+    def test_resumed_branch_cannot_expand_the_two_destination_budget_for_a_model(self):
+        from sweep_priority_catalog import sweep
+        from test_priority_candidates import Client
+        client = Client()
+        catalog = [deepcopy(PRODUCT), {'id': 2, 'slug': 'samsung-galaxy-s26', 'name': 'Samsung Galaxy S26',
+                   'attributes': {'ram_gb': 12, 'storage_gb': 256}, 'offer_targets': []}]
+        client.get_published_products = lambda: catalog
+        client.get_public_price_priority = lambda: {}
+        second, third = PDP[:-1] + 'L', PDP[:-1] + 'M'
+        class Transport:
+            def read_hepsiburada_category(self, url):
+                if url == SAMSUNG:
+                    return None, 'http_503', 503
+                if url == CATEGORY_URL:
+                    extra = (f'<h2 data-test-id="title-2"><a title="Apple iPhone 15 128 GB Siyah" href="{second}">'
+                             'Apple iPhone 15 128 GB Siyah</a></h2>')
+                    return document() + extra + f'<link rel="next" href="{CATEGORY_URL}?sayfa=2">', 'document_read', 200
+                return document().replace(PDP, third).replace('Cep Telefonu Fiyatları ve Modelleri', 'Cep Telefonu'), 'document_read', 200
+            def read_teknosa_category(self, url):
+                return '<h1 class="plp-title">Cep Telefonu Fiyatları ve Modelleri</h1>', 'document_read', 200
+            def report(self):
+                return {}
+        def inspect(transport, url, product):
+            return {'slug': product['slug'], 'retailer': 'Hepsiburada', 'url': url,
+                    'observed_url': url, 'reason': 'document_read', 'http_status': 200, 'prepared_offer': None}
+        with patch('sweep_priority_catalog.inspect_target', side_effect=inspect) as reader:
+            result = sweep(client=client, transport=Transport(), discover_hepsiburada=True, discover_teknosa=True)
+        self.assertEqual(reader.call_count, 2)
+        self.assertEqual({call.args[1] for call in reader.call_args_list}, {PDP, second})
+        self.assertEqual(result['queued'], 2)
+        self.assertEqual(result['hepsiburada_category_discovery']['resume_passes'], 1)
+        self.assertEqual(len(result['hepsiburada_category_discovery']['new_targets']), 2)
+        self.assertFalse(result['writes'])
+
     def test_sweep_follows_observed_branch_and_reverifies_only_fresh_product_pages(self):
         from sweep_priority_catalog import sweep
         from test_priority_candidates import Client

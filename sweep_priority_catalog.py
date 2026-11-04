@@ -180,19 +180,43 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                 'slug': product['slug'], 'retailer': 'Teknosa', 'url': destination,
                 'observed_url': offer['source_document_url'], 'reason': 'document_read', 'http_status': 200,
                 'document_reused': True, 'reader_reason': 'observed_public_seller_card', 'prepared_offer': offer})
-    def discover_category(retailer, report_key, module, read_category):
+    deferred_categories = []
+    def discover_category(retailer, report_key, module, read_category, resume=None):
         from teknosa_catalog_discovery import match_catalog_destinations
-        cards, category_url, category_seen = [], module.CATEGORY_URL, set()
-        pending_branches = []
-        discovery = result[report_key] = {'retailer': retailer, 'pages': [],
-                                                   'new_targets': [], 'pagination_complete': False}
-        for _ in range(module.MAX_CATEGORY_PAGES):
+        if resume is None:
+            cards, category_url, category_seen, pending_branches = [], module.CATEGORY_URL, set(), []
+            discovery = result[report_key] = {'retailer': retailer, 'pages': [],
+                                            'new_targets': [], 'pagination_complete': False}
+        else:
+            cards, category_url, category_seen, pending_branches = resume
+            discovery = result[report_key]
+            discovery['resume_passes'] = 1
+        # One shared budget across both passes, including failed attempts.
+        for _ in range(module.MAX_CATEGORY_PAGES - len(discovery['pages'])):
             if not category_url or category_url in category_seen:
                 break
             category_seen.add(category_url)
             html, reason, status = read_category(category_url)
             discovery['pages'].append({'url': category_url, 'reason': reason, 'http_status': status})
             if html is None:
+                transient = reason in {'http_500', 'http_502', 'http_503', 'http_504',
+                                       'browser_timeout', 'source_cooldown'}
+                if reason == 'source_cooldown':
+                    # No request was sent. Retain this exact observed page for
+                    # the later pass; do not guess a continuation around it.
+                    category_seen.remove(category_url)
+                    next_category_url = category_url
+                else:
+                    discovery.setdefault('incomplete_pages', []).append(category_url)
+                    next_category_url = pending_branches.pop(0) if pending_branches else None
+                source_blocked = transport.report().get(retailer, {}).get('blocked') is True
+                if (resume is None and transient and not source_blocked and next_category_url
+                        and len(discovery['pages']) < module.MAX_CATEGORY_PAGES
+                        and callable(getattr(module, 'discovery_links', None))):
+                    deferred_categories.append((retailer, report_key, module, read_category,
+                                                (cards, next_category_url, category_seen, pending_branches)))
+                    discovery['deferred_observed_pages'] = 1 + len(pending_branches)
+                    category_url = next_category_url
                 break
             parser = {}
             found, next_category_url = module.parse_category_document(html, category_url, diagnostic=parser)
@@ -226,10 +250,11 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                  | {observed_url(url) for _, url in processed} | inventory_urls)
         discovery['destinations_seen'] = len(cards)
         matched = match_catalog_destinations([c for c in cards if c['source_url'] not in known], products)
+        already_discovered = Counter(row['slug'] for row in discovery['new_targets'])
         for product in sorted(products, key=lambda p: (prices.get(p['id'], ('', True))[1], p['id'])):
             if product['slug'] in covered_models:
                 continue
-            for candidate in matched.get(product['id'], []):
+            for candidate in matched.get(product['id'], [])[:max(0, 2 - already_discovered[product['slug']])]:
                 discovery['new_targets'].append({'slug': product['slug'], **candidate})
                 result['queued'] += 1
                 process_target(candidate['source_url'], product)
@@ -284,6 +309,15 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                             result['models_without_priority_hints'] if slug != product['slug']]
                 if checkpoint:
                     checkpoint(result)
+        # Other retailers and the ordinary seed queue supply useful independent
+        # work while the source's existing cooldown runs. Resume only observed
+        # pending pages once; retain the same transport, robots, circuit and
+        # total page/PDP limits. Explicit denials are never retried here.
+        for retailer, report_key, module, read_category, continuation in deferred_categories:
+            if transport.report().get(retailer, {}).get('blocked') is True:
+                result[report_key]['resume_status'] = 'source_blocked'
+                continue
+            discover_category(retailer, report_key, module, read_category, continuation)
         result['status'] = 'publication_failed' if publication_failed else 'completed'
     except Exception as error:
         result.update(status='failed', error_type=type(error).__name__)
@@ -332,6 +366,8 @@ def save_report(result):
         lines += ['', f"Automatic {discovery['retailer']} category discovery: " + json.dumps({
             'pages': len(discovery['pages']), 'pagination_complete': discovery['pagination_complete'],
             'scope': discovery.get('scope'), 'branch_queue_complete': discovery.get('branch_queue_complete'),
+            'deferred_observed_pages': discovery.get('deferred_observed_pages', 0),
+            'resume_passes': discovery.get('resume_passes', 0),
             'destinations_seen': discovery.get('destinations_seen'),
             'new_targets': len(discovery['new_targets'])}, ensure_ascii=False)]
     if result.get('public_coverage'):
