@@ -26,6 +26,38 @@ def sweep_reader():
 
 
 class SweepTests(unittest.TestCase):
+    def test_current_full_listing_inventory_frees_discovery_slots_but_never_skips_normal_refresh(self):
+        urls = [f'https://www.n11.com/urun/samsung-galaxy-a36-5g-8gb-128gb-{12345671+i}' for i in range(4)]
+        for mode in ['current', 'stale', 'changed_catalog', 'wrong_version']:
+            client = Client()
+            client.product['offer_targets'] = [{'source_url': urls[0], 'merchant_name': 'n11'}]
+            client.get_public_price_priority = lambda: {}
+            client.existing = [{'source_url': urls[1], 'seller': 'Already verified shop', 'price': 1}]
+            inventory = client.get_offer_identity_readiness()
+            if mode == 'stale':
+                inventory['auditedAt'] = '1990-01-01T00:00:00Z'
+            elif mode == 'changed_catalog':
+                inventory['productCoverage'] = []
+            elif mode == 'wrong_version':
+                inventory['evidenceVersion'] = 'unknown'
+            class SearchTransport(Transport):
+                def read_n11_search(self, query):
+                    html = ''.join(f'<a href="{url}"><h2 class="product-item-title">'
+                                   f'{client.product["name"]} 8 GB RAM 128 GB</h2><b>1 TL</b></a>' for url in urls)
+                    return html, 'document_read', 200
+            def inspect(transport, url, product):
+                return {'slug': product['slug'], 'retailer': 'n11', 'url': url, 'observed_url': url,
+                        'http_status': 200, 'reason': 'document_read', 'prepared_offer': None}
+            with patch('sweep_priority_catalog.inspect_target', side_effect=inspect) as inspected, \
+                    patch('sweep_priority_catalog.refresh_candidates') as writer:
+                result = sweep(client=client, transport=SearchTransport(), discover_n11=True,
+                               current_listing_inventory=inventory)
+            expected = [urls[0], *urls[2:]] if mode == 'current' else urls[:3]
+            self.assertEqual([call.args[1] for call in inspected.call_args_list], expected, mode)
+            self.assertEqual(result['discovery_inventory']['status'], 'current' if mode == 'current' else 'unavailable')
+            self.assertFalse(result['writes'])
+            writer.assert_not_called()
+
     def test_missing_catalog_hint_is_discovered_automatically_without_creating_products_or_prices(self):
         client = Client()
         client.product['offer_targets'] = []

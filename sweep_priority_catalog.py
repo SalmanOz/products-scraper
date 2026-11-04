@@ -11,7 +11,7 @@ from pathlib import Path
 from audit_priority_retailers import inspect_target
 from offer_ingestion_client import IngestionClientError, OfferIngestionClient
 from priority_retailer_transport import HOSTS, PriorityRetailerTransport, product_host
-from publish_priority_candidates import CandidatePublicationError, refresh_candidates
+from publish_priority_candidates import CandidatePublicationError, _matched_rows, refresh_candidates
 from retailer_offer_refresh import RetailerOfferRefresher
 from update_prices import PriceUpdater
 
@@ -57,7 +57,7 @@ def catalog_queue(products, prices):
 
 def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None,
           discover_n11=False, discover_teknosa=False, discover_trendyol=False,
-          discover_hepsiburada=False):
+          discover_hepsiburada=False, current_listing_inventory=None):
     products, prices = client.get_published_products(), client.get_public_price_priority()
     if (not products or len(products) > 200 or len({p['id'] for p in products}) != len(products)
             or len({p['slug'] for p in products}) != len(products)):
@@ -75,6 +75,21 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
               'publish': publish, 'writes': False, 'status': 'running', 'queued': len(targets),
               'rows': [], 'accepted': 0, 'discovery': [], 'models_without_priority_hints': sorted(
                   {p['slug'] for p in products} - {p['slug'] for _, p in targets})}
+    # The catalog's 12 refresh hints are not a complete list of current listing
+    # resources. Do not let those omitted, already verified colors consume the
+    # small discovery allowance again. This inventory is only an exclusion set:
+    # it never supplies a price, evidence, or permission to write an offer.
+    inventory_urls = set()
+    if current_listing_inventory is not None:
+        try:
+            inventory = _matched_rows(current_listing_inventory)
+            if set(inventory) != {p['slug'] for p in products}:
+                raise ValueError('inventory_catalog_changed')
+            inventory_urls = {observed_url(row['source_url']) for rows in inventory.values()
+                              for row in rows if isinstance(row, dict) and product_host(row.get('source_url'))}
+            result['discovery_inventory'] = {'status': 'current', 'priority_listing_destinations': len(inventory_urls)}
+        except ValueError:
+            result['discovery_inventory'] = {'status': 'unavailable', 'priority_listing_destinations': 0}
     publication_failed = False
     processed = set()
     def process_target(url, product, audited_row=None):
@@ -165,7 +180,8 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
             discovery.update(scope=module.DISCOVERY_SCOPE,
                              branch_queue_complete=category_url is None and not discovery.get('incomplete_pages'),
                              pagination_complete=False)
-        known = {observed_url(url) for url, _ in targets} | {observed_url(url) for _, url in processed}
+        known = ({observed_url(url) for url, _ in targets}
+                 | {observed_url(url) for _, url in processed} | inventory_urls)
         discovery['destinations_seen'] = len(cards)
         matched = match_catalog_destinations([c for c in cards if c['source_url'] not in known], products)
         for product in sorted(products, key=lambda p: (prices.get(p['id'], ('', True))[1], p['id'])):
@@ -194,7 +210,7 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
             from n11_catalog_source import discover_catalog_targets
             from reviewed_offer_targets import with_reviewed_radio
             from tr_price_scraper import TRPriceScraper
-            inspected = {row['observed_url'] for row in result['rows']}
+            inspected = {row['observed_url'] for row in result['rows']} | inventory_urls
             for product in sorted(products, key=lambda p: (prices.get(p['id'], ('', True))[1], p['id'])):
                 specs = with_reviewed_radio(product, PriceUpdater.get_expected_specs(product.get('attributes')))
                 storage = specs.get('storage_gb')
@@ -249,6 +265,8 @@ def save_report(result):
     lines += ['', 'Reasons: ' + json.dumps(counts, ensure_ascii=False), '',
               'Sources: ' + json.dumps(result.get('sources'), ensure_ascii=False), '',
               'No-hint models: ' + ', '.join(result['models_without_priority_hints'])]
+    if result.get('discovery_inventory'):
+        lines += ['', 'Discovery inventory: ' + json.dumps(result['discovery_inventory'], ensure_ascii=False)]
     if result.get('discovery'):
         lines += ['', 'Automatic n11 discovery: ' + json.dumps({
             'catalog_queries': len(result['discovery']),
@@ -321,9 +339,14 @@ def main():
                 'physical_facts': row.get('physical_facts'), 'publication': row.get('publication')},
                 ensure_ascii=False), flush=True)
     client = OfferIngestionClient.from_env()
+    try:
+        listing_inventory = client.get_offer_identity_readiness()
+    except IngestionClientError:
+        # A missing optimization cannot suppress the ordinary fresh reads.
+        listing_inventory = {}
     result = sweep(client=client, publish=args.publish, checkpoint=checkpoint,
                    discover_n11=True, discover_teknosa=True, discover_trendyol=True,
-                   discover_hepsiburada=True)
+                   discover_hepsiburada=True, current_listing_inventory=listing_inventory)
     result['public_coverage'] = coverage_readback(result, client.get_public_price_priority())
     save_report(result)
     print(Path('priority-catalog-sweep.md').read_text())
