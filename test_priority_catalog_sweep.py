@@ -45,16 +45,31 @@ class SweepTests(unittest.TestCase):
         def inspect(transport, url, product):
             inspected.append(url)
             return {'slug': product['slug'], 'retailer': 'Hepsiburada', 'url': url, 'observed_url': url,
-                'http_status': 200, 'reason': 'document_read', 'prepared_offer': None,
+                'http_status': 200, 'reason': 'document_read', 'prepared_offer': {'url': root} if url == root else None,
                 'discovered_sellers': [{'source_url': target, 'source_document_url': url,
                                        'discovery_scope': 'public_other_seller_selector'} for target in links]}
         with patch('sweep_priority_catalog.inspect_target', side_effect=inspect), \
                 patch('sweep_priority_catalog.refresh_candidates') as writer:
-            result = sweep(client=client, transport=Transport(), publish=True, reader=sweep_reader())
+            result = sweep(client=client, transport=Transport(), publish=False, reader=sweep_reader())
         self.assertEqual(inspected, [root, links[0], links[1]])
         self.assertEqual(result['queued'], 3)
         self.assertEqual(result['accepted'], 0)
         writer.assert_not_called()  # A row hint never supplies a quote to publish.
+
+    def test_wrong_variant_root_cannot_spend_other_seller_discovery_slots(self):
+        client = Client()
+        client.get_public_price_priority = lambda: {}
+        root = 'https://www.hepsiburada.com/samsung-galaxy-a54-128-gb-p-HBCV0000TEST01'
+        client.product['offer_targets'] = [{'source_url': root}]
+        row = {'slug': client.product['slug'], 'retailer': 'Hepsiburada', 'url': root, 'observed_url': root,
+            'http_status': 200, 'reason': 'document_read', 'reader_reason': 'selected_radio_mismatch',
+            'prepared_offer': None, 'discovered_sellers': [{'source_url': root + '?magaza=Other',
+                'source_document_url': root, 'discovery_scope': 'public_other_seller_selector'}]}
+        with patch('sweep_priority_catalog.inspect_target', return_value=row) as reader:
+            result = sweep(client=client, transport=Transport())
+        reader.assert_called_once()
+        self.assertEqual(result['queued'], 1)
+        self.assertFalse(result['writes'])
 
     def test_observed_siblings_get_separate_fresh_reads_with_two_per_model_budget_and_no_recursion(self):
         client = Client()

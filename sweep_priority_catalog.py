@@ -162,7 +162,7 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
             checkpoint(result)
         seller_candidates = (row.get('discovered_sellers', [])
             if product_host(row.get('observed_url')) == 'www.hepsiburada.com'
-            and not urlparse(row['observed_url']).query else [])
+            and not urlparse(row['observed_url']).query and row.get('prepared_offer') is not None else [])
         for candidate in seller_candidates:
             destination = candidate.get('source_url') if isinstance(candidate, dict) else None
             if (seller_counts[product['slug']] >= 2 or product_host(destination) != 'www.hepsiburada.com'

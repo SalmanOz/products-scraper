@@ -141,7 +141,7 @@ def inspect_target(transport, url, product):
             offer, why = parse_catalog_buy_box(html, observed_url, product['name'], specs)
             row.update(reader_reason=why, prepared_offer=offer)
             row['discovered_siblings'] = discover_product_siblings(html, observed_url, product)
-            row['discovered_sellers'] = discover_product_sellers(html, observed_url)
+            row['discovered_sellers'] = discover_product_sellers(html, observed_url) if offer is not None else []
         if host == 'www.trendyol.com':
             from trendyol_catalog_source import parse_catalog_listing
             specs = with_reviewed_radio(product, PriceUpdater.get_expected_specs(product.get('attributes')))
