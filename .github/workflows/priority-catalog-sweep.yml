@@ -20,7 +20,9 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: ${{ inputs.publish && 'teknoskor-daily-data-sync' || 'teknoskor-priority-catalog-sweep-audit' }}
+  # Read-only sweeps spend the same retailer quota as publishers. Serialize
+  # them too, so a diagnostic cannot double traffic on a recovering source.
+  group: teknoskor-daily-data-sync
   cancel-in-progress: false
 jobs:
   sweep:
