@@ -2,7 +2,7 @@ from copy import deepcopy
 import unittest
 from unittest.mock import patch
 
-from hepsiburada_catalog_discovery import CATEGORY_URL, card_destination, category_identity, parse_category_document, discovery_links
+from hepsiburada_catalog_discovery import CATEGORY_URL, card_destination, category_identity, parse_category_document, discovery_links, discover_product_siblings
 from priority_retailer_transport import PriorityRetailerTransport
 from test_pasaj_source import Response
 from test_teknosa_catalog_discovery import PRODUCT
@@ -21,6 +21,32 @@ def document(brand=False):
 
 
 class HepsiburadaDiscoveryTests(unittest.TestCase):
+    def test_sibling_destinations_require_explicit_same_memory_phone_links_not_variant_prices(self):
+        import json
+        root = 'https://www.hepsiburada.com/apple-iphone-11-64-gb-beyaz-p-HBV0000120X66'
+        target = 'https://www.hepsiburada.com/apple-iphone-11-64-gb-siyah-p-HBV0000120X65'
+        product = {'name': 'Apple iPhone 11', 'slug': 'apple-iphone-11',
+                   'attributes': {'ram_gb': 4, 'storage_gb': 64}}
+        sibling = {'name': 'Apple iPhone 11 64 GB Siyah', 'sku': 'HBV0000120X65',
+                   'url': target, 'isDefault': False, 'isInStock': True, 'isPreOrder': False,
+                   'price': 1, 'properties': [{'name': 'Kapasite', 'valueObject': {'actualValue': '64 GB'}}]}
+        def html(row=sibling, sku='HBV0000120X66'):
+            return '<script id="reduxStore">' + json.dumps({'productState': {'product': {
+                'productId': 'HB00000NSBZ4', 'sku': sku, 'variants': [row]}}}) + '</script>'
+        found = discover_product_siblings(html(), root, product)
+        self.assertEqual([r['source_url'] for r in found], [target])
+        self.assertNotIn('price', found[0])
+        self.assertNotIn('merchant', found[0])
+        for patch in [{'url': target + '?magaza=Other'}, {'url': target.replace('.com/', '.com.evil.test/')},
+                      {'url': None}, {'sku': 'HBV0000120X67'}, {'isDefault': True},
+                      {'isInStock': False}, {'isPreOrder': True}, {'name': 'Apple iPhone 11 Pro 64 GB Siyah'},
+                      {'name': 'Apple Yenilenmiş iPhone 11 64 GB Siyah'},
+                      {'name': 'Apple iPhone 11 128 GB Siyah'},
+                      {'properties': [{'name': 'Kapasite', 'valueObject': {'actualValue': '128 GB'}}]}]:
+            self.assertEqual(discover_product_siblings(html({**sibling, **patch}), root, product), [], patch)
+        self.assertEqual(discover_product_siblings(html(sku='HBV0000120X67'), root, product), [])
+        self.assertEqual(discover_product_siblings(html() + html(), root, product), [])
+
     def test_public_ad_link_discovers_only_its_explicit_canonical_product_without_tracking(self):
         from urllib.parse import urlencode
         tracker = 'https://adservice.hepsiburada.com/event/api/v1/track?' + urlencode({

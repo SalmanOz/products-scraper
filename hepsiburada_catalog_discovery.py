@@ -3,6 +3,7 @@
 Follow only observed catalog phone links and the document's public rel=next links.
 Report the bounded discovery scope honestly, without guessing pages.
 """
+import json
 import re
 from urllib.parse import parse_qs, urljoin, urlparse
 
@@ -155,3 +156,57 @@ def discovery_links(html, url, products):
         elif identity in allowed:
             found.add(target)
     return sorted(model_links, key=lambda u: (model_links[u], u)) + sorted(found)
+
+
+def discover_product_siblings(html, url, product):
+    """Read explicit in-stock color links, never sibling prices or offer proof.
+
+    Even a currently unavailable selected color can expose other public SKU
+    destinations. Each destination must undergo a separate fresh full PDP read.
+    No URL is synthesized from an identifier and no other capacity is adopted.
+    """
+    from hepsiburada_catalog_source import _identity
+    from reviewed_offer_targets import with_reviewed_radio
+    from update_prices import PriceUpdater
+    if (product_host(url) != 'www.hepsiburada.com' or not isinstance(html, str)
+            or len(html.encode()) > MAX_HTML_BYTES):
+        return []
+    soup = BeautifulSoup(html, 'html.parser')
+    scripts = soup.select('script#reduxStore')
+    if len(scripts) != 1:
+        return []
+    try:
+        state = json.loads(scripts[0].get_text())['productState']['product']
+        if not isinstance(state, dict) or not _identity(url, state.get('productId'), state.get('sku')):
+            return []
+        variants = state.get('variants')
+        if not isinstance(variants, list) or len(variants) > 128:
+            return []
+        specs = with_reviewed_radio(product, PriceUpdater.get_expected_specs(product.get('attributes')))
+        storage = TRPriceScraper._spec_int(specs.get('storage_gb'))
+        if not storage:
+            return []
+    except (KeyError, ValueError, TypeError):
+        return []
+    matcher, found = TRPriceScraper(), {}
+    for variant in variants:
+        if (not isinstance(variant, dict) or variant.get('isDefault') is not False
+                or variant.get('isInStock') is not True or variant.get('isPreOrder') is not False):
+            continue
+        target, title, sku = variant.get('url'), variant.get('name'), variant.get('sku')
+        if (card_destination(target) != target or not isinstance(sku, str)
+                or not isinstance(target, str) or not urlparse(target).path.endswith('-p-' + sku)
+                or sku == state.get('sku') or not isinstance(title, str) or not 1 <= len(title) <= 500
+                or re.search(r'yenilenmi[sş]|refurbished|ikinci\s*el', title, re.I)
+                or not matcher.is_strict_match(product['name'], title, specs)):
+            continue
+        properties = variant.get('properties')
+        capacities = [p['valueObject'].get('actualValue') for p in properties
+                      if isinstance(p, dict) and p.get('name') == 'Kapasite'
+                      and isinstance(p.get('valueObject'), dict)] if isinstance(properties, list) else []
+        if capacities != [f'{storage} GB']:
+            continue
+        found[target] = {'source_url': target, 'discovery_title': title,
+                         'discovery_sku': sku, 'stock_priority': True,
+                         'discovery_scope': 'public_product_variant_link'}
+    return list(found.values())

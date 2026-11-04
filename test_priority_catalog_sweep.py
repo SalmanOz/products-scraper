@@ -26,6 +26,31 @@ def sweep_reader():
 
 
 class SweepTests(unittest.TestCase):
+    def test_observed_siblings_get_separate_fresh_reads_with_two_per_model_budget_and_no_recursion(self):
+        client = Client()
+        client.get_public_price_priority = lambda: {}
+        root = 'https://www.hepsiburada.com/samsung-galaxy-a54-128-gb-p-HBCV0000TEST01'
+        links = [root.replace('TEST01', f'TEST0{i}') for i in range(2, 6)]
+        client.product['offer_targets'] = [{'source_url': root}]
+        inspected = []
+        def inspect(transport, url, product):
+            inspected.append(url)
+            siblings = links if url == root else [links[-1]]
+            return {'slug': product['slug'], 'retailer': 'Hepsiburada', 'url': url, 'observed_url': url,
+                'http_status': 200, 'reason': 'document_read',
+                'reader_reason': 'selected_color_or_gtin_missing' if url != links[1] else 'selected_new_cash_offer_observed',
+                'prepared_offer': {'url': url} if url == links[1] else None,
+                'discovered_siblings': [{'source_url': target, 'discovery_scope': 'public_product_variant_link'}
+                                        for target in siblings]}
+        with patch('sweep_priority_catalog.inspect_target', side_effect=inspect), \
+                patch('sweep_priority_catalog.refresh_candidates', return_value={
+                    'writes': True, 'status': 'completed', 'ingestion': {'accepted': 1}}) as writer:
+            result = sweep(client=client, transport=Transport(), publish=True, reader=sweep_reader())
+        self.assertEqual(inspected, [root, links[0], links[1]])
+        self.assertEqual((len(result['rows']), result['queued'], result['accepted']), (3, 3, 1))
+        writer.assert_called_once()
+        self.assertEqual(writer.call_args.args[0]['rows'][0]['url'], links[1])
+
     def test_coverage_priority_retains_only_current_confirmed_multi_seller_models_and_keeps_full_gate(self):
         from datetime import datetime, timezone
         catalog = products(5)

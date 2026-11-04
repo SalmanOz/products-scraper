@@ -114,6 +114,8 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
         }
     publication_failed = False
     processed = set()
+    refresh_urls = {url for url, _ in refresh_targets}
+    sibling_counts = Counter()
     def process_target(url, product, audited_row=None):
         nonlocal publication_failed
         if (product['slug'], url) in processed:
@@ -152,6 +154,21 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
         result['sources'] = transport.report()
         if checkpoint:
             checkpoint(result)
+        # Expand only original refresh seeds after category discovery. This
+        # prevents recursively expanding colors or counting future queued
+        # category/refresh targets twice. A sibling is a new GET, never a quote
+        # copied from another variant's state or a new catalog product.
+        if url in refresh_urls and product_host(url) == 'www.hepsiburada.com':
+            for candidate in row.get('discovered_siblings', []):
+                destination = candidate.get('source_url') if isinstance(candidate, dict) else None
+                if (sibling_counts[product['slug']] >= 2 or product_host(destination) != 'www.hepsiburada.com'
+                        or candidate.get('discovery_scope') != 'public_product_variant_link'
+                        or destination in refresh_urls or observed_url(destination) in inventory_urls
+                        or (product['slug'], destination) in processed):
+                    continue
+                sibling_counts[product['slug']] += 1
+                result['queued'] += 1
+                process_target(destination, product)
         for offer in extra_offers:
             destination = offer.get('url')
             if ((product['slug'], destination) in processed or product_host(destination) != 'www.teknosa.com'
