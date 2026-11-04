@@ -757,7 +757,10 @@ class SweepTests(unittest.TestCase):
             self.assertEqual(result['catalog_count'], 5)
             self.assertEqual(len(result['rows']), 8 if retained else 10)
             self.assertEqual(result['queued'], len(result['rows']))
-            self.assertEqual(len(transport.queries), 4 if retained else 5)
+            self.assertEqual(len(transport.queries), 5)
+            if retained:
+                self.assertTrue(transport.queries[-1].startswith('Samsung Galaxy S25'))
+                self.assertEqual(result['n11_store_gap_discovery']['admitted_models'], retained)
             self.assertEqual(current, before)
             self.assertFalse(result['coverage_priority']['retailer_observation_timestamps_renewed'])
             self.assertFalse(result['writes'])
@@ -911,6 +914,128 @@ class SweepTests(unittest.TestCase):
         self.assertEqual(inspect.call_count, 4)
         self.assertEqual(writer.call_count, 1)
         self.assertEqual((result['status'], result['accepted']), ('publication_failed', 1))
+
+
+class N11PlatformCoverageTests(unittest.TestCase):
+    @staticmethod
+    def inventory(catalog, covered):
+        from datetime import datetime, timezone
+        return {'evidenceVersion': 'product-offer-match-v1', 'mode': 'shadow_audit_only',
+            'auditedAt': datetime.now(timezone.utc).isoformat(), 'productCoverage': [
+                {'slug': p['slug'], 'matchedMerchants': 2 if p['slug'] in covered else 0,
+                 'matchedOffers': [{'merchant_name': seller, 'price': 30000, 'source_url': url}
+                    for seller, url in [('MediaMarkt', 'https://www.mediamarkt.com.tr/tr/product/_phone-123456.html'),
+                        ('Trendyol', 'https://www.trendyol.com/samsung/phone-p-123456')]] if p['slug'] in covered else []}
+                for p in catalog]}
+
+    def test_one_family_query_can_recover_an_actual_n11_offer_for_a_retained_sibling(self):
+        from pathlib import Path
+        from urllib.parse import urlparse
+        from n11_catalog_source import N11CatalogSource
+        from retailer_offer_refresh import RetailerOfferRefresher
+        parent = {'id': 1, 'slug': 'samsung-galaxy-a37-5g', 'name': 'Samsung Galaxy A37 5G', 'offer_targets': [],
+            'attributes': {'ram_gb': 6, 'storage_gb': 128, 'Connectivity': {'5G': True}}}
+        child = {'id': 2, 'slug': 'samsung-galaxy-a37-5g-8gb-256gb', 'name': 'Samsung Galaxy A37 5G 8GB 256GB',
+            'offer_targets': [], 'attributes': {'ram_gb': 8, 'storage_gb': 256, 'Connectivity': {'5G': True}}}
+        catalog = [parent, child]
+        before = deepcopy(catalog)
+        inventory = self.inventory(catalog, {child['slug']})
+        class ScopedClient(Client):
+            def get_published_products(self):
+                return deepcopy(catalog)
+            def get_public_price_priority(self):
+                return {p['id']: (p['slug'], p['id'] == 2) for p in catalog}
+            def get_offer_identity_readiness(self):
+                current = deepcopy(inventory)
+                for batch in self.writes:
+                    for r in batch:
+                        row = next(row for row in current['productCoverage'] if row['slug'] == r['product_slug'])
+                        row['matchedOffers'].append({'merchant_name': r['seller'], 'price': r['price'], 'source_url': r['source_url']})
+                return current
+            def ingest_listing_offers(self, rows, *, require_all_accepted):
+                return {**super().ingest_offers(rows, require_all_accepted=require_all_accepted),
+                        'offer_identity_contract': 'seller-source-url-v1'}
+        client = ScopedClient()
+        fixtures = Path(__file__).with_name('fixtures')
+        cards = fixtures.joinpath('n11-phone-category-family-cards.html').read_text().replace('</h2>', '</h2><b>1 TL</b>')
+        selected = fixtures.joinpath('n11-a37-selected-teknosa-public-seller.html').read_text()
+        base = 'https://www.n11.com/urun/samsung-galaxy-a37-8-gb-256-gb-akilli-telefon-samsung-turkiye-garantili-123382261'
+        queries, reads = [], []
+        class FamilyTransport(Transport):
+            def configure_catalog_budget(self, count):
+                pass
+            def read_n11_phone_search(self, query):
+                queries.append(query)
+                return cards, 'document_read', 200
+            def read_document(self, url):
+                reads.append(url)
+                return (selected, 'document_read', 200) if url == base else (None, 'fixture_unavailable', 404)
+            def resolved_url(self, url):
+                return url
+        transport = FamilyTransport()
+        reader = RetailerOfferRefresher(n11_catalog_source=N11CatalogSource(transport=transport))
+        result = sweep(client=client, transport=transport, reader=reader, publish=True,
+            current_listing_inventory=inventory, coverage_first=True, memory_discovery=True, discover_n11=True)
+        self.assertEqual(result['status'], 'completed')
+        self.assertEqual(queries, ['Samsung Galaxy A37'])
+        self.assertGreaterEqual(reads.count(base), 2)  # Preview plus independent publication GET.
+        self.assertEqual((result['catalog_count'], result['accepted']), (2, 1))
+        self.assertEqual(client.writes[0][0]['product_slug'], child['slug'])
+        self.assertEqual(client.writes[0][0]['price'], 26999)
+        self.assertEqual(client.writes[0][0]['source_url'], base)
+        self.assertTrue(any(r.get('publication', {}).get('commercial_readback_verified') for r in result['rows']))
+        self.assertEqual(result['n11_store_gap_discovery']['admitted_models'], [child['slug']])
+        self.assertEqual(result['n11_store_gap_discovery']['same_run_query_reuses'], 1)
+        self.assertFalse(result['n11_store_gap_discovery']['prices_or_offer_evidence_reused'])
+        self.assertEqual(catalog, before)
+
+    def test_whole_platform_gap_scan_preserves_primary_recovery_and_requires_a_current_audit(self):
+        catalog = [{'id': n, 'slug': f'samsung-galaxy-a{n}', 'name': f'Samsung Galaxy A{n}', 'offer_targets': [],
+            'attributes': {'ram_gb': 8, 'storage_gb': 256, 'Connectivity': {'5G': True}}} for n in range(40, 65)]
+        missing = {'id': 200, 'slug': 'honor-200', 'name': 'Honor 200', 'offer_targets': [],
+            'attributes': {'ram_gb': 12, 'storage_gb': 512, 'Connectivity': {'5G': True}}}
+        catalog.append(missing)
+        covered = {p['slug'] for p in catalog if p['id'] != 200}
+        client = Client()
+        client.get_published_products = lambda: deepcopy(catalog)
+        client.get_public_price_priority = lambda: {p['id']: (p['slug'], p['slug'] in covered) for p in catalog}
+        class SearchTransport(Transport):
+            def __init__(self): self.queries = []
+            def read_n11_phone_search(self, query):
+                self.queries.append(query)
+                return '<h1>Cep Telefonu</h1>', 'document_read', 200
+        for mode in ('current', 'missing_audit', 'n11_already_present'):
+            inventory = self.inventory(catalog, covered) if mode != 'missing_audit' else None
+            if mode == 'n11_already_present':
+                inventory['productCoverage'][0]['matchedOffers'][0]['source_url'] = 'https://www.n11.com/urun/samsung-galaxy-a40-256-gb-1234567'
+            transport = SearchTransport()
+            result = sweep(client=client, transport=transport, discover_n11=True, coverage_first=True,
+                           current_listing_inventory=inventory)
+            self.assertEqual(result['status'], 'completed')
+            self.assertEqual(len(transport.queries), 25 if mode == 'n11_already_present' else 26)
+            self.assertTrue(transport.queries[0].startswith('Honor 200'))
+            self.assertEqual(len(result['n11_store_gap_discovery']['admitted_models']),
+                             0 if mode == 'missing_audit' else 24 if mode == 'n11_already_present' else 25)
+            if mode == 'n11_already_present':
+                self.assertNotIn('samsung-galaxy-a40', result['n11_store_gap_discovery']['eligible_models'])
+                self.assertFalse(any(q.startswith('Samsung Galaxy A40 ') for q in transport.queries))
+            self.assertEqual(result['catalog_count'], 26)
+            self.assertFalse(result['writes'])
+
+        from priority_retailer_transport import PriorityRetailerTransport
+        from test_pasaj_source import Response
+        requests = []
+        def get(url, **kwargs):
+            requests.append(url)
+            return Response(url, 'User-agent: *\nAllow: /\n' if url.endswith('robots.txt') else '<h1>Cep Telefonu</h1>')
+        bounded = PriorityRetailerTransport(get=get, sleep=lambda _: None, maximum_per_host=2)
+        result = sweep(client=client, transport=bounded, discover_n11=True, coverage_first=True,
+                       current_listing_inventory=self.inventory(catalog, covered))
+        self.assertEqual(len(requests), 3)  # Robots plus two actual search requests.
+        self.assertEqual(bounded.report()['n11']['document_requests'], 2)
+        self.assertEqual(sum(d['reason'] == 'pdp_budget_exhausted' for d in result['discovery']), 24)
+        self.assertEqual(result['catalog_count'], 26)
+        self.assertFalse(result['writes'])
 
 
 if __name__ == '__main__':

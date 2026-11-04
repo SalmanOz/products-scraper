@@ -6,7 +6,8 @@ import unittest
 from bs4 import BeautifulSoup
 
 from n11_catalog_source import (N11CatalogSource, catalog_offer_matches, discover_catalog_targets,
-                                discover_catalog_memory_targets, discover_product_sellers, parse_catalog_listing)
+                                discover_catalog_memory_targets, discover_product_sellers, parse_catalog_listing,
+                                public_search_card_document)
 from retailer_offer_refresh import RetailerOfferRefresher
 from update_prices import PriceUpdater
 
@@ -26,6 +27,19 @@ def document(change=None):
 
 
 class N11CatalogTests(unittest.TestCase):
+    def test_same_run_search_hint_document_cannot_retain_prices_scripts_private_state_or_foreign_links(self):
+        title = NAME + ' 8 GB 256 GB (Samsung Türkiye Garantili)'
+        body = ('<script>window.model={"private_account":"do-not-retain"}</script>'
+                f'<a href="{URL}"><h2 class="product-item-title">{title}</h2><b>1 TL</b></a>'
+                f'<a href="{URL}?token=private"><h2 class="product-item-title">Secret</h2></a>'
+                '<a href="https://evil.example/urun/phone-123456"><h2 class="product-item-title">Other</h2></a>')
+        hints = public_search_card_document(body)
+        self.assertIn(title, hints)
+        self.assertNotIn('1 TL', hints)
+        self.assertNotIn('private', hints)
+        self.assertNotIn('script', hints)
+        self.assertNotIn('evil.example', hints)
+        self.assertEqual(discover_catalog_targets(hints, NAME, SPECS), discover_catalog_targets(body, NAME, SPECS))
     def test_actual_public_seller_selector_is_retained_and_bound_to_shop_color_sku_and_gtin(self):
         from selected_sku_evidence import selected_sku_evidence
         html = Path(__file__).with_name('fixtures').joinpath('n11-a37-selected-teknosa-public-seller.html').read_text()

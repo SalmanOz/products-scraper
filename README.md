@@ -559,6 +559,15 @@ links per catalog SKU can receive fresh reads, each followed by a separate
 publication readback. Card prices never become offers. Invalid selectors and
 private/tracking parameters remain rejected by both collector and ingestion.
 
+Recovery mode also schedules the complete set of currently multi-seller SKUs
+whose fresh whole-catalog audit contains no n11 offer, after all missing-price
+and single-seller work. A missing or stale audit falls back to ordinary full
+discovery. The existing per-source document allowance remains shared. Matching
+family queries retain only a same-run document containing observed public card
+names and URLs for other capacities, never prices, account state or retailer
+SKU/stock evidence. Every resulting offer still requires its own selected PDP,
+fresh publication read, exact listing writer and commercial readback.
+
 Current commercial readback uses the authenticated
 `/api/ingestion/offer-identity-readiness` endpoint and the same full commercial
 matching audit. Historical price-index queries are not required to confirm a

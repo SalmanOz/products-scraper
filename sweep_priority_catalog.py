@@ -154,6 +154,7 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
     # it never supplies a price, evidence, or permission to write an offer.
     inventory_urls = set()
     covered_models = set()
+    n11_present_models = set()
     if current_listing_inventory is not None:
         try:
             inventory = _matched_rows(current_listing_inventory)
@@ -162,6 +163,8 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
             inventory_urls = {observed_url(row['source_url']) for rows in inventory.values()
                               for row in rows if isinstance(row, dict) and product_host(row.get('source_url'))}
             result['discovery_inventory'] = {'status': 'current', 'priority_listing_destinations': len(inventory_urls)}
+            n11_present_models = {slug for slug, rows in inventory.items() if any(
+                product_host(row.get('source_url')) == 'www.n11.com' for row in rows if isinstance(row, dict))}
             if coverage_first:
                 by_slug = {p['slug']: p for p in products}
                 for row in current_listing_inventory['productCoverage']:
@@ -187,6 +190,21 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
             'models_needing_recovery': sorted(p['slug'] for p in products if p['slug'] not in covered_models),
             'retailer_observation_timestamps_renewed': False,
         }
+    n11_gap_models = covered_models - n11_present_models
+    n11_gap_admitted = set()
+    if discover_n11:
+        result['n11_store_gap_discovery'] = {
+            'eligible_models': sorted(n11_gap_models), 'source_budget_shared': True,
+            'admitted_models': [], 'same_run_query_reuses': 0,
+            'prices_or_offer_evidence_reused': False}
+
+    def admit_n11_gap(slug):
+        if slug not in n11_gap_models:
+            return False
+        if slug not in n11_gap_admitted:
+            n11_gap_admitted.add(slug)
+            result['n11_store_gap_discovery']['admitted_models'].append(slug)
+        return True
     if memory_discovery:
         from automatic_memory_variants import memory_parent_priority
         result['memory_variant_priority'] = memory_parent_priority(products, prices)
@@ -245,7 +263,8 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
         if memory_discovery and row.get('prepared_offer') is None and row.get('other_memory_variant'):
             from automatic_memory_variants import existing_selected_memory_sibling
             sibling = existing_selected_memory_sibling(product, row['other_memory_variant'], products)
-            if sibling is not None and sibling['slug'] not in covered_models:
+            if sibling is not None and (sibling['slug'] not in covered_models or
+                    discover_n11 and row['retailer'] == 'n11' and admit_n11_gap(sibling['slug'])):
                 offer = row['other_memory_variant']['offer']
                 destination = offer['url']
                 if (sibling['slug'], destination) not in processed:
@@ -492,15 +511,18 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
         for url, product in ([] if category_audit_only else refresh_targets):
             process_target(url, product)
         if discover_n11:
-            from n11_catalog_source import discover_catalog_targets, discover_catalog_memory_targets
+            from n11_catalog_source import discover_catalog_targets, discover_catalog_memory_targets, public_search_card_document
             from reviewed_offer_targets import with_reviewed_radio
             from tr_price_scraper import TRPriceScraper
             inspected = {row['observed_url'] for row in result['rows']} | inventory_urls
+            search_hints = {}
             priorities = (result.get('memory_variant_priority') or {}).get('parent_priorities', {})
             for product in sorted(products, key=lambda p: (
+                    p['slug'] in covered_models,
                     priorities.get(p['slug'], 2) if memory_discovery else 0,
                     prices.get(p['id'], ('', True))[1], p['id'])):
-                if product['slug'] in covered_models:
+                store_gap = product['slug'] in covered_models
+                if store_gap and not admit_n11_gap(product['slug']):
                     continue
                 specs = with_reviewed_radio(product, PriceUpdater.get_expected_specs(product.get('attributes')))
                 storage = specs.get('storage_gb')
@@ -515,12 +537,25 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                     # Pro/Plus/Max and every selected-PDP verification below.
                     query_model = re.sub(r'\s+', ' ', re.sub(r'\b(?:4g|5g|lte)\b', '', model, flags=re.I)).strip()
                     query = query_model if memory_discovery else f'{query_model} {storage} GB'
-                    html, reason, status = phone_search(query)
                 else:
                     query = model if memory_discovery else f'{model} {storage} GB'
-                    html, reason, status = transport.read_n11_search(query)
+                reused = query in search_hints
+                if reused:
+                    html, reason, status = search_hints[query], 'same_run_public_search_hints', None
+                    result['n11_store_gap_discovery']['same_run_query_reuses'] += 1
+                else:
+                    html, reason, status = (phone_search(query) if callable(phone_search)
+                                            else transport.read_n11_search(query))
+                    if html is not None and status == 200:
+                        # Only observed public names/URLs survive to another SKU.
+                        # All price/SKU/seller/stock evidence requires a new PDP.
+                        search_hints[query] = public_search_card_document(html)
                 diagnostic = {'slug': product['slug'], 'retailer': 'n11', 'query': query,
                               'reason': reason, 'http_status': status, 'new_targets': []}
+                if store_gap:
+                    diagnostic['coverage_scope'] = 'missing_n11_platform_offer'
+                if reused:
+                    diagnostic['routing_hints_reused'] = True
                 if callable(phone_search):
                     diagnostic['discovery_scope'] = 'public_phone_category_family_query'
                 result['discovery'].append(diagnostic)
@@ -613,6 +648,11 @@ def save_report(result):
     lines += ['', 'Reasons: ' + json.dumps(counts, ensure_ascii=False), '',
               'Sources: ' + json.dumps(result.get('sources'), ensure_ascii=False), '',
               'No-hint models: ' + ', '.join(result['models_without_priority_hints'])]
+    if result.get('n11_store_gap_discovery'):
+        gaps = result['n11_store_gap_discovery']
+        lines += ['', 'n11 platform-gap routing: ' + json.dumps({
+            'eligible_models': len(gaps['eligible_models']), 'scheduled_models': len(gaps['admitted_models']),
+            'same_run_query_reuses': gaps['same_run_query_reuses'], 'prices_or_offer_evidence_reused': False})]
     if result.get('hepsiburada_category_continuation'):
         lines += ['', 'Hepsiburada category continuation: ' + json.dumps(
             result['hepsiburada_category_continuation'], ensure_ascii=False)]

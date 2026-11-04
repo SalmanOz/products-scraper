@@ -4,6 +4,7 @@ Never persist the surrounding window.model: it also contains visitor/account
 fields. Only the public product, SKU definitions and commercial metadata matter.
 """
 from datetime import datetime, timezone
+from html import escape
 import json
 import re
 from urllib.parse import parse_qs, urljoin, urlparse
@@ -28,6 +29,27 @@ def catalog_request_url(url):
 
 def canonical_product_url(url):
     return urlparse(url)._replace(query='').geturl() if catalog_request_url(url) else None
+
+
+def public_search_card_document(html):
+    """Keep same-run routing hints for sibling SKUs, without prices or state."""
+    if not isinstance(html, str) or len(html.encode()) > 5 * 1024 * 1024:
+        return ''
+    cards, seen = [], set()
+    for anchor in BeautifulSoup(html, 'html.parser').select('a[href]'):
+        headings = anchor.select('h2.product-item-title')
+        if len(headings) != 1:
+            continue
+        title = headings[0].get_text(' ', strip=True)
+        url = canonical_product_url(urljoin('https://www.n11.com/', anchor['href']))
+        if url is None or url in seen or not title or len(title) > 500:
+            continue
+        seen.add(url)
+        cards.append('<a href="' + escape(url, quote=True) + '"><h2 class="product-item-title">' +
+                     escape(title) + '</h2></a>')
+        if len(cards) >= 200:
+            break
+    return ''.join(cards)
 
 
 def discover_catalog_targets(html, name, specs, maximum=2, *, excluded_urls=()):
