@@ -38,7 +38,11 @@ def catalog_request_url(url):
 def selected_technical_text(soup, sku, product_id, listing_id, merchant_id):
     tables = soup.select('#techSpecs[data-test-id="KeyFeaturesTable"]')
     if tables:
-        return _normalized(tables[0].get_text(' ', strip=True)) if len(tables) == 1 else ''
+        # Public iPhone 12 PDP renders two identical copies of this component.
+        # Keep every field, including SKU and condition, in the comparison;
+        # a conflicting or additional copy cannot supply selected evidence.
+        texts = [_normalized(table.get_text(' ', strip=True)) for table in tables]
+        return texts[0] if len(texts) <= 2 and len(set(texts)) == 1 else ''
     # The newer table has no stable CSS class/id. Its own public component
     # event must bind the container to this exact selected SKU and listing.
     found = []

@@ -438,6 +438,12 @@ Kategori bütçeleri ürün sayfası bütçesinden ayrıdır; gecikme, robots ve
 kesicisi her iki yolda da uygulanır. Ürün sayfasında kapasite, 4G/5G, seçili
 ilan/satıcı, GTIN, stok ve normal veya açıkça ayrılmış sepette fiyat kanıtlanır.
 
+Hepsiburada'nın aynı seçili ürün için oluşturduğu iki teknik tablo ancak tüm
+metinleri birebir aynıysa tek gözlem olarak okunur. RAM, depolama, radyo,
+SKU veya kondisyon dahil herhangi bir alan çelişirse ya da ikiden fazla kopya
+varsa teklif reddedilir. Satıcı, seçili kontrol, barkod, stok ve fiyat
+doğrulamaları ile yazım öncesi canlı okuma ayrıca zorunludur.
+
 Trendyol'da mevcut yenileme hedeflerinden en fazla sekiz farklı markanın ürünü
 kategori keşfinden önce okunur; diğer katalog hedefleri normal turunda kalır.
 Bu sayfaların gözlenen telefon/Android telefon marka kategorileri, zorunlu

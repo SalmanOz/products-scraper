@@ -26,6 +26,48 @@ def document(changes=None):
 
 
 class HepsiburadaCatalogTests(unittest.TestCase):
+    def test_identical_duplicate_selected_tables_keep_full_sku_and_seller_proof(self):
+        from copy import deepcopy
+        soup = BeautifulSoup(document(), 'html.parser')
+        table = soup.select_one('#techSpecs')
+        table.insert_after(deepcopy(table))
+        html = str(soup)
+        offer, reason = parse_catalog_buy_box(html, TARGET, NAME, SPECS)
+        self.assertIsNotNone(offer, reason)
+        self.assertTrue(catalog_offer_matches(offer, NAME, SPECS))
+        for before, after in [
+                ('8806094821437', '8806094821438'),
+                ('data-test-id="addToCart"', 'disabled data-test-id="addToCart"'),
+                ('Seçili Kapasite 128 GB', 'Kapasite 128 GB')]:
+            with self.subTest(before=before):
+                self.assertIn(before, html)
+                self.assertIsNone(parse_catalog_buy_box(html.replace(before, after), TARGET, NAME, SPECS)[0])
+
+    def test_duplicate_tables_with_any_different_fact_or_excess_copies_are_rejected(self):
+        from copy import deepcopy
+        original = BeautifulSoup(document(), 'html.parser')
+        text = original.select_one('#techSpecs').get_text(' ', strip=True)
+        for before, after in [
+                ('Dahili Hafıza 128 GB', 'Dahili Hafıza 256 GB'),
+                ('8 GB RAM', '12 GB RAM'),
+                ('Mobil Bağlantı Hızı 5G', 'Mobil Bağlantı Hızı 4.5G'),
+                ('HBCV0000TEST01', 'HBCV0000OTHER1'),
+                ('Stok Kodu', 'Kondisyon C Grade Stok Kodu')]:
+            with self.subTest(before=before):
+                self.assertIn(before, text)
+                for changed_first in (False, True):
+                    soup = deepcopy(original)
+                    table = soup.select_one('#techSpecs')
+                    other = deepcopy(table)
+                    (table if changed_first else other).string = text.replace(before, after)
+                    table.insert_after(other)
+                    self.assertIsNone(parse_catalog_buy_box(str(soup), TARGET, NAME, SPECS)[0])
+        soup = deepcopy(original)
+        table = soup.select_one('#techSpecs')
+        table.insert_after(deepcopy(table))
+        table.insert_after(deepcopy(table))
+        self.assertIsNone(parse_catalog_buy_box(str(soup), TARGET, NAME, SPECS)[0])
+
     def test_information_advisory_is_not_a_hardware_variant_but_requires_its_exact_selected_control(self):
         import json
         from copy import deepcopy

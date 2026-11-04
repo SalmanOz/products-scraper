@@ -55,6 +55,20 @@ def reader():
 
 
 class PriorityCandidateTests(unittest.TestCase):
+    def test_identical_technical_copies_are_rechecked_before_atomic_write_and_commercial_readback(self):
+        from bs4 import BeautifulSoup
+        from unittest.mock import patch
+        html = BeautifulSoup(document(), 'html.parser')
+        table = html.select_one('#techSpecs')
+        table.insert_after(deepcopy(table))
+        with patch(__name__ + '.document', return_value=str(html)):
+            client = Client()
+            result = refresh_candidates(audit(), client=client, reader=reader())
+        self.assertEqual(len(client.writes), 1)
+        self.assertEqual(client.scores, 1)
+        self.assertTrue(result['commercial_readback_verified'])
+        self.assertEqual(result['ingestion']['accepted'], 1)
+
     def test_catalog_delay_expiry_is_typed_before_any_reader_or_writer_runs(self):
         from unittest.mock import Mock, patch
         clock=[datetime.now(timezone.utc)]
