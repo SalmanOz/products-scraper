@@ -150,6 +150,9 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
             'models_needing_recovery': sorted(p['slug'] for p in products if p['slug'] not in covered_models),
             'retailer_observation_timestamps_renewed': False,
         }
+    if memory_discovery:
+        from automatic_memory_variants import memory_parent_priority
+        result['memory_variant_priority'] = memory_parent_priority(products, prices)
     publication_failed = False
     processed = set()
     refresh_urls = {url for url, _ in refresh_targets}
@@ -362,7 +365,10 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                     result['models_without_priority_hints'] if slug != product['slug']]
         if memory_discovery:
             from automatic_memory_variants import memory_variant_destinations
-            for parent, card in memory_variant_destinations(cards, products):
+            memory_hints = memory_variant_destinations(cards, products)
+            priorities = result['memory_variant_priority']['parent_priorities']
+            memory_hints.sort(key=lambda hint: priorities.get(hint[0]['slug'], 2))
+            for parent, card in memory_hints:
                 url = card['source_url']
                 memory_key = (retailer, parent['slug'])
                 if (memory_counts[memory_key] >= 2 or memory_retailer_counts[retailer] >= 24
@@ -506,6 +512,9 @@ def save_report(result):
             'retained_current_multi_merchant_models': len(priority['retained_current_multi_merchant_models']),
             'models_needing_recovery': len(priority['models_needing_recovery']),
             'retailer_observation_timestamps_renewed': False}, ensure_ascii=False)]
+    if result.get('memory_variant_priority'):
+        lines += ['', 'Memory variant priority: ' + json.dumps({key: value for key, value in
+            result['memory_variant_priority'].items() if key != 'parent_priorities'}, ensure_ascii=False)]
     if result.get('discovery'):
         lines += ['', 'Automatic n11 discovery: ' + json.dumps({
             'catalog_queries': len(result['discovery']),
@@ -713,12 +722,18 @@ def main():
     result['hepsiburada_category_frontier_saved'] = save_frontier(STATE_PATH, result)
     save_report(result)  # Keep category progress if public price readback is temporarily unavailable.
     if args.memory_variants:
-        from automatic_memory_variants import prepare_memory_variants, verify_variant_catalog_readback
+        from automatic_memory_variants import prepare_memory_variants, verify_variant_catalog_readback, memory_parent_priority
         from source_ingestion import SourceIngestionClient
         from daily_discovery import write_json_checkpoint
         products = client.get_published_products()
         if len(products) != result['catalog_count']:
             raise ValueError('catalog_changed_before_memory_variant_preparation')
+        try:
+            result['memory_variant_priority'] = memory_parent_priority(products, client.get_public_price_priority())
+        except IngestionClientError:
+            # A temporary optimization read failure cannot erase the original
+            # routing snapshot or replace any fresh retailer evidence.
+            result.setdefault('memory_variant_priority', {})['refresh'] = 'initial_snapshot_retained'
         variant_rows_reported = 0
         def variant_checkpoint(report):
             nonlocal variant_rows_reported

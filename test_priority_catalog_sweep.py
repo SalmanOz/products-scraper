@@ -134,6 +134,42 @@ class TargetPreflightTests(unittest.TestCase):
 
 
 class CategoryDiagnosticTests(unittest.TestCase):
+    def test_missing_model_gets_category_capacity_budget_before_extra_options_of_a_priced_family(self):
+        base = {'id': 33, 'slug': 'samsung-galaxy-a34-5g', 'name': 'Samsung Galaxy A34 5G',
+                'attributes': {'ram_gb': 6, 'storage_gb': 128, 'Connectivity': {'5G': True}}, 'offer_targets': []}
+        sibling = {'id': 301, 'slug': 'samsung-galaxy-a34-5g-8gb-128gb',
+                   'name': 'Samsung Galaxy A34 5G 8GB 128GB',
+                   'attributes': {'ram_gb': 8, 'storage_gb': 128, 'Connectivity': {'5G': True}}, 'offer_targets': []}
+        missing = {'id': 34, 'slug': 'samsung-galaxy-a35-5g', 'name': 'Samsung Galaxy A35 5G',
+                   'attributes': {'ram_gb': 6, 'storage_gb': 128, 'Connectivity': {'5G': True}}, 'offer_targets': []}
+        catalog = [base, sibling, missing]
+        client = Client()
+        client.get_published_products = lambda: deepcopy(catalog)
+        client.get_public_price_priority = lambda: {p['id']: (p['slug'], p['id'] == sibling['id']) for p in catalog}
+        cards = [{'source_url': 'https://www.hepsiburada.com/samsung-galaxy-a34-5g-8gb-256gb-p-HBCV000040I6N3',
+                  'discovery_title': 'Samsung Galaxy A34 5G 8 GB RAM 256 GB', 'stock_priority': True},
+                 {'source_url': 'https://www.hepsiburada.com/samsung-galaxy-a35-5g-8gb-128gb-p-HBCV000040I6N4',
+                  'discovery_title': 'Samsung Galaxy A35 5G 8 GB RAM 128 GB', 'stock_priority': True}]
+        class CategoryTransport(Transport):
+            def read_hepsiburada_category(self, url):
+                return 'category-fixture', 'document_read', 200
+        def parse(html, url, diagnostic=None):
+            diagnostic.update(status='parsed')
+            return cards, None
+        def inspect(transport, url, product):
+            return {'slug': product['slug'], 'retailer': 'Hepsiburada', 'url': url, 'observed_url': url,
+                    'reason': 'document_read', 'http_status': 200, 'prepared_offer': None}
+        with patch('hepsiburada_catalog_discovery.parse_category_document', side_effect=parse), \
+                patch('hepsiburada_catalog_discovery.discovery_links', return_value=[]), \
+                patch('sweep_priority_catalog.inspect_target', side_effect=inspect) as inspector, \
+                patch('sweep_priority_catalog.refresh_candidates') as writer:
+            result = sweep(client=client, transport=CategoryTransport(), discover_hepsiburada=True, memory_discovery=True)
+        self.assertEqual([c.args[2]['slug'] for c in inspector.call_args_list], [missing['slug'], base['slug']])
+        self.assertEqual(result['catalog_count'], 3)
+        self.assertEqual(result['memory_variant_priority']['models_without_current_price'], 1)
+        self.assertFalse(result['writes'])
+        writer.assert_not_called()
+
     def test_one_retailers_capacity_hints_do_not_spend_the_other_retailers_allowance(self):
         client = Client()
         client.product.update(offer_targets=[], attributes={'ram_gb': 6, 'storage_gb': 128,

@@ -53,6 +53,35 @@ def family_key(model):
     return re.sub(r'\s+', ' ', re.sub(r'\b[45]g\b', '', model, flags=re.I)).strip().casefold()
 
 
+def memory_parent_priority(products, public_status):
+    """Route limited variant work to models with no currently priced capacity.
+
+    These public booleans are scheduling hints only. An unpriced 6/128 parent
+    is already covered if its independently verified 8/128 sibling has a price.
+    Radio remains part of the family; an unknown radio never joins another SKU.
+    """
+    groups = {}
+    for product in products:
+        specs = parent_specs(product)
+        model = TRPriceScraper._catalog_model_name(product['name'], product['attributes'])
+        radio = specs.get('network_generation')
+        key = ((family_key(model), radio) if model and radio in ('4g', '5g')
+               else ('unresolved', product['slug']))
+        status = public_status.get(product['id'])
+        priced = (status[1] if isinstance(status, (tuple, list)) and len(status) == 2
+                  and status[0] == product['slug'] and type(status[1]) is bool else None)
+        groups.setdefault(key, []).append((product['slug'], priced))
+    priorities, counts = {}, {0: 0, 1: 0, 2: 0}
+    for family, members in groups.items():
+        level = (1 if any(priced is True for _, priced in members) else
+                 0 if family[0] != 'unresolved' and all(priced is False for _, priced in members) else 2)
+        counts[level] += 1
+        priorities.update((slug, level) for slug, _ in members)
+    return {'source': 'public_current_price_snapshot', 'parent_priorities': priorities,
+            'models_without_current_price': counts[0], 'models_with_current_price': counts[1],
+            'unknown_models': counts[2], 'prices_are_routing_hints_only': True}
+
+
 def variant_identity(parent, ram, storage):
     if (type(ram) is not int or type(storage) is not int or not 1 <= ram <= 64
             or not 32 <= storage <= 4096):
@@ -495,7 +524,28 @@ def observed_variant_candidates(result, products):
         bucket = candidates.setdefault(key, {'parent': deepcopy(parent), 'specs': deepcopy(specs), 'targets': []})
         if offer['url'] not in bucket['targets']:
             bucket['targets'].append(offer['url'])
-    return list(candidates.values())
+    priorities = (result.get('memory_variant_priority') or {}).get('parent_priorities')
+    if not isinstance(priorities, dict):
+        return list(candidates.values())
+    tiers = {0: {}, 1: {}, 2: {}}
+    for candidate in candidates.values():
+        parent = candidate['parent']
+        level = priorities.get(parent['slug'], 2)
+        if type(level) is not int or level not in tiers:
+            level = 2
+        model = matcher._catalog_model_name(parent['name'], parent['attributes'])
+        family = (family_key(model), candidate['specs']['network_generation'])
+        tiers[level].setdefault(family, []).append(candidate)
+    ordered = []
+    for level in (0, 1, 2):
+        families = list(tiers[level].values())
+        # Give every missing model a first attempt before another capacity of
+        # the same model can consume the remaining technical/publication slots.
+        while any(families):
+            for family in families:
+                if family:
+                    ordered.append(family.pop(0))
+    return ordered
 
 
 def memory_variant_destinations(cards, products):

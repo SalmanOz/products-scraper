@@ -9,7 +9,7 @@ from unittest.mock import patch
 from automatic_memory_variants import (TechnicalVariantReader, PublicBrowserTechnicalReader, exact_capacity, selected_technical_document,
     technical_records, variant_identity, observed_variant_candidates, memory_variant_destinations,
     prepare_memory_variants, verify_variant_catalog_readback, memory_target_preflight, canonical_observation_time,
-    declared_technical_targets, CONTRACT)
+    declared_technical_targets, memory_parent_priority, CONTRACT)
 from observed_memory_variants import inspect_trendyol_memory_variant
 from test_observed_memory_variants import alternate_document, ALT_URL
 from test_trendyol_catalog_source import NAME, SPECS
@@ -38,6 +38,67 @@ def tech_document(url=ALT_TECH_URL, ram=8, storage=256, name=NAME):
 
 
 class AutomaticMemoryVariantTests(unittest.TestCase):
+    def test_memory_priority_counts_a_priced_sibling_but_never_merges_radio_or_unknown_public_rows(self):
+        def phone(product_id, name, ram, storage, five_g):
+            return {'id': product_id, 'slug': f'phone-{product_id}', 'name': name,
+                    'attributes': {'ram_gb': ram, 'storage_gb': storage, 'Connectivity': {'5G': five_g}}}
+        catalog = [phone(1, 'Samsung Galaxy A34 5G', 6, 128, True),
+                   phone(2, 'Samsung Galaxy A34 5G 8GB 128GB', 8, 128, True),
+                   phone(3, 'Samsung Galaxy A35 5G', 6, 128, True),
+                   phone(4, 'Samsung Galaxy A15 4G', 4, 128, False),
+                   phone(5, 'Samsung Galaxy A15 5G', 4, 128, True),
+                   phone(6, 'Samsung Galaxy A55 5G', 8, 128, True)]
+        status = {p['id']: (p['slug'], p['id'] in (2, 5)) for p in catalog}
+        status[6] = ('different-slug', False)
+        before = deepcopy(catalog), deepcopy(status)
+        result = memory_parent_priority(catalog, status)
+        self.assertEqual(result['parent_priorities'], {'phone-1': 1, 'phone-2': 1, 'phone-3': 0,
+                                                       'phone-4': 0, 'phone-5': 1, 'phone-6': 2})
+        self.assertEqual((result['models_without_current_price'], result['models_with_current_price'],
+                          result['unknown_models']), (2, 2, 1))
+        self.assertTrue(result['prices_are_routing_hints_only'])
+        self.assertEqual((catalog, status), before)
+
+    def test_a_missing_model_precedes_extra_capacity_of_a_family_with_a_priced_sibling(self):
+        from test_n11_catalog_source import document, URL as n11_url, NAME as n11_name
+        from observed_memory_variants import inspect_n11_memory_variant
+        missing = {'id': 124, 'slug': 'samsung-galaxy-a57', 'name': n11_name,
+                   'attributes': {'ram_gb': 6, 'storage_gb': 128, 'Connectivity': {'5G': True}}}
+        sibling = {'id': 125, 'slug': 'a54-six-gb', 'name': NAME + ' 6GB 128GB',
+                   'attributes': {'ram_gb': 6, 'storage_gb': 128, 'Connectivity': {'5G': True}}}
+        n11_preview = inspect_n11_memory_variant(document(), n11_url, n11_name,
+            {'ram_gb': 6, 'storage_gb': 128, 'network_generation': '5g'})
+        result = self.candidate_result()
+        result['rows'].append({'slug': missing['slug'], 'other_memory_variant': n11_preview})
+        catalog = [PARENT, missing, sibling]
+        result['memory_variant_priority'] = memory_parent_priority(catalog, {
+            PARENT['id']: (PARENT['slug'], False), missing['id']: (missing['slug'], False),
+            sibling['id']: (sibling['slug'], True)})
+        candidates = observed_variant_candidates(result, catalog)
+        self.assertEqual([c['parent']['slug'] for c in candidates], [missing['slug'], PARENT['slug']])
+        self.assertEqual(candidates[0]['targets'], [n11_url])
+
+    def test_each_missing_model_gets_a_first_capacity_attempt_before_second_options(self):
+        from test_n11_catalog_source import document, URL as n11_url, NAME as n11_name
+        from test_trendyol_catalog_source import document as ty_document, URL as ty_url
+        from observed_memory_variants import inspect_n11_memory_variant
+        parent = {**PARENT, 'attributes': {'ram_gb': 6, 'storage_gb': 64, 'network_generation': '5g'}}
+        missing = {'id': 124, 'slug': 'samsung-galaxy-a57', 'name': n11_name,
+                   'attributes': {'ram_gb': 6, 'storage_gb': 128, 'Connectivity': {'5G': True}}}
+        first = inspect_trendyol_memory_variant(ty_document(), ty_url, NAME, parent['attributes'])
+        second = inspect_trendyol_memory_variant(alternate_document(), ALT_URL, NAME, parent['attributes'])
+        other = inspect_n11_memory_variant(document(), n11_url, n11_name,
+            {'ram_gb': 6, 'storage_gb': 128, 'network_generation': '5g'})
+        result = {'rows': [{'slug': parent['slug'], 'other_memory_variant': first},
+                           {'slug': parent['slug'], 'other_memory_variant': second},
+                           {'slug': missing['slug'], 'other_memory_variant': other}]}
+        catalog = [parent, missing]
+        result['memory_variant_priority'] = memory_parent_priority(catalog,
+            {p['id']: (p['slug'], False) for p in catalog})
+        candidates = observed_variant_candidates(result, catalog)
+        self.assertEqual([(c['parent']['slug'], c['specs']['storage_gb']) for c in candidates],
+                         [(parent['slug'], 128), (missing['slug'], 256), (parent['slug'], 256)])
+
     def test_rendered_public_reader_is_scoped_anonymous_and_stops_after_denial(self):
         calls = []
         def response(body):
