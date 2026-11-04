@@ -26,6 +26,25 @@ def document(change=None):
 
 
 class N11CatalogTests(unittest.TestCase):
+    def test_observed_silicone_accessory_title_does_not_spend_the_two_phone_search_slots(self):
+        name = 'Xiaomi Redmi Note 15 4G'
+        specs = {'ram_gb': 6, 'storage_gb': 128, 'network_generation': '4g'}
+        accessory = 'https://www.n11.com/urun/newface-447-xiaomi-redmi-note-15-4g-viera-silikon-spt-gld-bordo-136833926'
+        title = 'Newface - 447 - Xiaomi Redmi Note 15 4g Viera Silikon - Spt-gld - - Bordo'
+        phone = 'https://www.n11.com/urun/xiaomi-redmi-note-15-4g-6-gb-128-gb-123382027'
+        def card(url, title):
+            return f'<a href="{url}"><h2 class="product-item-title">{title}</h2></a>'
+        html = card(accessory, title) + card(accessory.replace('136833926', '136833927'), title.replace('Bordo', 'Siyah'))
+        html += card(phone, name + ' 6 GB RAM 128 GB')
+        result = discover_catalog_targets(html, name, specs)
+        self.assertEqual([r['source_url'] for r in result], [phone])
+        self.assertNotIn('price', result[0])
+        parent = {'id': 999, 'slug': 'xiaomi-redmi-note-15-4g', 'name': name,
+                  'attributes': {'ram_gb': 4, 'storage_gb': 64, 'Connectivity': {'5G': False}}}
+        capacity_accessory = card(accessory, title + ' 6 GB RAM 128 GB')
+        self.assertEqual(discover_catalog_memory_targets(capacity_accessory + html, parent),
+                         [{'source_url': phone, 'discovery_title': name + ' 6 GB RAM 128 GB'}])
+
     def test_other_memory_search_cards_are_only_bounded_same_model_destinations(self):
         parent = {'id': 999, 'slug': 'samsung-galaxy-a57', 'name': NAME,
                   'attributes': {'ram_gb': 6, 'storage_gb': 128, 'Connectivity': {'5G': True}}}

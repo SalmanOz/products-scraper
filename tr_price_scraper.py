@@ -644,7 +644,7 @@ class TRPriceScraper:
         bad_keywords = [
             "kılıf", "kılıfı", "kılıflı", "case", "cam", "protector", "adaptör", "şarj", "kablo", "kulaklık", "earbuds", 
             "watch", "saat", "askı", "zincir", "koruyucu", "kapak", "film", "çanta", "stand", 
-            "lens", "kordon", "askısı", "başlığı", "outlet", "teşhir", "yenilenmiş", "ikinci el",
+            "lens", "kordon", "askısı", "başlığı", "silikon", "outlet", "teşhir", "yenilenmiş", "ikinci el",
             "revizyonlu", "refurbished", "kullanılmış", "tamirli", "b kalite", "a kalite", "c kalite",
             "traş", "köpüğü", "parfüm", "bakım", "kozmetik", "oyuncak", "lego", "puzzle", "kutu", 
             "boş", "aksesuar", "yedek parça", "pil", "batarya", "ekran", "parça", "uyumlu", "for", "için"
