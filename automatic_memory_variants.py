@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 import html as html_lib
 import json
 import re
+import time
 import unicodedata
 from urllib.parse import parse_qsl, quote, urljoin, urlparse
 
@@ -828,6 +829,33 @@ def memory_target_preflight(products, transport, *, maximum=48):
             'models_without_priority_hints': []}
 
 
+def _publish_variant_with_retry(client, payload, row):
+    """Replay this idempotent capacity transaction once after an uncertain reply.
+
+    Reuse the exact fresh evidence and uploaded images; do not repeat retailer
+    requests or change an observation. Explicit quality/identity rejections
+    are terminal. The existing whole-catalog and commercial readbacks still
+    have to verify every recovered acknowledgement.
+    """
+    for attempt in (1, 2):
+        row['publication_attempts'] = attempt
+        try:
+            response = client.session.request('POST', client.base_url + '/api/ingestion/memory-variants',
+                headers={'Authorization': 'Bearer ' + client.secret, 'Accept': 'application/json'},
+                json=payload, timeout=(10, 180), allow_redirects=False)
+        except (requests.Timeout, requests.ConnectionError):
+            row['publication_reply_uncertain'] = True
+            if attempt == 2:
+                raise
+        else:
+            if attempt == 2 or getattr(response, 'status_code', None) not in (502, 503, 504):
+                body = client._json_body(response)
+                if attempt == 2:
+                    row['publication_reply_recovered'] = True
+                return body
+        time.sleep(1)
+
+
 def prepare_memory_variants(result, products, *, transport, technical_reader=None,
                             publish=False, source_client=None, image_store=None, checkpoint=None,
                             maximum_variants=None):
@@ -916,20 +944,26 @@ def prepare_memory_variants(result, products, *, transport, technical_reader=Non
                 payload['parent'].update({key: expected_parent[key] for key in ('ram_gb', 'storage_gb', 'network_generation')})
                 # Image uploads are writes too; never claim no writes after an
                 # unsuccessful later server transaction.
-                response = source_client.session.request('POST', source_client.base_url + '/api/ingestion/memory-variants',
-                    headers={'Authorization': 'Bearer ' + source_client.secret, 'Accept': 'application/json'},
-                    json=payload, timeout=(10, 180))
-                body = source_client._json_body(response)
+                body = _publish_variant_with_retry(source_client, payload, row)
                 if (body.get('committed') is not True or body.get('contract') != CONTRACT
                         or body.get('parent_unchanged') is not True or body.get('outcome') not in ('created', 'existing')
                         or body.get('parent_product_id') != parent['id'] or type(body.get('product_id')) is not int
                         or body['product_id'] <= 0 or body.get('outcome') == 'created' and body.get('slug') != identity['slug']):
                     row['server_issues'] = body.get('issues', [])[:15]
                     raise ValueError('atomic_variant_publication_rejected')
-                row.update(status=body['outcome'], publication={key: body.get(key) for key in
+                outcome = body['outcome']
+                if outcome == 'existing' and body['product_id'] not in {p['id'] for p in products}:
+                    # The first reply may have been lost after commit. The
+                    # replay acknowledges that exact new SKU as existing;
+                    # it must still appear as a new child in baseline checks.
+                    if body.get('slug') != identity['slug']:
+                        raise ValueError('recovered_variant_identity_conflict')
+                    outcome = 'created'
+                    row['server_outcome'] = body['outcome']
+                row.update(status=outcome, publication={key: body.get(key) for key in
                     ('product_id', 'slug', 'parent_product_id', 'parent_unchanged', 'scores_recalculated')})
                 row['score_refresh_pending'] = body.get('scores_recalculated') is not True
-                report[body['outcome']] += 1
+                report[outcome] += 1
         except Exception as error:
             reason = str(error) if isinstance(error, ValueError) and re.fullmatch(r'[a-z0-9_]{1,100}', str(error)) else type(error).__name__
             row.update(status='rejected', reason=reason)

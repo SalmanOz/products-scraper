@@ -538,6 +538,17 @@ retailer SKU/seller/stock/price is independently mandatory. Missing evidence
 rejects that candidate without changing its parent. Original catalog identity
 and coverage are reported separately from the enlarged catalog readback.
 
+If that atomic publication loses its reply or returns HTTP 502/503/504, the
+client can replay the identical transaction once. It reuses the already uploaded
+images and fresh observations; it performs no extra retailer reads and never
+retries an explicit quality/identity rejection. A replay may acknowledge a
+committed new capacity as `existing`; it is counted as created only when its ID
+was absent from the pre-attempt catalog and its expected slug still matches.
+The full identity and exact commercial readbacks remain mandatory. Two uncertain
+replies cannot count a variant as published, and an unacknowledged new catalog
+row still stops the sweep. The artifact records the attempt count and reply
+recovery separately from successful publication.
+
 Families with no current priced capacity get an immediate preparation attempt
 when a fully observed other-capacity preview is discovered. Each missing family
 gets one early slot; remaining candidates wait until the full discovery pass.

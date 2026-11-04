@@ -2,6 +2,7 @@ import html
 import base64
 import json
 import unittest
+import requests
 from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -764,6 +765,85 @@ class AutomaticMemoryVariantTests(unittest.TestCase):
         self.assertEqual(payload['offers'][0]['source_title'], fresh['source_title'])
         self.assertEqual(payload['offers'][0]['observed_at'], canonical_observation_time(fresh['observed_at']))
         self.assertNotIn('product_id', payload['offers'][0])
+
+    def test_lost_commit_reply_or_failed_score_can_replay_without_duplicate_variant_or_source_reads(self):
+        for lost_reply in (True, False):
+            result = self.candidate_result()
+            original = deepcopy(PARENT)
+            fresh = deepcopy(result['rows'][0]['other_memory_variant']['offer'])
+            identity = variant_identity(PARENT, 8, 256)
+            child = {'id': 987, **identity, 'attributes': {'ram_gb': 8, 'storage_gb': 256,
+                                                         'Connectivity': {'5G': True}}}
+            catalog = [deepcopy(PARENT)]
+            calls = []
+            def request(method, url, **kwargs):
+                calls.append(kwargs)
+                acknowledgement = {'committed': True, 'contract': CONTRACT, 'parent_unchanged': True,
+                    'outcome': 'created' if len(calls) == 1 else 'existing', 'slug': identity['slug'],
+                    'product_id': child['id'], 'parent_product_id': PARENT['id'], 'scores_recalculated': len(calls) == 2}
+                if len(calls) == 1:
+                    catalog.append(deepcopy(child))
+                    if lost_reply:
+                        raise requests.ReadTimeout('reply lost after commit')
+                return SimpleNamespace(status_code=503 if len(calls) == 1 else 200, body=acknowledgement)
+            client = SimpleNamespace(base_url='https://teknoskor.com', secret='fixture-only',
+                session=SimpleNamespace(request=request), _json_body=lambda response: response.body)
+            store = unittest.mock.Mock(upload=unittest.mock.Mock(return_value='https://cdn.teknoskor.com/fixture.webp'))
+            with patch('automatic_memory_variants.technical_records', return_value=([{'attribute_key': 'ram_gb'}], {}, ['source-image'])), \
+                 patch('audit_priority_retailers.inspect_target', return_value={'prepared_offer': fresh}) as inspect, \
+                 patch('automatic_memory_variants.time.sleep'):
+                report = prepare_memory_variants(result, [PARENT], transport=SimpleNamespace(report=lambda: {}),
+                    technical_reader=SimpleNamespace(documents=3), publish=True, source_client=client, image_store=store)
+            self.assertEqual(len(calls), 2)
+            self.assertIs(calls[0]['json'], calls[1]['json'])
+            self.assertEqual(inspect.call_count, 1)
+            store.upload.assert_called_once()
+            row = report['rows'][0]
+            self.assertEqual((report['created'], report['existing'], row['status']), (1, 0, 'created'))
+            self.assertEqual(row['server_outcome'], 'existing')
+            self.assertEqual(row['publication_attempts'], 2)
+            self.assertTrue(row['publication_reply_recovered'])
+            self.assertFalse(row['score_refresh_pending'])
+            self.assertEqual(verify_variant_catalog_readback([PARENT], catalog, report)['new_variants_verified'], 1)
+            self.assertEqual(PARENT, original)
+
+    def test_two_uncertain_publication_replies_never_count_an_unacknowledged_commit_as_coverage(self):
+        result = self.candidate_result()
+        fresh = deepcopy(result['rows'][0]['other_memory_variant']['offer'])
+        identity = variant_identity(PARENT, 8, 256)
+        child = {'id': 987, **identity, 'attributes': {'ram_gb': 8, 'storage_gb': 256, 'Connectivity': {'5G': True}}}
+        client = unittest.mock.Mock(base_url='https://teknoskor.com', secret='fixture-only')
+        client.session.request.side_effect = requests.ReadTimeout('reply unknown')
+        with patch('automatic_memory_variants.technical_records', return_value=([{'attribute_key': 'ram_gb'}], {}, ['source-image'])), \
+             patch('audit_priority_retailers.inspect_target', return_value={'prepared_offer': fresh}), \
+             patch('automatic_memory_variants.time.sleep'):
+            report = prepare_memory_variants(result, [PARENT], transport=SimpleNamespace(report=lambda: {}),
+                technical_reader=SimpleNamespace(documents=3), publish=True, source_client=client,
+                image_store=unittest.mock.Mock(upload=unittest.mock.Mock(return_value='https://cdn.teknoskor.com/fixture.webp')))
+        self.assertEqual(client.session.request.call_count, 2)
+        self.assertEqual((report['created'], report['existing']), (0, 0))
+        self.assertEqual(report['rows'][0]['reason'], 'ReadTimeout')
+        self.assertTrue(report['rows'][0]['publication_reply_uncertain'])
+        self.assertTrue(report['writes'])
+        with self.assertRaisesRegex(ValueError, 'published_variant_catalog_readback_incomplete'):
+            verify_variant_catalog_readback([PARENT], [PARENT, child], report)
+
+    def test_explicit_variant_quality_rejection_is_never_retried(self):
+        result = self.candidate_result()
+        fresh = deepcopy(result['rows'][0]['other_memory_variant']['offer'])
+        client = unittest.mock.Mock(base_url='https://teknoskor.com', secret='fixture-only')
+        client.session.request.return_value = SimpleNamespace(status_code=422)
+        client._json_body.return_value = {'committed': False, 'issues': ['technical_model_identity_mismatch']}
+        with patch('automatic_memory_variants.technical_records', return_value=([{'attribute_key': 'ram_gb'}], {}, ['source-image'])), \
+             patch('audit_priority_retailers.inspect_target', return_value={'prepared_offer': fresh}), \
+             patch('automatic_memory_variants.time.sleep') as sleep:
+            report = prepare_memory_variants(result, [PARENT], transport=SimpleNamespace(report=lambda: {}),
+                technical_reader=SimpleNamespace(documents=3), publish=True, source_client=client,
+                image_store=unittest.mock.Mock(upload=unittest.mock.Mock(return_value='https://cdn.teknoskor.com/fixture.webp')))
+        client.session.request.assert_called_once()
+        sleep.assert_not_called()
+        self.assertEqual(report['created'], 0)
+        self.assertEqual(report['rows'][0]['server_issues'], ['technical_model_identity_mismatch'])
 
     def test_one_failed_source_image_can_recover_but_no_image_cannot_create_a_variant(self):
         result = self.candidate_result()
