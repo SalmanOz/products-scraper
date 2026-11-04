@@ -265,6 +265,50 @@ def selected_technical_document(html, url, model, specs, *, canonical_model_url=
             'observed_at': utc_observation_time()}
 
 
+def rejected_technical_observation(document, url, model, specs, phase):
+    """Keep bounded public identity facts, never the document or script state.
+
+    A missing exact proof must stay rejected. These observations distinguish
+    an unselected capacity from missing metadata in the anonymous CI renderer.
+    They are diagnostics only and are never supplied to publication.
+    """
+    soup = BeautifulSoup(document, 'html.parser')
+    sections = extract_spec_sections(soup)
+    connectivity = next((v for k, v in sections.items() if 'connect' in k.casefold()), {})
+    metadata = []
+    for key in ('deviceki', 'devicecompare'):
+        nodes = soup.select(f'meta[name="{key}"]')
+        item = {'key': key, 'count': len(nodes), 'valid_json': False}
+        if len(nodes) == 1:
+            try:
+                value = json.loads(html_lib.unescape(nodes[0].get('content', '')))
+                item['valid_json'] = isinstance(value, dict)
+                if isinstance(value, dict):
+                    name = value.get('name')
+                    if isinstance(name, str) and len(name) <= 120 and not re.search(r'[\x00-\x1f]', name):
+                        item['model_name'] = name
+                    slug = value.get('slug')
+                    if isinstance(slug, str) and re.fullmatch(r'[a-z0-9-]{1,160}', slug):
+                        item['selected_slug'] = slug
+            except (ValueError, TypeError):
+                pass
+        metadata.append(item)
+    canonicals = soup.select('link[rel="canonical"][href]')
+    active = soup.select('.versions-list > .item.active')
+    return {'scope': 'rejected_selected_technical_document', 'phase': phase,
+        'model': model, 'source_url': url,
+        'requested_specs': {k: specs.get(k) for k in ('ram_gb', 'storage_gb', 'network_generation')},
+        'observed_specs': {
+            'ram_gb': exact_capacity(find_section_spec(sections, 'Hardware', 'Memory RAM', 'RAM')),
+            'storage_gb': exact_capacity(find_section_spec(sections, 'Hardware', 'Capacity', 'Storage')),
+            'network_generation': PriceUpdater.get_expected_specs({'Connectivity': connectivity}).get('network_generation')},
+        'metadata': metadata, 'canonical_count': len(canonicals),
+        'canonical_urls': [target for node in canonicals[:3]
+                           if (target := observed_technical_link(node['href'], url))],
+        'active_version_count': len(active),
+        'active_version_urls': [target for node in active[:3] for target in declared_technical_targets(node, url)][:6]}
+
+
 class TechnicalVariantReader:
     """Anonymous public GETs with a per-invocation bound and denial stop."""
     def __init__(self, reader=None, maximum_documents=48):
@@ -330,6 +374,7 @@ class TechnicalVariantReader:
         if proof:
             proof['observed_at'] = self.observed_at[base]
             return html, proof
+        self.diagnostics.append(rejected_technical_observation(html, base, model, specs, 'requested_base'))
         soup = BeautifulSoup(html, 'html.parser')
         raw_specs = extract_spec_sections(soup)
         default_specs = {
@@ -340,6 +385,7 @@ class TechnicalVariantReader:
         if (not default_specs['ram_gb'] or not default_specs['storage_gb']
                 or not 1 <= default_specs['ram_gb'] <= 64 or not 32 <= default_specs['storage_gb'] <= 4096
                 or selected_technical_document(html, base, model, default_specs) is None):
+            self.diagnostics.append(rejected_technical_observation(html, base, model, default_specs, 'model_family'))
             raise ValueError('technical_model_family_not_verified')
         observed = []
         observed_priority = {}
@@ -387,6 +433,7 @@ class TechnicalVariantReader:
             if proof:
                 proof['observed_at'] = self.observed_at[url]
                 return html, proof
+            self.diagnostics.append(rejected_technical_observation(html, url, model, specs, 'requested_capacity'))
         raise ValueError('exact_selected_technical_memory_not_observed')
 
 
@@ -628,7 +675,8 @@ def prepare_memory_variants(result, products, *, transport, technical_reader=Non
     candidates = observed_variant_candidates(result, products)
     report = {'contract': CONTRACT, 'purpose': 'automatic_existing_model_memory_variants',
               'publish': publish, 'writes': False, 'observed_candidates': len(candidates),
-              'attempt_limit': MAX_VARIANTS, 'rows': [], 'created': 0, 'existing': 0}
+              'attempt_limit': MAX_VARIANTS, 'rows': [], 'created': 0, 'existing': 0,
+              'technical_diagnostics': getattr(technical_reader, 'diagnostics', [])}
     for candidate in candidates[:MAX_VARIANTS]:
         parent, specs = candidate['parent'], candidate['specs']
         identity = variant_identity(parent, specs['ram_gb'], specs['storage_gb'])

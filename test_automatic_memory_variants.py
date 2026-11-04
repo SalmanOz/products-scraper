@@ -258,6 +258,44 @@ class AutomaticMemoryVariantTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'not_observed'):
             TechnicalVariantReader(WrongReader()).locate(PARENT, specs)
 
+    def test_failed_selected_capacity_reports_observed_facts_without_document_state(self):
+        base = tech_document(TECH_URL, storage=128).replace('</body>',
+            f'<ul class="versions-list"><li class="item"><a href="{ALT_TECH_URL}">8 GB 256 GB</a></li></ul></body>')
+        child = tech_document(ram=6).replace('</body>',
+            '<script>PRIVATE_DOCUMENT_STATE</script><div>DO_NOT_RETAIN_PAGE_TEXT</div></body>')
+        class Reader:
+            def read(self, url):
+                if '_json/autocomplete' in url:
+                    return json.dumps({'results': [{'full_name': NAME, 'url': TECH_URL.rsplit('where-to-buy-', 1)[1]}]})
+                return {TECH_URL: base, ALT_TECH_URL: child}[url]
+        reader = TechnicalVariantReader(Reader())
+        with self.assertRaisesRegex(ValueError, 'exact_selected_technical_memory_not_observed'):
+            reader.locate(PARENT, dict(SPECS, storage_gb=256))
+        diagnostic = reader.diagnostics[-1]
+        self.assertEqual(diagnostic['phase'], 'requested_capacity')
+        self.assertEqual(diagnostic['requested_specs'], {'ram_gb': 8, 'storage_gb': 256, 'network_generation': '5g'})
+        self.assertEqual(diagnostic['observed_specs'], {'ram_gb': 6, 'storage_gb': 256, 'network_generation': '5g'})
+        self.assertEqual(diagnostic['canonical_urls'], [ALT_TECH_URL])
+        self.assertEqual(diagnostic['metadata'][0]['model_name'], NAME)
+        serialized = json.dumps(reader.diagnostics)
+        for private in ('PRIVATE_DOCUMENT_STATE', 'DO_NOT_RETAIN_PAGE_TEXT', '<script>', 'partials', 'phone-a54_big'):
+            self.assertNotIn(private, serialized)
+
+    def test_rejected_model_family_reports_missing_metadata_and_stays_rejected(self):
+        class Reader:
+            def read(self, url):
+                if '_json/autocomplete' in url:
+                    return json.dumps({'results': [{'full_name': NAME, 'url': TECH_URL.rsplit('where-to-buy-', 1)[1]}]})
+                return tech_document(TECH_URL, storage=128).replace('name="deviceki"', 'name="other"').replace(
+                    'name="devicecompare"', 'name="othercompare"')
+        reader = TechnicalVariantReader(Reader())
+        with self.assertRaisesRegex(ValueError, 'technical_model_family_not_verified'):
+            reader.locate(PARENT, dict(SPECS, storage_gb=256))
+        diagnostic = reader.diagnostics[-1]
+        self.assertEqual(diagnostic['phase'], 'model_family')
+        self.assertEqual([item['count'] for item in diagnostic['metadata']], [0, 0])
+        self.assertEqual(diagnostic['observed_specs']['storage_gb'], 128)
+
     def test_non_anchor_version_card_uses_only_its_declared_public_target(self):
         base = tech_document(TECH_URL, storage=128).replace('</body>',
             f'<ul class="versions-list"><li class="item" data-url="{ALT_TECH_URL}">8GB · 256GB</li></ul></body>')
@@ -366,6 +404,27 @@ class AutomaticMemoryVariantTests(unittest.TestCase):
         self.assertEqual(PARENT['attributes']['storage_gb'], 128)
         source_client.session.request.assert_not_called()
         image_store.upload.assert_not_called()
+
+    def test_failed_technical_observation_is_checkpointed_before_remaining_candidates(self):
+        reader = SimpleNamespace(documents=2, diagnostics=[])
+        snapshots = []
+        client, store = unittest.mock.Mock(), unittest.mock.Mock()
+        def reject(*args):
+            reader.diagnostics.append({'scope': 'rejected_selected_technical_document',
+                                       'observed_specs': {'ram_gb': 6, 'storage_gb': 256}})
+            raise ValueError('exact_selected_technical_memory_not_observed')
+        with patch('automatic_memory_variants.technical_records', side_effect=reject), \
+             patch('audit_priority_retailers.inspect_target') as inspect:
+            report = prepare_memory_variants(self.candidate_result(), [PARENT],
+                transport=SimpleNamespace(report=lambda: {}), technical_reader=reader,
+                publish=True, source_client=client, image_store=store,
+                checkpoint=lambda r: snapshots.append(deepcopy(r)))
+        self.assertEqual(snapshots[0]['technical_diagnostics'], reader.diagnostics)
+        self.assertEqual(report['rows'][0]['status'], 'rejected')
+        self.assertFalse(report['writes'])
+        inspect.assert_not_called()
+        client.session.request.assert_not_called()
+        store.upload.assert_not_called()
 
     def test_atomic_writer_receives_new_capacity_proof_and_immutable_parent_in_one_payload(self):
         result = self.candidate_result()

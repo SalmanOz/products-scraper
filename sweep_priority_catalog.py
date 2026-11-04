@@ -735,12 +735,17 @@ def main():
             # routing snapshot or replace any fresh retailer evidence.
             result.setdefault('memory_variant_priority', {})['refresh'] = 'initial_snapshot_retained'
         variant_rows_reported = 0
+        variant_diagnostics_reported = 0
         def variant_checkpoint(report):
-            nonlocal variant_rows_reported
+            nonlocal variant_rows_reported, variant_diagnostics_reported
             write_json_checkpoint(Path('automatic-memory-variants.json'), report)
             for row in report['rows'][variant_rows_reported:]:
                 print('Automatic memory variant: ' + json.dumps(row, ensure_ascii=False), flush=True)
             variant_rows_reported = len(report['rows'])
+            diagnostics = report.get('technical_diagnostics', [])
+            for diagnostic in diagnostics[variant_diagnostics_reported:]:
+                print('Automatic memory technical diagnostic: ' + json.dumps(diagnostic, ensure_ascii=False), flush=True)
+            variant_diagnostics_reported = len(diagnostics)
         variant_report = prepare_memory_variants(result, products,
             transport=PriorityRetailerTransport(maximum_per_host=24, n11_collector=getattr(client, 'n11_document_get', None)),
             publish=args.publish, source_client=SourceIngestionClient.from_env() if args.publish else None,
