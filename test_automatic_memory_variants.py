@@ -889,13 +889,30 @@ class AutomaticMemoryVariantTests(unittest.TestCase):
         added = {'id': 987, 'name': variant['name'], 'slug': variant['slug'],
                  'attributes': {'ram_gb': 8, 'storage_gb': 256, 'Connectivity': {'5G': True}}}
         self.assertEqual(verify_variant_catalog_readback([PARENT], [PARENT, added], report),
-                         {'parent_identities_unchanged': 1, 'new_variants_verified': 1, 'catalog_after': 2})
+                         {'parent_identities_unchanged': 1, 'parent_attributes_unchanged': 1,
+                          'new_variants_verified': 1, 'catalog_after': 2})
         for after in [[PARENT], [added], [PARENT, {**added, 'attributes': dict(SPECS)}],
                       [PARENT, {**added, 'slug': 'wrong'}], [PARENT, added, {**added, 'id': 988}]]:
             with self.assertRaises(ValueError):
                 verify_variant_catalog_readback([PARENT], after, report)
         with self.assertRaises(ValueError):
             verify_variant_catalog_readback([PARENT], [{**PARENT, 'attributes': dict(SPECS, ram_gb=12)}, added], report)
+
+    def test_catalog_readback_preserves_all_technical_attributes_with_exact_json_types(self):
+        original=deepcopy(PARENT)
+        original['attributes'].update(battery_mah=5000,Camera={'Resolution':'50 MP'},
+                                      Software={'OS':'Android 14'},flag=1)
+        after=deepcopy(original)
+        after['offer_targets']=[{'source_url':'https://www.n11.com/urun/samsung-galaxy-a54-12345001'}]
+        self.assertEqual(verify_variant_catalog_readback([original],[after],{'rows':[]})['parent_attributes_unchanged'],1)
+        for key,value in [('battery_mah',4999),('Camera',{'Resolution':'48 MP'}),
+                          ('Software',{'OS':'Android 15'}),('flag',True),('extra','unexpected')]:
+            changed=deepcopy(after);changed['attributes'][key]=value
+            with self.subTest(key=key),self.assertRaisesRegex(ValueError,'original_catalog_attributes_changed_after_variants'):
+                verify_variant_catalog_readback([original],[changed],{'rows':[]})
+        changed=deepcopy(after);del changed['attributes']['Camera']
+        with self.assertRaisesRegex(ValueError,'original_catalog_attributes_changed_after_variants'):
+            verify_variant_catalog_readback([original],[changed],{'rows':[]})
 
 
 if __name__ == '__main__':

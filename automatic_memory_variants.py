@@ -995,6 +995,15 @@ def verify_variant_catalog_readback(before, after, report):
     current = {p['id']: identity(p) for p in after}
     if len(current) != len(after) or any(current.get(key) != value for key, value in original.items()):
         raise ValueError('original_catalog_identity_changed_after_variants')
+    # RAM/storage/radio identity alone does not prove that the existing
+    # catalog's other technical features were preserved. Compare the entire
+    # authenticated attribute document, retaining JSON types and list order;
+    # price rows and refresh hints are intentionally outside this snapshot.
+    attributes = {p['id']: json.dumps(p.get('attributes'), sort_keys=True, ensure_ascii=False,
+                                     separators=(',', ':'), allow_nan=False) for p in after}
+    if any(attributes.get(p['id']) != json.dumps(p.get('attributes'), sort_keys=True, ensure_ascii=False,
+                separators=(',', ':'), allow_nan=False) for p in before):
+        raise ValueError('original_catalog_attributes_changed_after_variants')
     expected = {}
     for row in report['rows']:
         if row['status'] != 'created':
@@ -1008,4 +1017,5 @@ def verify_variant_catalog_readback(before, after, report):
                                 variant['storage_gb'], variant['network_generation'])
     if set(current) - set(original) != set(expected) or any(current.get(key) != value for key, value in expected.items()):
         raise ValueError('published_variant_catalog_readback_incomplete')
-    return {'parent_identities_unchanged': len(original), 'new_variants_verified': len(expected), 'catalog_after': len(current)}
+    return {'parent_identities_unchanged': len(original), 'parent_attributes_unchanged': len(original),
+            'new_variants_verified': len(expected), 'catalog_after': len(current)}

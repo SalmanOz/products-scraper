@@ -642,6 +642,12 @@ public seller/URL/price readback; an unconfirmed commit or mismatch stops later
 writes while GET-only diagnosis continues. The 80% gate uses the full enlarged
 catalog, with the original catalog's coverage reported separately.
 
+Variant readback compares every original authenticated technical attribute,
+including nested sections and JSON value types, in addition to the complete
+model/memory/radio identity. Changed prices and refresh URL hints are allowed;
+changed original specifications stop subsequent publications. Reports expose
+`parent_attributes_unchanged` separately from the identity count.
+
 n11 PDP reads retain only the observed public `magaza`, `renk` and
 `dahili-hafiza` selectors. The selected shop slug, color and capacity must
 independently match the URL, public seller profile, SKU, GTIN, stock, serialized
