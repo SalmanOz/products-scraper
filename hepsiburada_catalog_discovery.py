@@ -132,7 +132,12 @@ def _category_soup(html, url):
         return None
     soup = BeautifulSoup(html, 'html.parser')
     headings = soup.select('h1')
-    title = TRPriceScraper._normalize_words(headings[0].get_text(' ', strip=True)) if len(headings) == 1 else ''
+    def heading_words(value):
+        normalized = TRPriceScraper._normalize_words(value)
+        # Observed category H1s separate Fold/Flip from the generation while
+        # the taxonomy joins them. This changes routing only, never PDP names.
+        return re.sub(r'\b(fold|flip)\s+(\d{1,2})\b', r'\1\2', normalized)
+    title = heading_words(headings[0].get_text(' ', strip=True)) if len(headings) == 1 else ''
     if not title or len(title) > 250:
         return None
     path = urlparse(url).path
@@ -140,13 +145,13 @@ def _category_soup(html, url):
     # supply missing model qualifiers or become positive PDP/SKU evidence.
     category_words = {'cep', 'telefon', 'telefonu', 'telefonlar', 'telefonlari',
                       'android', 'iphone', 'ios', 'modelleri', 'fiyatlari', 've',
-                      'ozellikleri', 'indirimleri'}
+                      'ozellikleri', 'indirimleri', 'renkleri'}
     def category_tail(words):
         return bool(words) and len(words) <= 24 and all(
             word in category_words or re.fullmatch(r'20\d{2}', word) for word in words)
     model = _model_taxonomy(path)
     if model:
-        name = TRPriceScraper._normalize_words(model[0].replace('-', ' '))
+        name = heading_words(model[0].replace('-', ' '))
         labels = {name}
         parts = name.split()
         brand_words = {a for aliases in TRPriceScraper.PHONE_BRAND_ALIASES.values() for a in aliases}

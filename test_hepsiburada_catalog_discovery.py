@@ -21,6 +21,25 @@ def document(brand=False):
 
 
 class HepsiburadaDiscoveryTests(unittest.TestCase):
+    def test_observed_continuation_fold_flip_and_iphone_color_headings_preserve_model_boundaries(self):
+        cases = [
+            ('https://www.hepsiburada.com/samsung-galaxy-z-fold8-android-telefonlar-xc-60005201-b8848-t6808', 'Samsung Galaxy Z Fold 8'),
+            ('https://www.hepsiburada.com/samsung-galaxy-z-fold8-ultra-android-telefonlar-xc-60005201-b8848-t6810', 'Samsung Galaxy Z Fold 8 Ultra'),
+            ('https://www.hepsiburada.com/samsung-galaxy-z-flip8-android-telefonlar-xc-60005201-b8848-t6809', 'Samsung Galaxy Z Flip 8'),
+            ('https://www.hepsiburada.com/iphone-17-iphone-ios-telefonlar-xc-60005202-t6721', 'iPhone 17 Özellikleri & Renkleri'),
+        ]
+        for url, title in cases:
+            diagnostic = {}
+            parse_category_document('<h1>' + title + '</h1>', url, diagnostic)
+            self.assertEqual(diagnostic['status'], 'parsed', title)
+            for wrong in [title.replace(' 8', ' 7'), title.replace(' 17', ' 18'),
+                          title + ' Pro', title.replace('Samsung', 'Xiaomi')]:
+                if wrong == title:
+                    continue
+                diagnostic = {}
+                parse_category_document('<h1>' + wrong + '</h1>', url, diagnostic)
+                self.assertEqual(diagnostic['status'], 'category_identity_missing', wrong)
+
     def test_observed_bare_vivo_heading_matches_duplicated_brand_taxonomy_without_losing_model_qualifiers(self):
         url = 'https://www.hepsiburada.com/vivo-vivo-x300-android-telefonlar-xc-60005201-b8855-t6828'
         diagnostic = {}
