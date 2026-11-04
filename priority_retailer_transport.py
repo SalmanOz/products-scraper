@@ -228,6 +228,15 @@ class PriorityRetailerTransport:
             return None, 'invalid_catalog_category', None
         return self._read_document(url, 'www.teknosa.com', category=True)
 
+    def read_teknosa_classification(self, document_url, url, *, fresh=False):
+        # Only the selected native PDP code may address its public lazy tab.
+        # Share the same source circuit, robots, delay and total PDP allowance.
+        if (product_host(document_url) != 'www.teknosa.com' or urlparse(document_url).query
+                or url != 'https://www.teknosa.com/getClassificationData?productCode='
+                + urlparse(document_url).path.rsplit('-p-', 1)[-1]):
+            return None, 'invalid_selected_technical_url', None
+        return self._read_document(url, 'www.teknosa.com', fresh=fresh, classification=True)
+
     def read_hepsiburada_category(self, url):
         from hepsiburada_catalog_discovery import category_identity
         if category_identity(url) is None:
@@ -241,7 +250,7 @@ class PriorityRetailerTransport:
             return None, 'invalid_catalog_category', None
         return self._read_document(url, 'www.trendyol.com', category=True)
 
-    def _read_document(self, url, host, category=False, fresh=False):
+    def _read_document(self, url, host, category=False, fresh=False, classification=False):
         with self._lock:
             state = self._states.setdefault(host, {'rules': None, 'robots': 'not_loaded',
                 'pdp_requests': 0, 'search_requests': 0, 'browser_requests': 0,
@@ -291,9 +300,12 @@ class PriorityRetailerTransport:
                 state['pdp_requests'] += 1
                 if category:
                     state['category_requests'] = category_count + 1
+                if classification:
+                    state['classification_requests'] = state.get('classification_requests', 0) + 1
                 if urlparse(url).path in ('/arama', N11_PHONE_SEARCH_PATH):
                     state['search_requests'] += 1
-                raw, reason, status = self._read(url, MAX_HTML_BYTES, 'text/html', state)
+                raw, reason, status = self._read(url, 64 * 1024 if classification else MAX_HTML_BYTES,
+                                                 'application/json' if classification else 'text/html', state)
                 if reason != 'ready':
                     if reason == 'browser_timeout' and status == 504 and timeout_sku:
                         state['browser_timeout_skus'].add(timeout_sku)
@@ -318,10 +330,10 @@ class PriorityRetailerTransport:
     def report(self):
         return {HOSTS[host]: {**{key: value for key, value in state.items()
                               if key in {'robots', 'browser_requests', 'blocked', 'search_requests', 'category_requests',
-                                         'transport_error_type'}},
+                                         'transport_error_type', 'classification_requests'}},
                               **({'browser_timeout_sku_count': len(state['browser_timeout_skus']),
                                   'browser_timeout_sku_skips': state['browser_timeout_sku_skips']}
                                  if state['browser_timeout_skus'] else {}),
-                              'pdp_requests': state['pdp_requests'] - state['search_requests'] - state.get('category_requests', 0),
+                              'pdp_requests': state['pdp_requests'] - state['search_requests'] - state.get('category_requests', 0) - state.get('classification_requests', 0),
                               'document_requests': state['pdp_requests']}
                 for host, state in self._states.items()}

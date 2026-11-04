@@ -138,6 +138,14 @@ def inspect_target(transport, url, product):
             specs = with_reviewed_radio(product, PriceUpdater.get_expected_specs(product.get('attributes')))
             offer, why = parse_catalog_offer(html, url,
                 {'name': product['name'], 'specs': specs})
+            technical = None
+            if offer is None and why == 'catalog_variant_mismatch':
+                from teknosa_public_technical import read_observation
+                technical, technical_reason = read_observation(transport, html, observed_url)
+                row['teknosa_public_technical_reason'] = technical_reason
+                if technical is not None:
+                    offer, why = parse_catalog_offer(html, url,
+                        {'name': product['name'], 'specs': specs}, technical)
             row.update(reader_reason=why, prepared_offer=offer)
             if offer is not None and url == observed_url:
                 from teknosa_seller_cards import public_seller_offers
@@ -145,7 +153,7 @@ def inspect_target(transport, url, product):
                     {'name': product['name'], 'specs': specs}, maximum=3)
             if offer is None:
                 from observed_memory_variants import inspect_teknosa_memory_variant
-                other = inspect_teknosa_memory_variant(html, url, product['name'], specs)
+                other = inspect_teknosa_memory_variant(html, url, product['name'], specs, technical)
                 if other is not None:
                     row['other_memory_variant'] = other
         if host == 'www.hepsiburada.com':

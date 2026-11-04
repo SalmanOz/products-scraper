@@ -188,7 +188,7 @@ def parse_exact_first_party_offer(html: str, final_url: str = URL, catalog_profi
     return result, 'observed_exact_first_party_cash_offer'
 
 
-def parse_catalog_offer(html, url, profile):
+def parse_catalog_offer(html, url, profile, technical_observation=None):
     if urlparse(url).query:
         from teknosa_seller_cards import parse_seller_destination
         return parse_seller_destination(html, url, profile)
@@ -197,7 +197,7 @@ def parse_catalog_offer(html, url, profile):
         offer['platform'] = 'Teknosa'
         return offer, reason
     from teknosa_marketplace_source import parse_selected_marketplace
-    return parse_selected_marketplace(html, url, profile)
+    return parse_selected_marketplace(html, url, profile, technical_observation)
 
 
 class TeknosaCatalogSource:
@@ -208,6 +208,7 @@ class TeknosaCatalogSource:
         self._profiles = {}
         self._ambiguous = set()
         self._documents = {}
+        self._technical_documents = {}
 
     def register_catalog_targets(self, name, targets, specs):
         from priority_retailer_transport import product_host
@@ -254,6 +255,21 @@ class TeknosaCatalogSource:
         if html is None:
             return None, reason, status
         offer, reason = parse_catalog_offer(html, url, self._profiles[url])
+        if offer is None and reason == 'catalog_variant_mismatch':
+            from teknosa_public_technical import read_observation, MAX_AGE_SECONDS
+            technical = self._technical_documents.get(document_url)
+            if technical is not None:
+                age = (datetime.now(timezone.utc) - datetime.fromisoformat(technical['observed_at'])).total_seconds()
+                if not 0 <= age <= MAX_AGE_SECONDS:
+                    technical = None
+            if technical is None:
+                technical, _ = read_observation(self.transport, html, document_url)
+                if technical is not None:
+                    if len(self._technical_documents) >= 8:
+                        self._technical_documents.pop(next(iter(self._technical_documents)))
+                    self._technical_documents[document_url] = technical
+            if technical is not None:
+                offer, reason = parse_catalog_offer(html, url, self._profiles[url], technical)
         if offer is not None:
             offer['observed_at'] = observed_at
         return offer, reason, status

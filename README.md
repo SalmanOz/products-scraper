@@ -609,6 +609,22 @@ apply. The observed `12+256G` caption is interpreted like `12G+256G` only agains
 independently selected physical facts; server matching uses the same rule.
 Raw headings are retained. Category captions remain routing hints only.
 
+Teknosa's native technical tab lazily reads the public
+`/getClassificationData?productCode=...` endpoint. For a fully selected
+marketplace offer that still lacks physical RAM evidence, the reader can
+fetch that tab only when the one native `#js-psh-btn`, selected cart and exact
+PDP path agree on the product code and the own technical container is empty.
+The request shares the same robots rules, denial circuit, delay and total
+document allowance; a fresh variant recheck also spends its existing 24-read
+allowance. A response is usable for at most 60 seconds and must provide one
+explicit physical RAM, storage, positive 5G and complete matching model field
+with their observed classification codes. Missing, ranged, duplicate,
+conflicting, stale or other-product data cannot fill anything from catalog
+expectations. Existing contradictory tables never fall back to this response.
+The ordinary selected seller, SKU, GTIN, stock, cash/schema checks and later
+fresh publication/readback remain required. The response contains no prices,
+and neither changes catalog technical attributes nor creates products itself.
+
 If that atomic publication loses its reply or returns HTTP 502/503/504, the
 client can replay the identical transaction once. It reuses the already uploaded
 images and fresh observations; it performs no extra retailer reads and never

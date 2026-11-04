@@ -38,6 +38,15 @@ class FreshVariantTransport:
     def resolved_url(self, url):
         return self.transport.resolved_url(url)
 
+    def read_teknosa_classification(self, document_url, url):
+        host = product_host(document_url)
+        if host != 'www.teknosa.com':
+            return None, 'invalid_selected_technical_url', None
+        if self.attempts[host] >= 24:
+            return None, 'variant_recheck_budget_exhausted', None
+        self.attempts[host] += 1
+        return self.transport.read_teknosa_classification(document_url, url, fresh=True)
+
     def report(self):
         return self.transport.report()
 

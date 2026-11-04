@@ -12,7 +12,7 @@ from tr_price_scraper import TRPriceScraper
 from trendyol_catalog_source import _product_id, parse_catalog_listing, catalog_offer_matches
 
 
-def inspect_teknosa_memory_variant(html, url, name, catalog_specs):
+def inspect_teknosa_memory_variant(html, url, name, catalog_specs, technical_observation=None):
     """Read selected source capacities, then prove that entire offer.
 
     A cart title is only a capacity hint here. The ordinary Teknosa reader
@@ -50,7 +50,7 @@ def inspect_teknosa_memory_variant(html, url, name, catalog_specs):
     # physical RAM/storage/5G/model in its own complete technical table. Use
     # the same independent extractor as the ordinary offer reader, without
     # passing a catalog profile. Never replace a contradictory title fact.
-    technical = selected_technical_specs(mains[0], title, carts[0])
+    technical = selected_technical_specs(mains[0], title, carts[0], technical_observation)
     if technical is not None:
         if (ambiguous or ram is not None and ram != technical['ram_gb']
                 or storage is not None and storage != technical['storage_gb']
@@ -70,7 +70,7 @@ def inspect_teknosa_memory_variant(html, url, name, catalog_specs):
     model = matcher._catalog_model_name(name, catalog_specs)
     if not model:
         return None
-    offer, reason = parse_catalog_offer(html, url, {'name': model, 'specs': actual})
+    offer, reason = parse_catalog_offer(html, url, {'name': model, 'specs': actual}, technical_observation)
     if offer is None or not matcher.has_observed_offer_evidence(model, offer, actual):
         return None
     return {'scope': 'other_memory_variant_preview_only', 'writes': False,

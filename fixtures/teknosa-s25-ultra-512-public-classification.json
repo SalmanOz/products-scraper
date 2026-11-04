@@ -1,0 +1,422 @@
+[
+  {
+    "code": "",
+    "name": "",
+    "features": [
+      {
+        "code": "teknosaClassificationCatalog/1.0/CLS-2001.5g_100",
+        "name": "5G Desteği",
+        "description": null,
+        "type": null,
+        "range": false,
+        "comparable": true,
+        "featureUnit": {
+          "symbol": " ",
+          "name": null,
+          "unitType": "BR-200"
+        },
+        "featureValues": [
+          {
+            "value": "Evet"
+          }
+        ]
+      },
+      {
+        "code": "teknosaClassificationCatalog/1.0/CLS-2001.arka_kamera_cozunurlugu_100",
+        "name": "Arka Kamera Çözünürlüğü",
+        "description": null,
+        "type": null,
+        "range": false,
+        "comparable": true,
+        "featureUnit": {
+          "symbol": " ",
+          "name": null,
+          "unitType": "BR-200"
+        },
+        "featureValues": [
+          {
+            "value": "200 MP"
+          }
+        ]
+      },
+      {
+        "code": "teknosaClassificationCatalog/1.0/CLS-2001.bellek_kapasitesi_100",
+        "name": "Bellek Kapasitesi (RAM)",
+        "description": null,
+        "type": null,
+        "range": false,
+        "comparable": true,
+        "featureUnit": {
+          "symbol": " ",
+          "name": null,
+          "unitType": "BR-200"
+        },
+        "featureValues": [
+          {
+            "value": "12 GB"
+          }
+        ]
+      },
+      {
+        "code": "teknosaClassificationCatalog/1.0/CLS-2001.dahili_hafiza_100",
+        "name": "Dahili Hafıza",
+        "description": null,
+        "type": null,
+        "range": false,
+        "comparable": true,
+        "featureUnit": {
+          "symbol": " ",
+          "name": null,
+          "unitType": "BR-200"
+        },
+        "featureValues": [
+          {
+            "value": "512 GB"
+          }
+        ]
+      },
+      {
+        "code": "teknosaClassificationCatalog/1.0/CLS-2001.ekran_cozunurlugu_100",
+        "name": "Telefon Ekran Çözünürlüğü",
+        "description": null,
+        "type": null,
+        "range": false,
+        "comparable": true,
+        "featureUnit": {
+          "symbol": " ",
+          "name": null,
+          "unitType": "BR-200"
+        },
+        "featureValues": [
+          {
+            "value": "1440 x 3088"
+          }
+        ]
+      },
+      {
+        "code": "teknosaClassificationCatalog/1.0/CLS-2001.islemci_100",
+        "name": "İşlemci",
+        "description": null,
+        "type": null,
+        "range": false,
+        "comparable": true,
+        "featureUnit": {
+          "symbol": " ",
+          "name": null,
+          "unitType": "BR-200"
+        },
+        "featureValues": [
+          {
+            "value": "8 Elite"
+          }
+        ]
+      },
+      {
+        "code": "teknosaClassificationCatalog/1.0/CLS-2001.islemci_cekirdek_sayisi_100",
+        "name": "İşlemci Çekirdek Sayısı",
+        "description": null,
+        "type": null,
+        "range": false,
+        "comparable": true,
+        "featureUnit": {
+          "symbol": " ",
+          "name": null,
+          "unitType": "BR-200"
+        },
+        "featureValues": [
+          {
+            "value": "8"
+          }
+        ]
+      },
+      {
+        "code": "teknosaClassificationCatalog/1.0/CLS-2001.islemci_frekansi_100",
+        "name": "İşlemci Frekansı",
+        "description": null,
+        "type": null,
+        "range": false,
+        "comparable": true,
+        "featureUnit": {
+          "symbol": " ",
+          "name": null,
+          "unitType": "BR-200"
+        },
+        "featureValues": [
+          {
+            "value": "3,36"
+          }
+        ]
+      },
+      {
+        "code": "teknosaClassificationCatalog/1.0/CLS-2001.on_kamera_cozunurlugu_100",
+        "name": "Ön Kamera Çözünürlüğü",
+        "description": null,
+        "type": null,
+        "range": false,
+        "comparable": true,
+        "featureUnit": {
+          "symbol": " ",
+          "name": null,
+          "unitType": "BR-200"
+        },
+        "featureValues": [
+          {
+            "value": "12 MP"
+          }
+        ]
+      },
+      {
+        "code": "teknosaClassificationCatalog/1.0/CLS-2001.parmak_izi_okuyucu_100",
+        "name": "Parmak İzi Okuyucu",
+        "description": null,
+        "type": null,
+        "range": false,
+        "comparable": true,
+        "featureUnit": {
+          "symbol": " ",
+          "name": null,
+          "unitType": "BR-200"
+        },
+        "featureValues": [
+          {
+            "value": "Evet"
+          }
+        ]
+      },
+      {
+        "code": "teknosaClassificationCatalog/1.0/CLS-2001.sim_kart_yeterliligi_100",
+        "name": "Sim Kart Yeterliliği",
+        "description": null,
+        "type": null,
+        "range": false,
+        "comparable": true,
+        "featureUnit": {
+          "symbol": " ",
+          "name": null,
+          "unitType": "BR-200"
+        },
+        "featureValues": [
+          {
+            "value": "Çiftli Sim"
+          }
+        ]
+      },
+      {
+        "code": "teknosaClassificationCatalog/1.0/CLS-2001.usb_baglayici_100",
+        "name": "Usb Bağlayıcı",
+        "description": null,
+        "type": null,
+        "range": false,
+        "comparable": true,
+        "featureUnit": {
+          "symbol": " ",
+          "name": null,
+          "unitType": "BR-200"
+        },
+        "featureValues": [
+          {
+            "value": "USB C Tipi"
+          }
+        ]
+      },
+      {
+        "code": "teknosaClassificationCatalog/1.0/CLS-2001.yukseklik_100",
+        "name": "Yükseklik",
+        "description": null,
+        "type": null,
+        "range": false,
+        "comparable": true,
+        "featureUnit": {
+          "symbol": " ",
+          "name": null,
+          "unitType": "BR-200"
+        },
+        "featureValues": [
+          {
+            "value": "163,4"
+          }
+        ]
+      },
+      {
+        "code": "teknosaClassificationCatalog/1.0/CLS-2000.agirlik_100",
+        "name": "Ağırlık",
+        "description": null,
+        "type": null,
+        "range": false,
+        "comparable": true,
+        "featureUnit": {
+          "symbol": " ",
+          "name": null,
+          "unitType": "BR-200"
+        },
+        "featureValues": [
+          {
+            "value": "234"
+          }
+        ]
+      },
+      {
+        "code": "teknosaClassificationCatalog/1.0/CLS-2000.derinlik_100",
+        "name": "Derinlik",
+        "description": null,
+        "type": null,
+        "range": false,
+        "comparable": true,
+        "featureUnit": {
+          "symbol": " ",
+          "name": null,
+          "unitType": "BR-200"
+        },
+        "featureValues": [
+          {
+            "value": "8,9"
+          }
+        ]
+      },
+      {
+        "code": "teknosaClassificationCatalog/1.0/CLS-2000.ekran_boyutu_100",
+        "name": "Telefon Ekran Boyutu",
+        "description": null,
+        "type": null,
+        "range": false,
+        "comparable": true,
+        "featureUnit": {
+          "symbol": " ",
+          "name": null,
+          "unitType": "BR-200"
+        },
+        "featureValues": [
+          {
+            "value": "6.9 inç"
+          }
+        ]
+      },
+      {
+        "code": "teknosaClassificationCatalog/1.0/CLS-2000.genislik_100",
+        "name": "Genişlik",
+        "description": null,
+        "type": null,
+        "range": false,
+        "comparable": true,
+        "featureUnit": {
+          "symbol": " ",
+          "name": null,
+          "unitType": "BR-200"
+        },
+        "featureValues": [
+          {
+            "value": "78,1"
+          }
+        ]
+      },
+      {
+        "code": "teknosaClassificationCatalog/1.0/CLS-2000.hizli_sarj_100",
+        "name": "Hızlı Şarj",
+        "description": null,
+        "type": null,
+        "range": false,
+        "comparable": true,
+        "featureUnit": {
+          "symbol": " ",
+          "name": null,
+          "unitType": "BR-200"
+        },
+        "featureValues": [
+          {
+            "value": "Evet"
+          }
+        ]
+      },
+      {
+        "code": "teknosaClassificationCatalog/1.0/CLS-2000.pil_performansi_100",
+        "name": "Pil Performansı",
+        "description": null,
+        "type": null,
+        "range": false,
+        "comparable": true,
+        "featureUnit": {
+          "symbol": "mAh",
+          "name": null,
+          "unitType": "BR-282"
+        },
+        "featureValues": [
+          {
+            "value": "4000 - 4999"
+          }
+        ]
+      },
+      {
+        "code": "teknosaClassificationCatalog/1.0/CLS-2000.uretici_kodu_100",
+        "name": "Model Kodu",
+        "description": null,
+        "type": null,
+        "range": false,
+        "comparable": true,
+        "featureUnit": {
+          "symbol": " ",
+          "name": null,
+          "unitType": "BR-200"
+        },
+        "featureValues": [
+          {
+            "value": "Galaxy S25 Ultra"
+          }
+        ]
+      },
+      {
+        "code": "teknosaClassificationCatalog/1.0/CLS-2000.bluetooth_100",
+        "name": "Bluetooth",
+        "description": null,
+        "type": null,
+        "range": false,
+        "comparable": true,
+        "featureUnit": {
+          "symbol": " ",
+          "name": null,
+          "unitType": "BR-200"
+        },
+        "featureValues": [
+          {
+            "value": "Evet"
+          }
+        ]
+      },
+      {
+        "code": "teknosaClassificationCatalog/1.0/CLS-2000.urun_rengi_100",
+        "name": "Ürün Rengi",
+        "description": null,
+        "type": null,
+        "range": false,
+        "comparable": true,
+        "featureUnit": {
+          "symbol": " ",
+          "name": null,
+          "unitType": "BR-200"
+        },
+        "featureValues": [
+          {
+            "value": "Gümüş"
+          }
+        ]
+      },
+      {
+        "code": "teknosaClassificationCatalog/1.0/CLS-2008.kablosuz_sarj_olma_100",
+        "name": "Kablosuz Şarj",
+        "description": null,
+        "type": null,
+        "range": false,
+        "comparable": true,
+        "featureUnit": {
+          "symbol": " ",
+          "name": null,
+          "unitType": "BR-200"
+        },
+        "featureValues": [
+          {
+            "value": "Evet"
+          }
+        ]
+      }
+    ]
+  }
+]

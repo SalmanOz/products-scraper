@@ -13,7 +13,7 @@ from teknosa_reviewed_source import MAX_HTML_BYTES, _amount, _cash_price
 from tr_price_scraper import TRPriceScraper
 
 
-def selected_technical_specs(main, title, cart):
+def selected_technical_specs(main, title, cart, technical_observation=None):
     """Read only the selected PDP's own explicit physical specification table.
 
     No catalog profile enters this function. A title omission can be filled
@@ -29,6 +29,12 @@ def selected_technical_specs(main, title, cart):
     section = sections[0]
     headings = section.select(':scope > button.pdp-acc-trg > h2')
     tables = section.select('#tableContainer > table.tableFeature')
+    if not tables and technical_observation is not None:
+        if (len(headings) != 1 or headings[0].get_text(' ', strip=True) != 'Teknik Özellikler'
+                or len(section.select('#tableContainer')) != 1 or section.select('#tableContainer table')):
+            return None
+        from teknosa_public_technical import response_fields
+        return response_fields(technical_observation, main, title, cart)
     if (len(headings) != 1 or headings[0].get_text(' ', strip=True) != 'Teknik Özellikler'
             or len(tables) != 1):
         return None
@@ -63,7 +69,7 @@ def selected_technical_specs(main, title, cart):
             'selected_teknosa_physical_specs_verified': True}
 
 
-def parse_selected_marketplace(html, url, profile):
+def parse_selected_marketplace(html, url, profile, technical_observation=None):
     if (product_host(url) != 'www.teknosa.com' or urlparse(url).query
             or not isinstance(html, str) or len(html.encode()) > MAX_HTML_BYTES
             or not isinstance(profile, dict) or not isinstance(profile.get('specs'), dict)):
@@ -195,7 +201,7 @@ def parse_selected_marketplace(html, url, profile):
               'source_title': title, 'url': url,
               'currency': 'TRY', 'condition': 'new', 'availability': 'in_stock',
               'price': float(price), 'observed_at': datetime.now(timezone.utc).isoformat()}
-    technical = selected_technical_specs(main, title, cart)
+    technical = selected_technical_specs(main, title, cart, technical_observation)
     if technical is not None:
         result.update(product_id=sku, **technical)
     if not catalog_offer_matches(result, profile.get('name'), profile['specs']):
