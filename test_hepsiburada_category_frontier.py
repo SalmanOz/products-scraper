@@ -28,7 +28,7 @@ class FrontierTests(unittest.TestCase):
                 'cycle_started_at': self.now.isoformat(), 'updated_at': self.now.isoformat(),
                 'pending': [BRAND + '?sayfa=2'], 'visited': [CATEGORY_URL, BRAND]}
 
-    def test_only_physical_catalog_identity_invalidates_the_cursor_not_prices_or_scores(self):
+    def test_physical_catalog_changes_invalidate_visited_exclusions_but_preserve_unread_urls(self):
         with TemporaryDirectory() as folder:
             path = Path(folder) / 'frontier.json'
             path.write_text(json.dumps(self.payload()))
@@ -40,7 +40,51 @@ class FrontierTests(unittest.TestCase):
                 self.assertEqual(state['pending'], [BRAND + '?sayfa=2'])
             products = deepcopy(self.products)
             products[0]['attributes']['ram_gb'] = 8
-            self.assertEqual(load_frontier(path, products, now=self.now)[1], 'catalog_changed')
+            state, status = load_frontier(path, products, now=self.now)
+            self.assertEqual(status, 'catalog_changed_pending_retained')
+            self.assertEqual(state['visited'], [])
+            self.assertEqual(state['pending'], [BRAND + '?sayfa=2'])
+            self.assertEqual(state['catalog_fingerprint'], catalog_fingerprint(products))
+            self.assertEqual(state['cycle_started_at'], self.payload()['cycle_started_at'])
+
+    def test_a_new_variant_keeps_the_unread_tail_and_still_requires_its_new_selected_pdp_read(self):
+        catalog = self.products + [{**PRODUCT, 'id': 2, 'slug': PRODUCT['slug'] + '-12gb-512gb',
+            'name': PRODUCT['name'] + ' 12GB 512GB',
+            'attributes': {'ram_gb': 12, 'storage_gb': 512}}]
+        client = Client()
+        client.get_published_products = lambda: catalog
+        client.get_public_price_priority = lambda: {}
+        target = 'https://www.hepsiburada.com/samsung-galaxy-s26-512-gb-12-gb-ram-p-HBCV0000TEST52'
+        class Transport:
+            def __init__(self): self.calls = []
+            def report(self): return {}
+            def read_hepsiburada_category(self, url):
+                self.calls.append(url)
+                if url == CATEGORY_URL:
+                    html = '<h1>Cep Telefonu Fiyatları ve Modelleri</h1><a href="' + BRAND + '">Samsung</a>'
+                else:
+                    html = '<h1>Samsung Android Telefonlar</h1><h2 data-test-id="title-1"><a title="Samsung Galaxy S26 512 GB 12 GB Ram" href="' + target + '">' + \
+                        'Samsung Galaxy S26 512 GB 12 GB Ram</a></h2>'
+                return html, 'document_read', 200
+        def inspect(transport, url, product):
+            return {'slug': product['slug'], 'url': url, 'observed_url': url,
+                    'reason': 'selected_proof_missing', 'http_status': 200, 'prepared_offer': None}
+        with TemporaryDirectory() as folder, patch('hepsiburada_catalog_discovery.MAX_CATEGORY_PAGES', 2), \
+                patch('sweep_priority_catalog.inspect_target', side_effect=inspect) as selected_read, \
+                patch('sweep_priority_catalog.refresh_candidates') as writer:
+            path = Path(folder) / 'frontier.json'
+            path.write_text(json.dumps(self.payload()))
+            transport = Transport()
+            result = sweep(client=client, transport=transport, discover_hepsiburada=True,
+                           category_frontier_path=path)
+            self.assertEqual(transport.calls, [CATEGORY_URL, BRAND + '?sayfa=2'])
+            self.assertEqual(result['hepsiburada_category_continuation']['restored_visited'], 0)
+            self.assertEqual(result['hepsiburada_category_continuation']['restored_pending'], 1)
+            self.assertIn(BRAND, result['hepsiburada_category_discovery']['pending_observed_urls'])
+            selected_read.assert_called_once_with(transport, target, catalog[1])
+            self.assertFalse(result['writes'])
+            self.assertEqual(result['accepted'], 0)
+            writer.assert_not_called()
 
     def test_stale_future_malformed_foreign_and_price_bearing_state_never_enters_the_queue(self):
         cases = []

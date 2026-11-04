@@ -85,7 +85,13 @@ def load_frontier(path, products, *, now=None):
         if (now - started).total_seconds() > MAX_AGE_SECONDS:
             return empty, 'expired'
         if data['catalog_fingerprint'] != empty['catalog_fingerprint']:
-            return empty, 'catalog_changed'
+            # New physical variants change which cards need a fresh selected
+            # PDP read. Never reuse the old visited/exclusion set. However,
+            # already-observed unread category URLs remain useful routing
+            # hints: dropping them on every successful variant publication
+            # repeatedly spends the budget on the same category prefix.
+            return {**empty, 'cycle_started_at': data['cycle_started_at'],
+                    'pending': data['pending']}, 'catalog_changed_pending_retained'
         if not data['pending']:
             return empty, 'drained'  # Start a fresh discovery cycle next time.
         return {k: data[k] for k in ('catalog_fingerprint', 'cycle_started_at', 'pending', 'visited')}, 'ready'
