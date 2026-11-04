@@ -648,6 +648,11 @@ model/memory/radio identity. Changed prices and refresh URL hints are allowed;
 changed original specifications stop subsequent publications. Reports expose
 `parent_attributes_unchanged` separately from the identity count.
 
+Rejected n11 other-memory previews also report their bounded source stage and,
+only after independent extraction, the observed physical capacities/radio and
+ordinary selected-reader rejection code. These diagnostics carry no prices,
+account data or offer permission; they never become a publication candidate.
+
 n11 PDP reads retain only the observed public `magaza`, `renk` and
 `dahili-hafiza` selectors. The selected shop slug, color and capacity must
 independently match the URL, public seller profile, SKU, GTIN, stock, serialized

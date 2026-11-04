@@ -127,9 +127,12 @@ def inspect_target(transport, url, product):
             row['discovered_sellers'] = discover_product_sellers(html, final_url)
             if offer is None:
                 from observed_memory_variants import inspect_n11_memory_variant
-                other = inspect_n11_memory_variant(html, final_url, product['name'], specs)
+                diagnostic = {}
+                other = inspect_n11_memory_variant(html, final_url, product['name'], specs, diagnostic)
                 if other is not None:
                     row['other_memory_variant'] = other
+                else:
+                    row['other_memory_variant_diagnostic'] = diagnostic
         if host == 'www.teknosa.com':
             from teknosa_reviewed_source import parse_catalog_offer
             specs = with_reviewed_radio(product, PriceUpdater.get_expected_specs(product.get('attributes')))

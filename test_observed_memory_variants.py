@@ -21,6 +21,29 @@ def alternate_document(changes=None):
 
 
 class ObservedMemoryVariantTests(unittest.TestCase):
+    def test_n11_rejected_other_memory_reports_only_bounded_source_stage_without_authorizing_an_offer(self):
+        from test_n11_catalog_source import document as n11_document, URL as n11_url, NAME as n11_name
+        import json
+        parent={'ram_gb':6,'storage_gb':128,'network_generation':'5g'}
+        def changed(state,soup):
+            state['unrelated_private_account']='must-not-appear'
+            node=soup.select_one('script[type="application/ld+json"]')
+            schema=json.loads(node.get_text());schema['offers']['price']='1.00';node.string=json.dumps(schema)
+        diagnostic={}
+        self.assertIsNone(inspect_n11_memory_variant(n11_document(changed),n11_url,n11_name,parent,diagnostic))
+        self.assertEqual(diagnostic,{'status':'selected_variant_parse_rejected','writes':False,
+            'scope':'diagnostic_only_not_offer_evidence','observed_specs':{'ram_gb':8,'storage_gb':256,'network_generation':'5g'},
+            'reader_reason':'schema_selected_cash_offer_mismatch'})
+        product={'name':n11_name,'slug':'samsung-galaxy-a57','attributes':parent}
+        class Source:
+            def read_document(self,url): return n11_document(changed),'document_read',200
+            def resolved_url(self,url): return url
+        row=inspect_target(Source(),n11_url,product)
+        self.assertIsNone(row['prepared_offer'])
+        self.assertNotIn('other_memory_variant',row)
+        self.assertEqual(row['other_memory_variant_diagnostic'],diagnostic)
+        self.assertNotIn('must-not-appear',str(row))
+
     def test_teknosa_omitted_heading_ram_uses_selected_table_for_separate_memory_discovery(self):
         from pathlib import Path
         from automatic_memory_variants import observed_variant_candidates, variant_selected_evidence

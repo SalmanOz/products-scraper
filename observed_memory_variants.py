@@ -78,8 +78,11 @@ def inspect_teknosa_memory_variant(html, url, name, catalog_specs):
             'observed_specs': actual, 'verification': reason, 'offer': offer}
 
 
-def inspect_n11_memory_variant(html, url, name, catalog_specs):
+def inspect_n11_memory_variant(html, url, name, catalog_specs, diagnostic=None):
     from n11_catalog_source import parse_catalog_listing as parse, catalog_offer_matches as matches
+    if isinstance(diagnostic, dict):
+        diagnostic.update(status='selected_memory_source_incomplete', writes=False,
+                          scope='diagnostic_only_not_offer_evidence')
     if (not isinstance(html, str) or len(html.encode()) > 5 * 1024 * 1024
             or not isinstance(catalog_specs, dict)):
         return None
@@ -135,6 +138,8 @@ def inspect_n11_memory_variant(html, url, name, catalog_specs):
         actual['network_generation'] = '4g'
     else:
         return None
+    if isinstance(diagnostic, dict):
+        diagnostic.update(status='catalog_variant_scope_mismatch', observed_specs=dict(actual))
     matcher = TRPriceScraper()
     expected = tuple(matcher._spec_int(catalog_specs.get(k)) for k in ('ram_gb', 'storage_gb'))
     radio = catalog_specs.get('network_generation') or matcher._radio_generation(name)
@@ -143,8 +148,13 @@ def inspect_n11_memory_variant(html, url, name, catalog_specs):
         return None
     model = matcher._catalog_model_name(name, catalog_specs)
     offer, reason = parse(html, url, model, actual)
+    if isinstance(diagnostic, dict):
+        diagnostic.update(status='selected_variant_parse_rejected' if offer is None else 'selected_variant_match_rejected',
+                          reader_reason=reason)
     if offer is None or not matches(offer, model, actual):
         return None
+    if isinstance(diagnostic, dict):
+        diagnostic['status'] = 'preview_verified'
     return {'scope': 'other_memory_variant_preview_only', 'writes': False,
             'catalog_memory': dict(zip(('ram_gb', 'storage_gb'), expected)),
             'observed_specs': actual, 'verification': reason, 'offer': offer}
