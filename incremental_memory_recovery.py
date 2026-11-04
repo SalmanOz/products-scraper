@@ -10,7 +10,7 @@ import re
 from automatic_memory_variants import (
     CONTRACT, MAX_VARIANTS, TechnicalVariantReader, family_key, memory_parent_priority,
     observed_variant_candidates, prepare_memory_variants, variant_identity,
-    verify_variant_catalog_readback,
+    verify_variant_catalog_readback, parent_specs,
 )
 from offer_ingestion_client import IngestionClientError
 from priority_retailer_transport import HOSTS, product_host
@@ -62,6 +62,7 @@ class IncrementalMemoryRecovery:
         self.attempted = set()
         self.early_families = set()
         self.early_covered_families = set()
+        self.early_covered_hint_families = set()
         self.report = {'contract': CONTRACT, 'purpose': 'automatic_existing_model_memory_variants',
             'timing': 'during_discovery_and_final_remainder', 'publish': publish,
             'writes': False, 'rows': [], 'created': 0, 'existing': 0, 'attempt_limit': MAX_VARIANTS}
@@ -141,6 +142,7 @@ class IncrementalMemoryRecovery:
                     'reason': 'all_observed_variant_sources_blocked_for_run', 'retailers': sorted(retailers)})
         self.report.update(observed_candidates=len(observed), attempted_candidates=len(self.attempted),
             early_covered_family_attempts=len(self.early_covered_families),
+            early_covered_hint_families=len(self.early_covered_hint_families),
             early_covered_family_limit=min(MAX_EARLY_COVERED_FAMILIES, max(0, MAX_VARIANTS - 1)),
             early_unpriced_family_attempts=len(self.early_families - self.early_covered_families),
             eligible_source_candidates=len(observed) - len(deferred),
@@ -162,6 +164,34 @@ class IncrementalMemoryRecovery:
         self.report['failure_reason'] = (reason if isinstance(error, ValueError)
             and re.fullmatch(r'[a-z0-9_]{1,100}', reason) else type(error).__name__)
 
+    def _covered_early_allowed(self, family):
+        limit = min(MAX_EARLY_COVERED_FAMILIES, max(0, MAX_VARIANTS - 1))
+        reserved = self.early_covered_families | self.early_covered_hint_families
+        return family not in self.early_families and (family in reserved or len(reserved) < limit)
+
+    def admit_early_memory_hint(self, parent, products, prices):
+        """Reserve a bounded category-to-PDP read, never price/SKU evidence.
+
+        Share the two covered-family slots with actual early preparation, so
+        failed public hints cannot read every priced model before missing ones.
+        """
+        if self.failed or len(self.attempted) >= MAX_VARIANTS:
+            return False
+        level = memory_parent_priority(products, prices)['parent_priorities'].get(parent['slug'], 2)
+        if level == 0:
+            return True
+        if level != 1:
+            return False
+        model = TRPriceScraper._catalog_model_name(parent['name'], parent['attributes'])
+        radio = parent_specs(parent).get('network_generation')
+        if not model or radio not in ('4g', '5g'):
+            return False
+        family = family_key(model), radio
+        if not self._covered_early_allowed(family):
+            return False
+        self.early_covered_hint_families.add(family)
+        return True
+
     def observe(self, result, row, products, prices):
         if self.failed or len(self.attempted) >= MAX_VARIANTS:
             return
@@ -172,8 +202,7 @@ class IncrementalMemoryRecovery:
             # families until discovery finishes. Unknown price hints wait.
             priorities = memory_parent_priority(products, prices)['parent_priorities']
             level = priorities.get(row['slug'], 2)
-            covered_limit = min(MAX_EARLY_COVERED_FAMILIES, max(0, MAX_VARIANTS - 1))
-            if level not in (0, 1) or level == 1 and len(self.early_covered_families) >= covered_limit:
+            if level not in (0, 1):
                 return
             subset = {**result, 'rows': [row]}
             candidates = [c for c in observed_variant_candidates(subset, products)
@@ -183,6 +212,8 @@ class IncrementalMemoryRecovery:
                 model = TRPriceScraper._catalog_model_name(candidate['parent']['name'], candidate['parent']['attributes'])
                 family = family_key(model), candidate['specs']['network_generation']
                 if family in self.early_families:
+                    return
+                if level == 1 and not self._covered_early_allowed(family):
                     return
                 previous = len(self.attempted)
                 self._prepare(subset, products, prices, candidates, 1)

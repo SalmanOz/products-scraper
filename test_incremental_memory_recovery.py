@@ -276,6 +276,98 @@ class IncrementalMemoryRecoveryTests(unittest.TestCase):
         self.assertEqual(recovery.report['attempted_candidates'], 4)
         self.assertFalse(recovery.report['writes'])
 
+    def test_category_only_covered_capacity_reaches_fresh_proof_and_publication_before_next_category_denial(self):
+        from hepsiburada_catalog_discovery import CATEGORY_URL
+        from test_hepsiburada_catalog_discovery import SAMSUNG
+        class PricedClient(GrowingClient):
+            def get_public_price_priority(self):
+                return {p['id']: (p['slug'], True) for p in self.catalog}
+        client = PricedClient()
+        client.product['offer_targets'] = []
+        original = deepcopy(client.product)
+        title = NAME + ' 128 GB 8 GB RAM'
+        category = (f'<h1>Cep Telefonu Fiyatları ve Modelleri</h1><h2 data-test-id="title-1">'
+                    f'<a href="{TARGET}" title="{title}">{title}</a></h2><a href="{SAMSUNG}">Samsung</a>')
+        def get(url, **kwargs):
+            if url.endswith('robots.txt'):
+                return Response(url, 'User-agent: *\nAllow: /\n')
+            if url == CATEGORY_URL:
+                client.events.append(('category_root', url))
+                return Response(url, category)
+            if url == TARGET:
+                client.events.append(('pdp', url))
+                return Response(url, document())
+            client.events.append(('category_denied', url))
+            return Response(url, 'denied', status=403)
+        def post(url, **kwargs):
+            return Response(url, json.dumps({'status': 'ok', 'solution': {
+                'url': kwargs['json']['url'], 'status': 403, 'response': 'denied'}}))
+        transport = PriorityRetailerTransport(get=get, post=post, sleep=lambda _: None, maximum_per_host=100)
+        recovery = self.recovery(client, transport)
+        class SharedOfferTransport(FreshVariantTransport):
+            def configure_catalog_budget(self, count):
+                self.transport.configure_catalog_budget(count)
+        reader = RetailerOfferRefresher(hepsiburada_catalog_source=HepsiburadaCatalogSource(
+            transport=SharedOfferTransport(transport)))
+        with patch('automatic_memory_variants.technical_records', return_value=([], {}, ['source-image'])):
+            result = sweep(client=client, transport=transport, reader=reader, publish=True,
+                discover_hepsiburada=True, memory_discovery=True, memory_recovery=recovery)
+        self.assertFalse(recovery.failed, recovery.report)
+        self.assertEqual(result['status'], 'completed')
+        self.assertEqual(recovery.report['created'], 1)
+        self.assertEqual(recovery.report['early_covered_hint_families'], 1)
+        self.assertEqual(recovery.report['early_covered_family_attempts'], 1)
+        self.assertTrue(recovery.report['rows'][0]['commercial_readback_verified'])
+        kinds = [event[0] for event in client.events]
+        self.assertLess(kinds.index('category_root'), kinds.index('pdp'))
+        self.assertLess(kinds.index('pdp'), kinds.index('atomic'))
+        self.assertLess(kinds.index('atomic'), kinds.index('category_denied'))
+        self.assertEqual(client.product, original)
+
+    def test_unverified_category_hints_share_two_covered_family_read_slots_and_unknown_prices_get_none(self):
+        from hepsiburada_catalog_discovery import CATEGORY_URL
+        from test_hepsiburada_catalog_discovery import SAMSUNG
+        for known_priced in (True, None):
+            client = GrowingClient()
+            parents, cards, targets = [], [], []
+            for number in (36, 37, 38):
+                parent = deepcopy(client.product)
+                parent.update(id=number, slug=f'samsung-galaxy-a{number}-5g', name=NAME.replace('A36', f'A{number}'), offer_targets=[])
+                target = TARGET.replace('a36', f'a{number}')
+                title = parent['name'] + ' 128 GB 8 GB RAM'
+                cards.append(f'<h2 data-test-id="title-{number}"><a href="{target}" title="{title}">{title}</a></h2>')
+                parents.append(parent)
+                targets.append(target)
+            client.catalog = parents
+            client.get_public_price_priority = lambda: {p['id']: (p['slug'], known_priced) for p in parents}
+            category = '<h1>Cep Telefonu Fiyatları ve Modelleri</h1>' + ''.join(cards) + f'<a href="{SAMSUNG}">Samsung</a>'
+            observed_pdps = []
+            def get(url, **kwargs):
+                if url.endswith('robots.txt'):
+                    return Response(url, 'User-agent: *\nAllow: /\n')
+                if url == CATEGORY_URL:
+                    return Response(url, category)
+                if url in targets:
+                    observed_pdps.append(url)
+                    return Response(url, '<h1>Unverified listing without selected SKU or seller proof</h1>')
+                return Response(url, 'denied', status=403)
+            def post(url, **kwargs):
+                return Response(url, json.dumps({'status': 'ok', 'solution': {
+                    'url': kwargs['json']['url'], 'status': 403, 'response': 'denied'}}))
+            transport = PriorityRetailerTransport(get=get, post=post, sleep=lambda _: None, maximum_per_host=100)
+            recovery = self.recovery(client, transport, publish=False)
+            with patch('automatic_memory_variants.technical_records') as technical:
+                result = sweep(client=client, transport=transport, publish=False, discover_hepsiburada=True,
+                    memory_discovery=True, memory_recovery=recovery)
+            self.assertFalse(recovery.failed, recovery.report)
+            self.assertEqual(observed_pdps, targets[:2] if known_priced else [])
+            self.assertEqual(recovery.report['early_covered_hint_families'], 2 if known_priced else 0)
+            self.assertEqual(recovery.report['attempted_candidates'], 0)
+            self.assertFalse(result['writes'])
+            technical.assert_not_called()
+            recovery.image_store.upload.assert_not_called()
+            self.assertFalse(any(event[0] == 'atomic' for event in client.events))
+
     def test_unknown_public_price_hint_cannot_use_a_covered_family_early_slot(self):
         client = GrowingClient()
         transport = source(client)
@@ -291,6 +383,34 @@ class IncrementalMemoryRecoveryTests(unittest.TestCase):
             recovery.finish(result, products, prices)
             self.assertEqual(technical.call_count, 1)
         self.assertEqual(recovery.report['early_covered_family_attempts'], 0)
+
+    def test_category_hints_and_already_observed_preparations_share_the_same_covered_family_allowance(self):
+        client = GrowingClient()
+        parents, rows = [], []
+        for number in (36, 37, 38):
+            parent = deepcopy(client.product)
+            parent.update(id=number, slug=f'samsung-galaxy-a{number}-5g', name=NAME.replace('A36', f'A{number}'))
+            url = TARGET.replace('a36', f'a{number}')
+            html = document().replace('A36', f'A{number}').replace('a36', f'a{number}')
+            transport = SimpleNamespace(read_document=lambda url, body=html: (body, 'document_read', 200),
+                resolved_url=lambda url: url)
+            rows.append(inspect_target(transport, url, parent))
+            parents.append(parent)
+        prices = {p['id']: (p['slug'], True) for p in parents}
+        recovery = self.recovery(client, SimpleNamespace(report=lambda: {}), publish=False)
+        recovery.start(parents, prices)
+        result = {'status': 'completed', 'catalog_count': 3, 'writes': False, 'rows': rows}
+        with patch('automatic_memory_variants.technical_records', side_effect=ValueError('fixture_unavailable')) as technical:
+            recovery.observe(result, rows[0], parents, prices)
+            self.assertTrue(recovery.admit_early_memory_hint(parents[1], parents, prices))
+            self.assertFalse(recovery.admit_early_memory_hint(parents[2], parents, prices))
+            recovery.observe(result, rows[1], parents, prices)
+            recovery.observe(result, rows[2], parents, prices)
+            self.assertEqual([call.args[0]['id'] for call in technical.call_args_list], [36, 37])
+            recovery.finish(result, parents, prices)
+            self.assertEqual([call.args[0]['id'] for call in technical.call_args_list], [36, 37, 38])
+        self.assertEqual(recovery.report['early_covered_family_attempts'], 2)
+        self.assertFalse(recovery.failed, recovery.report)
 
     def test_global_candidate_allowance_is_shared_between_early_and_final_preparation(self):
         client = GrowingClient()

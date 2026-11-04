@@ -357,13 +357,19 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
             for parent, card in memory_hints:
                 url = card['source_url']
                 memory_key = (retailer, parent['slug'])
-                # Before the next category, spend at most one capacity slot
-                # on a family with no current price. The ordinary final pass
-                # shares these counters and retains the existing 2/24 caps.
-                if (early and (priorities.get(parent['slug'], 2) != 0 or memory_counts[memory_key] >= 1)
-                        or memory_counts[memory_key] >= 2 or memory_retailer_counts[retailer] >= 24
+                # Category cards are only routing hints. Share the recovery's
+                # bounded early covered-family admission before spending a PDP
+                # read; the ordinary final pass keeps the same 2/24 counters.
+                if (memory_counts[memory_key] >= 2 or memory_retailer_counts[retailer] >= 24
                         or (parent['slug'], url) in processed):
                     continue
+                if early:
+                    if memory_counts[memory_key] >= 1:
+                        continue
+                    admit = getattr(memory_recovery, 'admit_early_memory_hint', None)
+                    if not (admit(parent, products, prices) if callable(admit)
+                            else priorities.get(parent['slug'], 2) == 0):
+                        continue
                 memory_counts[memory_key] += 1
                 memory_retailer_counts[retailer] += 1
                 discovery.setdefault('memory_variant_hints', []).append({'parent_slug': parent['slug'], **card})

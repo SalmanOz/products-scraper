@@ -558,6 +558,10 @@ source can become unavailable late in discovery. The other ten shared slots
 stay reserved for unpriced families until discovery finishes; unknown public
 price hints do not qualify for the covered-family allowance. A second capacity
 of any early family and candidates beyond the allowance wait for the final pass.
+Hepsiburada category-to-PDP routing shares that same two-family allowance with
+preparation: it can read the observed new-capacity card before the next category,
+even when no old product hint exists. An unverified card still consumes its
+family's routing allowance, preventing unlimited speculative early PDP reads.
 The artifact reports covered/unpriced early attempts separately; neither an
 early slot nor a category card establishes a price or published capacity.
 Early and final work share the same 12-candidate and 48-technical-request limits.
