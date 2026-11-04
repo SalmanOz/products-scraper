@@ -282,6 +282,15 @@ class OfferIngestionClient:
                 # Filtering or the local cap can only make completeness worse.
                 if len(offer_targets) != len(targets):
                     truncated = True
+                # Existing provenance URLs route fresh reads, never stored facts.
+                technical_hints = raw_product.get('technical_source_urls')
+                technical_urls = []
+                if isinstance(technical_hints, list) and len(technical_hints) <= 4:
+                    for hint in technical_hints:
+                        if (isinstance(hint, str) and len(hint) <= 2048
+                                and re.fullmatch(r'https://www\.kimovil\.com/en/where-to-buy-[a-z0-9-]+', hint)
+                                and hint not in technical_urls):
+                            technical_urls.append(hint)
                 products.append(
                     {
                         "id": product_id,
@@ -292,6 +301,7 @@ class OfferIngestionClient:
                         ),
                         "offer_targets": offer_targets,
                         "offer_targets_truncated": truncated,
+                        **({'technical_source_urls': technical_urls} if technical_urls else {}),
                     }
                 )
                 seen_ids.add(product_id)

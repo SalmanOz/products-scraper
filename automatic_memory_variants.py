@@ -376,6 +376,7 @@ class TechnicalVariantReader:
         self.attempts = 0
         self.base_documents = {}
         self.provider_variants = {}
+        self.hinted_roots = set()
         self.observed_at = {}
         self.diagnostics = []
 
@@ -388,43 +389,62 @@ class TechnicalVariantReader:
         self.observed_at[url] = utc_observation_time()
         return document
 
+    def discover_roots(self, model, specs):
+        # The existing public autocomplete returns actual model URLs. No
+        # region/capacity suffix is synthesized or searched in a URL grid.
+        endpoint = ('https://www.kimovil.com/_json/autocomplete_devicemodels_joined.json'
+                    '?device_type=0&name=' + quote(re.sub(r'\b[45]g\b', '', model, flags=re.I).strip(), safe=''))
+        raw = self.read(endpoint)
+        if raw.lstrip().startswith('<'):
+            raw = BeautifulSoup(raw, 'html.parser').get_text()
+        data = json.loads(raw)
+        candidates = []
+        variants_by_root = {}
+        for row in data.get('results', [])[:30]:
+            if not isinstance(row, dict) or row.get('is_rumor'):
+                continue
+            name = row.get('full_name') or row.get('alias')
+            target = row.get('url')
+            if (not isinstance(name, str) or not isinstance(target, str)
+                    or not technical_model_matches(model, name)
+                    or TRPriceScraper._radio_generation(name) not in (None, specs['network_generation'])):
+                continue
+            target = 'https://www.kimovil.com/en/where-to-buy-' + target
+            if technical_url(target):
+                candidates.append(target)
+                variants_by_root.setdefault(target, []).extend(autocomplete_technical_variants(row))
+        self.diagnostics.append({'scope': 'public_technical_model_discovery', 'model': model,
+            'result_count': len(data.get('results', [])), 'matching_model_urls': list(dict.fromkeys(candidates))[:6]})
+        unique = list(dict.fromkeys(candidates))
+        roots = {re.sub(r'-[45]g$', '', url) for url in unique}
+        if len(unique) > 1 and len(roots) == 1 and next(iter(roots)) in unique:
+            # A bare name may refer to the other radio generation. Prefer
+            # the actually returned, explicitly matching radio URL, then
+            # still require its newly read technical radio facts.
+            qualified = [url for url in unique if url.endswith('-' + specs['network_generation'])]
+            candidates = qualified if len(qualified) == 1 else [next(iter(roots))]
+            self.diagnostics[-1]['radio_qualified_discovery'] = True
+        return candidates, variants_by_root
+
     def locate(self, parent, specs):
         model = TRPriceScraper._catalog_model_name(parent['name'], parent['attributes'])
         if model not in self.base_documents:
-            # The existing public autocomplete returns actual model URLs. No
-            # region/capacity suffix is synthesized or searched in a URL grid.
-            endpoint = ('https://www.kimovil.com/_json/autocomplete_devicemodels_joined.json'
-                        '?device_type=0&name=' + quote(re.sub(r'\b[45]g\b', '', model, flags=re.I).strip(), safe=''))
-            raw = self.read(endpoint)
-            if raw.lstrip().startswith('<'):
-                raw = BeautifulSoup(raw, 'html.parser').get_text()
-            data = json.loads(raw)
-            candidates = []
-            variants_by_root = {}
-            for row in data.get('results', [])[:30]:
-                if not isinstance(row, dict) or row.get('is_rumor'):
-                    continue
-                name = row.get('full_name') or row.get('alias')
-                target = row.get('url')
-                if (not isinstance(name, str) or not isinstance(target, str)
-                        or not technical_model_matches(model, name)
-                        or TRPriceScraper._radio_generation(name) not in (None, specs['network_generation'])):
-                    continue
-                target = 'https://www.kimovil.com/en/where-to-buy-' + target
-                if technical_url(target):
-                    candidates.append(target)
-                    variants_by_root.setdefault(target, []).extend(autocomplete_technical_variants(row))
-            self.diagnostics.append({'scope': 'public_technical_model_discovery', 'model': model,
-                'result_count': len(data.get('results', [])), 'matching_model_urls': list(dict.fromkeys(candidates))[:6]})
-            unique = list(dict.fromkeys(candidates))
-            roots = {re.sub(r'-[45]g$', '', url) for url in unique}
-            if len(unique) > 1 and len(roots) == 1 and next(iter(roots)) in unique:
-                # A bare name may refer to the other radio generation. Prefer
-                # the actually returned, explicitly matching radio URL, then
-                # still require its newly read technical radio facts.
-                qualified = [url for url in unique if url.endswith('-' + specs['network_generation'])]
-                candidates = qualified if len(qualified) == 1 else [next(iter(roots))]
-                self.diagnostics[-1]['radio_qualified_discovery'] = True
+            hints = parent.get('technical_source_urls')
+            if isinstance(hints, list) and len(hints) <= 4:
+                for hint in dict.fromkeys(url for url in hints if technical_url(url)):
+                    document = self.read(hint)
+                    # The persisted URL is not proof. Its freshly selected
+                    # model, physical memory and radio must match the parent.
+                    if selected_technical_document(document, hint, model, parent_specs(parent)):
+                        self.base_documents[model] = (hint, document)
+                        self.provider_variants[hint] = []
+                        self.hinted_roots.add(hint)
+                        self.diagnostics.append({'scope': 'fresh_persisted_technical_root',
+                            'model': model, 'source_url': hint, 'parent_memory_radio_verified': True,
+                            'stored_facts_reused': False})
+                        break
+        if model not in self.base_documents:
+            candidates, variants_by_root = self.discover_roots(model, specs)
             if len(set(candidates)) != 1:
                 raise ValueError('technical_model_discovery_ambiguous_or_missing')
             base = candidates[0]
@@ -448,6 +468,12 @@ class TechnicalVariantReader:
                 or selected_technical_document(html, base, model, default_specs) is None):
             self.diagnostics.append(rejected_technical_observation(html, base, model, default_specs, 'model_family'))
             raise ValueError('technical_model_family_not_verified')
+        if base in self.hinted_roots:
+            # Provider version URLs remain bound to this exact fresh root,
+            # even when search omits it or returns unrelated models.
+            _, variants_by_root = self.discover_roots(model, specs)
+            self.provider_variants[base] = variants_by_root.get(base, [])
+            self.hinted_roots.remove(base)
         observed = []
         observed_priority = {}
         version_hints = []

@@ -39,6 +39,53 @@ def tech_document(url=ALT_TECH_URL, ram=8, storage=256, name=NAME):
 
 
 class AutomaticMemoryVariantTests(unittest.TestCase):
+    def test_persisted_root_is_reread_and_can_find_a_child_when_search_omits_the_actual_model(self):
+        root = 'https://www.kimovil.com/en/where-to-buy-xiaomi-17'
+        child = root + '-12gb-512gb'
+        base = tech_document(root, ram=12, storage=256, name='Xiaomi 17').replace('</body>',
+            f'<ul class="versions-list"><li class="item"><a href="{child}">12GB 512GB</a></li></ul></body>')
+        docs = {root: base, child: tech_document(child, ram=12, storage=512, name='Xiaomi 17')}
+        calls = []
+        class Reader:
+            def read(self, url):
+                calls.append(url)
+                if '_json/autocomplete' in url:
+                    return json.dumps({'results': [{'full_name': 'Xiaomi Redmi 17 5G',
+                        'url': 'xiaomi-redmi-17-5g', 'vers': 'Global · 12GB · 512GB=wrong-redmi-child'}]})
+                return docs[url]
+        parent = {'id': 284, 'name': 'Xiaomi 17', 'slug': 'xiaomi-17',
+                  'attributes': {'ram_gb': 12, 'storage_gb': 256, 'Connectivity': {'5G': True}},
+                  'technical_source_urls': [root]}
+        before = deepcopy(parent)
+        reader = TechnicalVariantReader(Reader())
+        _, proof = reader.locate(parent, {'ram_gb': 12, 'storage_gb': 512, 'network_generation': '5g'})
+        self.assertEqual(proof['source_url'], child)
+        self.assertEqual(calls[0], root)
+        self.assertEqual(calls[-1], child)
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(parent, before)
+        self.assertEqual(reader.diagnostics[0]['stored_facts_reused'], False)
+        self.assertEqual(reader.diagnostics[0]['parent_memory_radio_verified'], True)
+
+    def test_persisted_root_cannot_supply_missing_or_conflicting_parent_facts_or_foreign_destinations(self):
+        root = 'https://www.kimovil.com/en/where-to-buy-xiaomi-17'
+        for document in [tech_document(root, ram=8, storage=256, name='Xiaomi 17'),
+                         tech_document(root, ram=12, storage=256, name='Xiaomi Redmi 17'),
+                         tech_document(root, ram=12, storage=256, name='Xiaomi 17').replace('n78', 'No')]:
+            calls = []
+            class Reader:
+                def read(self, url):
+                    calls.append(url)
+                    return json.dumps({'results': []}) if '_json/autocomplete' in url else document
+            parent = {'id': 284, 'name': 'Xiaomi 17', 'slug': 'xiaomi-17',
+                      'attributes': {'ram_gb': 12, 'storage_gb': 256, 'Connectivity': {'5G': True}},
+                      'technical_source_urls': ['https://evil.example/phone', root + '?token=private', root]}
+            with self.assertRaisesRegex(ValueError, 'technical_model_discovery_ambiguous_or_missing'):
+                TechnicalVariantReader(Reader()).locate(parent, {'ram_gb': 12, 'storage_gb': 512,
+                                                               'network_generation': '5g'})
+            self.assertEqual(len(calls), 2)
+            self.assertEqual(calls[0], root)
+
     def test_flagship_technical_discovery_never_follows_a_redmi_result_with_the_same_number(self):
         calls = []
         class Reader:
@@ -110,6 +157,11 @@ class AutomaticMemoryVariantTests(unittest.TestCase):
         self.assertEqual(calls[1:], [TECH_URL, ALT_TECH_URL])
         self.assertEqual(proof['source_url'], ALT_TECH_URL)
         self.assertEqual(proof['storage_gb'], 256)
+        hinted_reader = TechnicalVariantReader(Reader())
+        _, hinted_proof = hinted_reader.locate({**PARENT, 'technical_source_urls': [TECH_URL]},
+                                               dict(SPECS, storage_gb=256))
+        self.assertEqual(hinted_proof['source_url'], ALT_TECH_URL)
+        self.assertEqual(hinted_reader.documents, 3)
         self.assertIsNone(selected_technical_document(str(child), ALT_TECH_URL, NAME, dict(SPECS, storage_gb=256), canonical_model_url=TECH_URL))
         missing_slug = BeautifulSoup(str(child), 'html.parser')
         missing_meta = missing_slug.select_one('meta[name="devicecompare"]')

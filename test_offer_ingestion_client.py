@@ -213,6 +213,9 @@ def test_catalog_is_read_without_mysql():
                             "name": "Example Phone",
                             "slug": "example-phone",
                             "attributes": {"ram_gb": 8},
+                            "technical_source_urls": ['https://www.kimovil.com/en/where-to-buy-example-phone',
+                                'https://evil.example/phone',
+                                'https://www.kimovil.com/en/where-to-buy-example-phone?token=private'],
                             "offer_targets_truncated": False,
                             "offer_targets": [{"merchant_name": "n11", "source_url": "https://www.n11.com/urun/phone",
                                                "seller_name": "N11 Store",
@@ -249,6 +252,8 @@ def test_catalog_is_read_without_mysql():
 
     assert [product["id"] for product in products] == [42, 43]
     assert products[1]["attributes"] == {}
+    assert products[0]['technical_source_urls'] == ['https://www.kimovil.com/en/where-to-buy-example-phone']
+    assert 'technical_source_urls' not in products[1]
     assert [call[2]["params"]["page"] for call in session.calls] == ["1", "2"]
     assert all(call[0] == "GET" for call in session.calls)
     assert all(
@@ -996,6 +1001,17 @@ def test_our_collector_gateway_failure_keeps_bounded_cooldown_instead_of_permane
     assert len(session.calls) == 1
 
 from unittest import TestCase
+
+
+class TechnicalSourceHintContractTests(TestCase):
+    def test_catalog_keeps_only_bounded_public_provenance_urls_and_no_stored_offer_values(self):
+        test_catalog_is_read_without_mysql()
+        for hints in ['https://www.kimovil.com/en/where-to-buy-phone', [None, {}],
+                      ['https://www.kimovil.com/en/where-to-buy-phone'] * 5]:
+            client = OfferIngestionClient('https://teknoskor.com', TEST_SECRET, session=FakeSession([
+                FakeResponse(200, {'products': [{'id': 1, 'name': 'Phone', 'slug': 'phone',
+                    'technical_source_urls': hints}], 'hasMore': False})]))
+            self.assertNotIn('technical_source_urls', client.get_published_products()[0])
 
 
 class N11CollectorBoundaryTests(TestCase):
