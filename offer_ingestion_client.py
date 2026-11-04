@@ -26,10 +26,12 @@ class IngestionClientError(RuntimeError):
 
 
 class PublicDocumentResponse:
-    def __init__(self, url, status, document, content_type):
+    def __init__(self, url, status, document, content_type, location=None):
         self.url, self.status_code = url, status
         self._body = document.encode('utf-8')
         self.headers = {'Content-Type': content_type, 'Content-Length': str(len(self._body))}
+        if location is not None:
+            self.headers['Location'] = location
 
     def iter_content(self, chunk_size=65536):
         for offset in range(0, len(self._body), chunk_size):
@@ -661,7 +663,7 @@ class OfferIngestionClient:
         The ingestion credential goes only to our existing application host;
         the collector never forwards it or visitor cookies to the retailer.
         """
-        from priority_retailer_transport import product_host
+        from priority_retailer_transport import product_host, n11_canonical_redirect
         parsed = urlparse(url)
         query = parse_qsl(parsed.query, keep_blank_values=True)
         if (parsed.scheme != 'https' or parsed.netloc != 'www.n11.com' or parsed.fragment
@@ -685,7 +687,11 @@ class OfferIngestionClient:
                     or stamp.tzinfo is None
                     or not -60 <= (datetime.now(timezone.utc) - stamp).total_seconds() <= 60):
                 raise ValueError('Unbound or stale public document response')
-            return PublicDocumentResponse(url, body['source_status'], body['document'], body['content_type'])
+            redirect = body.get('redirect_url')
+            if (redirect is not None and (body['source_status'] not in (301, 302, 307, 308)
+                    or not n11_canonical_redirect(url, redirect))):
+                raise ValueError('Unbound public canonical redirect')
+            return PublicDocumentResponse(url, body['source_status'], body['document'], body['content_type'], redirect)
         except IngestionClientError:
             # Our collector's temporary gateway/restart failure is not a
             # retailer access denial. The source transport applies its bounded

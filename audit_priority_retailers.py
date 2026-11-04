@@ -120,7 +120,9 @@ def inspect_target(transport, url, product):
         if host == 'www.n11.com':
             from n11_catalog_source import parse_catalog_listing
             specs = with_reviewed_radio(product, PriceUpdater.get_expected_specs(product.get('attributes')))
-            offer, why = parse_catalog_listing(html, observed_url, product['name'], specs)
+            final_url = transport.resolved_url(observed_url)
+            offer, why = parse_catalog_listing(html, final_url, product['name'], specs)
+            row['resolved_url'] = final_url
             row.update(reader_reason=why, prepared_offer=offer)
         if host == 'www.teknosa.com':
             from teknosa_reviewed_source import parse_catalog_offer

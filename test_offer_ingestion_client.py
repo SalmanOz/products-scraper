@@ -52,6 +52,39 @@ def test_transient_catalog_gateway_520_retries_instead_of_aborting_the_catalog_s
         assert len(session.calls) == 2
 
 
+def test_n11_collector_redirect_metadata_stays_bound_to_the_same_product_group():
+    from priority_retailer_transport import PriorityRetailerTransport
+    original = 'https://www.n11.com/urun/samsung-galaxy-a57-256-gb-12345678'
+    canonical = original.replace('256-gb', '256gb')
+    def body(url, status=200, redirect=None):
+        return {'purpose': 'public_n11_document', 'writes': False, 'url': url,
+                'source_status': status, 'observed_at': datetime.now(timezone.utc).isoformat(),
+                'document': 'User-agent: *\nAllow: /\n' if url.endswith('robots.txt') else '<h1>Phone</h1>',
+                'content_type': 'text/html', **({'redirect_url': redirect} if redirect is not None else {})}
+    session = FakeSession([
+        FakeResponse(200, body('https://www.n11.com/robots.txt')),
+        FakeResponse(200, body(original, 301, canonical)),
+        FakeResponse(200, body(canonical)),
+    ])
+    client = OfferIngestionClient('https://teknoskor.com', TEST_SECRET, session=session)
+    transport = PriorityRetailerTransport(n11_collector=client.n11_document_get, sleep=lambda _: None)
+    assert transport.read_document(original)[1:] == ('document_read', 200)
+    assert transport.resolved_url(original) == canonical
+    assert [call[2]['json']['url'] for call in session.calls] == [
+        'https://www.n11.com/robots.txt', original, canonical]
+    for destination, status in [(canonical.replace('12345678', '12345679'), 301),
+        (canonical + '?magaza=other', 301), ('https://evil.example', 301), (canonical, 200),
+        (canonical, 403), (123, 301)]:
+        client = OfferIngestionClient('https://teknoskor.com', TEST_SECRET,
+            session=FakeSession([FakeResponse(200, body(original, status, destination))]))
+        try:
+            client.n11_document_get(original)
+        except requests.RequestException:
+            pass
+        else:
+            raise AssertionError('Unbound canonical redirect accepted')
+
+
 def test_dedicated_n11_collector_keeps_authentication_on_our_host_and_binds_fresh_source_response():
     from priority_retailer_transport import PriorityRetailerTransport
     target = 'https://www.n11.com/urun/samsung-galaxy-a57-256-gb-12345678'
@@ -963,6 +996,17 @@ def test_our_collector_gateway_failure_keeps_bounded_cooldown_instead_of_permane
     assert len(session.calls) == 1
 
 from unittest import TestCase
+
+
+class N11CollectorBoundaryTests(TestCase):
+    def test_same_product_redirect_metadata(self):
+        test_n11_collector_redirect_metadata_stays_bound_to_the_same_product_group()
+
+    def test_credentials_and_denial_boundary(self):
+        test_dedicated_n11_collector_keeps_authentication_on_our_host_and_binds_fresh_source_response()
+
+    def test_our_gateway_failure_is_not_a_retailer_denial(self):
+        test_our_collector_gateway_failure_keeps_bounded_cooldown_instead_of_permanent_denial()
 
 
 class CompleteTargetInspectionTests(TestCase):

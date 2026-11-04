@@ -313,7 +313,7 @@ def main():
                           if product_host(row[0]) == 'www.n11.com'), None)
         if candidate is None:
             raise ValueError('No catalog n11 destination available')
-        transport = PriorityRetailerTransport(maximum_per_host=1,
+        transport = PriorityRetailerTransport(maximum_per_host=2,
                                              n11_collector=client.n11_document_get)
         row = inspect_target(transport, candidate[0], candidate[1])
         result = {'purpose': 'n11_collector_readonly_preflight', 'catalog_count': len(products),
@@ -334,6 +334,7 @@ def main():
             row = result['rows'][-1]
             print(json.dumps({'visited': visited, 'queued': result['queued'],
                 'accepted': result['accepted'], 'slug': row['slug'], 'retailer': row['retailer'],
+                'url': row['url'], 'observed_url': row['observed_url'], 'resolved_url': row.get('resolved_url'),
                 'reason': row.get('reader_reason', row['reason']), 'http_status': row['http_status'],
                 'expected_specs': row.get('expected_specs'), 'heading': row.get('heading'),
                 'physical_facts': row.get('physical_facts'), 'publication': row.get('publication')},

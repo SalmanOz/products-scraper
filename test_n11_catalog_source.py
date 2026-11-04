@@ -109,6 +109,8 @@ class N11CatalogTests(unittest.TestCase):
     def test_public_reader_writer_and_complete_seller_proof_are_integrated(self):
         calls = []
         class Transport:
+            def resolved_url(self, url):
+                return url
             def read_document(self, url):
                 calls.append(url)
                 return document(), 'document_read', 200
@@ -128,6 +130,26 @@ class N11CatalogTests(unittest.TestCase):
         product['offer_targets'].append({'merchant_name': 'MediaMarkt',
                                          'source_url': 'https://www.mediamarkt.com.tr/tr/product/_other-123456.html'})
         self.assertFalse(updater.live_offer_is_valid(product, offers[0], SPECS))
+
+    def test_canonical_slug_redirect_reaches_the_same_selected_sku_and_records_final_destination(self):
+        from priority_retailer_transport import PriorityRetailerTransport
+        from test_pasaj_source import Response
+        canonical = URL.replace('256-gb', '256gb')
+        html = document().replace(URL, canonical)
+        def get(url, **_):
+            if url.endswith('robots.txt'):
+                return Response(url, 'User-agent: *\nAllow: /\n')
+            if url == URL:
+                response = Response(url, '', status=301)
+                response.headers['Location'] = canonical
+                return response
+            return Response(url, html)
+        source = N11CatalogSource(transport=PriorityRetailerTransport(get=get, sleep=lambda _: None))
+        source.register_catalog_targets(NAME, [{'source_url': URL}], SPECS)
+        offer, reason, status = source.read_offer(URL)
+        self.assertEqual((reason, status), ('selected_n11_cash_offer', 200))
+        self.assertEqual(offer['url'], canonical)
+        self.assertTrue(catalog_offer_matches(offer, NAME, SPECS))
 
     def test_stock_private_member_app_and_basket_prices_never_become_ordinary_cash(self):
         changes = [('availableToBuy', False), ('outOfStock', True), ('stock', 0), ('secondHand', True),

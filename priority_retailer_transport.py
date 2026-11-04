@@ -78,6 +78,12 @@ def challenge_document(html):
                 or soup.select('#challenge-form, #captchacharacters'))
 
 
+def n11_canonical_redirect(original, target):
+    return (product_host(original) == product_host(target) == 'www.n11.com'
+            and not urlparse(original).query and not urlparse(target).query
+            and urlparse(original).path.rsplit('-', 1)[-1] == urlparse(target).path.rsplit('-', 1)[-1])
+
+
 class PriorityRetailerTransport:
     def __init__(self, *, get=None, post=None, sleep=time.sleep, clock=time.monotonic,
                  maximum_per_host=2, n11_collector=None):
@@ -112,16 +118,18 @@ class PriorityRetailerTransport:
             location = transport._redirect_location
             if (allow_redirect and accept == 'text/html' and result[2] in (301, 302, 307, 308)
                     and isinstance(location, str) and len(location) <= 1000
-                    and product_host(url) == 'www.trendyol.com'):
+                    and product_host(url) in ('www.trendyol.com', 'www.n11.com')):
                 target = urljoin(url, location)
                 original, redirected = urlparse(url), urlparse(target)
                 before, after = dict(parse_qsl(original.query)), dict(parse_qsl(redirected.query))
                 # A slug/one-size canonicalization may not change product or seller.
                 # No cross-host redirect, changed memory selector, second hop or
                 # request beyond the same source's original budget is followed.
-                if (product_host(target) != 'www.trendyol.com'
-                        or original.path.rsplit('-p-', 1)[-1] != redirected.path.rsplit('-p-', 1)[-1]
-                        or before.get('merchantId') != after.get('merchantId')
+                same_identity = (n11_canonical_redirect(url, target) if product_host(url) == 'www.n11.com'
+                                 else product_host(target) == 'www.trendyol.com'
+                                 and original.path.rsplit('-p-', 1)[-1] == redirected.path.rsplit('-p-', 1)[-1]
+                                 and before.get('merchantId') == after.get('merchantId'))
+                if (not same_identity
                         or not state['rules'].can_fetch(BOT, target)):
                     return None, 'redirect_identity_or_policy_mismatch', result[2]
                 if (target in state['seen']

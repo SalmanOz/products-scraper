@@ -277,5 +277,5 @@ class N11CatalogSource:
         html, reason, status = self.transport.read_document(observed)
         if html is None:
             return None, reason, status
-        offer, reason = parse_catalog_listing(html, observed, profile['name'], profile['specs'])
+        offer, reason = parse_catalog_listing(html, self.transport.resolved_url(observed), profile['name'], profile['specs'])
         return offer, reason, status

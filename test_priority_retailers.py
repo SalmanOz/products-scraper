@@ -189,6 +189,50 @@ class PriorityRetailerTests(unittest.TestCase):
         self.assertEqual(reader.report()['Trendyol']['pdp_requests'], 2)
         self.assertEqual(reader.read_document(URLS[1] + '1')[1], 'pdp_budget_exhausted')
 
+    def test_n11_canonical_redirect_keeps_group_robots_budget_and_one_hop(self):
+        original = URLS[2]
+        canonical = original.replace('128-gb', '128gb')
+        for destination, expected in (
+            (canonical, 'document_read'),
+            (canonical + '?magaza=other', 'redirect_identity_or_policy_mismatch'),
+            (canonical.replace('12345678', '12345679'), 'redirect_identity_or_policy_mismatch'),
+            ('https://evil.example/urun/phone-12345678', 'redirect_identity_or_policy_mismatch'),
+        ):
+            calls = []
+            def get(url, **_):
+                calls.append(url)
+                response = Response(url, 'User-agent: *\nAllow: /\n' if url.endswith('robots.txt') else '<h1>Phone</h1>')
+                if url == original:
+                    response.status_code = 301
+                    response.headers['Location'] = destination
+                return response
+            reader = PriorityRetailerTransport(get=get, sleep=lambda _: None)
+            self.assertEqual(reader.read_document(original)[1], expected)
+            self.assertEqual(len(calls), 3 if expected == 'document_read' else 2)
+            if expected == 'document_read':
+                self.assertEqual(reader.resolved_url(original), canonical)
+        reader = PriorityRetailerTransport(get=get, sleep=lambda _: None, maximum_per_host=1)
+        destination = canonical
+        self.assertEqual(reader.read_document(original)[1], 'redirect_budget_or_duplicate')
+
+        def denied(url, **_):
+            response = get(url)
+            if url.endswith('robots.txt'):
+                response = Response(url, 'User-agent: *\nAllow: /\nDisallow: ' + canonical.split('.com')[1])
+            return response
+        reader = PriorityRetailerTransport(get=denied, sleep=lambda _: None)
+        self.assertEqual(reader.read_document(original)[1], 'redirect_identity_or_policy_mismatch')
+
+        def looping(url, **_):
+            if url.endswith('robots.txt'):
+                return Response(url, 'User-agent: *\nAllow: /\n')
+            response = Response(url, '', status=301)
+            response.headers['Location'] = canonical if url == original else original
+            return response
+        reader = PriorityRetailerTransport(get=looping, sleep=lambda _: None)
+        self.assertEqual(reader.read_document(original)[1], 'http_301')
+        self.assertEqual(reader.report()['n11']['pdp_requests'], 2)
+
     def test_trendyol_canonical_redirect_keeps_product_seller_robots_and_request_budget(self):
         original = URLS[1] + '?merchantId=123&v=tek-ebat'
         canonical = URLS[1].replace('128-gb', '128gb') + '?merchantId=123'

@@ -20,10 +20,10 @@ def priority_catalog_source_budgets(products):
                 destinations[host].add(urlparse(url)._replace(query='').geturl())
     budgets = {}
     for host, urls in destinations.items():
-        # Reserve one additional discovered PDP per model. Trendyol may also
-        # perform the already-validated same-product canonical redirect.
+        # Reserve an extra discovered PDP per model and one same-product
+        # canonical redirect on sources which support it.
         count = len(urls) + len(products)
-        if host == 'www.trendyol.com':
+        if host in ('www.trendyol.com', 'www.n11.com'):
             count *= 2
         budgets[host] = max(1, min(400, count))
     return budgets
