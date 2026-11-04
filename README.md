@@ -532,7 +532,7 @@ hints per existing model (24 per retailer) and prepares at most 12 separately
 verified capacities. `--publish` enables the atomic `/api/ingestion/memory-variants`
 writer and first-party image uploads. There are no hand-authored model/price
 batches. Source denial circuits survive the variant stage. A technical page
-must have the exact selected canonical, model, unambiguous physical RAM/storage,
+must have the exact selected model, unambiguous physical RAM/storage,
 radio, release and complete freshly sourced sections; a fresh live selected
 retailer SKU/seller/stock/price is independently mandatory. Missing evidence
 rejects that candidate without changing its parent. Original catalog identity
@@ -541,7 +541,10 @@ and coverage are reported separately from the enlarged catalog readback.
 Technical documents use normal rendered GETs in the job's existing anonymous
 browser service. Accepted URLs are limited to public Kimovil model pages and
 its existing model autocomplete. Changed URLs, non-200 responses, challenge
-documents and conflicting canonical/model/memory facts are rejected. No user
+documents and conflicting canonical/model/memory facts are rejected. A shared
+model canonical requires its separately verified model page, the exact active
+capacity link and the selected device metadata slug; it never supplies capacity.
+No user
 browser profile, authentication, proxy or cookie override is attached. Fetch
 times survive in-memory reuse; offer timestamps are serialized as UTC without
 renewing their observed time.

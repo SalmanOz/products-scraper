@@ -58,7 +58,8 @@ class AutomaticMemoryVariantTests(unittest.TestCase):
             reader.read(ALT_TECH_URL)
         self.assertEqual(len(calls), 2)
         self.assertEqual(calls[1][0], 'http://localhost:8191/v1')
-        self.assertEqual(set(calls[1][1]['json']), {'cmd', 'url', 'session', 'maxTimeout'})
+        self.assertEqual(set(calls[1][1]['json']), {'cmd', 'url', 'session', 'maxTimeout', 'waitInSeconds'})
+        self.assertEqual(calls[1][1]['json']['waitInSeconds'], 2)
         self.assertLessEqual(calls[1][1]['timeout'], 60)
 
     def test_rendered_public_reader_rejects_changed_url_and_challenge_documents(self):
@@ -130,6 +131,23 @@ class AutomaticMemoryVariantTests(unittest.TestCase):
             self.assertIn(original, document)
             self.assertIsNone(selected_technical_document(document.replace(original, replacement), ALT_TECH_URL, NAME, specs))
         self.assertIsNone(selected_technical_document(document, TECH_URL, NAME, specs))
+
+    def test_shared_model_canonical_needs_exact_active_capacity_link_and_selected_metadata_slug(self):
+        specs = dict(SPECS, storage_gb=256)
+        document = tech_document().replace(f'href="{ALT_TECH_URL}"', f'href="{TECH_URL}"')
+        old = html.escape(json.dumps({'name': NAME, 'image': 'https://cdn-files.kimovil.com/phone-a54_big.jpg'}), quote=True)
+        new = html.escape(json.dumps({'name': NAME, 'slug': ALT_TECH_URL.rsplit('where-to-buy-', 1)[1],
+                                      'image': 'https://cdn-files.kimovil.com/phone-a54_big.jpg'}), quote=True)
+        document = document.replace(old, new).replace('</body>',
+            f'<ul class="versions-list"><li class="item active"><a href="{ALT_TECH_URL}">8GB · 256GB</a></li></ul></body>')
+        self.assertIsNone(selected_technical_document(document, ALT_TECH_URL, NAME, specs))
+        self.assertIsNotNone(selected_technical_document(document, ALT_TECH_URL, NAME, specs, canonical_model_url=TECH_URL))
+        for before, after in [('item active', 'item'),
+                              ('&quot;slug&quot;', '&quot;other_slug&quot;'),
+                              (f'href="{ALT_TECH_URL}"', f'href="{TECH_URL}"')]:
+            self.assertIsNone(selected_technical_document(document.replace(before, after), ALT_TECH_URL, NAME, specs,
+                                                         canonical_model_url=TECH_URL))
+        self.assertIsNone(selected_technical_document(document, ALT_TECH_URL, NAME, specs, canonical_model_url=TECH_URL+'-pro'))
 
     def test_locates_only_observed_capacity_link_and_stages_fresh_technical_facts_not_parent_copy(self):
         base = tech_document(TECH_URL, storage=128).replace('</body>',

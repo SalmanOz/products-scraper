@@ -587,6 +587,8 @@ def main():
         checkpoint_variant(report)
         for row in report['rows']:
             print('Automatic memory variant: ' + json.dumps(row, ensure_ascii=False), flush=True)
+        for diagnostic in report.get('technical_diagnostics', []):
+            print('Technical memory discovery: ' + json.dumps(diagnostic, ensure_ascii=False), flush=True)
         print('Automatic memory variant summary: ' + json.dumps({key: report[key] for key in
             ('observed_candidates', 'technical_documents', 'created', 'existing', 'writes')}, ensure_ascii=False), flush=True)
         return

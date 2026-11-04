@@ -104,7 +104,7 @@ def exact_capacity(raw):
     return int(amounts[0][0]) * (1024 if amounts[0][1].casefold() == 'tb' else 1)
 
 
-def selected_technical_document(html, url, model, specs):
+def selected_technical_document(html, url, model, specs, *, canonical_model_url=None):
     if not technical_url(url) or not isinstance(html, str) or len(html.encode()) > 5 * 1024 * 1024:
         return None
     soup = BeautifulSoup(html, 'html.parser')
@@ -112,6 +112,7 @@ def selected_technical_document(html, url, model, specs):
     if re.search(r'just a moment|captcha|access denied|verify you are human', title, re.I):
         return None
     names = []
+    selected_slug = None
     for key in ('deviceki', 'devicecompare'):
         nodes = soup.select(f'meta[name="{key}"]')
         if len(nodes) > 1:
@@ -121,6 +122,8 @@ def selected_technical_document(html, url, model, specs):
                 value = json.loads(html_lib.unescape(nodes[0].get('content', '')))
                 if isinstance(value, dict) and isinstance(value.get('name'), str):
                     names.append(value['name'])
+                if key == 'devicecompare' and isinstance(value, dict):
+                    selected_slug = value.get('slug')
             except (ValueError, TypeError):
                 return None
     # Kimovil may spell radio in metadata while the existing model omits it.
@@ -128,11 +131,23 @@ def selected_technical_document(html, url, model, specs):
     core = lambda name: re.sub(r'\b[45]g\b', '', name, flags=re.I).strip()
     if not names or not all(KimovilScraper.is_product_name_match(core(model), core(name)) for name in names):
         return None
+    if selected_slug is not None and selected_slug != url.rsplit('/where-to-buy-', 1)[-1]:
+        return None
     if any(TRPriceScraper._radio_generation(name) not in (None, specs['network_generation']) for name in names):
         return None
     canonical = soup.select('link[rel="canonical"][href]')
-    if len(canonical) != 1 or urljoin(url, canonical[0]['href']).rstrip('/') != url:
+    if len(canonical) != 1:
         return None
+    actual_canonical = urljoin(url, canonical[0]['href']).rstrip('/')
+    if actual_canonical != url:
+        # Observed Kimovil variants share their model canonical. This is
+        # acceptable only after the caller separately verifies that exact
+        # model page and this page independently selects the requested slug.
+        selected = soup.select('.versions-list > li.item.active > a[href]')
+        if (actual_canonical != canonical_model_url or not technical_url(actual_canonical)
+                or selected_slug != url.rsplit('/where-to-buy-', 1)[-1]
+                or len(selected) != 1 or urljoin(url, selected[0]['href']) != url):
+            return None
     sections = extract_spec_sections(soup)
     actual = {'ram_gb': exact_capacity(find_section_spec(sections, 'Hardware', 'Memory RAM', 'RAM')),
               'storage_gb': exact_capacity(find_section_spec(sections, 'Hardware', 'Capacity', 'Storage'))}
@@ -155,6 +170,7 @@ class TechnicalVariantReader:
         self.attempts = 0
         self.base_documents = {}
         self.observed_at = {}
+        self.diagnostics = []
 
     def read(self, url):
         if self.attempts >= self.maximum_documents:
@@ -171,7 +187,7 @@ class TechnicalVariantReader:
             # The existing public autocomplete returns actual model URLs. No
             # region/capacity suffix is synthesized or searched in a URL grid.
             endpoint = ('https://www.kimovil.com/_json/autocomplete_devicemodels_joined.json'
-                        '?device_type=0&name=' + quote(model, safe=''))
+                        '?device_type=0&name=' + quote(re.sub(r'\b[45]g\b', '', model, flags=re.I).strip(), safe=''))
             raw = self.read(endpoint)
             if raw.lstrip().startswith('<'):
                 raw = BeautifulSoup(raw, 'html.parser').get_text()
@@ -190,6 +206,8 @@ class TechnicalVariantReader:
                 target = 'https://www.kimovil.com/en/where-to-buy-' + target
                 if technical_url(target):
                     candidates.append(target)
+            self.diagnostics.append({'scope': 'public_technical_model_discovery', 'model': model,
+                'result_count': len(data.get('results', [])), 'matching_model_urls': list(dict.fromkeys(candidates))[:6]})
             if len(set(candidates)) != 1:
                 raise ValueError('technical_model_discovery_ambiguous_or_missing')
             base = candidates[0]
@@ -200,6 +218,16 @@ class TechnicalVariantReader:
             proof['observed_at'] = self.observed_at[base]
             return html, proof
         soup = BeautifulSoup(html, 'html.parser')
+        raw_specs = extract_spec_sections(soup)
+        default_specs = {
+            'ram_gb': exact_capacity(find_section_spec(raw_specs, 'Hardware', 'Memory RAM', 'RAM')),
+            'storage_gb': exact_capacity(find_section_spec(raw_specs, 'Hardware', 'Capacity', 'Storage')),
+            'network_generation': specs['network_generation'],
+        }
+        if (not default_specs['ram_gb'] or not default_specs['storage_gb']
+                or not 1 <= default_specs['ram_gb'] <= 64 or not 32 <= default_specs['storage_gb'] <= 4096
+                or selected_technical_document(html, base, model, default_specs) is None):
+            raise ValueError('technical_model_family_not_verified')
         observed = []
         for anchor in soup.select('a[href]'):
             url = urljoin(base, anchor['href'])
@@ -212,9 +240,13 @@ class TechnicalVariantReader:
                 if (re.search(rf'(?<!\d){ram}\s*GB\b', label, re.I) and re.search(rf'(?<!\d){storage}\s*GB\b', label, re.I)
                         or re.search(rf'(?:-|global|china){ram}gb-{storage}gb$', path)):
                     observed.append(url)
+        self.diagnostics.append({'scope': 'observed_technical_capacity_links', 'model': model,
+            'source_url': base, 'selected_default_specs': default_specs,
+            'requested_specs': specs, 'version_lists': len(soup.select('.versions-list')),
+            'observed_capacity_urls': observed[:6]})
         for url in observed[:3]:
             html = self.read(url)
-            proof = selected_technical_document(html, url, model, specs)
+            proof = selected_technical_document(html, url, model, specs, canonical_model_url=base)
             if proof:
                 proof['observed_at'] = self.observed_at[url]
                 return html, proof
@@ -262,7 +294,8 @@ class PublicBrowserTechnicalReader:
                 raise ValueError('technical_browser_session_unavailable')
             self.ready = True
         response = self.post('http://localhost:8191/v1',
-            json={'cmd': 'request.get', 'url': url, 'session': self.session, 'maxTimeout': 45000}, timeout=60)
+            json={'cmd': 'request.get', 'url': url, 'session': self.session, 'maxTimeout': 45000,
+                  'waitInSeconds': 2 if technical_url(url) else 0}, timeout=60)
         response.raise_for_status()
         body = response.json()
         solution = body.get('solution') if isinstance(body, dict) else None
@@ -491,7 +524,8 @@ def prepare_memory_variants(result, products, *, transport, technical_reader=Non
         if checkpoint:
             checkpoint(report)
     report.update(technical_documents=technical_reader.documents,
-                  technical_request_attempts=getattr(technical_reader, 'attempts', technical_reader.documents), sources=transport.report())
+                  technical_request_attempts=getattr(technical_reader, 'attempts', technical_reader.documents),
+                  technical_diagnostics=getattr(technical_reader, 'diagnostics', []), sources=transport.report())
     return report
 
 
