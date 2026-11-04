@@ -21,6 +21,102 @@ class Transport:
 
 
 class TargetPreflightTests(unittest.TestCase):
+    def test_teknosa_supplement_requires_fresh_missing_platform_audit_and_keeps_two_target_limit(self):
+        from datetime import datetime, timedelta, timezone
+        base = 'https://www.teknosa.com/samsung-galaxy-a36-5g-8gb128gb-akilli-telefon-p-12507984'
+        urls = [base + str(i) for i in range(3)]
+        class CategoryTransport(Transport):
+            def read_teknosa_category(self, url):
+                return '<h1 class="plp-title">Cep Telefonu Fiyatları ve Modelleri</h1>', 'document_read', 200
+        for mode, expected_reads in [('missing', 2), ('present', 0), ('stale', 3), ('none', 3)]:
+            with self.subTest(mode=mode):
+                client = Client()
+                client.product['offer_targets'] = [{'source_url': url} for url in urls]
+                client.get_public_price_priority = lambda: {client.product['id']: (client.product['slug'], True)}
+                records = [{'source_url': target, 'merchant_name': name, 'price': 30000} for target, name in [
+                    ('https://www.hepsiburada.com/samsung-galaxy-a36-p-HBCV0000OLD001', 'Shop One'),
+                    (urls[0] if mode == 'present' else 'https://www.hepsiburada.com/samsung-galaxy-a36-p-HBCV0000OLD002', 'Shop Two')]]
+                inventory = {'evidenceVersion': 'product-offer-match-v1', 'mode': 'shadow_audit_only',
+                    'auditedAt': (datetime.now(timezone.utc) - timedelta(minutes=6 if mode == 'stale' else 0)).isoformat(),
+                    'productCoverage': [{'slug': client.product['slug'], 'matchedMerchants': 2, 'matchedOffers': records}]}
+                def inspect(transport, url, product):
+                    return {'slug': product['slug'], 'retailer': 'Teknosa', 'url': url, 'observed_url': url,
+                            'reason': 'http_404', 'http_status': 404, 'prepared_offer': None}
+                with patch('sweep_priority_catalog.inspect_target', side_effect=inspect) as inspector:
+                    result = sweep(client=client, transport=CategoryTransport(), discover_teknosa=True,
+                        coverage_first=True, current_listing_inventory=None if mode == 'none' else inventory)
+                self.assertEqual(inspector.call_count, expected_reads)
+                self.assertEqual(result['teknosa_store_gap_discovery']['eligible_models'],
+                                 [client.product['slug']] if mode == 'missing' else [])
+                self.assertFalse(result['writes'])
+
+    def test_missing_teknosa_platform_is_recovered_after_primary_gaps_from_existing_or_fresh_category_hints(self):
+        from datetime import datetime, timezone
+        from html import escape
+        from pathlib import Path
+        from teknosa_reviewed_source import TeknosaCatalogSource
+        from retailer_offer_refresh import RetailerOfferRefresher
+        html = Path(__file__).with_name('fixtures').joinpath('teknosa-selected-s25-ultra-512-physical-table.html').read_text()
+        url = 'https://www.teknosa.com/samsung-galaxy-s25-ultra-5g-512gb-titanyum-gumus-akilli-telefon-p-125079845'
+        title = 'Samsung Galaxy S25 Ultra 5G 512GB Titanyum Gümüş Akıllı Telefon'
+        missing_url = 'https://www.hepsiburada.com/honor-90-256-gb-8-gb-ram-p-HBCV0000MIS001'
+        missing = {'id': 1000, 'name': 'Honor 90', 'slug': 'honor-90',
+                   'attributes': {'ram_gb': 8, 'storage_gb': 256, 'Connectivity': {'5G': True}},
+                   'offer_targets': [{'source_url': missing_url}]}
+        class ScopedClient(Client):
+            def get_published_products(self):
+                return deepcopy([self.product, missing])
+            def get_public_price_priority(self):
+                return {self.product['id']: (self.product['slug'], True), missing['id']: (missing['slug'], False)}
+            def get_offer_identity_readiness(self):
+                rows = [{'source_url': 'https://www.hepsiburada.com/samsung-galaxy-s25-ultra-p-HBCV0000OLD001',
+                         'merchant_name': 'Shop One', 'price': 80000},
+                        {'source_url': 'https://www.hepsiburada.com/samsung-galaxy-s25-ultra-p-HBCV0000OLD002',
+                         'merchant_name': 'Shop Two', 'price': 81000}]
+                rows += [{'source_url': r['source_url'], 'merchant_name': r['seller'], 'price': r['price']}
+                         for batch in self.writes for r in batch]
+                return {'evidenceVersion': 'product-offer-match-v1', 'mode': 'shadow_audit_only',
+                    'auditedAt': datetime.now(timezone.utc).isoformat(), 'productCoverage': [
+                        {'slug': self.product['slug'], 'matchedMerchants': len(rows), 'matchedOffers': rows},
+                        {'slug': missing['slug'], 'matchedMerchants': 0, 'matchedOffers': []}]}
+            def ingest_listing_offers(self, rows, *, require_all_accepted):
+                return {**super().ingest_offers(rows, require_all_accepted=require_all_accepted),
+                        'offer_identity_contract': 'seller-source-url-v1', 'server_scores_recalculated': True}
+        class SourceTransport(Transport):
+            def __init__(self, category_hint):
+                self.calls, self.category_hint = [], category_hint
+            def configure_catalog_budget(self, count):
+                pass
+            def read_document(self, target):
+                self.calls.append(target)
+                return (html, 'document_read', 200) if target == url else (None, 'http_404', 404)
+            def read_teknosa_category(self, target):
+                card = ('<div data-product-url="' + url + '" data-product-name="' + escape(title) +
+                    '" data-product-id="125079845" data-product-ean="8806097015154" '
+                    'data-product-page-type="CATEGORY" data-product-stock="Y"><h3 class="prd-title">' +
+                    escape(title) + '</h3></div>') if self.category_hint else ''
+                return '<h1 class="plp-title">Cep Telefonu Fiyatları ve Modelleri</h1>' + card, 'document_read', 200
+        for category_hint in (False, True):
+            with self.subTest(category_hint=category_hint):
+                client = ScopedClient()
+                client.product.update(name='Samsung Galaxy S25 Ultra 12GB 512GB',
+                    slug='samsung-galaxy-s25-ultra-12gb-512gb',
+                    attributes={'ram_gb': 12, 'storage_gb': 512, 'Connectivity': {'5G': True}},
+                    offer_targets=[] if category_hint else [{'source_url': url, 'merchant_name': 'hepsi10line'}])
+                transport = SourceTransport(category_hint)
+                reader = RetailerOfferRefresher(teknosa_catalog_source=TeknosaCatalogSource(transport=transport))
+                result = sweep(client=client, transport=transport, reader=reader, publish=True,
+                    coverage_first=True, discover_teknosa=True,
+                    current_listing_inventory=client.get_offer_identity_readiness())
+                self.assertEqual(transport.calls, [missing_url, url, url])
+                self.assertEqual(result['status'], 'completed')
+                self.assertEqual(result['accepted'], 1)
+                self.assertEqual(len(client.writes), 1)
+                self.assertTrue(result['rows'][-1]['publication']['commercial_readback_verified'])
+                self.assertEqual(result['teknosa_store_gap_discovery']['admitted_models'], [client.product['slug']])
+                self.assertFalse(result['teknosa_store_gap_discovery']['prices_or_offer_evidence_reused'])
+                self.assertEqual(client.writes[0][0]['source_variant_evidence']['ram_gb'], 12)
+
     def test_expired_prewrite_candidate_is_skipped_and_the_next_target_gets_fresh_full_publication(self):
         from datetime import datetime,timedelta,timezone
         from urllib.parse import urlencode

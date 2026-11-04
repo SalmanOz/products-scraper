@@ -155,6 +155,7 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
     inventory_urls = set()
     covered_models = set()
     n11_present_models = set()
+    teknosa_present_models = set()
     result['priority_store_coverage_before'] = {'status': 'unavailable'}
     if current_listing_inventory is not None:
         try:
@@ -167,6 +168,8 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
             result['priority_store_coverage_before'] = priority_store_coverage_readback(current_listing_inventory, products)
             n11_present_models = {slug for slug, rows in inventory.items() if any(
                 product_host(row.get('source_url')) == 'www.n11.com' for row in rows if isinstance(row, dict))}
+            teknosa_present_models = {slug for slug, rows in inventory.items() if any(
+                product_host(row.get('source_url')) == 'www.teknosa.com' for row in rows if isinstance(row, dict))}
             if coverage_first:
                 by_slug = {p['slug']: p for p in products}
                 for row in current_listing_inventory['productCoverage']:
@@ -193,6 +196,13 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
             'retailer_observation_timestamps_renewed': False,
         }
     n11_gap_models = covered_models - n11_present_models
+    teknosa_gap_models = covered_models - teknosa_present_models
+    teknosa_gap_cards = {}
+    if discover_teknosa:
+        result['teknosa_store_gap_discovery'] = {
+            'eligible_models': sorted(teknosa_gap_models), 'admitted_models': [],
+            'source_budget_shared': True, 'routing_hint_limit': 2000,
+            'prices_or_offer_evidence_reused': False}
     n11_gap_admitted = set()
     if discover_n11:
         result['n11_store_gap_discovery'] = {
@@ -465,6 +475,16 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
             found, next_category_url = module.parse_category_document(html, category_url, diagnostic=parser)
             discovery['pages'][-1]['parser'] = parser
             cards.extend(found)
+            if retailer == 'Teknosa' and teknosa_gap_models and not category_audit_only:
+                for card in found:
+                    destination = card.get('source_url')
+                    if (destination not in teknosa_gap_cards and len(teknosa_gap_cards) < 2000
+                            and product_host(destination) == 'www.teknosa.com'):
+                        # Only routing data survives until primary price and
+                        # second-seller gaps have completed. No card amount,
+                        # GTIN, stock claim or selected evidence is retained.
+                        teknosa_gap_cards[destination] = {key: card[key] for key in
+                            ('source_url', 'discovery_title', 'stock_priority')}
             if parser.get('status') != 'parsed':
                 if callable(getattr(module, 'discovery_links', None)):
                     discovery.setdefault('incomplete_pages', []).append(category_url)
@@ -632,6 +652,29 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                 result[report_key]['resume_status'] = 'source_blocked'
                 continue
             discover_category(retailer, report_key, module, read_category, continuation)
+        if discover_teknosa and teknosa_gap_models and not category_audit_only:
+            from teknosa_catalog_discovery import match_catalog_destinations
+            matched = match_catalog_destinations(list(teknosa_gap_cards.values()), products)
+            hints = defaultdict(list)
+            for url, product in targets:
+                if product_host(url) == 'www.teknosa.com':
+                    hints[product['id']].append(url)
+            for product in sorted(products, key=lambda p: p['id']):
+                if product['slug'] not in teknosa_gap_models:
+                    continue
+                # Prefer freshly observed category destinations, then existing
+                # catalog hints. The normal shared transport and all writer
+                # guards remain in force; retained rows never supply quotes.
+                destinations = list(dict.fromkeys(
+                    [c['source_url'] for c in matched.get(product['id'], [])] + hints[product['id']]))
+                destinations = [url for url in destinations if
+                    (product['slug'], url) not in processed and observed_url(url) not in inventory_urls][:2]
+                if not destinations:
+                    continue
+                result['teknosa_store_gap_discovery']['admitted_models'].append(product['slug'])
+                for url in destinations:
+                    result['queued'] += 1
+                    process_target(url, product)
         result['status'] = ('category_audit_completed' if category_audit_only else
                             'publication_failed' if publication_failed else 'completed')
     except Exception as error:
@@ -684,6 +727,10 @@ def save_report(result):
     lines += ['', 'Reasons: ' + json.dumps(counts, ensure_ascii=False), '',
               'Sources: ' + json.dumps(result.get('sources'), ensure_ascii=False), '',
               'No-hint models: ' + ', '.join(result['models_without_priority_hints'])]
+    if result.get('teknosa_store_gap_discovery'):
+        gaps = result['teknosa_store_gap_discovery']
+        lines += ['', f"Teknosa platform gaps: {len(gaps['admitted_models'])}/{len(gaps['eligible_models'])} "
+                  'models admitted after primary recovery; existing source limits and fresh selected-offer proof retained.']
     if result.get('trendyol_brand_category_discovery'):
         brands = result['trendyol_brand_category_discovery']
         lines += ['', 'Trendyol observed brand routing: ' + json.dumps({

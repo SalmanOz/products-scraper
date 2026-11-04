@@ -212,10 +212,13 @@ class TeknosaCatalogSource:
     def register_catalog_targets(self, name, targets, specs):
         from priority_retailer_transport import product_host
         matcher = TRPriceScraper()
+        model = matcher._catalog_model_name(name, specs)
+        if not model:
+            return
         for target in targets:
             url = target.get('source_url') if isinstance(target, dict) else None
             if (url == URL or product_host(url) != 'www.teknosa.com'
-                    or not matcher.is_strict_match(name, url.split('/', 3)[3].replace('-', ' '), {})):
+                    or not matcher.is_strict_match(model, url.split('/', 3)[3].replace('-', ' '), {})):
                 continue
             profile = {'name': name, 'specs': dict(specs)}
             if url in self._profiles and self._profiles[url] != profile:

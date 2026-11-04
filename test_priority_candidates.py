@@ -61,7 +61,7 @@ class PriorityCandidateTests(unittest.TestCase):
         from teknosa_reviewed_source import TeknosaCatalogSource
         html = Path(__file__).with_name('fixtures').joinpath('teknosa-selected-s25-ultra-512-physical-table.html').read_text()
         url = 'https://www.teknosa.com/samsung-galaxy-s25-ultra-5g-512gb-titanyum-gumus-akilli-telefon-p-125079845'
-        name, specs = 'Samsung Galaxy S25 Ultra', {'ram_gb': 12, 'storage_gb': 512, 'network_generation': '5g'}
+        name, specs = 'Samsung Galaxy S25 Ultra 12GB 512GB', {'ram_gb': 12, 'storage_gb': 512, 'network_generation': '5g'}
         observed, reason = parse_selected_marketplace(html, url, {'name': name, 'specs': specs})
         self.assertIsNotNone(observed, reason)
         class ScopedClient(Client):

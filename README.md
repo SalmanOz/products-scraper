@@ -450,6 +450,13 @@ kapsayıcısındaki tek teknik tablonun model, fiziksel RAM, depolama ve açık
 Başlığın kendisi korunur; mevcut satıcı/SKU/GTIN/stok/fiyat kanıtı ve yeniden
 canlı okuma geçmeden yazım yapılmaz. Eksik veya olumsuz 5G alanından 4G türetilmez.
 
+`coverage-first` turu fiyat/ikinci satıcı açıklarını işledikten sonra, güncel
+tüm-katalog denetiminde Teknosa teklifi bulunmayan çok satıcılı varyantları da
+inceler. Yalnız mevcut katalog adresleri ve aynı turda gözlenen kategori
+bağlantıları kullanılır; en fazla 2 adres/varyant, aynı mağaza istek bütçesi
+ve kaynak kesicisi geçerlidir. Eski/eksik denetim bu ek kuyruğu açmaz.
+`teknosa_store_gap_discovery` uygun ve incelenen varyantları ayrıca raporlar.
+
 Trendyol'da mevcut yenileme hedeflerinden en fazla sekiz farklı markanın ürünü
 kategori keşfinden önce okunur; diğer katalog hedefleri normal turunda kalır.
 Bu sayfaların gözlenen telefon/Android telefon marka kategorileri, zorunlu
