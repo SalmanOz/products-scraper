@@ -228,6 +228,9 @@ class HepsiburadaS25FeSource:
                 return None, 'solver_unavailable', response.status_code
             status = solution.get('status')
             if solution.get('url') != url:
+                # Discard the changed document. The outer category router may
+                # retain only a separately validated public taxonomy URL hint.
+                self._redirect_location = solution.get('url')
                 return None, 'browser_changed_url', status
             if status != 200:
                 return None, f'browser_site_http_{status}', status

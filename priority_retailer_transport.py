@@ -95,6 +95,7 @@ class PriorityRetailerTransport:
         self._maximum = maximum_per_host
         self._states = {}
         self._resolved = {}
+        self._category_redirects = {}
         self._lock = RLock()
 
     def configure_catalog_budget(self, count):
@@ -116,6 +117,14 @@ class PriorityRetailerTransport:
             result = (transport._read(url, limit, accept=accept) if dedicated else
                       transport._read_with_fallback(url, limit, accept=accept))
             location = transport._redirect_location
+            if (accept == 'text/html' and urlparse(url).hostname == 'www.hepsiburada.com'
+                    and isinstance(location, str) and len(location) <= 200
+                    and (result[1] == 'browser_changed_url' and result[2] == 200 or
+                         result[2] in (301, 302, 307, 308))):
+                from hepsiburada_catalog_discovery import category_redirect_target
+                target = category_redirect_target(url, urljoin(url, location))
+                if target and state['rules'].can_fetch(BOT, target):
+                    self._category_redirects[url] = target
             if (allow_redirect and accept == 'text/html' and result[2] in (301, 302, 307, 308)
                     and isinstance(location, str) and len(location) <= 1000
                     and product_host(url) in ('www.trendyol.com', 'www.n11.com')):
@@ -147,6 +156,9 @@ class PriorityRetailerTransport:
 
     def resolved_url(self, url):
         return self._resolved.get(url, url)
+
+    def category_redirect_url(self, url):
+        return self._category_redirects.get(url)
 
     def read_document(self, url):
         host = product_host(url)

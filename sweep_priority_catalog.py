@@ -219,6 +219,7 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
             cards, category_url, category_seen, pending_branches = resume
             discovery = result[report_key]
             discovery['resume_passes'] = 1
+        redirected_categories = set(discovery.get('redirected_categories', {}).values())
         # One shared budget across both passes, including failed attempts.
         for _ in range(module.MAX_CATEGORY_PAGES - len(discovery['pages'])):
             if not category_url or category_url in category_seen:
@@ -229,6 +230,20 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
             if html is None:
                 transient = reason in {'http_500', 'http_502', 'http_503', 'http_504',
                                        'browser_timeout', 'source_cooldown'}
+                source_blocked = transport.report().get(retailer, {}).get('blocked') is True
+                redirect_reader = getattr(transport, 'category_redirect_url', None)
+                redirect_validator = getattr(module, 'category_redirect_target', None)
+                if (not source_blocked and category_url not in redirected_categories
+                        and callable(redirect_reader) and callable(redirect_validator)):
+                    target = redirect_reader(category_url)
+                    if (target and target not in category_seen
+                            and redirect_validator(category_url, target) == target):
+                        discovery.setdefault('redirected_categories', {})[category_url] = target
+                        discovery['pages'][-1]['observed_redirect_url'] = target
+                        redirected_categories.add(target)
+                        pending_branches = [u for u in pending_branches if u != target]
+                        category_url = target
+                        continue  # Fresh GET within the same bounded category budget.
                 if reason == 'source_cooldown':
                     # No request was sent. Retain this exact observed page for
                     # the later pass; do not guess a continuation around it.
@@ -237,7 +252,6 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                 else:
                     discovery.setdefault('incomplete_pages', []).append(category_url)
                     next_category_url = pending_branches.pop(0) if pending_branches else None
-                source_blocked = transport.report().get(retailer, {}).get('blocked') is True
                 if (not source_blocked and next_category_url and reason in {
                         'browser_changed_url', 'unexpected_final_url', 'http_404', 'http_410', 'already_read'}):
                     # An obsolete/duplicate observed branch does not make the
@@ -379,6 +393,7 @@ def category_page_diagnostics(result):
             parser = page.get('parser') or {}
             events.append({'category_page': index, 'retailer': discovery.get('retailer'),
                 'url': page.get('url'), 'reason': page.get('reason'), 'http_status': page.get('http_status'),
+                **({'observed_redirect_url': page['observed_redirect_url']} if page.get('observed_redirect_url') else {}),
                 'parser_status': parser.get('status'), 'observed_headings': parser.get('observed_headings', [])})
     return events
 

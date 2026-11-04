@@ -21,6 +21,48 @@ def document(brand=False):
 
 
 class HepsiburadaDiscoveryTests(unittest.TestCase):
+    def test_observed_taxonomy_move_is_only_a_same_model_same_page_hint(self):
+        from hepsiburada_catalog_discovery import category_redirect_target
+        old = 'https://www.hepsiburada.com/samsung-galaxy-s25-fe-android-telefonlar-xc-60005201-b8848-t6765'
+        new = old.replace('t6765', 't6774')  # Publicly observed Nov 4 canonical taxonomy move.
+        self.assertEqual(category_redirect_target(old, new), new)
+        for changed in [new.replace('s25-fe', 's25'), new.replace('s25', 's26'),
+                        new.replace('samsung-', 'xiaomi-'), new.replace('.com/', '.com.evil.test/'),
+                        new + '?sayfa=2', new + '?token=private', new + '#fragment', PDP, old]:
+            self.assertIsNone(category_redirect_target(old, changed), changed)
+        self.assertIsNone(category_redirect_target(PDP, PDP[:-1] + 'L'))
+
+    def test_router_discards_redirected_body_reads_one_observed_target_and_bounds_second_hop(self):
+        from sweep_priority_catalog import sweep
+        from test_priority_candidates import Client
+        old = 'https://www.hepsiburada.com/samsung-galaxy-s25-fe-android-telefonlar-xc-60005201-b8848-t6765'
+        new = old.replace('t6765', 't6774')
+        third = old.replace('t6765', 't6775')
+        for second_hop in (False, True):
+            client = Client()
+            client.product.update(name='Samsung Galaxy S25 FE', attributes={'ram_gb': 8, 'storage_gb': 256}, offer_targets=[])
+            client.get_public_price_priority = lambda: {}
+            visited = []
+            class Transport:
+                def read_hepsiburada_category(self, url):
+                    visited.append(url)
+                    if url == CATEGORY_URL:
+                        return '<h1>Cep Telefonu Fiyatları ve Modelleri</h1><a href="' + old + '">S25 FE</a>', 'document_read', 200
+                    if url == old or second_hop:
+                        return None, 'browser_changed_url', 200
+                    return '<h1>Samsung Galaxy S25 FE Özellikleri</h1>', 'document_read', 200
+                def category_redirect_url(self, url):
+                    return {old: new, new: third}.get(url)
+                def report(self):
+                    return {}
+            result = sweep(client=client, transport=Transport(), discover_hepsiburada=True, category_audit_only=True)
+            self.assertEqual(visited, [CATEGORY_URL, old, new])
+            report = result['hepsiburada_category_discovery']
+            self.assertEqual(report['redirected_categories'], {old: new})
+            self.assertEqual(report['branch_queue_complete'], not second_hop)
+            self.assertFalse(result['writes'])
+            self.assertEqual(result['rows'], [])
+
     def test_all_observed_run36_heading_failures_parse_without_accepting_another_model(self):
         import json
         from pathlib import Path

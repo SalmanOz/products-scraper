@@ -102,6 +102,20 @@ def category_scope(url):
     return ('brand', identity)
 
 
+def category_redirect_target(original, observed):
+    """Only an observed equivalent taxonomy, keeping the immediate page.
+
+    This is a new discovery hint, not permission to reuse the changed body.
+    PDPs, sellers, queries, different generations and radio paths cannot pass.
+    """
+    scope = category_scope(original)
+    if (scope is None or category_scope(observed) != scope or original == observed
+            or (urlparse(original).query or 'sayfa=1') !=
+               (urlparse(observed).query or 'sayfa=1')):
+        return None
+    return observed
+
+
 def _category_soup(html, url):
     brand = category_identity(url)
     if brand is None or not isinstance(html, str) or len(html.encode()) > MAX_HTML_BYTES:

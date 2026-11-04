@@ -16,6 +16,39 @@ URLS = (
 
 
 class PriorityRetailerTests(unittest.TestCase):
+    def test_hb_category_redirects_only_record_safe_observed_hints_and_never_accept_changed_bodies(self):
+        old = 'https://www.hepsiburada.com/samsung-galaxy-s25-fe-android-telefonlar-xc-60005201-b8848-t6765'
+        new = old.replace('t6765', 't6774')
+        for redirected, forbidden, expected in [(new, False, new), (new, True, None),
+                (new.replace('s25-fe', 's25'), False, None), (new + '?token=private', False, None),
+                (new.replace('.com/', '.com.evil.test/'), False, None), (URLS[0], False, None)]:
+            posts = []
+            def get(url, **_):
+                rules = 'User-agent: *\nAllow: /\n' + ('Disallow: ' + new.split('.com')[1] + '\n' if forbidden else '')
+                return Response(url, rules if url.endswith('robots.txt') else 'denied', status=200 if url.endswith('robots.txt') else 403)
+            def post(url, **kwargs):
+                posts.append(kwargs['json']['url'])
+                return Response(url, json.dumps({'status': 'ok', 'solution': {
+                    'url': redirected, 'status': 200, 'response': '<h1>Changed body must be discarded</h1>'}}))
+            source = PriorityRetailerTransport(get=get, post=post, sleep=lambda _: None)
+            self.assertEqual(source.read_hepsiburada_category(old), (None, 'browser_changed_url', 200))
+            self.assertEqual(source.category_redirect_url(old), expected)
+            self.assertEqual(posts, [old])  # No implicit follow or document reuse.
+            self.assertEqual(source.report()['Hepsiburada']['category_requests'], 1)
+        redirected = new
+        source = PriorityRetailerTransport(get=get, post=post, sleep=lambda _: None)
+        self.assertEqual(source.read_document(URLS[0]), (None, 'browser_changed_url', 200))
+        self.assertIsNone(source.category_redirect_url(URLS[0]))
+        def get_moved(url, **_):
+            response = Response(url, 'User-agent: *\nAllow: /\n' if url.endswith('robots.txt') else '',
+                                status=200 if url.endswith('robots.txt') else 301)
+            if not url.endswith('robots.txt'):
+                response.headers['Location'] = new
+            return response
+        source = PriorityRetailerTransport(get=get_moved, sleep=lambda _: None)
+        self.assertEqual(source.read_hepsiburada_category(old), (None, 'http_301', 301))
+        self.assertEqual(source.category_redirect_url(old), new)
+
     def test_one_transient_failure_cools_down_then_allows_one_later_healthy_pdp(self):
         now, calls = [1000], []
         def get(url, **_):
