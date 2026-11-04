@@ -77,6 +77,31 @@ def catalog_queue(products, prices, *, diagnostic=None):
     return [(url, product) for _, url, product in rows]
 
 
+def recovery_hepsiburada_seeds(targets, prices, maximum=12):
+    """Give actual PDP gaps a turn before category navigation spends the source.
+
+    Alternate price and second-seller gaps, one existing destination per SKU.
+    Prices only order requests; every quote still needs the same fresh reader.
+    """
+    buckets, seen = defaultdict(list), set()
+    for url, product in targets:
+        if product_host(url) != 'www.hepsiburada.com' or product['slug'] in seen:
+            continue
+        seen.add(product['slug'])
+        status = prices.get(product['id'])
+        priced = (status[1] if isinstance(status, (tuple, list)) and len(status) == 2
+                  and status[0] == product['slug'] and type(status[1]) is bool else None)
+        buckets[priced].append((url, product))
+    ordered = []
+    for index in range(max((len(rows) for rows in buckets.values()), default=0)):
+        for priced in (False, True, None):
+            if index < len(buckets[priced]):
+                ordered.append(buckets[priced][index])
+                if len(ordered) >= maximum:
+                    return ordered
+    return ordered
+
+
 def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None,
           discover_n11=False, discover_teknosa=False, discover_trendyol=False,
           discover_hepsiburada=False, current_listing_inventory=None, coverage_first=False,
@@ -397,6 +422,17 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                 result['queued'] += 1
                 process_target(url, parent)
     try:
+        if discover_hepsiburada and not category_audit_only and (coverage_first or memory_discovery):
+            early_targets = recovery_hepsiburada_seeds(refresh_targets, prices)
+            early = result['hepsiburada_pdp_priority'] = {
+                'scope': 'existing_price_and_seller_gaps_before_categories',
+                'initial_model_limit': 12, 'initial_models_processed': 0,
+                'source_circuit_reused': True, 'stored_prices_reused': False}
+            for url, product in early_targets:
+                if transport.report().get('Hepsiburada', {}).get('blocked') is True:
+                    break
+                process_target(url, product)
+                early['initial_models_processed'] += 1
         if discover_hepsiburada:
             import hepsiburada_catalog_discovery
             discover_category('Hepsiburada', 'hepsiburada_category_discovery', hepsiburada_catalog_discovery,

@@ -2,7 +2,7 @@ from copy import deepcopy
 import unittest
 from unittest.mock import patch
 
-from sweep_priority_catalog import catalog_queue, coverage_readback, sweep, target_preflight
+from sweep_priority_catalog import catalog_queue, coverage_readback, sweep, target_preflight, recovery_hepsiburada_seeds
 from publish_priority_candidates import CandidatePublicationError
 from test_priority_candidates import Client, audit, reader
 
@@ -20,6 +20,51 @@ class Transport:
 
 
 class TargetPreflightTests(unittest.TestCase):
+    def test_existing_hb_price_and_second_seller_gaps_are_interleaved_and_bounded_without_mutation(self):
+        catalog = [{'id': i, 'slug': str(i)} for i in range(1, 17)]
+        targets = [(f'https://www.hepsiburada.com/phone-p-HBCV0000000{i:02d}', p)
+                   for i, p in enumerate(catalog)]
+        prices = {p['id']: (p['slug'], p['id'] > 8) for p in catalog}
+        before = deepcopy((targets, prices))
+        ordered = recovery_hepsiburada_seeds(targets + targets, prices)
+        self.assertEqual([p['id'] for _, p in ordered], [1, 9, 2, 10, 3, 11, 4, 12, 5, 13, 6, 14])
+        self.assertEqual(len({p['slug'] for _, p in ordered}), 12)
+        self.assertEqual((targets, prices), before)
+
+    def test_existing_hb_quote_is_verified_before_a_category_denial_and_never_retried_after_it(self):
+        from test_hepsiburada_catalog_source import document, TARGET, NAME, SPECS
+        from hepsiburada_catalog_source import HepsiburadaCatalogSource
+        from retailer_offer_refresh import RetailerOfferRefresher
+        client = Client()
+        client.get_public_price_priority = lambda: {client.product['id']: (client.product['slug'], False)}
+        seen = []
+        class DenyingCategoryTransport(Transport):
+            blocked = False
+            def configure_catalog_budget(self, count):
+                pass
+            def read_document(self, url):
+                seen.append(('pdp', url))
+                return (None, 'source_circuit_open', None) if self.blocked else (document(), 'document_read', 200)
+            def read_hepsiburada_category(self, url):
+                seen.append(('category', url))
+                self.blocked = True
+                return None, 'http_403', 403
+            def report(self):
+                return {'Hepsiburada': {'blocked': self.blocked}}
+        before = deepcopy(client.product)
+        transport = DenyingCategoryTransport()
+        source_reader = RetailerOfferRefresher(hepsiburada_catalog_source=HepsiburadaCatalogSource(transport=transport))
+        result = sweep(client=client, transport=transport, reader=source_reader,
+                       discover_hepsiburada=True, coverage_first=True, publish=True)
+        self.assertEqual(seen[0], ('pdp', TARGET))
+        self.assertEqual([kind for kind, _ in seen], ['pdp', 'pdp', 'category'])
+        self.assertEqual(len(client.writes), 1)
+        self.assertTrue(result['rows'][0]['publication']['commercial_readback_verified'])
+        self.assertEqual(result['accepted'], 1)
+        self.assertTrue(result['sources']['Hepsiburada']['blocked'])
+        self.assertEqual(client.product, before)
+        self.assertFalse(result['hepsiburada_pdp_priority']['stored_prices_reused'])
+
     def test_n11_other_memory_pdp_allowance_is_shared_and_bounded_across_the_catalog(self):
         catalog = [{'id': n, 'slug': f'samsung-galaxy-a{n}', 'name': f'Samsung Galaxy A{n}',
                     'offer_targets': [], 'attributes': {'ram_gb': 6, 'storage_gb': 128,
