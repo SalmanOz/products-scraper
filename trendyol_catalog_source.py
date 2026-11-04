@@ -48,6 +48,49 @@ def _selected(rows):
     return found[0] if len(found) == 1 else None
 
 
+def _selected_group_schema(schema, identity, url, physical, brand):
+    """Only the group's own current-PDP offer can corroborate a selected SKU.
+
+    No child offer or aggregate amount is selected. Its direct identity and
+    separate physical properties must agree with the actual selected listing;
+    this function never receives catalog expectations.
+    """
+    canonical = urlparse(url)._replace(query='').geturl()
+    offer = schema.get('offers')
+    schema_brand = schema.get('brand')
+    variants = schema.get('hasVariant')
+    if (schema.get('productGroupID') != identity or schema.get('sku') != identity
+            or schema.get('@id') != canonical or not isinstance(offer, dict)
+            or offer.get('url') != canonical or not isinstance(schema_brand, dict)
+            or TRPriceScraper._normalize_words(schema_brand.get('name')) != TRPriceScraper._normalize_words(brand.get('name'))
+            or not isinstance(variants, list) or not 1 <= len(variants) <= 100):
+        return False
+    for variant in variants:
+        child_offer = variant.get('offers') if isinstance(variant, dict) else None
+        if (not isinstance(variant, dict) or str(variant.get('sku')) == identity
+                or _product_id(variant.get('@id')) == identity
+                or isinstance(child_offer, dict) and _product_id(child_offer.get('url')) == identity):
+            return False
+    properties = schema.get('additionalProperty')
+    if not isinstance(properties, list) or len(properties) > 100:
+        return False
+    fields = {}
+    for prop in properties:
+        key = prop.get('name') if isinstance(prop, dict) else None
+        if key not in {'RAM Kapasitesi', 'Dahili Hafıza', 'Mobil Bağlantı Hızı'}:
+            continue
+        if key in fields or prop.get('@type') != 'PropertyValue' or not isinstance(prop.get('unitText'), str):
+            return False
+        fields[key] = prop['unitText']
+    for key, label in (('ram_gb', 'RAM Kapasitesi'), ('storage_gb', 'Dahili Hafıza')):
+        match = re.fullmatch(r'([1-9]\d{0,3})\s*GB', fields.get(label, ''), re.I)
+        if match is None or int(match[1]) != physical.get(key):
+            return False
+    radio = fields.get('Mobil Bağlantı Hızı', '').casefold()
+    return (radio in {'5g', '4g', '4.5g', '4,5g'}
+            and ('5g' if radio == '5g' else '4g') == physical.get('network_generation'))
+
+
 def parse_catalog_listing(html, url, name, specs):
     """Require schema, selected state, two variant lists and visible cash/cart agreement."""
     identity = _product_id(url)
@@ -169,8 +212,10 @@ def parse_catalog_listing(html, url, name, specs):
         value = price_data.get(key)
         if value is not None and (not isinstance(value, dict) or _amount(value.get('value')) != price):
             return None, 'conditional_price'
-    schemas = [node for node in _nodes(soup) if node.get('@type') == 'Product']
+    schemas = [node for node in _nodes(soup) if node.get('@type') in ('Product', 'ProductGroup')]
     schema = schemas[0] if len(schemas) == 1 else {}
+    if schema.get('@type') == 'ProductGroup' and not _selected_group_schema(schema, identity, url, physical, brand):
+        return None, 'schema_selected_group_mismatch'
     offer = schema.get('offers')
     if (str(schema.get('sku')) != identity or _product_id(schema.get('@id')) != identity
             or matcher._normalize_words(str(schema.get('name') or '')) != matcher._normalize_words(title)

@@ -16,10 +16,10 @@ def selected_capacity_title(title, selected):
     if (not isinstance(title, str) or not selected or type(selected.get('ram_gb')) is not int or type(selected.get('storage_gb')) is not int
             or re.search(r'\b(?:virtual|sanal|extended)\s*ram\b|\bram\s*(?:virtual|sanal|extended)\b', title, re.I)):
         return title
-    # Observed Xiaomi selected PDPs spell both units as G (12G+256G).
+    # Observed Xiaomi PDPs use 12G+256G and omit the first unit in 12+256G.
     # Interpret only one complete pair agreeing with independently selected
     # attributes; a lone 4G/5G remains connectivity, never capacity evidence.
-    shorthand = re.compile(r'(?<![\w.,])([1-9]|1\d|2[0-4])\s*G\s*\+\s*'
+    shorthand = re.compile(r'(?<![\w.,])([1-9]|1\d|2[0-4])\s*G?\s*\+\s*'
                            r'(64|128|256|512|1024)\s*G(?!\w)', re.I)
     matches = list(shorthand.finditer(title))
     if len(matches) == 1:

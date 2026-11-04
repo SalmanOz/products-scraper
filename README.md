@@ -598,6 +598,17 @@ product address still needs the ordinary selected SKU/seller/stock/cash parser
 and fresh publication read. All brands share the existing 100-page allowance
 and source denial circuit.
 
+Trendyol's current selected PDP may describe itself as `ProductGroup`. Its own
+root SKU, group ID, exact canonical URL, name, brand and direct single Offer
+must identify the requested PDP; separate RAM/storage/radio properties must
+agree with the selected product attributes. Other `hasVariant` offers are
+never selected, and a child pointing back to the current PDP, duplicate roots,
+missing own Offer, aggregates or conflicting properties are rejected. All
+ordinary merchant/SKU/GTIN/two-selected-variant-list/stock/cash/cart checks still
+apply. The observed `12+256G` caption is interpreted like `12G+256G` only against
+independently selected physical facts; server matching uses the same rule.
+Raw headings are retained. Category captions remain routing hints only.
+
 If that atomic publication loses its reply or returns HTTP 502/503/504, the
 client can replay the identical transaction once. It reuses the already uploaded
 images and fresh observations; it performs no extra retailer reads and never

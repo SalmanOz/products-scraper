@@ -21,6 +21,32 @@ def alternate_document(changes=None):
 
 
 class ObservedMemoryVariantTests(unittest.TestCase):
+    def test_observed_missing_first_g_cards_are_only_other_capacity_routing_hints(self):
+        from pathlib import Path
+        from bs4 import BeautifulSoup
+        from automatic_memory_variants import memory_variant_destinations
+        from trendyol_catalog_discovery import parse_category_document
+        from selected_sku_evidence import selected_capacity_title
+        url='https://www.trendyol.com/xiaomi-android-cep-telefonu-x-b101939-c164461'
+        html=Path('fixtures/trendyol-xiaomi-public-second-page-routing.html').read_text()
+        cards,_=parse_category_document(html,url+'?pi=2')
+        parent={'id':270,'slug':'xiaomi-17t-pro','name':'Xiaomi 17T Pro',
+                'attributes':{'ram_gb':12,'storage_gb':512,'Connectivity':{'5G':True}}}
+        hints=memory_variant_destinations(cards,[parent])
+        self.assertEqual(len(hints),1)
+        self.assertIn('12+256G',hints[0][1]['discovery_title'])
+        self.assertNotIn('price',hints[0][1])
+        self.assertNotIn('source_variant_evidence',hints[0][1])
+        raw='Xiaomi 17T Pro 12+256G Mor (Xiaomi Türkiye Garantili)'
+        self.assertEqual(selected_capacity_title(raw,None),raw)
+        self.assertEqual(selected_capacity_title(raw,{'ram_gb':8,'storage_gb':256}),raw)
+        self.assertEqual(selected_capacity_title(raw,{'ram_gb':12,'storage_gb':512}),raw)
+        self.assertIn('RAM 12 GB; ROM 256 GB',selected_capacity_title(raw,{'ram_gb':12,'storage_gb':256}))
+        for bad in ['Xiaomi 17T Pro RAM 12+256G','Xiaomi 17T Pro 12+256G RAM',
+                    'Xiaomi 17T Pro 12+256G sanal RAM','Xiaomi 17T Pro 12+256G 8G RAM',
+                    'Xiaomi 17T Pro 12+256G 12+512G']:
+            self.assertEqual(selected_capacity_title(bad,{'ram_gb':12,'storage_gb':256}),bad)
+
     def test_n11_rejected_other_memory_reports_only_bounded_source_stage_without_authorizing_an_offer(self):
         from test_n11_catalog_source import document as n11_document, URL as n11_url, NAME as n11_name
         import json

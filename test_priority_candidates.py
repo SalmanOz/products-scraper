@@ -55,6 +55,45 @@ def reader():
 
 
 class PriorityCandidateTests(unittest.TestCase):
+    def test_product_group_missing_first_g_requires_fresh_selected_quote_before_atomic_write_and_readback(self):
+        from pathlib import Path
+        from trendyol_catalog_source import TrendyolCatalogSource,parse_catalog_listing
+        html=Path('fixtures/trendyol-selected-product-group-missing-first-g.html').read_text()
+        url='https://www.trendyol.com/xiaomi/17t-pro-12-256g-mor-xiaomi-turkiye-garantili-p-1142620581'
+        name='Xiaomi 17T Pro 12GB 256GB';specs={'ram_gb':12,'storage_gb':256,'network_generation':'5g'}
+        observed,reason=parse_catalog_listing(html,url,name,specs)
+        self.assertIsNotNone(observed,reason)
+        class ScopedClient(Client):
+            def ingest_listing_offers(self,rows,*,require_all_accepted):
+                return {**super().ingest_offers(rows,require_all_accepted=require_all_accepted),
+                    'offer_identity_contract':'seller-source-url-v1','server_scores_recalculated':True}
+        class Source:
+            def __init__(self,body): self.body,self.calls=body,[]
+            def read_document(self,target): self.calls.append(target);return self.body,'document_read',200
+            def resolved_url(self,target): return target
+        for change in ('none','price','model','stock'):
+            with self.subTest(change=change):
+                client=ScopedClient();client.product.update(name=name,slug='xiaomi-17t-pro-12gb-256gb',
+                    attributes={**specs,'Connectivity':{'5G':True}},offer_targets=[])
+                body=(html.replace('62999','62998').replace('62.999','62.998') if change=='price' else
+                      html.replace('17T Pro','17T Ultra') if change=='model' else
+                      html.replace('"sellable": true','"sellable": false') if change=='stock' else html)
+                source=Source(body)
+                report={'purpose':'automatic_priority_retailer_diagnosis','writes':False,'catalog_count':1,
+                    'rows':[{'slug':client.product['slug'],'retailer':'Trendyol','reason':'document_read',
+                             'http_status':200,'prepared_offer':observed}]}
+                result=refresh_candidates(report,client=client,reader=RetailerOfferRefresher(
+                    trendyol_catalog_source=TrendyolCatalogSource(transport=source)))
+                self.assertEqual(source.calls,[url])
+                if change!='none': self.assertEqual(client.writes,[])
+                else:
+                    self.assertEqual(len(client.writes),1)
+                    self.assertTrue(result['commercial_readback_verified'])
+                    self.assertTrue(result['scoring']['scores_recalculated'])
+                    self.assertEqual(client.writes[0][0]['price'],62999)
+                    self.assertEqual(client.writes[0][0]['source_title'],observed['source_title'])
+                    self.assertEqual(client.writes[0][0]['source_variant_evidence']['storage_gb'],256)
+
     def test_n11_missing_url_qualifier_uses_selected_hint_only_for_fresh_atomic_publication(self):
         from pathlib import Path
         from n11_catalog_source import N11CatalogSource, parse_catalog_listing

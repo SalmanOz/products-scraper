@@ -774,7 +774,7 @@ def memory_variant_destinations(cards, products):
     for card in sorted(cards, key=lambda c: (not c.get('stock_priority', False), c['source_url'])):
         title = card.get('discovery_title', '')
         title = re.sub(r'(?<=\d)GB[/_](?=\d)', ' GB ', title, flags=re.I)
-        title = re.sub(r'(?<![\w.,])([1-9]|1\d|2[0-4])\s*G\s*\+\s*(64|128|256|512|1024)\s*G(?!\w)',
+        title = re.sub(r'(?<![\w.,])([1-9]|1\d|2[0-4])\s*G?\s*\+\s*(64|128|256|512|1024)\s*G(?!\w)',
                        r'RAM \1 GB; ROM \2 GB', title, flags=re.I)
         ram, storage, ambiguous = matcher._unambiguous_listing_capacities(title)
         if (ambiguous or storage is None or not 32 <= storage <= 4096

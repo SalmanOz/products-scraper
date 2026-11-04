@@ -52,6 +52,60 @@ def document(changes=None):
 
 
 class TrendyolCatalogTests(unittest.TestCase):
+    def test_actual_product_group_uses_only_its_own_selected_offer_and_independent_physical_fields(self):
+        from pathlib import Path
+        from selected_sku_evidence import selected_sku_evidence
+        from trendyol_catalog_source import catalog_offer_matches
+        html=Path('fixtures/trendyol-selected-product-group-missing-first-g.html').read_text()
+        url='https://www.trendyol.com/xiaomi/17t-pro-12-256g-mor-xiaomi-turkiye-garantili-p-1142620581'
+        specs={'ram_gb':12,'storage_gb':256,'network_generation':'5g'}
+        offer,reason=parse_catalog_listing(html,url,'Xiaomi 17T Pro',specs)
+        self.assertEqual(reason,'selected_new_cash_offer_observed')
+        self.assertEqual((offer['merchant'],offer['price'],offer['gtin13']),('Trendyol',62999,'6932554492014'))
+        self.assertEqual(offer['source_title'],'Xiaomi 17T Pro 12+256G Mor (Xiaomi Türkiye Garantili)')
+        proof=selected_sku_evidence(offer)
+        self.assertEqual((proof['ram_gb'],proof['storage_gb'],proof['network_generation']),(12,256,'5g'))
+        self.assertEqual(proof['sku'],'1596797844')
+        self.assertTrue(catalog_offer_matches(offer,'Xiaomi 17T Pro',specs))
+        for fields in ({'ram_gb':8},{'storage_gb':512},{'network_generation':'4g'}):
+            self.assertIsNone(parse_catalog_listing(html,url,'Xiaomi 17T Pro',{**specs,**fields})[0])
+
+    def test_product_group_cannot_borrow_child_prices_or_override_ambiguous_root_identity_and_properties(self):
+        from pathlib import Path
+        from bs4 import BeautifulSoup
+        from copy import deepcopy
+        html=Path('fixtures/trendyol-selected-product-group-missing-first-g.html').read_text()
+        url='https://www.trendyol.com/xiaomi/17t-pro-12-256g-mor-xiaomi-turkiye-garantili-p-1142620581'
+        specs={'ram_gb':12,'storage_gb':256,'network_generation':'5g'}
+        original=json.loads(BeautifulSoup(html,'html.parser').select_one('script[type="application/ld+json"]').get_text())
+        mutations=[]
+        for field,value in [('productGroupID','1142620794'),('sku','1142620794'),('@id',url.replace('1142620581','1142620794')),
+                            ('@id',url+'?merchantId=968'),('brand',{'name':'Samsung'}),
+                            ('name','Xiaomi 17T Pro 8+256G Mor'),('offers',None),
+                            ('offers',original['hasVariant'][0]['offers']),
+                            ('offers',{**original['offers'],'@type':'AggregateOffer'}),
+                            ('offers',{**original['offers'],'price':'1.00'}),
+                            ('offers',{**original['offers'],'availability':'https://schema.org/OutOfStock'})]:
+            schema=deepcopy(original);schema[field]=value;mutations.append(schema)
+        for label,value in [('RAM Kapasitesi','8 GB'),('Dahili Hafıza','512 GB'),('Mobil Bağlantı Hızı','4G')]:
+            schema=deepcopy(original);next(p for p in schema['additionalProperty'] if p['name']==label)['unitText']=value;mutations.append(schema)
+        for field in ('sku','offer_url'):
+            schema=deepcopy(original)
+            if field=='sku': schema['hasVariant'][0]['sku']='1142620581'
+            else: schema['hasVariant'][0]['offers']['url']=url
+            mutations.append(schema)
+        schema=deepcopy(original);schema['additionalProperty']=[p for p in schema['additionalProperty'] if p['name']!='RAM Kapasitesi'];mutations.append(schema)
+        schema=deepcopy(original);schema['additionalProperty'].append(deepcopy(next(p for p in schema['additionalProperty'] if p['name']=='RAM Kapasitesi')));mutations.append(schema)
+        for schema in mutations:
+            soup=BeautifulSoup(html,'html.parser');soup.select_one('script[type="application/ld+json"]').string=json.dumps(schema)
+            self.assertIsNone(parse_catalog_listing(str(soup),url,'Xiaomi 17T Pro',specs)[0],schema.get('offers'))
+        # Another variant's cheap price is never selected for this source URL.
+        schema=deepcopy(original);schema['hasVariant'][0]['offers']['price']='1.00'
+        soup=BeautifulSoup(html,'html.parser');soup.select_one('script[type="application/ld+json"]').string=json.dumps(schema)
+        self.assertEqual(parse_catalog_listing(str(soup),url,'Xiaomi 17T Pro',specs)[0]['price'],62999)
+        soup.select_one('script[type="application/ld+json"]').insert_after(deepcopy(soup.select_one('script[type="application/ld+json"]')))
+        self.assertIsNone(parse_catalog_listing(str(soup),url,'Xiaomi 17T Pro',specs)[0])
+
     def test_observed_g_shorthand_and_ungrouped_basket_caption_require_all_selected_proof(self):
         from pathlib import Path
         from datetime import datetime, timedelta, timezone
