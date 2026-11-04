@@ -102,6 +102,94 @@ class PriorityRetailerTests(unittest.TestCase):
             self.assertEqual(source.read_document(URLS[2] + '1')[1],
                              'source_circuit_open' if status == 403 else 'source_cooldown')
 
+    def test_same_hb_sku_timeout_aliases_send_no_more_requests_and_another_selected_offer_still_verifies(self):
+        from hepsiburada_catalog_source import HepsiburadaCatalogSource, catalog_offer_matches
+        from test_hepsiburada_catalog_source import document, TARGET, NAME, SPECS
+        now, gets, posts = [1000], [], []
+        def get(url, **_):
+            gets.append(url)
+            if url.endswith('robots.txt'):
+                return Response(url, 'User-agent: *\nAllow: /\n')
+            return Response(url, document() if url == TARGET else 'denied', status=200 if url == TARGET else 403)
+        def post(url, **kwargs):
+            posts.append(kwargs['json']['url'])
+            return Response(url, json.dumps({'status': 'error', 'message': 'Error: Timeout after 45.0 seconds.'}), status=500)
+        source = PriorityRetailerTransport(get=get, post=post, sleep=lambda _: None,
+            clock=lambda: now[0], maximum_per_host=2)
+        self.assertEqual(source.read_document(URLS[0])[1:], ('browser_timeout', 504))
+        self.assertEqual(source.read_document(URLS[0] + '?magaza=Another+Seller'),
+            (None, 'same_sku_browser_timeout', None))
+        self.assertEqual(source.read_document(TARGET)[1], 'source_cooldown')
+        now[0] += 31
+        self.assertEqual(source.read_fresh_document(URLS[0])[1], 'same_sku_browser_timeout')
+        reader = HepsiburadaCatalogSource(transport=source)
+        reader.register_catalog_targets(NAME, [{'source_url': TARGET}], SPECS)
+        offer, reason, status = reader.read_offer(TARGET)
+        self.assertTrue(catalog_offer_matches(offer, NAME, SPECS), (reason, status))
+        self.assertEqual(posts, [URLS[0]])
+        self.assertEqual(gets, ['https://www.hepsiburada.com/robots.txt', URLS[0], TARGET])
+        report = source.report()['Hepsiburada']
+        self.assertFalse(report['blocked'])
+        self.assertEqual((report['browser_timeout_sku_count'], report['browser_timeout_sku_skips']), (1, 2))
+        self.assertEqual(report['pdp_requests'], 2)
+        self.assertEqual(source.read_document(URLS[0] + '1')[1], 'pdp_budget_exhausted')
+
+    def test_another_hb_sku_timeout_or_explicit_denial_still_closes_the_unchanged_host_circuit(self):
+        for second_denial in (False, True):
+            now, posts = [1000], []
+            def get(url, **_):
+                return Response(url, 'User-agent: *\nAllow: /\n' if url.endswith('robots.txt') else 'denied',
+                    status=200 if url.endswith('robots.txt') else 403)
+            def post(url, **kwargs):
+                posts.append(kwargs['json']['url'])
+                denied = second_denial and len(posts) == 2
+                message = ('Error: Cloudflare has blocked this request. Probably your IP is banned.' if denied
+                           else 'Error: Timeout after 45.0 seconds.')
+                return Response(url, json.dumps({'status': 'error', 'message': message}), status=500)
+            source = PriorityRetailerTransport(get=get, post=post, sleep=lambda _: None,
+                clock=lambda: now[0], maximum_per_host=5)
+            self.assertEqual(source.read_document(URLS[0])[1], 'browser_timeout')
+            self.assertEqual(source.read_document(URLS[0] + '?magaza=Other')[1], 'same_sku_browser_timeout')
+            now[0] += 31
+            self.assertEqual(source.read_document(URLS[0] + '1')[1],
+                'browser_access_denied' if second_denial else 'browser_timeout')
+            self.assertEqual(source.read_document(URLS[0] + '2')[1], 'source_circuit_open')
+            self.assertTrue(source.report()['Hepsiburada']['blocked'])
+            self.assertEqual(posts, [URLS[0], URLS[0] + '1'])
+
+    def test_ordinary_http_504_is_not_relabelled_as_a_single_hb_sku_browser_timeout(self):
+        now, gets = [1000], []
+        def get(url, **_):
+            gets.append(url)
+            return Response(url, 'User-agent: *\nAllow: /\n' if url.endswith('robots.txt') else 'unavailable',
+                status=200 if url.endswith('robots.txt') else 504)
+        source = PriorityRetailerTransport(get=get, sleep=lambda _: None, clock=lambda: now[0], maximum_per_host=5)
+        self.assertEqual(source.read_document(URLS[0])[1], 'http_504')
+        now[0] += 31
+        alias = URLS[0] + '?magaza=Other'
+        self.assertEqual(source.read_document(alias)[1], 'http_504')
+        self.assertEqual(source.read_document(URLS[0] + '1')[1], 'source_circuit_open')
+        self.assertEqual(gets, ['https://www.hepsiburada.com/robots.txt', URLS[0], alias])
+        self.assertNotIn('browser_timeout_sku_count', source.report()['Hepsiburada'])
+
+    def test_hb_parent_product_urls_cannot_share_a_selected_sku_timeout(self):
+        now, posts = [1000], []
+        parent = URLS[0].replace('-p-HBCV', '-pm-HBC')
+        def get(url, **_):
+            return Response(url, 'User-agent: *\nAllow: /\n' if url.endswith('robots.txt') else 'denied',
+                status=200 if url.endswith('robots.txt') else 403)
+        def post(url, **kwargs):
+            posts.append(kwargs['json']['url'])
+            return Response(url, json.dumps({'status': 'error', 'message': 'Error: Timeout after 45.0 seconds.'}), status=500)
+        source = PriorityRetailerTransport(get=get, post=post, sleep=lambda _: None,
+            clock=lambda: now[0], maximum_per_host=5)
+        self.assertEqual(source.read_document(parent)[1], 'browser_timeout')
+        now[0] += 31
+        self.assertEqual(source.read_document(parent + '?magaza=Other')[1], 'browser_timeout')
+        self.assertEqual(posts, [parent, parent + '?magaza=Other'])
+        self.assertTrue(source.report()['Hepsiburada']['blocked'])
+        self.assertNotIn('browser_timeout_sku_count', source.report()['Hepsiburada'])
+
     def test_n11_discovery_search_obeys_robots_and_shared_document_budget(self):
         calls = []
         def get(url, **_):

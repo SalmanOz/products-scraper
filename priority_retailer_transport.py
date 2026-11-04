@@ -79,6 +79,14 @@ def challenge_document(html):
                 or soup.select('#challenge-form, #captchacharacters'))
 
 
+def _hepsiburada_selected_sku_key(url):
+    """Only a selected SKU URL, not a parent product or a seller identity."""
+    if product_host(url) != 'www.hepsiburada.com':
+        return None
+    match = re.search(r'-p-((?:HBCV[A-Z0-9]{5,30}|HBV[0-9][A-Z0-9]{4,29}))$', urlparse(url).path)
+    return match[1] if match else None
+
+
 def n11_product_selectors(url):
     """Only n11's observed public seller/color/capacity controls are routable."""
     if product_host(url) != 'www.n11.com':
@@ -237,9 +245,17 @@ class PriorityRetailerTransport:
         with self._lock:
             state = self._states.setdefault(host, {'rules': None, 'robots': 'not_loaded',
                 'pdp_requests': 0, 'search_requests': 0, 'browser_requests': 0,
-                'delay': 0.5, 'blocked': False, 'seen': set(), 'transient_retries': 1})
+                'delay': 0.5, 'blocked': False, 'seen': set(), 'transient_retries': 1,
+                'browser_timeout_skus': set(), 'browser_timeout_sku_skips': 0})
             if state['blocked']:
                 return None, 'source_circuit_open', None
+            timeout_sku = _hepsiburada_selected_sku_key(url) if not category else None
+            if timeout_sku and timeout_sku in state['browser_timeout_skus']:
+                # Do not request another seller/query alias of this timed-out
+                # SKU. Negative routing knowledge never supplies an offer.
+                # Host cooldown, denial circuit and all budgets stay intact.
+                state['browser_timeout_sku_skips'] += 1
+                return None, 'same_sku_browser_timeout', None
             if state.get('retry_after', 0) > self._clock():
                 return None, 'source_cooldown', None
             try:
@@ -279,6 +295,8 @@ class PriorityRetailerTransport:
                     state['search_requests'] += 1
                 raw, reason, status = self._read(url, MAX_HTML_BYTES, 'text/html', state)
                 if reason != 'ready':
+                    if reason == 'browser_timeout' and status == 504 and timeout_sku:
+                        state['browser_timeout_skus'].add(timeout_sku)
                     if status in (500, 502, 503, 504) and state['transient_retries']:
                         state['transient_retries'] -= 1
                         state['retry_after'] = self._clock() + 30
@@ -297,6 +315,9 @@ class PriorityRetailerTransport:
     def report(self):
         return {HOSTS[host]: {**{key: value for key, value in state.items()
                               if key in {'robots', 'browser_requests', 'blocked', 'search_requests', 'category_requests'}},
+                              **({'browser_timeout_sku_count': len(state['browser_timeout_skus']),
+                                  'browser_timeout_sku_skips': state['browser_timeout_sku_skips']}
+                                 if state['browser_timeout_skus'] else {}),
                               'pdp_requests': state['pdp_requests'] - state['search_requests'] - state.get('category_requests', 0),
                               'document_requests': state['pdp_requests']}
                 for host, state in self._states.items()}

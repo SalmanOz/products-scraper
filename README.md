@@ -567,6 +567,14 @@ early slot nor a category card establishes a price or published capacity.
 Early and final work share the same 12-candidate and 48-technical-request limits.
 Publication rechecks share the discovery transport's robots, denial circuit,
 cooldown and total request budget, with at most 24 fresh PDP rechecks per retailer.
+Within one sweep, a browser-renderer timeout on an exact Hepsiburada SKU URL is
+remembered only as a failed resource. Other seller/query aliases of that same
+SKU are skipped without another request, including fresh rechecks. Parent
+product URLs cannot establish this key. This avoids one slow SKU exhausting
+the host's transient allowance twice. The existing cooldown, document limits,
+explicit-denial circuit and second distinct-resource failure remain unchanged;
+no price, stock or seller evidence is reused. Reports expose only the timed-out
+SKU count and skipped-request count, and the record expires with the sweep.
 Only deduplication is bypassed for an explicit fresh read. After any attempted
 publication, unchanged original identities and acknowledged children are read
 back before ordinary publishing continues. Created offers also require exact
