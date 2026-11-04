@@ -180,6 +180,8 @@ def parse_exact_first_party_offer(html: str, final_url: str = URL, catalog_profi
               'observed_at': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')}
     if generic:
         result.update(gtin13=ean, observed_barcode=cart.get('data-product-ean'),
+                      selected_teknosa_first_party_verified=True, merchant_id='1001',
+                      sku=product_id, listing_id=product_id,
                       source_render_state='pending_selected_cart' if pending_cart else 'enabled_selected_cart')
     if not matcher.has_observed_offer_evidence(name, result, specs):
         return None, 'catalog_variant_mismatch'

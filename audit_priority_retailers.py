@@ -139,6 +139,11 @@ def inspect_target(transport, url, product):
                 from teknosa_seller_cards import public_seller_offers
                 row['additional_prepared_offers'] = public_seller_offers(html, observed_url,
                     {'name': product['name'], 'specs': specs}, maximum=3)
+            if offer is None:
+                from observed_memory_variants import inspect_teknosa_memory_variant
+                other = inspect_teknosa_memory_variant(html, url, product['name'], specs)
+                if other is not None:
+                    row['other_memory_variant'] = other
         if host == 'www.hepsiburada.com':
             from hepsiburada_catalog_source import parse_catalog_buy_box
             from hepsiburada_catalog_discovery import discover_product_siblings, discover_product_sellers

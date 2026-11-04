@@ -117,6 +117,40 @@ def declared_technical_targets(node, base):
 
 
 def variant_selected_evidence(offer, name, specs):
+    if isinstance(offer, dict) and offer.get('platform') == 'Teknosa':
+        from priority_retailer_transport import product_host
+        from retailer_barcode import retailer_gtin13
+        from teknosa_marketplace_source import catalog_offer_matches as matches
+        matcher = TRPriceScraper()
+        title = offer.get('source_title')
+        if not isinstance(title, str):
+            return None
+        ram, storage, ambiguous = matcher._unambiguous_listing_capacities(title)
+        radios = set(matcher._identity_words(title)) & {'4g', '5g', 'lte'}
+        if 'lte' in radios:
+            radios.discard('lte')
+            radios.add('4g')
+        if (ambiguous or len(radios) != 1 or ram != specs.get('ram_gb')
+                or storage != specs.get('storage_gb') or specs.get('network_generation') not in radios
+                or product_host(offer.get('url')) != 'www.teknosa.com' or urlparse(offer['url']).query
+                or not retailer_gtin13(offer.get('gtin13'))
+                or not all(re.fullmatch(r'[1-9]\d{0,19}', str(offer.get(k) or ''))
+                           for k in ('sku', 'merchant_id', 'listing_id'))
+                or not urlparse(offer['url']).path.endswith('-p-' + str(offer['sku']))
+                or not matcher.has_observed_offer_evidence(name, offer, specs)):
+            return None
+        if offer.get('selected_teknosa_first_party_verified') is True:
+            if (offer.get('merchant') != 'Teknosa' or offer.get('merchant_id') != '1001'
+                    or offer.get('listing_id') != offer.get('sku') or offer.get('currency') != 'TRY'
+                    or offer.get('availability') != 'in_stock'):
+                return None
+        elif not matches(offer, name, specs):
+            return None
+        return {'version': 'selected-retailer-sku-v1', 'platform': 'Teknosa',
+                'product_id': str(offer['sku']), 'sku': str(offer['sku']),
+                'listing_id': str(offer['listing_id']), 'merchant_id': str(offer['merchant_id']),
+                'merchant_name': offer['merchant'], 'gtin13': offer['gtin13'],
+                'ram_gb': ram, 'storage_gb': storage, 'network_generation': specs['network_generation']}
     ordinary = selected_sku_evidence(offer)
     if ordinary is not None:
         if offer['platform'] == 'Trendyol':

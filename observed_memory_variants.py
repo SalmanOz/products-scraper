@@ -12,6 +12,54 @@ from tr_price_scraper import TRPriceScraper
 from trendyol_catalog_source import _product_id, parse_catalog_listing, catalog_offer_matches
 
 
+def inspect_teknosa_memory_variant(html, url, name, catalog_specs):
+    """Read capacities from the selected cart, then prove that entire offer.
+
+    A cart title is only a capacity hint here. The ordinary Teknosa reader
+    must bind it to the visible heading, selected SKU, GTIN, seller, stock,
+    schema and cash price. The later publisher also reads an independent
+    technical document; neither stage fills omitted RAM/radio from the parent.
+    """
+    from priority_retailer_transport import product_host
+    from teknosa_reviewed_source import parse_catalog_offer
+    if (product_host(url) != 'www.teknosa.com' or not isinstance(html, str)
+            or len(html.encode()) > 5 * 1024 * 1024 or not isinstance(catalog_specs, dict)):
+        return None
+    mains = BeautifulSoup(html, 'html.parser').select('#pdp-main')
+    if len(mains) != 1:
+        return None
+    carts = mains[0].select('button#addToCartButton')
+    if len(carts) != 1:
+        return None
+    title = carts[0].get('data-product-name')
+    if not isinstance(title, str) or not title:
+        return None
+    matcher = TRPriceScraper()
+    ram, storage, ambiguous = matcher._unambiguous_listing_capacities(title)
+    radios = set(matcher._identity_words(title)) & {'4g', '5g', 'lte'}
+    if 'lte' in radios:
+        radios.discard('lte')
+        radios.add('4g')
+    if (ambiguous or ram is None or storage is None or len(radios) != 1
+            or not 1 <= ram <= 64 or not 32 <= storage <= 4096):
+        return None
+    actual = {'ram_gb': ram, 'storage_gb': storage, 'network_generation': radios.pop()}
+    expected = tuple(matcher._spec_int(catalog_specs.get(k)) for k in ('ram_gb', 'storage_gb'))
+    radio = catalog_specs.get('network_generation') or matcher._radio_generation(name)
+    if (not all(expected) or actual['network_generation'] != radio
+            or (ram, storage) == expected):
+        return None
+    model = matcher._catalog_model_name(name, catalog_specs)
+    if not model:
+        return None
+    offer, reason = parse_catalog_offer(html, url, {'name': model, 'specs': actual})
+    if offer is None or not matcher.has_observed_offer_evidence(model, offer, actual):
+        return None
+    return {'scope': 'other_memory_variant_preview_only', 'writes': False,
+            'catalog_memory': dict(zip(('ram_gb', 'storage_gb'), expected)),
+            'observed_specs': actual, 'verification': reason, 'offer': offer}
+
+
 def inspect_n11_memory_variant(html, url, name, catalog_specs):
     from n11_catalog_source import parse_catalog_listing as parse, catalog_offer_matches as matches
     if (not isinstance(html, str) or len(html.encode()) > 5 * 1024 * 1024

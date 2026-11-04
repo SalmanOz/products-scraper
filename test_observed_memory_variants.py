@@ -3,7 +3,8 @@ import unittest
 from unittest.mock import patch
 
 from audit_priority_retailers import inspect_target
-from observed_memory_variants import inspect_trendyol_memory_variant, inspect_hepsiburada_memory_variant, inspect_n11_memory_variant
+from observed_memory_variants import (inspect_trendyol_memory_variant, inspect_hepsiburada_memory_variant,
+                                     inspect_n11_memory_variant, inspect_teknosa_memory_variant)
 from sweep_priority_catalog import sweep, coverage_readback
 from test_trendyol_catalog_source import document, URL, NAME, SPECS
 
@@ -20,6 +21,71 @@ def alternate_document(changes=None):
 
 
 class ObservedMemoryVariantTests(unittest.TestCase):
+    def test_teknosa_real_selected_cart_recovers_memory_without_copying_parent_facts(self):
+        from pathlib import Path
+        from bs4 import BeautifulSoup
+        html = Path(__file__).with_name('fixtures').joinpath('teknosa-selected-brand-rendering.html').read_text()
+        url = ('https://www.teknosa.com/poco-x6-pro-5g-8-gb-ram-256-gb-siyah-cep-telefonu-'
+               'poco-turkiye-garantili-p-780010584')
+        parent = {'ram_gb': 12, 'storage_gb': 512, 'network_generation': '5g'}
+        before = deepcopy(parent)
+        preview = inspect_teknosa_memory_variant(html, url, 'POCO X6 Pro 12GB 512GB', parent)
+        self.assertIsNotNone(preview)
+        self.assertEqual(preview['observed_specs'], {'ram_gb': 8, 'storage_gb': 256, 'network_generation': '5g'})
+        self.assertEqual((preview['offer']['merchant'], preview['offer']['price'], preview['offer']['gtin13']),
+                         ('BAŞARAN İLETİŞİM', 39999, '6941812757994'))
+        self.assertFalse(preview['writes'])
+        self.assertEqual(parent, before)
+        from automatic_memory_variants import observed_variant_candidates, variant_selected_evidence
+        proof = variant_selected_evidence(preview['offer'], 'POCO X6 Pro', preview['observed_specs'])
+        self.assertEqual((proof['platform'], proof['merchant_name'], proof['ram_gb'], proof['storage_gb']),
+                         ('Teknosa', 'BAŞARAN İLETİŞİM', 8, 256))
+        product = {'id': 999, 'slug': 'poco-x6-pro', 'name': 'POCO X6 Pro', 'attributes': parent}
+        candidates = observed_variant_candidates({'rows': [{'slug': product['slug'], 'other_memory_variant': preview}]}, [product])
+        self.assertEqual(candidates[0]['targets'], [url])
+        for change in ({'merchant_id': '1001'}, {'listing_id': None}, {'gtin13': '6941812757995'},
+                       {'selected_teknosa_variant_verified': False}, {'url': url + '?shopId=1234'}):
+            self.assertIsNone(variant_selected_evidence({**preview['offer'], **change}, 'POCO X6 Pro', preview['observed_specs']))
+        for value in ('8+8 GB RAM 256 GB', 'RAM 6/8 GB 256 GB', '8 GB RAM 128/256 GB',
+                      '256 GB', '8 GB RAM', '8 GB RAM 256 GB 4G 5G'):
+            soup = BeautifulSoup(html, 'html.parser')
+            soup.select_one('#pdp-main button#addToCartButton')['data-product-name'] = 'Poco X6 Pro ' + value
+            self.assertIsNone(inspect_teknosa_memory_variant(str(soup), url, 'POCO X6 Pro', parent), value)
+        for selector, attribute, value in [
+            ('button#addToCartButton', 'data-product-ean', '6941812757995'),
+            ('button#addToCartButton', 'data-shop-name', 'Other seller'),
+            ('button#addToCartButton', 'aria-disabled', 'true'),
+        ]:
+            soup = BeautifulSoup(html, 'html.parser')
+            soup.select_one('#pdp-main ' + selector)[attribute] = value
+            self.assertIsNone(inspect_teknosa_memory_variant(str(soup), url, 'POCO X6 Pro', parent))
+        for name, specs in [('POCO X6', parent), ('POCO X6 Pro', dict(parent, network_generation='4g')),
+                            ('POCO X6 Pro', dict(parent, ram_gb=8, storage_gb=256)),
+                            ('POCO X6 Pro', {'ram_gb': 12, 'storage_gb': 512})]:
+            self.assertIsNone(inspect_teknosa_memory_variant(html, url, name, specs))
+        self.assertIsNone(inspect_teknosa_memory_variant(html + html, url, 'POCO X6 Pro', parent))
+
+    def test_teknosa_first_party_preview_is_separate_from_original_sku_offer(self):
+        from test_teknosa_catalog_source import document as tk_document, TARGET, PROFILE
+        parent = {'ram_gb': 6, 'storage_gb': 128, 'network_generation': '5g'}
+        class Transport:
+            def read_document(self, url):
+                return '<div id="pdp-main">' + tk_document() + '</div>', 'document_read', 200
+        product = {'name': PROFILE['name'], 'slug': 'samsung-galaxy-a36-5g', 'attributes': parent}
+        row = inspect_target(Transport(), TARGET, product)
+        self.assertIsNone(row['prepared_offer'])
+        self.assertFalse(row['other_memory_variant']['writes'])
+        self.assertEqual(row['other_memory_variant']['observed_specs'], dict(parent, ram_gb=8))
+        self.assertEqual(row['other_memory_variant']['offer']['merchant'], 'Teknosa')
+        from automatic_memory_variants import variant_selected_evidence
+        preview = row['other_memory_variant']
+        proof = variant_selected_evidence(preview['offer'], PROFILE['name'], preview['observed_specs'])
+        self.assertEqual((proof['product_id'], proof['sku'], proof['listing_id'], proof['merchant_id']),
+                         ('100000123456', '100000123456', '100000123456', '1001'))
+        for change in ({'merchant': 'Other shop'}, {'merchant_id': '9999'}, {'listing_id': '9999'},
+                       {'selected_teknosa_first_party_verified': False}, {'availability': 'out_of_stock'}):
+            self.assertIsNone(variant_selected_evidence({**preview['offer'], **change}, PROFILE['name'], preview['observed_specs']))
+
     def test_n11_other_memory_requires_selected_sku_stock_gtin_seller_and_radio(self):
         from test_n11_catalog_source import document as n11_document, URL as n11_url, NAME as n11_name
         parent = {'ram_gb': 6, 'storage_gb': 128, 'network_generation': '5g'}
