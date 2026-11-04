@@ -812,14 +812,18 @@ def memory_target_preflight(products, transport, *, maximum=48):
 
 
 def prepare_memory_variants(result, products, *, transport, technical_reader=None,
-                            publish=False, source_client=None, image_store=None, checkpoint=None):
+                            publish=False, source_client=None, image_store=None, checkpoint=None,
+                            maximum_variants=None):
     from audit_priority_retailers import inspect_target
     from priority_retailer_transport import HOSTS, product_host
     technical_reader = technical_reader or TechnicalVariantReader()
+    limit = MAX_VARIANTS if maximum_variants is None else maximum_variants
+    if type(limit) is not int or not 0 <= limit <= MAX_VARIANTS:
+        raise ValueError('invalid_memory_variant_attempt_limit')
     candidates = observed_variant_candidates(result, products)
     report = {'contract': CONTRACT, 'purpose': 'automatic_existing_model_memory_variants',
               'publish': publish, 'writes': False, 'observed_candidates': len(candidates),
-              'attempt_limit': MAX_VARIANTS, 'rows': [], 'created': 0, 'existing': 0,
+              'attempt_limit': limit, 'rows': [], 'created': 0, 'existing': 0,
               'technical_diagnostics': getattr(technical_reader, 'diagnostics', []),
               'source_deferrals': []}
     reachable = []
@@ -836,7 +840,7 @@ def prepare_memory_variants(result, products, *, transport, technical_reader=Non
                 'retailers': sorted({HOSTS[product_host(url)] for url in candidate['targets']})})
     report.update(eligible_source_candidates=len(reachable),
                   deferred_source_candidates=len(report['source_deferrals']))
-    for candidate in reachable[:MAX_VARIANTS]:
+    for candidate in reachable[:limit]:
         parent, specs = candidate['parent'], candidate['specs']
         identity = variant_identity(parent, specs['ram_gb'], specs['storage_gb'])
         row = {'parent_slug': parent['slug'], 'variant': {**identity, **specs}, 'status': 'pending', 'writes': False}

@@ -105,7 +105,8 @@ def recovery_hepsiburada_seeds(targets, prices, maximum=12):
 def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None,
           discover_n11=False, discover_teknosa=False, discover_trendyol=False,
           discover_hepsiburada=False, current_listing_inventory=None, coverage_first=False,
-          category_audit_only=False, category_frontier_path=None, memory_discovery=False):
+          category_audit_only=False, category_frontier_path=None, memory_discovery=False,
+          memory_recovery=None):
     if category_audit_only and (publish or discover_n11):
         raise ValueError('Category routing audits cannot publish or fetch product search results')
     products, prices = client.get_published_products(), client.get_public_price_priority()
@@ -127,6 +128,11 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
               'conflicting_hint_exclusions': hint_exclusions,
               'rows': [], 'accepted': 0, 'discovery': [], 'models_without_priority_hints': sorted(
                   {p['slug'] for p in products} - {p['slug'] for _, p in targets})}
+    if memory_recovery is not None:
+        if not memory_discovery or category_audit_only:
+            raise ValueError('incremental_memory_recovery_requires_memory_sweep')
+        result['initial_catalog_count'] = len(products)
+        memory_recovery.start(products, prices)
     from hepsiburada_category_frontier import load_frontier, save_frontier
     frontier, frontier_status = load_frontier(
         category_frontier_path if discover_hepsiburada and not category_audit_only else None, products)
@@ -223,6 +229,10 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                 row['publication'] = refreshed
                 result['accepted'] += refreshed.get('ingestion', {}).get('accepted', 0)
                 result['writes'] |= refreshed['writes']
+        if (memory_recovery is not None and not publication_failed
+                and row.get('other_memory_variant')):
+            memory_recovery.observe(result, row, products, prices)
+            publication_failed |= memory_recovery.failed
         result['sources'] = transport.report()
         if checkpoint:
             checkpoint(result)
@@ -541,6 +551,8 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
         raise
     finally:
         result['sources'] = transport.report()
+    if memory_recovery is not None:
+        memory_recovery.finish(result, products, prices)
     if checkpoint:
         checkpoint(result)
     return result
@@ -788,35 +800,12 @@ def main():
     except IngestionClientError:
         # A missing optimization cannot suppress the ordinary fresh reads.
         listing_inventory = {}
-    from hepsiburada_category_frontier import save_frontier, STATE_PATH
-    result = sweep(client=client, publish=args.publish, checkpoint=checkpoint,
-                   discover_n11=not args.hepsiburada_category_audit,
-                   discover_teknosa=not args.hepsiburada_category_audit,
-                   discover_trendyol=not args.hepsiburada_category_audit,
-                   discover_hepsiburada=True, current_listing_inventory=listing_inventory,
-                   coverage_first=args.coverage_first or args.hepsiburada_category_audit,
-                   category_audit_only=args.hepsiburada_category_audit,
-                   memory_discovery=args.memory_variants,
-                   category_frontier_path=None if args.hepsiburada_category_audit else STATE_PATH)
-    if args.hepsiburada_category_audit:
-        save_report(result)
-        print(Path('priority-catalog-sweep.md').read_text())
-        return
-    result['hepsiburada_category_frontier_saved'] = save_frontier(STATE_PATH, result)
-    save_report(result)  # Keep category progress if public price readback is temporarily unavailable.
+    memory_recovery = None
+    sweep_transport = None
     if args.memory_variants:
-        from automatic_memory_variants import prepare_memory_variants, verify_variant_catalog_readback, memory_parent_priority
+        from incremental_memory_recovery import IncrementalMemoryRecovery
         from source_ingestion import SourceIngestionClient
         from daily_discovery import write_json_checkpoint
-        products = client.get_published_products()
-        if len(products) != result['catalog_count']:
-            raise ValueError('catalog_changed_before_memory_variant_preparation')
-        try:
-            result['memory_variant_priority'] = memory_parent_priority(products, client.get_public_price_priority())
-        except IngestionClientError:
-            # A temporary optimization read failure cannot erase the original
-            # routing snapshot or replace any fresh retailer evidence.
-            result.setdefault('memory_variant_priority', {})['refresh'] = 'initial_snapshot_retained'
         variant_rows_reported = 0
         variant_diagnostics_reported = 0
         def variant_checkpoint(report):
@@ -829,22 +818,46 @@ def main():
             for diagnostic in diagnostics[variant_diagnostics_reported:]:
                 print('Automatic memory technical diagnostic: ' + json.dumps(diagnostic, ensure_ascii=False), flush=True)
             variant_diagnostics_reported = len(diagnostics)
-        variant_report = prepare_memory_variants(result, products,
-            transport=PriorityRetailerTransport(maximum_per_host=24, n11_collector=getattr(client, 'n11_document_get', None)),
+        sweep_transport = PriorityRetailerTransport(maximum_per_host=350,
+            n11_collector=getattr(client, 'n11_document_get', None))
+        memory_recovery = IncrementalMemoryRecovery(client=client, transport=sweep_transport,
             publish=args.publish, source_client=SourceIngestionClient.from_env() if args.publish else None,
             checkpoint=variant_checkpoint)
+    from hepsiburada_category_frontier import save_frontier, STATE_PATH
+    result = sweep(client=client, publish=args.publish, checkpoint=checkpoint, transport=sweep_transport,
+                   discover_n11=not args.hepsiburada_category_audit,
+                   discover_teknosa=not args.hepsiburada_category_audit,
+                   discover_trendyol=not args.hepsiburada_category_audit,
+                   discover_hepsiburada=True, current_listing_inventory=listing_inventory,
+                   coverage_first=args.coverage_first or args.hepsiburada_category_audit,
+                   category_audit_only=args.hepsiburada_category_audit,
+                   memory_discovery=args.memory_variants,
+                   memory_recovery=memory_recovery,
+                   category_frontier_path=None if args.hepsiburada_category_audit else STATE_PATH)
+    if args.hepsiburada_category_audit:
+        save_report(result)
+        print(Path('priority-catalog-sweep.md').read_text())
+        return
+    result['hepsiburada_category_frontier_saved'] = save_frontier(STATE_PATH, result)
+    save_report(result)  # Keep category progress if public price readback is temporarily unavailable.
+    if args.memory_variants:
+        from automatic_memory_variants import verify_variant_catalog_readback
+        products = memory_recovery.before
+        variant_report = memory_recovery.report
         variant_checkpoint(variant_report)
         readback = verify_variant_catalog_readback(products, client.get_published_products(), variant_report)
         result['automatic_memory_variants'] = {key: variant_report[key] for key in
             ('observed_candidates', 'eligible_source_candidates', 'deferred_source_candidates',
              'attempted_candidates', 'technical_documents', 'created', 'existing', 'writes', 'score_refresh_pending')}
         result['automatic_memory_variants']['catalog_readback'] = readback
+        if memory_recovery.failed:
+            result['automatic_memory_variants']['failure_reason'] = variant_report['failure_reason']
         current_prices = client.get_public_price_priority()
-        result['original_catalog_coverage'] = coverage_readback(result,
+        result['original_catalog_coverage'] = coverage_readback({**result, 'catalog_count': len(products)},
             {p['id']: current_prices[p['id']] for p in products if p['id'] in current_prices})
         result['public_coverage'] = coverage_readback({**result, 'catalog_count': readback['catalog_after']}, current_prices)
         result['writes'] |= variant_report['writes']
-        if variant_report['score_refresh_pending']:
+        if variant_report['score_refresh_pending'] and result['status'] == 'completed':
             result['status'] = 'variant_scores_pending'
         save_report(result)
         print('Automatic memory variant summary: ' + json.dumps(result['automatic_memory_variants']), flush=True)

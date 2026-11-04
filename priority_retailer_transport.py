@@ -167,6 +167,17 @@ class PriorityRetailerTransport:
             return None, 'invalid_priority_pdp', None
         return self._read_document(url, host)
 
+    def read_fresh_document(self, url):
+        """Reverify a selected public PDP inside this run's existing circuit.
+
+        A preview is never publication evidence. Only deduplication is bypassed;
+        robots, denials, cooldowns and the total request allowance still apply.
+        """
+        host = product_host(url)
+        if host is None:
+            return None, 'invalid_priority_pdp', None
+        return self._read_document(url, host, fresh=True)
+
     def read_n11_search(self, query):
         if (not isinstance(query, str) or not 1 <= len(query) <= 180
                 or re.search(r'[\x00-\x1f]', query)):
@@ -203,7 +214,7 @@ class PriorityRetailerTransport:
             return None, 'invalid_catalog_category', None
         return self._read_document(url, 'www.trendyol.com', category=True)
 
-    def _read_document(self, url, host, category=False):
+    def _read_document(self, url, host, category=False, fresh=False):
         with self._lock:
             state = self._states.setdefault(host, {'rules': None, 'robots': 'not_loaded',
                 'pdp_requests': 0, 'search_requests': 0, 'browser_requests': 0,
@@ -233,7 +244,7 @@ class PriorityRetailerTransport:
                     state.update(rules=rules, delay=delay)
                 if not state['rules'].can_fetch(BOT, url):
                     return None, 'robots_disallowed', None
-                if url in state['seen']:
+                if url in state['seen'] and not fresh:
                     return None, 'already_read', None
                 category_count = state.get('category_requests', 0)
                 category_limit = 100 if host == 'www.trendyol.com' else 80 if host == 'www.hepsiburada.com' else 40

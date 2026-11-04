@@ -538,6 +538,19 @@ retailer SKU/seller/stock/price is independently mandatory. Missing evidence
 rejects that candidate without changing its parent. Original catalog identity
 and coverage are reported separately from the enlarged catalog readback.
 
+Families with no current priced capacity get an immediate preparation attempt
+when a fully observed other-capacity preview is discovered. Each missing family
+gets one early slot; remaining candidates wait until the full discovery pass.
+Early and final work share the same 12-candidate and 48-technical-request limits.
+Publication rechecks share the discovery transport's robots, denial circuit,
+cooldown and total request budget, with at most 24 fresh PDP rechecks per retailer.
+Only deduplication is bypassed for an explicit fresh read. After any attempted
+publication, unchanged original identities and acknowledged children are read
+back before ordinary publishing continues. Created offers also require exact
+public seller/URL/price readback; an unconfirmed commit or mismatch stops later
+writes while GET-only diagnosis continues. The 80% gate uses the full enlarged
+catalog, with the original catalog's coverage reported separately.
+
 Technical documents use normal rendered GETs in the job's existing anonymous
 browser service. Accepted URLs are limited to public Kimovil model pages and
 its existing model autocomplete. Changed URLs, non-200 responses, challenge
