@@ -659,6 +659,18 @@ names and URLs for other capacities, never prices, account state or retailer
 SKU/stock evidence. Every resulting offer still requires its own selected PDP,
 fresh publication read, exact listing writer and commercial readback.
 
+Hepsiburada, Trendyol and Teknosa platform gaps are also recovered after all
+primary missing-price/second-seller work and n11 discovery. Only a complete,
+fresh whole-catalog audit can retain a multi-seller model and establish its
+missing platform. Existing catalog URLs and at most 2,000 same-run category
+URL/title/stock-priority hints per retailer supply at most two new reads per
+model, preferring observed category destinations. No card amount, selected SKU
+fact or old price is retained. Previously inspected/current URLs are excluded;
+all existing source/PDP/category limits and stop rules remain shared. Every
+offer still needs a fresh full selected read, atomic writer, acknowledged
+scoring and exact commercial readback. Stale or missing inventories keep the
+ordinary full-refresh fallback; they never open this supplementary queue.
+
 Reports separately measure full-catalog Hepsiburada, Trendyol, n11 and Teknosa
 coverage before and after the run using the fresh authenticated commercial
 audit. Each platform counts a physical SKU once; valid listing rows remain

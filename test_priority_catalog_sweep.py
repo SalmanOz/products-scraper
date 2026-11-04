@@ -21,6 +21,106 @@ class Transport:
 
 
 class TargetPreflightTests(unittest.TestCase):
+    def test_hb_and_trendyol_platform_gaps_require_current_missing_platform_audit_and_two_targets(self):
+        from datetime import datetime, timedelta, timezone
+        cases=[('Hepsiburada','discover_hepsiburada',
+                [f'https://www.hepsiburada.com/samsung-galaxy-a36-5g-128-gb-p-HBCV0000GAP00{i}' for i in range(3)]),
+               ('Trendyol','discover_trendyol',
+                [f'https://www.trendyol.com/samsung/galaxy-a36-5g-128-gb-p-{676507060+i}' for i in range(3)])]
+        class Categories(Transport):
+            def read_hepsiburada_category(self,url):
+                return '<h1>Cep Telefonu Fiyatları ve Modelleri</h1>','document_read',200
+            def read_trendyol_category(self,url):
+                return '<h1 class="title">Cep Telefonu</h1><a href="/cep-telefonu-x-c103498">1</a>','document_read',200
+        for retailer,flag,urls in cases:
+            for mode,expected in [('missing',2),('present',0),('stale',3),('none',3)]:
+                with self.subTest(retailer=retailer,mode=mode):
+                    client=Client();client.product['offer_targets']=[{'source_url':u} for u in urls]
+                    client.get_public_price_priority=lambda:{client.product['id']:(client.product['slug'],True)}
+                    other=('https://www.n11.com/urun/samsung-galaxy-a36-5g-8-gb-128-gb-12345001')
+                    rows=[{'source_url':other,'merchant_name':'Shop One','price':30000},
+                          {'source_url':urls[0] if mode=='present' else other.replace('12345001','12345002'),
+                           'merchant_name':'Shop Two','price':31000}]
+                    inventory={'evidenceVersion':'product-offer-match-v1','mode':'shadow_audit_only',
+                        'auditedAt':(datetime.now(timezone.utc)-timedelta(minutes=6 if mode=='stale' else 0)).isoformat(),
+                        'productCoverage':[{'slug':client.product['slug'],'matchedMerchants':2,'matchedOffers':rows}]}
+                    def inspect(transport,url,product):
+                        return {'slug':product['slug'],'retailer':retailer,'url':url,'observed_url':url,
+                                'reason':'http_404','http_status':404,'prepared_offer':None}
+                    with patch('sweep_priority_catalog.inspect_target',side_effect=inspect) as inspector:
+                        result=sweep(client=client,transport=Categories(),coverage_first=True,
+                            current_listing_inventory=None if mode=='none' else inventory,**{flag:True})
+                    self.assertEqual(inspector.call_count,expected)
+                    report=result[retailer.lower()+'_store_gap_discovery']
+                    self.assertEqual(report['eligible_models'],[client.product['slug']] if mode=='missing' else [])
+                    self.assertFalse(report['prices_or_offer_evidence_reused'])
+                    self.assertFalse(result['writes'])
+
+    def test_hb_and_trendyol_missing_platform_recovery_runs_after_primary_and_reverifies_atomic_write(self):
+        from datetime import datetime,timezone
+        from html import escape
+        from test_hepsiburada_catalog_source import document as hb_document,TARGET as HB_URL,NAME as HB_NAME,SPECS as HB_SPECS
+        from test_trendyol_catalog_source import document as ty_document,URL as TY_URL,NAME as TY_NAME,SPECS as TY_SPECS
+        from hepsiburada_catalog_source import HepsiburadaCatalogSource
+        from trendyol_catalog_source import TrendyolCatalogSource
+        from retailer_offer_refresh import RetailerOfferRefresher
+        missing_url='https://www.n11.com/urun/honor-90-8-gb-256-gb-12345003'
+        missing={'id':1000,'name':'Honor 90','slug':'honor-90',
+                 'attributes':{'ram_gb':8,'storage_gb':256,'Connectivity':{'5G':True}},
+                 'offer_targets':[{'source_url':missing_url}]}
+        for retailer,flag,url,name,specs,html,source_type,reader_key in [
+            ('Hepsiburada','discover_hepsiburada',HB_URL,HB_NAME,HB_SPECS,hb_document(),HepsiburadaCatalogSource,'hepsiburada_catalog_source'),
+            ('Trendyol','discover_trendyol',TY_URL.split('?')[0],TY_NAME,TY_SPECS,ty_document(),TrendyolCatalogSource,'trendyol_catalog_source')]:
+            for category_hint in (False,True):
+                with self.subTest(retailer=retailer,category_hint=category_hint):
+                    class ScopedClient(Client):
+                        def get_published_products(self): return deepcopy([self.product,missing])
+                        def get_public_price_priority(self):
+                            return {self.product['id']:(self.product['slug'],True),1000:('honor-90',False)}
+                        def get_offer_identity_readiness(self):
+                            rows=[{'source_url':'https://www.n11.com/urun/samsung-galaxy-a36-5g-128-gb-12345001',
+                                   'merchant_name':'Shop One','price':30000},
+                                  {'source_url':'https://www.n11.com/urun/samsung-galaxy-a36-5g-128-gb-12345002',
+                                   'merchant_name':'Shop Two','price':31000}]
+                            rows += [{'source_url':r['source_url'],'merchant_name':r['seller'],'price':r['price']}
+                                     for batch in self.writes for r in batch]
+                            return {'evidenceVersion':'product-offer-match-v1','mode':'shadow_audit_only',
+                                'auditedAt':datetime.now(timezone.utc).isoformat(),'productCoverage':[
+                                    {'slug':self.product['slug'],'matchedMerchants':len(rows),'matchedOffers':rows},
+                                    {'slug':'honor-90','matchedMerchants':0,'matchedOffers':[]}]}
+                        def ingest_listing_offers(self,records,*,require_all_accepted):
+                            return {**super().ingest_offers(records,require_all_accepted=require_all_accepted),
+                                    'offer_identity_contract':'seller-source-url-v1','server_scores_recalculated':True}
+                    class SourceTransport(Transport):
+                        def __init__(self): self.calls=[]
+                        def configure_catalog_budget(self,count): pass
+                        def read_document(self,target):
+                            self.calls.append(target)
+                            return (None,'http_404',404) if target==missing_url else (html,'document_read',200)
+                        def resolved_url(self,target): return target
+                        def read_hepsiburada_category(self,target):
+                            card=(f'<h2 data-test-id="title-1"><a href="{url}" title="{escape(name+" 8 GB RAM 128 GB",quote=True)}">'
+                                  f'{escape(name+" 8 GB RAM 128 GB")}</a></h2>') if category_hint else ''
+                            return '<h1>Cep Telefonu Fiyatları ve Modelleri</h1>'+card,'document_read',200
+                        def read_trendyol_category(self,target):
+                            card=(f'<a class="product-card" href="{url}"><h2 class="title">{escape(name+" 8 GB RAM 128 GB")}</h2>'
+                                  '<button>Sepete Ekle</button></a>') if category_hint else ''
+                            return ('<h1 class="title">Cep Telefonu</h1><a href="/cep-telefonu-x-c103498">1</a>'+card,
+                                    'document_read',200)
+                    client=ScopedClient();client.product.update(name=name,attributes=specs,
+                        offer_targets=[] if category_hint else [{'source_url':url}])
+                    transport=SourceTransport()
+                    reader=RetailerOfferRefresher(**{reader_key:source_type(transport=transport)})
+                    result=sweep(client=client,transport=transport,reader=reader,publish=True,coverage_first=True,
+                        current_listing_inventory=client.get_offer_identity_readiness(),**{flag:True})
+                    self.assertEqual(transport.calls[0],missing_url)
+                    self.assertEqual(result['status'],'completed')
+                    self.assertGreaterEqual(result['accepted'],1,result)
+                    self.assertGreaterEqual(len(client.writes),1)
+                    self.assertEqual(result[retailer.lower()+'_store_gap_discovery']['admitted_models'],[client.product['slug']])
+                    pubs=[r['publication'] for r in result['rows'] if r.get('publication',{}).get('writes')]
+                    self.assertTrue(all(p['commercial_readback_verified'] and p['scoring']['scores_recalculated'] for p in pubs))
+
     def test_teknosa_supplement_requires_fresh_missing_platform_audit_and_keeps_two_target_limit(self):
         from datetime import datetime, timedelta, timezone
         base = 'https://www.teknosa.com/samsung-galaxy-a36-5g-8gb128gb-akilli-telefon-p-12507984'
