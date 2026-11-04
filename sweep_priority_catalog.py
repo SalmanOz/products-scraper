@@ -12,7 +12,7 @@ from urllib.parse import unquote, urlparse
 from audit_priority_retailers import inspect_target
 from offer_ingestion_client import IngestionClientError, OfferIngestionClient
 from priority_retailer_transport import HOSTS, PriorityRetailerTransport, product_host
-from publish_priority_candidates import CandidatePublicationError, _matched_rows, refresh_candidates
+from publish_priority_candidates import CandidatePublicationError, CandidateObservationExpired, _matched_rows, refresh_candidates
 from retailer_offer_refresh import RetailerOfferRefresher
 from update_prices import PriceUpdater
 
@@ -256,6 +256,11 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                 # ingest only this observation, and verify the commercial readback.
                 try:
                     refreshed = refresh_candidates(audit, client=client, reader=reader)
+                except CandidateObservationExpired:
+                    # A slow preflight may age this observation before any
+                    # writer is called. Skip it; subsequent targets require
+                    # their own fresh proof and all existing checks.
+                    refreshed = {'status': 'expired_before_write', 'writes': False}
                 except CandidatePublicationError as error:
                     # Stop ALL further price writes, but finish the independent
                     # GET-only diagnosis so the rest of the catalog is not lost.

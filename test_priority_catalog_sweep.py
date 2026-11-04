@@ -21,6 +21,43 @@ class Transport:
 
 
 class TargetPreflightTests(unittest.TestCase):
+    def test_expired_prewrite_candidate_is_skipped_and_the_next_target_gets_fresh_full_publication(self):
+        from datetime import datetime,timedelta,timezone
+        from urllib.parse import urlencode
+        from test_hepsiburada_catalog_source import document,TARGET,NAME,SPECS,parse_catalog_buy_box
+        from hepsiburada_catalog_source import HepsiburadaCatalogSource
+        from retailer_offer_refresh import RetailerOfferRefresher
+        class SourceTransport(Transport):
+            def configure_catalog_budget(self, count):
+                pass
+            def read_document(self, url):
+                return document(), 'document_read', 200
+        class ScopedClient(Client):
+            def ingest_listing_offers(self, rows, *, require_all_accepted):
+                return {**super().ingest_offers(rows, require_all_accepted=require_all_accepted),
+                        'offer_identity_contract': 'seller-source-url-v1'}
+        client=ScopedClient()
+        client.get_public_price_priority = lambda: {client.product['id']: (client.product['slug'], False)}
+        observed,_=parse_catalog_buy_box(document(),TARGET,NAME,SPECS)
+        other=TARGET+'?'+urlencode({'magaza':observed['merchant']})
+        client.product['offer_targets']=[{'source_url':u,'merchant_name':observed['merchant']} for u in (TARGET,other)]
+        def inspect(transport,url,product):
+            offer,_=parse_catalog_buy_box(document(),url,NAME,SPECS)
+            if url==TARGET:
+                offer['observed_at']=(datetime.now(timezone.utc)-timedelta(minutes=6)).isoformat()
+            return {'slug':product['slug'],'url':url,'observed_url':url,'retailer':'Hepsiburada',
+                'reason':'document_read','http_status':200,'prepared_offer':offer}
+        with patch('sweep_priority_catalog.inspect_target',side_effect=inspect):
+            source = SourceTransport()
+            refresher = RetailerOfferRefresher(hepsiburada_catalog_source=HepsiburadaCatalogSource(transport=source))
+            result=sweep(client=client,publish=True,transport=source,reader=refresher)
+        self.assertEqual(result['status'],'completed')
+        self.assertEqual((len(result['rows']),result['queued']),(2,2))
+        self.assertEqual(result['rows'][0]['publication'],{'status':'expired_before_write','writes':False})
+        self.assertTrue(result['rows'][1]['publication']['commercial_readback_verified'])
+        self.assertEqual((result['accepted'],len(client.writes)),(1,1))
+        self.assertEqual(client.writes[0][0]['source_url'],other)
+
     def test_old_n11_selector_hint_cannot_create_a_none_queue_or_hide_the_catalog_model(self):
         base = 'https://www.n11.com/urun/samsung-galaxy-a37-8-gb-256-gb-123382261'
         catalog = [{'id': 1, 'slug': 'samsung-galaxy-a37-5g', 'name': 'Samsung Galaxy A37 5G',

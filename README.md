@@ -424,6 +424,11 @@ aynı çalışmada tekrar okunan ve sunucu doğrulamasından geçen teklifleri y
 Bu akış yeni ürün veya teknik özellik oluşturmaz. Tüm modlar günlük fiyat
 yazarıyla aynı concurrency kuyruğunu kullanır; yeni bir zamanlama oluşturmaz.
 
+Yazım öncesindeki katalog veya ticari denetim gecikmesi bir teklifin gözlem
+süresini aşırırsa yalnız o aday `expired_before_write` olarak atlanır; sonraki
+aday kendi canlı kaynağından yeniden doğrulanır. Tazelik sınırları korunur.
+Yazım başladıktan sonraki belirsiz sonuçlar tüm sonraki fiyat yazımlarını durdurur.
+
 Kategori kartları yalnız ürün adresi ipucudur. Hepsiburada'da mağazanın kendi
 bağlantılarıyla görülen marka/model kategorileri ve `rel=next` sayfaları en fazla
 80 kategori okumasıyla izlenir. Aynı marka/model ve aynı sayfa numarasına taşınan

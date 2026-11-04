@@ -123,6 +123,8 @@ def parse_category_document(html, url, diagnostic=None):
     page = identity['page']
     soup = BeautifulSoup(html, 'html.parser')
     headings = soup.select('h1.title')
+    if isinstance(diagnostic, dict):
+        diagnostic['observed_headings'] = [h.get_text(' ', strip=True)[:180] for h in headings[:2]]
     if (len(headings) != 1 or TRPriceScraper._normalize_words(headings[0].get_text(' ', strip=True)) !=
             TRPriceScraper._normalize_words(identity['heading'])):
         if isinstance(diagnostic, dict):

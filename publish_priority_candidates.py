@@ -17,6 +17,10 @@ class CandidatePublicationError(ValueError):
         self.result = result
 
 
+class CandidateObservationExpired(ValueError):
+    """A pre-write observation expired; no publication has started."""
+
+
 def _fresh(value, seconds=300):
     try:
         stamp = datetime.fromisoformat(value.replace('Z', '+00:00'))
@@ -80,9 +84,11 @@ def refresh_candidates(audit, *, client, reader=None):
         if (slug not in products or (slug == 'samsung-galaxy-a37-5g' and not listing_scoped) or host not in HOSTS
                 or row.get('http_status') != 200 or row.get('reason') != 'document_read'
                 or old.get('platform') != HOSTS[host] or row.get('retailer') != HOSTS[host]
-                or not _fresh(old.get('observed_at')) or (slug, url) in seen
+                or (slug, url) in seen
                 or url in url_owners and url_owners[url] != slug):
             raise ValueError('unbound_stale_or_duplicate_candidate')
+        if not _fresh(old.get('observed_at')):
+            raise CandidateObservationExpired('candidate_observation_expired')
         seen.add((slug, url))
         url_owners[url] = slug
         product = products[slug]
@@ -122,7 +128,7 @@ def refresh_candidates(audit, *, client, reader=None):
     # Recheck observation ages immediately before the one atomic HTTPS batch.
     prepared = result['prepared_offers']
     if any(not _fresh(o.get('observed_at')) for o in prepared):
-        raise ValueError('prepared_observation_expired')
+        raise CandidateObservationExpired('prepared_observation_expired')
     result['already_current'] = []
     if prepared:
         current = _matched_rows(client.get_offer_identity_readiness())
@@ -142,7 +148,7 @@ def refresh_candidates(audit, *, client, reader=None):
         prepared = result['prepared_offers'] = remaining
     if prepared:
         if any(not _fresh(o.get('observed_at')) for o in prepared):
-            raise ValueError('prepared_observation_expired')
+            raise CandidateObservationExpired('prepared_observation_expired')
         try:
             writer = client.ingest_listing_offers if listing_scoped else client.ingest_offers
             ingestion = writer(prepared, require_all_accepted=True)

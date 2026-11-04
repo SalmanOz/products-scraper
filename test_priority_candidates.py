@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 import unittest
 
 from hepsiburada_catalog_source import HepsiburadaCatalogSource, parse_catalog_buy_box
-from publish_priority_candidates import refresh_candidates
+from publish_priority_candidates import refresh_candidates, CandidateObservationExpired
 from retailer_offer_refresh import RetailerOfferRefresher
 from test_hepsiburada_catalog_source import document, TARGET, NAME, SPECS
 
@@ -55,6 +55,40 @@ def reader():
 
 
 class PriorityCandidateTests(unittest.TestCase):
+    def test_catalog_delay_expiry_is_typed_before_any_reader_or_writer_runs(self):
+        from unittest.mock import Mock, patch
+        clock=[datetime.now(timezone.utc)]
+        class DelayedCatalog(Client):
+            def get_published_products(self):
+                result=super().get_published_products()
+                clock[0]+=timedelta(minutes=6)
+                return result
+        client, report, source=DelayedCatalog(), audit(), Mock()
+        with patch('publish_priority_candidates.datetime') as timer:
+            timer.fromisoformat.side_effect=datetime.fromisoformat
+            timer.now.side_effect=lambda _:clock[0]
+            with self.assertRaisesRegex(CandidateObservationExpired,'candidate_observation_expired'):
+                refresh_candidates(report,client=client,reader=source)
+        source.refresh_existing_offer_targets.assert_not_called()
+        self.assertEqual((client.writes,client.scores),([],0))
+
+    def test_readback_delay_expiry_keeps_the_final_prewrite_age_guard_without_any_write(self):
+        from unittest.mock import patch
+        clock=[datetime.now(timezone.utc)]
+        class DelayedReadback(Client):
+            def get_offer_identity_readiness(self):
+                result=super().get_offer_identity_readiness()
+                clock[0]+=timedelta(minutes=6)
+                result['auditedAt']=clock[0].isoformat()
+                return result
+        client=DelayedReadback()
+        with patch('publish_priority_candidates.datetime') as timer:
+            timer.fromisoformat.side_effect=datetime.fromisoformat
+            timer.now.side_effect=lambda _:clock[0]
+            with self.assertRaisesRegex(CandidateObservationExpired,'prepared_observation_expired'):
+                refresh_candidates(audit(),client=client,reader=reader())
+        self.assertEqual((client.writes,client.scores),([],0))
+
     def test_confirmed_server_scoring_avoids_duplicate_recalculation_but_keeps_exact_readback(self):
         class ServerScoredClient(Client):
             def ingest_offers(self, records, *, require_all_accepted=False):
