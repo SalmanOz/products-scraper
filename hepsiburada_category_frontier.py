@@ -94,7 +94,7 @@ def load_frontier(path, products, *, now=None):
 
 
 def save_frontier(path, result, *, now=None):
-    """Save only the completed sweep's URL queue, even if price coverage failed."""
+    """Save a completed category pass's URL queue independently of later prices."""
     continuation = result.get('hepsiburada_category_continuation')
     discovery = result.get('hepsiburada_category_discovery')
     if not continuation or not discovery or continuation.get('status') == 'disabled':

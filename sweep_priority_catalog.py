@@ -102,7 +102,7 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
               'conflicting_hint_exclusions': hint_exclusions,
               'rows': [], 'accepted': 0, 'discovery': [], 'models_without_priority_hints': sorted(
                   {p['slug'] for p in products} - {p['slug'] for _, p in targets})}
-    from hepsiburada_category_frontier import load_frontier
+    from hepsiburada_category_frontier import load_frontier, save_frontier
     frontier, frontier_status = load_frontier(
         category_frontier_path if discover_hepsiburada and not category_audit_only else None, products)
     if frontier_status != 'disabled':
@@ -335,6 +335,12 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
             discovery['visited_category_urls'] = list(dict.fromkeys(frontier['visited'] + [
                 page['url'] for page in discovery['pages']
                 if (page.get('parser') or {}).get('status') == 'parsed']))
+            if category_frontier_path is not None and not category_audit_only:
+                # Preserve the completed category pass before product refresh,
+                # other sources or variant publication can interrupt the job.
+                # The existing always-save cache step then retains these URL
+                # hints even when the remaining sweep is cancelled/times out.
+                result['hepsiburada_category_frontier_saved'] = save_frontier(category_frontier_path, result)
         discovery['category_budget_exhausted'] = bool(category_url and len(discovery['pages']) >= module.MAX_CATEGORY_PAGES)
         if getattr(module, 'DISCOVERY_SCOPE', None):
             discovery.update(scope=module.DISCOVERY_SCOPE,

@@ -126,6 +126,45 @@ class FrontierTests(unittest.TestCase):
             self.assertEqual(load_frontier(path, self.products)[1], 'drained')
             writer.assert_not_called()
 
+    def test_completed_category_progress_survives_an_interrupted_later_source_without_a_final_save(self):
+        client = Client()
+        client.get_published_products = lambda: self.products
+        client.get_public_price_priority = lambda: {}
+        class Transport:
+            def __init__(self): self.calls = []
+            def report(self): return {}
+            def read_hepsiburada_category(self, url):
+                self.calls.append(url)
+                if url == CATEGORY_URL:
+                    body = '<h1>Cep Telefonu Fiyatları ve Modelleri</h1><a href="' + BRAND + '">Samsung</a>'
+                else:
+                    page = int(url.rsplit('=', 1)[1]) if '?sayfa=' in url else 1
+                    body = '<h1>Samsung Android Telefonlar</h1>'
+                    body += '<link rel="next" href="' + BRAND + f'?sayfa={page+1}">'
+                return body, 'document_read', 200
+            def read_teknosa_category(self, url):
+                raise TimeoutError('later_source_interrupted')
+        with TemporaryDirectory() as folder, patch('hepsiburada_catalog_discovery.MAX_CATEGORY_PAGES', 2), \
+                patch('sweep_priority_catalog.refresh_candidates') as writer:
+            path = Path(folder) / 'frontier.json'
+            first = Transport()
+            with self.assertRaisesRegex(TimeoutError, 'later_source_interrupted'):
+                sweep(client=client, transport=first, discover_hepsiburada=True,
+                      discover_teknosa=True, category_frontier_path=path)
+            saved, status = load_frontier(path, self.products)
+            self.assertEqual(status, 'ready')
+            self.assertEqual(saved['pending'], [BRAND + '?sayfa=2'])
+            self.assertEqual(saved['visited'], [CATEGORY_URL, BRAND])
+            self.assertNotIn('price', path.read_text())
+            second = Transport()
+            result = sweep(client=client, transport=second, discover_hepsiburada=True,
+                           category_frontier_path=path)
+            self.assertEqual(second.calls, [CATEGORY_URL, BRAND + '?sayfa=2'])
+            self.assertEqual(result['hepsiburada_category_frontier_saved']['status'], 'saved')
+            self.assertEqual(load_frontier(path, self.products)[0]['cycle_started_at'], saved['cycle_started_at'])
+            self.assertFalse(result['writes'])
+            writer.assert_not_called()
+
     def test_readonly_category_audit_cannot_restore_a_pricing_sweeps_frontier(self):
         client = Client(); client.get_published_products = lambda: self.products
         client.get_public_price_priority = lambda: {}
