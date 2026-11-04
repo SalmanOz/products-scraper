@@ -398,8 +398,13 @@ class TechnicalVariantReader:
     def discover_roots(self, model, specs):
         # The existing public autocomplete returns actual model URLs. No
         # region/capacity suffix is synthesized or searched in a URL grid.
+        query_model = re.sub(r'\b[45]g\b', '', model, flags=re.I).strip()
+        # Legacy catalog names may join iPhone and its generation. The
+        # provider's search uses the spaced spelling; selected-page identity
+        # still compares the original complete model, qualifiers and memory.
+        query_model = re.sub(r'\b(iphone)(?=\d)', r'\1 ', query_model, flags=re.I)
         endpoint = ('https://www.kimovil.com/_json/autocomplete_devicemodels_joined.json'
-                    '?device_type=0&name=' + quote(re.sub(r'\b[45]g\b', '', model, flags=re.I).strip(), safe=''))
+                    '?device_type=0&name=' + quote(query_model, safe=''))
         raw = self.read(endpoint)
         if raw.lstrip().startswith('<'):
             raw = BeautifulSoup(raw, 'html.parser').get_text()
@@ -486,6 +491,15 @@ class TechnicalVariantReader:
         version_nodes = soup.select('.versions-list > .item')
         if not version_nodes:
             version_nodes = soup.select('.versions-list [href], .versions-list [data-kdecode], .versions-list [data-href], .versions-list [data-url], .versions-list [data-slug]')
+        # Region labels only order actual observed destinations. Prefer the
+        # region of the already verified base over a different region's first
+        # equal-capacity link; every selected document still needs full proof.
+        active_regions = {node.get('data-mk') for node in version_nodes
+                          if 'active' in node.get('class', [])
+                          and base in declared_technical_targets(node, base)
+                          and isinstance(node.get('data-mk'), str)
+                          and re.fullmatch(r'[A-Za-z][A-Za-z0-9 -]{0,39}', node['data-mk'])}
+        base_region = next(iter(active_regions)) if len(active_regions) == 1 else None
         for node in version_nodes:
             # Link text and the actually observed path are routing hints only;
             # the selected page must independently prove all specifications.
@@ -504,9 +518,11 @@ class TechnicalVariantReader:
                         or re.search(rf'(?:-|global|china){ram}gb(?:-|$)', path)
                         or re.search(rf'(?:-|global|china){storage}gb(?:-|$)', path)):
                     observed.append(url)
-                    observed_priority[url] = int(bool(re.search(rf'(?<!\d){ram}\s*GB\b', label, re.I)
-                        and re.search(rf'(?<!\d){storage}\s*GB\b', label, re.I)))
-        observed.sort(key=lambda url: -observed_priority[url])
+                    observed_priority[url] = (
+                        int(bool(re.search(rf'(?<!\d){ram}\s*GB\b', label, re.I)
+                            and re.search(rf'(?<!\d){storage}\s*GB\b', label, re.I))),
+                        int(base_region is not None and node.get('data-mk') == base_region))
+        observed.sort(key=lambda url: tuple(-value for value in observed_priority[url]))
         declared = {item['source_url'] for item in self.provider_variants.get(base, [])
                     if item['ram_gb'] == specs['ram_gb'] and item['storage_gb'] == specs['storage_gb']}
         for target in sorted(declared):
@@ -514,6 +530,7 @@ class TechnicalVariantReader:
                 observed.append(target)
         self.diagnostics.append({'scope': 'observed_technical_capacity_links', 'model': model,
             'source_url': base, 'selected_default_specs': default_specs,
+            'selected_default_region': base_region,
             'requested_specs': specs, 'version_lists': len(soup.select('.versions-list')),
             'provider_declared_capacity_urls': sorted(declared),
             'observed_capacity_urls': observed[:6], 'version_hints': version_hints,

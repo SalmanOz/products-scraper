@@ -39,6 +39,75 @@ def tech_document(url=ALT_TECH_URL, ram=8, storage=256, name=NAME):
 
 
 class AutomaticMemoryVariantTests(unittest.TestCase):
+    def test_compact_iphone_name_uses_spaced_search_without_changing_catalog_identity_or_matching(self):
+        root = 'https://www.kimovil.com/en/where-to-buy-apple-iphone16e'
+        parent = {'id': 338, 'name': 'Apple iPhone16e 8GB 512GB', 'slug': 'apple-iphone16e-8gb-512gb',
+                  'attributes': {'ram_gb': 8, 'storage_gb': 512, 'Connectivity': {'5G': True}}}
+        original = deepcopy(parent)
+        for discovered in ['Apple iPhone16e', 'Apple iPhone 16']:
+            calls = []
+            class Reader:
+                def read(self, url):
+                    calls.append(url)
+                    if '_json/autocomplete' in url:
+                        self_case.assertTrue(url.endswith('name=Apple%20iPhone%2016e'))
+                        return json.dumps({'results': [{'full_name': discovered,
+                            'url': root.rsplit('where-to-buy-', 1)[1]}]})
+                    return tech_document(root, ram=8, storage=256, name=discovered)
+            self_case = self
+            reader = TechnicalVariantReader(Reader())
+            specs = {'ram_gb': 8, 'storage_gb': 256, 'network_generation': '5g'}
+            if discovered == 'Apple iPhone16e':
+                _, evidence = reader.locate(parent, specs)
+                self.assertEqual(evidence['model_name'], 'Apple iPhone16e')
+                self.assertEqual(evidence['source_url'], root)
+                self.assertEqual(len(calls), 2)
+            else:
+                with self.assertRaisesRegex(ValueError, 'technical_model_discovery_ambiguous_or_missing'):
+                    reader.locate(parent, specs)
+                self.assertEqual(len(calls), 1)
+            self.assertEqual(parent, original)
+
+    def test_requested_capacity_in_verified_base_region_precedes_another_regions_first_link(self):
+        root = 'https://www.kimovil.com/en/where-to-buy-samsung-galaxy-s24fe'
+        other = 'https://www.kimovil.com/en/where-to-buy-samsung-galaxy-s24f-8gb-256gb-sm-s721u'
+        same = root + '-8gb-256gb'
+        name = 'Samsung Galaxy S24FE'
+        parent = {'id': 225, 'name': 'Samsung Galaxy S24 FE', 'slug': 'samsung-galaxy-s24fe',
+                  'attributes': {'ram_gb': 8, 'storage_gb': 128, 'Connectivity': {'5G': True}},
+                  'technical_source_urls': [root]}
+        original = deepcopy(parent)
+        base = tech_document(root, storage=128, name=name).replace('</body>',
+            f'<ul class="versions-list"><li class="item" data-mk="NA"><a href="{other}">8GB 256GB</a></li></ul>'
+            f'<ul class="versions-list"><li class="item active" data-mk="Global"><a href="{root}">8GB 128GB</a></li>'
+            f'<li class="item" data-mk="Global"><a href="{same}">8GB 256GB</a></li></ul></body>')
+        for actual_same_storage in [256, 512]:
+            calls = []
+            class Reader:
+                def read(self, url):
+                    calls.append(url)
+                    if '_json/autocomplete' in url:
+                        return json.dumps({'results': [{'full_name': name,
+                            'url': root.rsplit('where-to-buy-', 1)[1]}]})
+                    return {root: base, same: tech_document(same, storage=actual_same_storage, name=name),
+                            other: tech_document(other, storage=256, name=name)}[url]
+            reader = TechnicalVariantReader(Reader())
+            _, evidence = reader.locate(parent, {'ram_gb': 8, 'storage_gb': 256, 'network_generation': '5g'})
+            self.assertEqual(calls[:3], [root, calls[1], same])
+            self.assertIn('_json/autocomplete', calls[1])
+            if actual_same_storage == 256:
+                self.assertEqual(evidence['source_url'], same)
+                self.assertNotIn(other, calls)
+            else:
+                # A region label is no substitute for the selected physical
+                # memory: the wrong-capacity page fails before the fallback.
+                self.assertEqual(evidence['source_url'], other)
+                self.assertEqual(calls[-2:], [same, other])
+            diagnostic = next(d for d in reader.diagnostics if d['scope'] == 'observed_technical_capacity_links')
+            self.assertEqual(diagnostic['selected_default_region'], 'Global')
+            self.assertEqual(diagnostic['observed_capacity_urls'][:2], [same, other])
+            self.assertEqual(parent, original)
+
     def test_persisted_root_is_reread_and_can_find_a_child_when_search_omits_the_actual_model(self):
         root = 'https://www.kimovil.com/en/where-to-buy-xiaomi-17'
         child = root + '-12gb-512gb'
