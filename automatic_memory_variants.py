@@ -145,6 +145,32 @@ def declared_technical_targets(node, base):
     return found
 
 
+def autocomplete_technical_variants(row):
+    """Copy opaque capacity destinations actually declared by the provider.
+
+    Its public `vers` field is label=slug entries separated by '#'. No region,
+    capacity or model suffix is generated. Labels are routing hints only.
+    """
+    raw = row.get('vers')
+    if not isinstance(raw, str) or len(raw) > 32768:
+        return []
+    variants = []
+    for item in raw.split('#')[:128]:
+        if item.count('=') != 1:
+            continue
+        label, slug = item.split('=')
+        if not re.fullmatch(r'[a-z0-9]+(?:-[a-z0-9]+)+', slug):
+            continue
+        amounts = re.findall(r'(?<![\w.,])(\d{1,4})\s*(GB|TB)\b', label, re.I)
+        if len(amounts) != 2:
+            continue
+        ram, storage = [int(n) * (1024 if unit.casefold() == 'tb' else 1) for n, unit in amounts]
+        target = 'https://www.kimovil.com/en/where-to-buy-' + slug
+        if 1 <= ram <= 64 and 32 <= storage <= 4096 and technical_url(target):
+            variants.append({'source_url': target, 'ram_gb': ram, 'storage_gb': storage})
+    return variants
+
+
 def variant_selected_evidence(offer, name, specs):
     if isinstance(offer, dict) and offer.get('platform') == 'Teknosa':
         from priority_retailer_transport import product_host
@@ -230,7 +256,7 @@ def selected_technical_radio(connectivity, source_names, soup):
     return None
 
 
-def selected_technical_document(html, url, model, specs, *, canonical_model_url=None):
+def selected_technical_document(html, url, model, specs, *, canonical_model_url=None, provider_declared_variant=None):
     if not technical_url(url) or not isinstance(html, str) or len(html.encode()) > 5 * 1024 * 1024:
         return None
     soup = BeautifulSoup(html, 'html.parser')
@@ -272,7 +298,8 @@ def selected_technical_document(html, url, model, specs, *, canonical_model_url=
         selected = soup.select('.versions-list > .item.active')
         if (actual_canonical != canonical_model_url or not technical_url(actual_canonical)
                 or selected_slug != url.rsplit('/where-to-buy-', 1)[-1]
-                or len(selected) != 1 or declared_technical_targets(selected[0], url) != [url]):
+                or (selected and (len(selected) != 1 or declared_technical_targets(selected[0], url) != [url]))
+                or (not selected and provider_declared_variant != url)):
             return None
     sections = extract_spec_sections(soup)
     actual = {'ram_gb': exact_capacity(find_section_spec(sections, 'Hardware', 'Memory RAM', 'RAM')),
@@ -341,6 +368,7 @@ class TechnicalVariantReader:
         self.documents = 0
         self.attempts = 0
         self.base_documents = {}
+        self.provider_variants = {}
         self.observed_at = {}
         self.diagnostics = []
 
@@ -365,6 +393,7 @@ class TechnicalVariantReader:
                 raw = BeautifulSoup(raw, 'html.parser').get_text()
             data = json.loads(raw)
             candidates = []
+            variants_by_root = {}
             core = lambda text: re.sub(r'\b[45]g\b', '', text, flags=re.I).strip()
             for row in data.get('results', [])[:30]:
                 if not isinstance(row, dict) or row.get('is_rumor'):
@@ -378,6 +407,7 @@ class TechnicalVariantReader:
                 target = 'https://www.kimovil.com/en/where-to-buy-' + target
                 if technical_url(target):
                     candidates.append(target)
+                    variants_by_root.setdefault(target, []).extend(autocomplete_technical_variants(row))
             self.diagnostics.append({'scope': 'public_technical_model_discovery', 'model': model,
                 'result_count': len(data.get('results', [])), 'matching_model_urls': list(dict.fromkeys(candidates))[:6]})
             unique = list(dict.fromkeys(candidates))
@@ -393,6 +423,7 @@ class TechnicalVariantReader:
                 raise ValueError('technical_model_discovery_ambiguous_or_missing')
             base = candidates[0]
             self.base_documents[model] = (base, self.read(base))
+            self.provider_variants[base] = variants_by_root.get(base, [])
         base, html = self.base_documents[model]
         proof = selected_technical_document(html, base, model, specs)
         if proof:
@@ -438,9 +469,15 @@ class TechnicalVariantReader:
                     observed_priority[url] = int(bool(re.search(rf'(?<!\d){ram}\s*GB\b', label, re.I)
                         and re.search(rf'(?<!\d){storage}\s*GB\b', label, re.I)))
         observed.sort(key=lambda url: -observed_priority[url])
+        declared = {item['source_url'] for item in self.provider_variants.get(base, [])
+                    if item['ram_gb'] == specs['ram_gb'] and item['storage_gb'] == specs['storage_gb']}
+        for target in sorted(declared):
+            if target != base and target not in observed:
+                observed.append(target)
         self.diagnostics.append({'scope': 'observed_technical_capacity_links', 'model': model,
             'source_url': base, 'selected_default_specs': default_specs,
             'requested_specs': specs, 'version_lists': len(soup.select('.versions-list')),
+            'provider_declared_capacity_urls': sorted(declared),
             'observed_capacity_urls': observed[:6], 'version_hints': version_hints,
             'version_structure': [
                 {'tag': container.name, 'attribute_names': list(container.attrs),
@@ -453,7 +490,8 @@ class TechnicalVariantReader:
                 for container in soup.select('.versions-list')[:2]]})
         for url in observed[:3]:
             html = self.read(url)
-            proof = selected_technical_document(html, url, model, specs, canonical_model_url=base)
+            proof = selected_technical_document(html, url, model, specs, canonical_model_url=base,
+                provider_declared_variant=url if url in declared else None)
             if proof:
                 proof['observed_at'] = self.observed_at[url]
                 return html, proof

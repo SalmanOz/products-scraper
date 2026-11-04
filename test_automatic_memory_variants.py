@@ -9,7 +9,7 @@ from unittest.mock import patch
 from automatic_memory_variants import (TechnicalVariantReader, PublicBrowserTechnicalReader, exact_capacity, selected_technical_document,
     technical_records, variant_identity, observed_variant_candidates, memory_variant_destinations,
     prepare_memory_variants, verify_variant_catalog_readback, memory_target_preflight, canonical_observation_time,
-    declared_technical_targets, memory_parent_priority, existing_selected_memory_sibling, CONTRACT)
+    declared_technical_targets, autocomplete_technical_variants, memory_parent_priority, existing_selected_memory_sibling, CONTRACT)
 from observed_memory_variants import inspect_trendyol_memory_variant
 from test_observed_memory_variants import alternate_document, ALT_URL
 from test_trendyol_catalog_source import NAME, SPECS
@@ -38,6 +38,47 @@ def tech_document(url=ALT_TECH_URL, ram=8, storage=256, name=NAME):
 
 
 class AutomaticMemoryVariantTests(unittest.TestCase):
+    def test_provider_declared_version_recovers_missing_menu_without_inventing_a_capacity_url(self):
+        from bs4 import BeautifulSoup
+        base = tech_document(TECH_URL, storage=128)
+        child = BeautifulSoup(tech_document(), 'html.parser')
+        child.select_one('link[rel="canonical"]')['href'] = TECH_URL
+        meta = child.select_one('meta[name="devicecompare"]')
+        value = json.loads(meta['content']); value['slug'] = ALT_TECH_URL.rsplit('where-to-buy-', 1)[1]
+        meta['content'] = json.dumps(value)
+        versions = f'Global · 8GB · 128GB={TECH_URL.rsplit("where-to-buy-", 1)[1]}#Global · 8GB · 256GB={value["slug"]}'
+        calls = []
+        class Reader:
+            def read(self, url):
+                calls.append(url)
+                if '_json/autocomplete' in url:
+                    return json.dumps({'results': [{'full_name': NAME, 'url': TECH_URL.rsplit('where-to-buy-', 1)[1], 'vers': versions}]})
+                return {TECH_URL: base, ALT_TECH_URL: str(child)}[url]
+        reader = TechnicalVariantReader(Reader())
+        _, proof = reader.locate(PARENT, dict(SPECS, storage_gb=256))
+        self.assertEqual(calls[1:], [TECH_URL, ALT_TECH_URL])
+        self.assertEqual(proof['source_url'], ALT_TECH_URL)
+        self.assertEqual(proof['storage_gb'], 256)
+        self.assertIsNone(selected_technical_document(str(child), ALT_TECH_URL, NAME, dict(SPECS, storage_gb=256), canonical_model_url=TECH_URL))
+        missing_slug = BeautifulSoup(str(child), 'html.parser')
+        missing_meta = missing_slug.select_one('meta[name="devicecompare"]')
+        missing_value = json.loads(missing_meta['content']); del missing_value['slug']
+        missing_meta['content'] = json.dumps(missing_value)
+        for bad in [str(child).replace('256 GB', '128 GB'), str(missing_slug),
+                    str(child).replace('</body>', f'<ul class="versions-list"><li class="item active"><a href="{TECH_URL}">8GB 128GB</a></li></ul></body>')]:
+            self.assertIsNone(selected_technical_document(bad, ALT_TECH_URL, NAME, dict(SPECS, storage_gb=256),
+                canonical_model_url=TECH_URL, provider_declared_variant=ALT_TECH_URL))
+        self.assertIsNone(selected_technical_document(str(child), ALT_TECH_URL, NAME, dict(SPECS, storage_gb=256),
+            canonical_model_url=TECH_URL, provider_declared_variant=TECH_URL))
+
+    def test_provider_version_labels_are_only_routing_hints_and_foreign_or_generated_targets_are_not_used(self):
+        slug = ALT_TECH_URL.rsplit('where-to-buy-', 1)[1]
+        self.assertEqual(autocomplete_technical_variants({'vers': f'Global · 8GB · 256GB={slug}'}),
+            [{'source_url': ALT_TECH_URL, 'ram_gb': 8, 'storage_gb': 256}])
+        for value in [f'8GB · 256GB=https://evil.test/{slug}', f'8GB · 256GB={slug}?token=private',
+                      '8GB · 256GB=', f'8GB · 12GB · 256GB={slug}', f'256GB={slug}', 'x' * 32769]:
+            self.assertEqual(autocomplete_technical_variants({'vers': value}), [])
+
     def test_an_existing_sibling_needs_unique_same_family_memory_radio_and_complete_selected_seller_proof(self):
         preview = self.candidate_result()['rows'][0]['other_memory_variant']
         sibling = {**PARENT, 'id': 124, **variant_identity(PARENT, 8, 256),
