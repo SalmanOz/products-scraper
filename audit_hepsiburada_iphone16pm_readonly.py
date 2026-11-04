@@ -78,6 +78,24 @@ def _valid_gtin13(value):
     return (10 - (sum(digits[:12:2]) + 3 * sum(digits[1:12:2])) % 10) % 10 == digits[12]
 
 
+def _neutral_selected_option(properties):
+    """Public non-hardware options, always checked in the visible selector too."""
+    options = [p for p in properties if isinstance(p, dict) and p.get('name') == 'Seçenek']
+    if len(options) != 1 or not isinstance(options[0].get('valueObject'), dict):
+        return None
+    prop = options[0]
+    value = prop['valueObject'].get('actualValue')
+    if value == 'Aksesuarsız Kutu':
+        return value
+    # Observed A17 4/128 listings select a catalog-information advisory rather
+    # than a package/condition. It must not be a price-changing option. Actual
+    # model, RAM, storage, radio, GTIN, seller and stock are proved separately.
+    if (value == 'İSİM VE AÇIKLAMALAR KISMINDAKİ BİLGİLER DOĞRUDUR'
+            and prop.get('isShowPrice') is False):
+        return value
+    return None
+
+
 def _selected_variant(product, scope=None):
     scope = DEFAULT_REVIEWED_TARGET if scope is None else scope
     variants = product.get('variants')
@@ -114,8 +132,9 @@ def _selected_variant(product, scope=None):
     # The public legacy iPhone template independently selects a box option.
     # Only the observed neutral, accessory-free box can accompany this SKU;
     # bundles, used-condition choices and unknown option values stay rejected.
-    if scope.get('generic_catalog') is True and values.get('Seçenek') == 'Aksesuarsız Kutu':
-        expected_properties['Seçenek'] = 'Aksesuarsız Kutu'
+    neutral_option = _neutral_selected_option(properties)
+    if scope.get('generic_catalog') is True and neutral_option is not None:
+        expected_properties['Seçenek'] = neutral_option
     if (values != expected_properties
             or not barcode_matches
             or variant.get('isInStock') is not True
@@ -230,8 +249,8 @@ def parse_exact_buy_box(html: str, final_url: str = URL, *, scope=None):
     if len(sellers) != 1:
         return None, 'selected_visible_seller_mismatch'
     controls = (('Kapasite', str(scope['SPECS']['storage_gb']) + ' GB'), ('Renk', scope['COLOR']))
-    if generic and any(p.get('name') == 'Seçenek' for p in variant['properties']):
-        controls += (('Seçenek', 'Aksesuarsız Kutu'),)
+    if generic and (neutral_option := _neutral_selected_option(variant['properties'])) is not None:
+        controls += (('Seçenek', neutral_option),)
     for kind, value in controls:
         buttons = soup.select(f'button[data-test-id="variant-box-{kind}-{value}"]')
         if len(buttons) != 1 or buttons[0].get('aria-label') != f'Seçili {kind} {value}':

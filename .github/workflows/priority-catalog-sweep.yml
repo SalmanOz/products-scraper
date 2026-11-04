@@ -10,6 +10,7 @@ on:
           - coverage-first
           - n11-preflight
           - hepsiburada-category-audit
+          - target-preflight
         default: full
         required: true
       publish:
@@ -17,6 +18,16 @@ on:
         type: boolean
         required: true
         default: false
+      target_slug:
+        description: 'Read-only target-preflight only: existing published product slug'
+        type: string
+        required: false
+        default: ''
+      target_url:
+        description: 'Read-only target-preflight only: one public priority-retailer PDP URL'
+        type: string
+        required: false
+        default: ''
 permissions:
   contents: read
 concurrency:
@@ -53,8 +64,12 @@ jobs:
           SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
           PUBLISH: ${{ inputs.publish }}
           MODE: ${{ inputs.mode }}
+          TARGET_SLUG: ${{ inputs.target_slug }}
+          TARGET_URL: ${{ inputs.target_url }}
         run: |
-          if test "$MODE" = n11-preflight; then
+          if test "$MODE" = target-preflight; then
+            python -u sweep_priority_catalog.py --target-preflight "$TARGET_URL" --target-slug "$TARGET_SLUG"
+          elif test "$MODE" = n11-preflight; then
             python -u sweep_priority_catalog.py --n11-preflight
           elif test "$MODE" = hepsiburada-category-audit; then
             python -u sweep_priority_catalog.py --hepsiburada-category-audit

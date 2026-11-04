@@ -407,6 +407,8 @@ def save_report(result):
              '', '| Model | Retailer | HTTP | Parser | Publication |', '|---|---|---:|---|---|']
     if result.get('purpose') == 'readonly_category_routing_audit':
         lines.insert(2, 'Read-only category routing audit: retailer product pages were not fetched; no prices were written. This does not pass the catalog price coverage gate.')
+    if result.get('purpose') == 'readonly_existing_catalog_target_preflight':
+        lines.insert(2, 'Read-only selected-PDP parser proof against the current published catalog: one target, no publication and no catalog/spec writes. This does not pass the catalog price coverage gate.')
     for row in result['rows']:
         lines.append(f"| {row['slug']} | {row['retailer']} | {row['http_status']} | "
                      f"{row.get('reader_reason', row['reason'])} | "
@@ -457,6 +459,39 @@ def save_report(result):
     Path('priority-catalog-sweep.md').write_text('\n'.join(lines))
 
 
+def target_preflight(*, client, url, slug, transport=None):
+    """Fresh, read-only parser proof against one current published catalog SKU.
+
+    This accepts no product/spec/price payload and never calls a publisher.
+    URL text is only a negative identity guard; the ordinary full PDP parser
+    must independently establish the actual selected physical variant.
+    """
+    from tr_price_scraper import TRPriceScraper
+    from reviewed_offer_targets import with_reviewed_radio
+    if (product_host(url) is None or not isinstance(slug, str)
+            or not slug or len(slug) > 150):
+        raise ValueError('invalid_existing_catalog_preflight_target')
+    products = client.get_published_products()
+    if (not products or len(products) > 200
+            or len({p['id'] for p in products}) != len(products)
+            or len({p['slug'] for p in products}) != len(products)):
+        raise ValueError('invalid_or_oversized_catalog')
+    product = next((p for p in products if p['slug'] == slug), None)
+    if product is None:
+        raise ValueError('preflight_product_not_published')
+    specs = with_reviewed_radio(product, PriceUpdater.get_expected_specs(product.get('attributes')))
+    if not TRPriceScraper().is_strict_match(product['name'], urlparse(url).path.replace('-', ' '), specs):
+        raise ValueError('preflight_url_catalog_identity_conflict')
+    transport = transport or PriorityRetailerTransport(maximum_per_host=2,
+        n11_collector=getattr(client, 'n11_document_get', None))
+    row = inspect_target(transport, url, product)
+    row['expected_specs'] = {k: specs.get(k) for k in ('ram_gb', 'storage_gb', 'network_generation')}
+    return {'purpose': 'readonly_existing_catalog_target_preflight', 'catalog_count': len(products),
+            'status': 'completed' if row.get('prepared_offer') is not None else 'rejected',
+            'publish': False, 'writes': False, 'accepted': 0, 'queued': 1, 'rows': [row],
+            'models_without_priority_hints': [], 'sources': transport.report()}
+
+
 def coverage_readback(result, current):
     """An exhausted queue is operational completion, not sufficient coverage."""
     if not isinstance(current, dict) or len(current) != result['catalog_count']:
@@ -476,7 +511,21 @@ def main():
     parser.add_argument('--n11-preflight', action='store_true')
     parser.add_argument('--coverage-first', action='store_true')
     parser.add_argument('--hepsiburada-category-audit', action='store_true')
+    parser.add_argument('--target-preflight', metavar='PUBLIC_PDP_URL')
+    parser.add_argument('--target-slug', metavar='EXISTING_PUBLISHED_SLUG')
     args = parser.parse_args()
+    if args.target_preflight is not None:
+        if args.publish or args.n11_preflight or args.coverage_first or args.hepsiburada_category_audit:
+            raise ValueError('The selected target preflight is read-only and cannot run a sweep')
+        result = target_preflight(client=OfferIngestionClient.from_env(),
+                                  url=args.target_preflight, slug=args.target_slug)
+        save_report(result)
+        print(Path('priority-catalog-sweep.md').read_text())
+        if result['status'] != 'completed':
+            raise SystemExit('Selected target did not pass the full parser proof; no writes')
+        return
+    if args.target_slug is not None:
+        raise ValueError('A target slug is only valid with --target-preflight')
     if args.hepsiburada_category_audit and (args.publish or args.n11_preflight):
         raise ValueError('The category routing audit is read-only')
     if args.n11_preflight:

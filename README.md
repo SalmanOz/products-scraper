@@ -435,6 +435,14 @@ ilan/satıcı, GTIN, stok ve normal veya açıkça ayrılmış sepette fiyat kan
 
 `hepsiburada-category-audit` yalnız kategori yönlerini sınar: ürün sayfası
 okumaz ve fiyat yazmaz. `n11-preflight` salt okunur kaynak tanısı içindir.
+`target-preflight`, `target_slug` ile mevcut yayımlanmış ürünü ve `target_url`
+ile dört mağazadan tek bir herkese açık ürün adresini alır. Güncel katalogdaki
+özelliklere karşı normal tam seçili SKU ayrıştırıcısını çalıştırır; ürün,
+özellik veya fiyat yazmaz. URL/model çelişkisi istekten önce, gerçek kapasite,
+radyo, GTIN, satıcı ve stok çelişkileri ürün ayrıştırıcısında reddedilir.
+Bu modda başarılı sonuç yalnız ayrıştırıcı kanıtıdır; yayımlama veya katalog
+kapsamı başarısı değildir. Komut satırında `--target-preflight URL
+--target-slug SLUG` kullanılır; `--publish` ve diğer tarama modlarıyla birleşmez.
 Çıktılar `priority-catalog-sweep.json` ve `.md` dosyalarıdır. Kategori
 olaylarında `parser_status`, gözlenen H1, güvenli yönlendirme ipucu ve HTTP
 sonucu bulunur. `remaining_observed_pages` ve `category_budget_exhausted`,

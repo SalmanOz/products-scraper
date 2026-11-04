@@ -2,7 +2,7 @@ from copy import deepcopy
 import unittest
 from unittest.mock import patch
 
-from sweep_priority_catalog import catalog_queue, coverage_readback, sweep
+from sweep_priority_catalog import catalog_queue, coverage_readback, sweep, target_preflight
 from publish_priority_candidates import CandidatePublicationError
 from test_priority_candidates import Client, audit, reader
 
@@ -17,6 +17,53 @@ def products(count):
 class Transport:
     def report(self):
         return {}
+
+
+class TargetPreflightTests(unittest.TestCase):
+    def test_full_selected_offer_is_only_readonly_parser_proof_for_the_current_published_sku(self):
+        from test_hepsiburada_catalog_source import document, NAME, SPECS, TARGET
+        client = Client()
+        client.get_published_products = lambda: [{'id': 1, 'slug': 'a36-test', 'name': NAME, 'attributes': SPECS}]
+        visited = []
+        class TargetTransport(Transport):
+            def read_document(self, url):
+                visited.append(url)
+                return document(), 'document_read', 200
+        with patch('sweep_priority_catalog.refresh_candidates') as writer, \
+                patch.object(client, 'get_public_price_priority', create=True) as coverage:
+            result = target_preflight(client=client, url=TARGET, slug='a36-test', transport=TargetTransport())
+        self.assertEqual(result['status'], 'completed')
+        self.assertIsNotNone(result['rows'][0]['prepared_offer'])
+        self.assertEqual((result['publish'], result['writes'], result['accepted']), (False, False, 0))
+        self.assertEqual(visited, [TARGET])
+        self.assertNotIn('public_coverage', result)
+        writer.assert_not_called(); coverage.assert_not_called()
+        with self.assertRaises(ValueError):
+            target_preflight(client=client, url=TARGET, slug='not-published', transport=TargetTransport())
+        for url in [TARGET.replace('www.hepsiburada.com', 'evil.test'),
+                    TARGET.replace('a36-5g', 'a35-5g'), TARGET + '?token=private']:
+            with self.assertRaises(ValueError):
+                target_preflight(client=client, url=url, slug='a36-test', transport=TargetTransport())
+        self.assertEqual(visited, [TARGET])
+
+    def test_selected_capacity_conflict_is_rejected_and_cli_cannot_publish_or_start_another_mode(self):
+        from test_hepsiburada_catalog_source import document, NAME, SPECS, TARGET
+        from sweep_priority_catalog import main
+        client = Client()
+        client.get_published_products = lambda: [{'id': 1, 'slug': 'a36-test', 'name': NAME, 'attributes': SPECS}]
+        class TargetTransport(Transport):
+            def read_document(self, url):
+                return document().replace('8 GB RAM', '12 GB RAM'), 'document_read', 200
+        result = target_preflight(client=client, url=TARGET, slug='a36-test', transport=TargetTransport())
+        self.assertEqual(result['status'], 'rejected')
+        self.assertIsNone(result['rows'][0]['prepared_offer'])
+        self.assertFalse(result['writes'])
+        for flag in ['--publish', '--coverage-first', '--n11-preflight', '--hepsiburada-category-audit']:
+            with patch('sys.argv', ['sweep', '--target-preflight', TARGET, '--target-slug', 'a36-test', flag]), \
+                    patch('sweep_priority_catalog.OfferIngestionClient.from_env') as factory:
+                with self.assertRaises(ValueError):
+                    main()
+                factory.assert_not_called()
 
 
 class CategoryDiagnosticTests(unittest.TestCase):

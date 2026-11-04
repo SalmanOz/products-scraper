@@ -26,6 +26,35 @@ def document(changes=None):
 
 
 class HepsiburadaCatalogTests(unittest.TestCase):
+    def test_information_advisory_is_not_a_hardware_variant_but_requires_its_exact_selected_control(self):
+        import json
+        from copy import deepcopy
+        label = 'İSİM VE AÇIKLAMALAR KISMINDAKİ BİLGİLER DOĞRUDUR'
+        base = BeautifulSoup(document(), 'html.parser')
+        state = json.loads(base.select_one('script#reduxStore').text)
+        option = {'name': 'Seçenek', 'isShowPrice': False, 'valueObject': {'actualValue': label}}
+        def render(property_patch=None, *, control_label=label, selected=True):
+            soup = BeautifulSoup(str(base), 'html.parser')
+            changed = deepcopy(state)
+            changed['productState']['product']['variants'][0]['properties'].append({**option, **(property_patch or {})})
+            soup.select_one('script#reduxStore').string = json.dumps(changed)
+            control = '' if control_label is None else ('<button data-test-id="variant-box-Seçenek-' +
+                control_label + '" aria-label="' + ('Seçili ' if selected else '') + 'Seçenek ' + control_label + '">' + control_label + '</button>')
+            return str(soup) + control
+        offer, reason = parse_catalog_buy_box(render(), TARGET, NAME, SPECS)
+        self.assertIsNotNone(offer, reason)
+        self.assertTrue(catalog_offer_matches(offer, NAME, SPECS))
+        for index, changed in enumerate([render(control_label=None), render(selected=False),
+                        render({'isShowPrice': True}), render({'isShowPrice': None}),
+                        render({'valueObject': {'actualValue': 'Aksesuarlı Paket'}}),
+                        render({'valueObject': {'actualValue': 'Yenilenmiş Ürün'}}),
+                        render().replace('Mobil Bağlantı Hızı <span>5G</span>', 'Mobil Bağlantı Hızı <span>4.5G</span>'),
+                        render().replace('8 GB RAM', '12 GB RAM'),
+                        render().replace('8806094821437', '8806094821438'),
+                        render().replace('data-test-id="addToCart"', 'disabled data-test-id="addToCart"')]):
+            self.assertTrue(changed != render(), f'No-op negative fixture {index}')
+            self.assertIsNone(parse_catalog_buy_box(changed, TARGET, NAME, SPECS)[0], f'Negative fixture {index}')
+
     def test_literal_storage_presence_cell_requires_actual_selected_sku_capacity_and_visible_control(self):
         # Public Redmi Note 15 Pro PDPs observed Nov 4: "Dahili Hafıza Var"
         # with separately selected 256 GB controls and SKU properties.
