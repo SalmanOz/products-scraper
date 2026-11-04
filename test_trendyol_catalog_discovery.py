@@ -1,4 +1,7 @@
+from copy import deepcopy
+import json
 import unittest
+from bs4 import BeautifulSoup
 
 from priority_retailer_transport import PriorityRetailerTransport
 from trendyol_catalog_discovery import CATEGORY_URL, category_page_number, parse_category_document
@@ -24,6 +27,106 @@ def document(body=None, page=1):
 
 
 class TrendyolDiscoveryTests(unittest.TestCase):
+    def test_observed_anchorless_xiaomi_state_reaches_second_public_html_page_without_api_or_prices(self):
+        base = 'https://www.trendyol.com/xiaomi-android-cep-telefonu-x-b101939-c164461'
+        pages = [Path('fixtures/trendyol-xiaomi-public-'+part+'-page-routing.html').read_text()
+                 for part in ('first', 'second')]
+        rows = []
+        for index, html in enumerate(pages, 1):
+            diagnostic = {}
+            found, next_url = parse_category_document(html, base + (f'?pi={index}' if index > 1 else ''), diagnostic)
+            self.assertEqual(next_url, base + f'?pi={index+1}')
+            self.assertEqual(diagnostic['status'], 'parsed')
+            self.assertEqual(diagnostic['pagination_source'], 'public_category_state_html_projection')
+            self.assertEqual(len(found), 36)
+            self.assertTrue(all(set(row) == {'source_url','discovery_title','discovery_product_id','stock_priority'} for row in found))
+            self.assertTrue(all(row['source_url'].startswith('https://www.trendyol.com/') and '?' not in row['source_url'] for row in found))
+            rows.append(found)
+        old_model = {'id': 215, 'slug': 'xiaomi-13t', 'name': 'Xiaomi 13T',
+                     'attributes': {'ram_gb': 12, 'storage_gb': 256, 'Connectivity': {'5G': True}}}
+        self.assertEqual(match_catalog_destinations(rows[0], [old_model]), {})
+        self.assertIn(old_model['id'], match_catalog_destinations(rows[1], [old_model]))
+        no_state = BeautifulSoup(pages[0], 'html.parser')
+        no_state.select_one('script').decompose()
+        diagnostic = {}
+        self.assertIsNone(parse_category_document(str(no_state), base, diagnostic)[1])
+        self.assertEqual(diagnostic['status'], 'pagination_unrecognized')
+
+    def test_serialized_pagination_cannot_change_category_host_index_or_public_query_scope(self):
+        base = 'https://www.trendyol.com/xiaomi-android-cep-telefonu-x-b101939-c164461'
+        html = Path('fixtures/trendyol-xiaomi-public-first-page-routing.html').read_text()
+        soup = BeautifulSoup(html, 'html.parser')
+        script = soup.select_one('script')
+        original = json.loads(script.get_text().split('=',1)[1].rstrip(';'))
+        mutations = []
+        for key, value in [('title','Samsung Android Cep Telefonu'), ('pageIndex',2),
+                           ('pageIndex',True), ('total',1), ('total',True), ('total',100001)]:
+            state = deepcopy(original); state['data'][key] = value; mutations.append(state)
+        for field in ('current','next'):
+            link = original['data']['_links'][field]
+            for changed in [link.replace('https:', 'http:'), link.replace('apigw.trendyol.com','evil.example'),
+                            link.replace('apigw.trendyol.com','apigw.trendyol.com:443'), link+'#extra',
+                            link+'&token=private',link+'&pi=2',link.replace('pathModel=xiaomi-','pathModel=samsung-'),
+                            link.replace('pageSize=36','pageSize=360'),link.replace('pi=1','pi=2').replace('pi=2','pi=3')]:
+                state=deepcopy(original);state['data']['_links'][field]=changed;mutations.append(state)
+        state=deepcopy(original);del state['data']['_links']['next'];mutations.append(state)
+        state=deepcopy(original);state['data']['_links']['next']=None;mutations.append(state)
+        for state in mutations:
+            changed=BeautifulSoup(html,'html.parser')
+            changed.select_one('script').string='window["__single-search-result__PROPS"]='+json.dumps(state)+';'
+            diagnostic={}
+            self.assertIsNone(parse_category_document(str(changed),base,diagnostic)[1], state['data'])
+            self.assertEqual(diagnostic['status'],'pagination_unrecognized')
+        soup.select_one('script').insert_after(deepcopy(soup.select_one('script')))
+        self.assertIsNone(parse_category_document(str(soup),base)[1])
+        consistent=html+f'<a href="{base}?pi=2">2</a>'
+        self.assertEqual(parse_category_document(consistent,base)[1],base+'?pi=2')
+        terminal=deepcopy(original);terminal['data']['total']=36;terminal['data']['_links']['next']=None
+        soup=BeautifulSoup(html,'html.parser')
+        soup.select_one('script').string='window["__single-search-result__PROPS"]='+json.dumps(terminal)+';'
+        diagnostic={}
+        self.assertIsNone(parse_category_document(str(soup),base,diagnostic)[1])
+        self.assertEqual(diagnostic['status'],'parsed')
+
+    def test_full_sweep_visits_observed_second_html_page_but_never_publishes_category_amounts(self):
+        from unittest.mock import patch
+        from sweep_priority_catalog import sweep
+        base='https://www.trendyol.com/xiaomi-android-cep-telefonu-x-b101939-c164461'
+        pages=[Path('fixtures/trendyol-xiaomi-public-'+part+'-page-routing.html').read_text()
+               for part in ('first','second')]
+        product={'id':215,'slug':'xiaomi-13t','name':'Xiaomi 13T',
+                 'attributes':{'ram_gb':12,'storage_gb':256,'Connectivity':{'5G':True}},
+                 'offer_targets':[],'offer_targets_truncated':False}
+        class Client:
+            def get_published_products(self): return [deepcopy(product)]
+            def get_public_price_priority(self): return {215:('xiaomi-13t',False)}
+        calls=[]
+        class Transport:
+            def configure_catalog_budget(self,count): pass
+            def read_trendyol_category(self,url):
+                calls.append(('category',url))
+                if url==CATEGORY_URL:
+                    body=f'<h1 class="title">Cep Telefonu</h1><a href="{CATEGORY_URL}">1</a><a href="{base}">Xiaomi</a>'
+                elif url in (base,base+'?pi=2'):
+                    body=pages[0 if url==base else 1]
+                else:
+                    assert url==base+'?pi=3'
+                    body=f'<h1 class="title">Xiaomi Android Cep Telefonu</h1><a href="{base}">1</a>'
+                return body,'document_read',200
+            def read_document(self,url):
+                calls.append(('pdp',url))
+                return '<h1>Incomplete selected offer</h1>','document_read',200
+            def resolved_url(self,url): return url
+            def report(self): return {}
+        with patch('sweep_priority_catalog.refresh_candidates') as writer:
+            result=sweep(client=Client(),publish=True,transport=Transport(),discover_trendyol=True)
+        self.assertEqual([u for kind,u in calls if kind=='category'],
+                         [CATEGORY_URL,base,base+'?pi=2',base+'?pi=3'])
+        self.assertIn(('pdp','https://www.trendyol.com/xiaomi/13t-256-gb-12-gb-ram-siyah-cep-telefonu-xiaomi-turkiye-garantili-p-767729000'),calls)
+        self.assertFalse(any('apigw.trendyol.com' in url for _,url in calls))
+        self.assertEqual((result['accepted'],result['writes']),(0,False))
+        writer.assert_not_called()
+
     def test_observed_public_brand_page_has_only_raw_product_hints_and_exact_brand_heading(self):
         url = 'https://www.trendyol.com/infinix-android-cep-telefonu-x-b158303-c164461'
         body = Path('fixtures/trendyol-public-brand-category.html').read_text()

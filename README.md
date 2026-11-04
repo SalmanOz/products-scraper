@@ -588,6 +588,16 @@ rejected. The preview only queues a separate variant: independent technical
 verification, a fresh selected offer, atomic publication and exact readback
 remain mandatory; the original capacity is never repriced from that preview.
 
+Trendyol brand categories without pagination anchors can continue from their
+public `__single-search-result__PROPS` category state. The heading, current
+page index, total, current/next links, fixed public search parameters and exact
+category path must agree. Only the ordinary `www.trendyol.com` HTML category
+page is read next; the API URL is never requested, and serialized amounts,
+sellers and account state never become routing or offer evidence. Every new
+product address still needs the ordinary selected SKU/seller/stock/cash parser
+and fresh publication read. All brands share the existing 100-page allowance
+and source denial circuit.
+
 If that atomic publication loses its reply or returns HTTP 502/503/504, the
 client can replay the identical transaction once. It reuses the already uploaded
 images and fresh observations; it performs no extra retailer reads and never

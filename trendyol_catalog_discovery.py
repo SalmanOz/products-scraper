@@ -3,8 +3,9 @@
 Card amounts are deliberately ignored. Each destination must pass the existing
 fresh selected SKU/seller/stock/cash reader before it can become an offer.
 """
+import json
 import re
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qsl, urlencode, urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
@@ -114,6 +115,64 @@ def recovery_seed_targets(targets, prices, maximum=8):
     return selected
 
 
+def _public_state_pagination(soup, url, identity, card_count):
+    """Project the selected category's observed pagination into HTML reads.
+
+    Some current brand pages have no pagination anchors. Their public search
+    state names the next page in an API link. Never request that API or reuse
+    its product amounts: bind both links to this exact category/index and
+    read only the ordinary public HTML page through the existing transport.
+    """
+    states = []
+    for script in soup.select('script:not([src])'):
+        body = script.get_text()
+        match = re.match(r'^\s*window\["__single-search-result__PROPS"\]\s*=\s*', body)
+        if match is None:
+            continue
+        try:
+            state, end = json.JSONDecoder().raw_decode(body[match.end():])
+            if body[match.end() + end:].strip() not in ('', ';'):
+                return False, None
+            states.append(state)
+        except (ValueError, TypeError):
+            return False, None
+    state = states[0] if len(states) == 1 and isinstance(states[0], dict) else {}
+    data = state.get('data')
+    page = identity['page']
+    if (not isinstance(data, dict) or type(data.get('pageIndex')) is not int
+            or data['pageIndex'] != page or type(data.get('total')) is not int
+            or not card_count <= data['total'] <= 100000 or not card_count
+            or not isinstance(data.get('title'), str)
+            or TRPriceScraper._normalize_words(data['title']) != TRPriceScraper._normalize_words(identity['heading'])
+            or not isinstance(data.get('_links'), dict)):
+        return False, None
+    fixed = {'promotionSearch': 'false', 'stickyShellNavigation': 'true',
+             'isDynamicRenderingAgent': 'false', 'channelId': '1',
+             'subPathStrategy': 'no-subpath', 'isTyPlusIncluded': 'false',
+             'pageSize': '36', 'pathModel': identity['path'].lstrip('/')}
+    def matches(raw, index):
+        if not isinstance(raw, str) or len(raw) > 1000 or re.search(r'[\x00-\x20\\]', raw):
+            return False
+        try:
+            parsed = urlparse(raw)
+            pairs = parse_qsl(parsed.query, keep_blank_values=True, max_num_fields=9)
+            return (parsed.scheme == 'https' and parsed.netloc == 'apigw.trendyol.com'
+                    and parsed.path == '/discovery-sfint-search-service/api/search/products/'
+                    and not parsed.fragment and not parsed.params
+                    and len(pairs) == len(dict(pairs)) == 9
+                    and dict(pairs) == {**fixed, 'pi': str(index)})
+        except ValueError:
+            return False
+    links = data['_links']
+    if 'next' not in links or not matches(links.get('current'), page):
+        return False, None
+    if links.get('next') is None:
+        return (data['total'] <= page * 36 and data['total'] > (page - 1) * 36), None
+    if data['total'] <= page * 36 or not matches(links['next'], page + 1):
+        return False, None
+    return True, urlparse(url)._replace(query=urlencode({'pi': page + 1})).geturl()
+
+
 def parse_category_document(html, url, diagnostic=None):
     if isinstance(diagnostic, dict):
         diagnostic['status'] = 'invalid_category_document'
@@ -167,8 +226,17 @@ def parse_category_document(html, url, diagnostic=None):
     next_url = next(iter(page_urls)) if len(page_urls) == 1 else None
     status = ('pagination_unrecognized' if not page_numbers or
               any(number > page for number in page_numbers) and next_url is None else 'parsed')
+    state_valid, state_next = _public_state_pagination(soup, url, identity, len(cards))
+    pagination_source = 'public_category_links'
+    if state_valid:
+        if next_url is not None and next_url != state_next:
+            status, next_url = 'pagination_conflict', None
+        elif next_url is None:
+            status, next_url = 'parsed', state_next
+            pagination_source = 'public_category_state_html_projection'
     if isinstance(diagnostic, dict):
         diagnostic.update(status=status, destinations=len(cards),
+                          pagination_source=pagination_source,
                           category_scope='phone_brand' if identity['brand'] else 'phones',
                           highest_observed_page=max(page_numbers) if page_numbers else None)
     return cards, next_url
