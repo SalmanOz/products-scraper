@@ -218,7 +218,9 @@ class PriorityRetailerTests(unittest.TestCase):
         def denied(url, **_):
             response = get(url)
             if url.endswith('robots.txt'):
-                response = Response(url, 'User-agent: *\nAllow: /\nDisallow: ' + canonical.split('.com')[1])
+                # Only the redirected spelling is forbidden. Avoid overlapping
+                # Allow/Disallow precedence, which differs across Python versions.
+                response = Response(url, 'User-agent: *\nDisallow: ' + canonical.split('.com')[1])
             return response
         reader = PriorityRetailerTransport(get=denied, sleep=lambda _: None)
         self.assertEqual(reader.read_document(original)[1], 'redirect_identity_or_policy_mismatch')
