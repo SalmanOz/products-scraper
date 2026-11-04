@@ -62,7 +62,10 @@ def catalog_queue(products, prices):
 
 def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None,
           discover_n11=False, discover_teknosa=False, discover_trendyol=False,
-          discover_hepsiburada=False, current_listing_inventory=None, coverage_first=False):
+          discover_hepsiburada=False, current_listing_inventory=None, coverage_first=False,
+          category_audit_only=False):
+    if category_audit_only and (publish or discover_n11):
+        raise ValueError('Category routing audits cannot publish or fetch product search results')
     products, prices = client.get_published_products(), client.get_public_price_priority()
     if (not products or len(products) > 200 or len({p['id'] for p in products}) != len(products)
             or len({p['slug'] for p in products}) != len(products)):
@@ -110,6 +113,8 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
     # catalog-wide quality gate. Ordinary full refresh remains the default.
     refresh_targets = [(url, product) for url, product in targets if product['slug'] not in covered_models]
     result['queued'] = len(refresh_targets)
+    if category_audit_only:
+        result.update(purpose='readonly_category_routing_audit', category_candidates=[], queued=0)
     if coverage_first:
         result['coverage_priority'] = {
             'status': 'current_server_audit' if result.get('discovery_inventory', {}).get('status') == 'current' else 'full_refresh_fallback',
@@ -127,6 +132,9 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
         if (product['slug'], url) in processed:
             return
         processed.add((product['slug'], url))
+        if category_audit_only:
+            result['category_candidates'].append({'slug': product['slug'], 'source_url': url})
+            return  # A destination hint is never a fetched/verified/publishable quote.
         row = audited_row if audited_row is not None else inspect_target(transport, url, product)
         extra_offers = row.pop('additional_prepared_offers', [])
         row['expected_specs'] = product.get('attributes') and {
@@ -293,7 +301,7 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
             import trendyol_catalog_discovery
             discover_category('Trendyol', 'trendyol_category_discovery', trendyol_catalog_discovery,
                               transport.read_trendyol_category)
-        for url, product in refresh_targets:
+        for url, product in ([] if category_audit_only else refresh_targets):
             process_target(url, product)
         if discover_n11:
             from n11_catalog_source import discover_catalog_targets
@@ -338,7 +346,8 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                 result[report_key]['resume_status'] = 'source_blocked'
                 continue
             discover_category(retailer, report_key, module, read_category, continuation)
-        result['status'] = 'publication_failed' if publication_failed else 'completed'
+        result['status'] = ('category_audit_completed' if category_audit_only else
+                            'publication_failed' if publication_failed else 'completed')
     except Exception as error:
         result.update(status='failed', error_type=type(error).__name__)
         if checkpoint:
@@ -371,6 +380,8 @@ def save_report(result):
              f"Status: {result['status']}; catalog: {result['catalog_count']}; "
              f"visited: {len(result['rows'])}/{result['queued']}; accepted: {result['accepted']}.",
              '', '| Model | Retailer | HTTP | Parser | Publication |', '|---|---|---:|---|---|']
+    if result.get('purpose') == 'readonly_category_routing_audit':
+        lines.insert(2, 'Read-only category routing audit: retailer product pages were not fetched; no prices were written. This does not pass the catalog price coverage gate.')
     for row in result['rows']:
         lines.append(f"| {row['slug']} | {row['retailer']} | {row['http_status']} | "
                      f"{row.get('reader_reason', row['reason'])} | "
@@ -429,7 +440,10 @@ def main():
     parser.add_argument('--publish', action='store_true')
     parser.add_argument('--n11-preflight', action='store_true')
     parser.add_argument('--coverage-first', action='store_true')
+    parser.add_argument('--hepsiburada-category-audit', action='store_true')
     args = parser.parse_args()
+    if args.hepsiburada_category_audit and (args.publish or args.n11_preflight):
+        raise ValueError('The category routing audit is read-only')
     if args.n11_preflight:
         if args.publish or args.coverage_first:
             raise ValueError('The collector preflight is read-only')
@@ -478,9 +492,16 @@ def main():
         # A missing optimization cannot suppress the ordinary fresh reads.
         listing_inventory = {}
     result = sweep(client=client, publish=args.publish, checkpoint=checkpoint,
-                   discover_n11=True, discover_teknosa=True, discover_trendyol=True,
+                   discover_n11=not args.hepsiburada_category_audit,
+                   discover_teknosa=not args.hepsiburada_category_audit,
+                   discover_trendyol=not args.hepsiburada_category_audit,
                    discover_hepsiburada=True, current_listing_inventory=listing_inventory,
-                   coverage_first=args.coverage_first)
+                   coverage_first=args.coverage_first or args.hepsiburada_category_audit,
+                   category_audit_only=args.hepsiburada_category_audit)
+    if args.hepsiburada_category_audit:
+        save_report(result)
+        print(Path('priority-catalog-sweep.md').read_text())
+        return
     result['public_coverage'] = coverage_readback(result, client.get_public_price_priority())
     save_report(result)
     print(Path('priority-catalog-sweep.md').read_text())

@@ -20,6 +20,36 @@ class Transport:
 
 
 class CategoryDiagnosticTests(unittest.TestCase):
+    def test_readonly_category_probe_uses_same_routing_without_any_pdp_read_or_publication(self):
+        client = Client()
+        client.get_public_price_priority = lambda: {}
+        url = 'https://www.hepsiburada.com/samsung-galaxy-a36-5g-8gb-ram-128gb-p-HBCV0000TEST01'
+        class CategoryTransport(Transport):
+            def read_hepsiburada_category(self, url):
+                return '<h1>Public category</h1>', 'document_read', 200
+            def read_document(self, url):
+                raise AssertionError('A routing audit must not fetch a PDP')
+        def parse(html, url, diagnostic=None):
+            diagnostic.update(status='parsed')
+            return [{'source_url': 'https://www.hepsiburada.com/samsung-galaxy-a36-5g-8gb-ram-128gb-p-HBCV0000TEST01',
+                     'discovery_title': 'Samsung Galaxy A36 5G 8GB RAM 128GB', 'stock_priority': False}], None
+        with patch('hepsiburada_catalog_discovery.parse_category_document', side_effect=parse), \
+                patch('hepsiburada_catalog_discovery.discovery_links', return_value=[]), \
+                patch('sweep_priority_catalog.inspect_target') as pdp, \
+                patch('sweep_priority_catalog.refresh_candidates') as writer:
+            result = sweep(client=client, transport=CategoryTransport(), discover_hepsiburada=True,
+                           category_audit_only=True)
+        self.assertEqual(result['status'], 'category_audit_completed')
+        self.assertEqual(result['category_candidates'], [{'slug': client.product['slug'], 'source_url': url}])
+        self.assertEqual(result['rows'], [])
+        self.assertEqual((result['queued'], result['accepted'], result['writes']), (1, 0, False))
+        pdp.assert_not_called()
+        writer.assert_not_called()
+        with self.assertRaises(ValueError):
+            sweep(client=client, publish=True, category_audit_only=True)
+        with self.assertRaises(ValueError):
+            sweep(client=client, discover_n11=True, category_audit_only=True)
+
     def test_parser_and_transport_failures_remain_visible_without_exporting_document_or_offer_payloads(self):
         from sweep_priority_catalog import category_page_diagnostics
         data = {'hepsiburada_category_discovery': {'retailer': 'Hepsiburada', 'pages': [
