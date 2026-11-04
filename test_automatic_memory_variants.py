@@ -38,6 +38,25 @@ def tech_document(url=ALT_TECH_URL, ram=8, storage=256, name=NAME):
 
 
 class AutomaticMemoryVariantTests(unittest.TestCase):
+    def test_storage_only_iphone_card_routes_to_an_unseen_storage_without_copying_parent_ram(self):
+        parent = {'id': 1, 'name': 'Apple iPhone 16 Pro Max', 'slug': 'apple-iphone-16-pro-max',
+                  'attributes': {'ram_gb': 8, 'storage_gb': 256, 'Connectivity': {'5G': True}}}
+        card = {'source_url': 'https://www.trendyol.com/apple/iphone-16-pro-max-512-gb-p-123456789',
+                'discovery_title': 'Apple iPhone 16 Pro Max 512 GB', 'stock_priority': True}
+        before = deepcopy(parent), deepcopy(card)
+        self.assertEqual(memory_variant_destinations([card], [parent]), [(parent, card)])
+        self.assertEqual((parent, card), before)
+        self.assertNotIn('ram_gb', card)
+        self.assertNotIn('observed_specs', card)
+        self.assertNotIn('price', card)
+        known = {**parent, 'id': 2, 'name': parent['name'] + ' 8GB 512GB',
+                 'attributes': {'ram_gb': 8, 'storage_gb': 512, 'Connectivity': {'5G': True}}}
+        self.assertEqual(memory_variant_destinations([card], [parent, known]), [])
+        for title in ['Apple iPhone 16 Pro Max 256/512 GB', 'Apple iPhone 16 Pro Max 256 GB',
+                      'Apple iPhone 16 Pro Max 512 GB Kılıf', 'Apple iPhone 16 Pro 512 GB',
+                      'Apple iPhone 17 Pro Max 512 GB', 'Apple iPhone 16 Pro Max']:
+            self.assertEqual(memory_variant_destinations([{**card, 'discovery_title': title}], [parent]), [], title)
+
     def test_provider_declared_version_recovers_missing_menu_without_inventing_a_capacity_url(self):
         from bs4 import BeautifulSoup
         base = tech_document(TECH_URL, storage=128)

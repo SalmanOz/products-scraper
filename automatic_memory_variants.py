@@ -707,6 +707,7 @@ def memory_variant_destinations(cards, products):
         if previous is None or p['id'] < previous['id']:
             families[family] = p
         known.add((*family, specs.get('ram_gb'), specs.get('storage_gb')))
+    known_storage = {(model, radio, storage) for model, radio, _, storage in known}
     found = {}
     for card in sorted(cards, key=lambda c: (not c.get('stock_priority', False), c['source_url'])):
         title = card.get('discovery_title', '')
@@ -714,12 +715,19 @@ def memory_variant_destinations(cards, products):
         title = re.sub(r'(?<![\w.,])([1-9]|1\d|2[0-4])\s*G\s*\+\s*(64|128|256|512|1024)\s*G(?!\w)',
                        r'RAM \1 GB; ROM \2 GB', title, flags=re.I)
         ram, storage, ambiguous = matcher._unambiguous_listing_capacities(title)
-        if ambiguous or not ram or not storage or not 1 <= ram <= 64 or not 32 <= storage <= 4096:
+        if (ambiguous or storage is None or not 32 <= storage <= 4096
+                or ram is not None and not 1 <= ram <= 64):
             continue
         owners = []
         for (model, radio), parent in families.items():
             actual = {'ram_gb': ram, 'storage_gb': storage, 'network_generation': radio}
-            if ((model, radio, ram, storage) not in known and matcher.is_strict_match(model, title, actual)
+            already_known = ((model, radio, storage) in known_storage if ram is None
+                             else (model, radio, ram, storage) in known)
+            # Storage-only category labels (especially iPhone) are URL hints,
+            # not selected RAM evidence. Read an unseen storage PDP without
+            # filling RAM from the parent; its complete selected facts and
+            # independent technical source must still establish the new SKU.
+            if (not already_known and matcher.is_strict_match(model, title, actual)
                     and matcher.is_strict_match(model, urlparse(card['source_url']).path.replace('-', ' '), actual)):
                 owners.append((model, radio, parent))
         if len(owners) != 1:

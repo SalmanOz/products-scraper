@@ -288,6 +288,38 @@ def sweep_reader():
 
 
 class SweepTests(unittest.TestCase):
+    def test_storage_only_search_hint_must_read_actual_selected_ram_and_never_fill_it_from_parent(self):
+        from test_n11_catalog_source import document, URL, NAME
+        for missing_ram in (False, True):
+            client = Client()
+            client.product.update(name=NAME, slug='samsung-galaxy-a57', offer_targets=[],
+                attributes={'ram_gb': 6, 'storage_gb': 128, 'Connectivity': {'5G': True}})
+            client.get_public_price_priority = lambda: {}
+            documents = []
+            def remove_ram(state, soup):
+                state['product']['productAttributes'] = [a for a in state['product']['productAttributes']
+                                                        if a['key'] != 'Bellek Kapasitesi']
+            class SearchTransport(Transport):
+                def read_n11_search(self, query):
+                    return f'<a href="{URL}"><h2 class="product-item-title">{NAME} 256 GB</h2></a>', 'document_read', 200
+                def read_document(self, url):
+                    documents.append(url)
+                    return document(remove_ram if missing_ram else None), 'document_read', 200
+                def resolved_url(self, url): return url
+            with patch('sweep_priority_catalog.refresh_candidates') as writer:
+                result = sweep(client=client, transport=SearchTransport(), discover_n11=True,
+                               memory_discovery=True, publish=True)
+            self.assertEqual(documents, [URL])
+            self.assertIsNone(result['rows'][0]['prepared_offer'])
+            self.assertFalse(result['writes'])
+            self.assertEqual(client.product['attributes']['ram_gb'], 6)
+            if missing_ram:
+                self.assertIsNone(result['rows'][0].get('other_memory_variant'))
+            else:
+                self.assertEqual(result['rows'][0]['other_memory_variant']['observed_specs'],
+                                 {'ram_gb': 8, 'storage_gb': 256, 'network_generation': '5g'})
+            writer.assert_not_called()
+
     def test_a_fresh_n11_other_capacity_routes_to_its_existing_sku_before_duplicate_query_is_skipped(self):
         from test_n11_catalog_source import document, URL, NAME
         client = Client()
