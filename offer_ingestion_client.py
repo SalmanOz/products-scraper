@@ -655,7 +655,7 @@ class OfferIngestionClient:
     def get_offer_identity_readiness(self):
         """Authenticated, current commercial-offer identity readback."""
         body = self._request_json(
-            "GET", "/api/ingestion/price-index-readiness",
+            "GET", "/api/ingestion/offer-identity-readiness",
             headers={"Authorization": f"Bearer {self.secret}",
                      "Accept": "application/json"},
         )
@@ -673,12 +673,12 @@ class OfferIngestionClient:
         The ingestion credential goes only to our existing application host;
         the collector never forwards it or visitor cookies to the retailer.
         """
-        from priority_retailer_transport import product_host, n11_canonical_redirect, N11_PHONE_SEARCH_PATH
+        from priority_retailer_transport import n11_product_selectors, n11_canonical_redirect, N11_PHONE_SEARCH_PATH
         parsed = urlparse(url)
         query = parse_qsl(parsed.query, keep_blank_values=True)
         search_key = {'/arama': 'q', N11_PHONE_SEARCH_PATH: 'iw'}.get(parsed.path)
         if (parsed.scheme != 'https' or parsed.netloc != 'www.n11.com' or parsed.fragment
-                or not (product_host(url) == 'www.n11.com' and not parsed.query
+                or not (n11_product_selectors(url) is not None
                         or parsed.path == '/robots.txt' and not parsed.query
                         or search_key is not None and len(query) == 1 and query[0][0] == search_key
                         and 1 <= len(query[0][1]) <= 180 and not re.search(r'[\x00-\x1f\x7f]', query[0][1]))):

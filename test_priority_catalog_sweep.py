@@ -20,6 +20,64 @@ class Transport:
 
 
 class TargetPreflightTests(unittest.TestCase):
+    def test_n11_observed_other_shops_are_separately_reread_published_and_commercially_verified(self):
+        import json
+        from pathlib import Path
+        from urllib.parse import parse_qs, urlparse
+        from bs4 import BeautifulSoup
+        from n11_catalog_source import N11CatalogSource
+        from retailer_offer_refresh import RetailerOfferRefresher
+        base = 'https://www.n11.com/urun/samsung-galaxy-a37-8-gb-256-gb-akilli-telefon-samsung-turkiye-garantili-123382261'
+        fixture = Path(__file__).with_name('fixtures').joinpath('n11-a37-selected-teknosa-public-seller.html').read_text()
+        shops = {'teknosa': ('Teknosa', 4951862), 'n11': ('n11', 10001),
+                 'mxshop': ('MXshop', 10002), 'ickaleiletisim': ('İÇKALEİLETİSİM', 10003)}
+        calls = []
+        class SellerTransport(Transport):
+            def configure_catalog_budget(self, count):
+                pass
+            def resolved_url(self, url):
+                return url
+            def read_document(self, url):
+                calls.append(url)
+                slug = parse_qs(urlparse(url).query).get('magaza', ['teknosa'])[0]
+                name, shop_id = shops[slug]
+                soup = BeautifulSoup(fixture, 'html.parser')
+                script = next(s for s in soup.select('script') if s.text.startswith('window.model = '))
+                state = json.loads(script.text.removeprefix('window.model = ').rstrip(';'))
+                state['product']['seller'] = {'id': shop_id, 'nickName': name}
+                state['productMeta']['sellerId'] = str(shop_id)
+                state['skus'][0]['storeName'] = name
+                script.string = 'window.model = ' + json.dumps(state) + ';'
+                link = soup.select_one('.sidebarSellerArea-top-name')
+                link.string, link['title'], link['href'] = name, name, '/magaza/' + slug
+                return str(soup), 'document_read', 200
+        class ScopedClient(Client):
+            def ingest_listing_offers(self, rows, *, require_all_accepted):
+                return {**super().ingest_offers(rows, require_all_accepted=require_all_accepted),
+                        'offer_identity_contract': 'seller-source-url-v1'}
+        client = ScopedClient()
+        client.product.update(slug='samsung-galaxy-a37-5g-8gb-256gb', name='Samsung Galaxy A37 5G 8GB 256GB',
+            attributes={'ram_gb': 8, 'storage_gb': 256, 'Connectivity': {'5G': True}},
+            offer_targets=[{'merchant_name': 'Teknosa', 'source_url': base}])
+        client.get_public_price_priority = lambda: {client.product['id']: (client.product['slug'], False)}
+        before = deepcopy(client.product)
+        transport = SellerTransport()
+        reader = RetailerOfferRefresher(n11_catalog_source=N11CatalogSource(transport=transport))
+        result = sweep(client=client, transport=transport, reader=reader, publish=True)
+        self.assertEqual(result['status'], 'completed')
+        self.assertEqual((result['queued'], len(result['rows']), result['accepted']), (4, 4, 4))
+        self.assertEqual(len(client.writes), 4)
+        self.assertEqual({rows[0]['seller'] for rows in client.writes}, {name for name, _ in shops.values()})
+        self.assertEqual(len(calls), 8)  # Every selector is fetched again before its own publication.
+        self.assertTrue(all(r['publication']['commercial_readback_verified'] for r in result['rows']))
+        for batch in client.writes:
+            offer = batch[0]
+            if '?' in offer['source_url']:
+                query = parse_qs(urlparse(offer['source_url']).query)
+                self.assertEqual(offer['source_variant_evidence']['merchant_slug'], query['magaza'][0])
+                self.assertEqual(offer['source_variant_evidence']['color_slug'], query['renk'][0])
+        self.assertEqual(client.product, before)
+
     def test_existing_hb_price_and_second_seller_gaps_are_interleaved_and_bounded_without_mutation(self):
         catalog = [{'id': i, 'slug': str(i)} for i in range(1, 17)]
         targets = [(f'https://www.hepsiburada.com/phone-p-HBCV0000000{i:02d}', p)

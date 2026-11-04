@@ -79,6 +79,25 @@ def challenge_document(html):
                 or soup.select('#challenge-form, #captchacharacters'))
 
 
+def n11_product_selectors(url):
+    """Only n11's observed public seller/color/capacity controls are routable."""
+    if product_host(url) != 'www.n11.com':
+        return None
+    pairs = parse_qsl(urlparse(url).query, keep_blank_values=True, max_num_fields=4)
+    selectors = dict(pairs)
+    if not selectors:
+        return {}
+    if (len(pairs) > 3 or len(pairs) != len(selectors) or 'magaza' not in selectors
+            or any(key not in ('magaza', 'renk', 'dahili-hafiza') for key in selectors)):
+        return None
+    for key, value in pairs:
+        if not re.fullmatch(r'[a-z0-9]+(?:-[a-z0-9]+)*', value) or len(value) > 100:
+            return None
+        if key == 'dahili-hafiza' and not re.fullmatch(r'(?:32|64|128|256|512|1024|2048|4096)-gb', value):
+            return None
+    return selectors
+
+
 def n11_canonical_redirect(original, target):
     return (product_host(original) == product_host(target) == 'www.n11.com'
             and not urlparse(original).query and not urlparse(target).query

@@ -6,7 +6,7 @@ import unittest
 from bs4 import BeautifulSoup
 
 from n11_catalog_source import (N11CatalogSource, catalog_offer_matches, discover_catalog_targets,
-                                discover_catalog_memory_targets, parse_catalog_listing)
+                                discover_catalog_memory_targets, discover_product_sellers, parse_catalog_listing)
 from retailer_offer_refresh import RetailerOfferRefresher
 from update_prices import PriceUpdater
 
@@ -26,6 +26,61 @@ def document(change=None):
 
 
 class N11CatalogTests(unittest.TestCase):
+    def test_actual_public_seller_selector_is_retained_and_bound_to_shop_color_sku_and_gtin(self):
+        from selected_sku_evidence import selected_sku_evidence
+        html = Path(__file__).with_name('fixtures').joinpath('n11-a37-selected-teknosa-public-seller.html').read_text()
+        base = 'https://www.n11.com/urun/samsung-galaxy-a37-8-gb-256-gb-akilli-telefon-samsung-turkiye-garantili-123382261'
+        url = base + '?magaza=teknosa&renk=lavanta-moru'
+        name = 'Samsung Galaxy A37 5G'
+        offer, reason = parse_catalog_listing(html, url, name, SPECS)
+        self.assertEqual(reason, 'selected_n11_cash_offer')
+        self.assertEqual((offer['url'], offer['merchant'], offer['merchant_id'], offer['price']),
+                         (url, 'Teknosa', 4951862, 26999))
+        self.assertEqual(offer['gtin13'], '8806099054991')
+        self.assertTrue(catalog_offer_matches(offer, name, SPECS))
+        proof = selected_sku_evidence(offer)
+        self.assertEqual((proof['merchant_slug'], proof['color_slug']), ('teknosa', 'lavanta-moru'))
+        for bad in (url.replace('magaza=teknosa', 'magaza=mxshop'), url.replace('lavanta-moru', 'gri'),
+                    url + '&dahili-hafiza=128-gb', url + '&magaza=other', url + '&token=private'):
+            self.assertIsNone(parse_catalog_listing(html, bad, name, SPECS)[0], bad)
+        for changes in ({'selected_n11_seller_slug': 'other'}, {'selected_n11_color_slug': 'gri'},
+                        {'selected_n11_seller_slug': None}, {'gtin13': '8806099054992'},
+                        {'storage_gb': 128}, {'network_generation': '4g'}):
+            altered = {**offer, **changes}
+            self.assertTrue(selected_sku_evidence(altered) is None or
+                            not catalog_offer_matches(altered, name, SPECS), changes)
+        calls = []
+        class Transport:
+            def read_document(self, actual):
+                calls.append(actual)
+                return html, 'document_read', 200
+            def resolved_url(self, actual):
+                return actual
+        reader = RetailerOfferRefresher(n11_catalog_source=N11CatalogSource(transport=Transport()))
+        offers = reader.refresh_existing_offer_targets(name, [{'source_url': url}], SPECS)
+        self.assertEqual(calls, [url])
+        self.assertEqual(len(offers), 1)
+        updater = PriceUpdater(ingestion_client=object(), offer_refresher=reader)
+        record = updater.prepare_product_offers({'id': 326, 'slug': 'samsung-galaxy-a37-5g-8gb-256gb'},
+            offers, updater.utc_timestamp(), updater.utc_timestamp())[0]
+        self.assertEqual(record['source_url'], url)
+        self.assertEqual(record['source_variant_evidence']['merchant_slug'], 'teknosa')
+
+    def test_other_seller_discovery_returns_only_observed_same_group_urls_without_prices(self):
+        html = Path(__file__).with_name('fixtures').joinpath('n11-a37-selected-teknosa-public-seller.html').read_text()
+        url = 'https://www.n11.com/urun/samsung-galaxy-a37-8-gb-256-gb-akilli-telefon-samsung-turkiye-garantili-123382261?magaza=teknosa&renk=lavanta-moru'
+        rows = discover_product_sellers(html, url)
+        self.assertEqual([r['seller_slug'] for r in rows], ['n11', 'mxshop', 'ickaleiletisim'])
+        self.assertTrue(all(set(r) == {'source_url', 'source_document_url', 'seller_name', 'seller_slug', 'discovery_scope'} for r in rows))
+        self.assertTrue(all(r['source_document_url'] == url for r in rows))
+        self.assertEqual(len(discover_product_sellers(html, url, maximum=2)), 2)
+        self.assertEqual(discover_product_sellers(html.replace('"groupId": 123382261', '"groupId": 123382262'), url), [])
+        soup = BeautifulSoup(html, 'html.parser')
+        anchors = soup.select('.unifiedProduct a')
+        anchors[0]['href'] += '&token=private'
+        anchors[1]['href'] = anchors[1]['href'].replace('123382261?', '123382262?')
+        anchors[2]['href'] = 'https://evil.example' + anchors[2]['href']
+        self.assertEqual(discover_product_sellers(str(soup), url), [])
     def test_observed_silicone_accessory_title_does_not_spend_the_two_phone_search_slots(self):
         name = 'Xiaomi Redmi Note 15 4G'
         specs = {'ram_gb': 6, 'storage_gb': 128, 'network_generation': '4g'}
@@ -155,8 +210,11 @@ class N11CatalogTests(unittest.TestCase):
                 return document(), 'document_read', 200
         source = N11CatalogSource(transport=Transport())
         reader = RetailerOfferRefresher(n11_catalog_source=source)
-        offers = reader.refresh_existing_offer_targets(NAME,
-            [{'source_url': URL + '?magaza=stale&renk=krem'}], SPECS)
+        self.assertEqual(reader.refresh_existing_offer_targets(NAME,
+            [{'source_url': URL + '?magaza=stale&renk=krem'}], SPECS), [])
+        self.assertEqual(calls, [URL + '?magaza=stale&renk=krem'])
+        calls.clear()
+        offers = reader.refresh_existing_offer_targets(NAME, [{'source_url': URL}], SPECS)
         self.assertEqual(calls, [URL])
         self.assertEqual(len(offers), 1)
         updater = PriceUpdater(ingestion_client=object(), offer_refresher=reader)

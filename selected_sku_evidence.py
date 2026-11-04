@@ -90,14 +90,22 @@ def selected_sku_evidence(offer):
                 or len(query) != len({key for key, _ in query})):
             return None
         if prefix == 'n11':
+            from priority_retailer_transport import n11_product_selectors
+            selectors = n11_product_selectors(raw_url)
             group = str(offer.get('group_id') or '')
-            if (url.netloc != 'www.n11.com' or query or not re.fullmatch(r'[1-9]\d{0,19}', group)
+            if (selectors is None or not re.fullmatch(r'[1-9]\d{0,19}', group)
                     or not re.fullmatch(r'/urun/[a-z0-9-]+-' + group, url.path)):
+                return None
+            expected_selectors = {'magaza': offer.get('selected_n11_seller_slug'),
+                'renk': offer.get('selected_n11_color_slug'), 'dahili-hafiza': f'{storage}-gb'}
+            if any(expected_selectors.get(key) != value for key, value in selectors.items()):
                 return None
         elif (url.netloc != 'www.trendyol.com' or not re.fullmatch(
                 r'/[a-z0-9-]+/[a-z0-9-]+-p-' + product, url.path)):
             return None
         for key, value in query:
+            if prefix == 'n11':
+                continue  # Already bound to the independently selected fields.
             if (key == 'merchantId' and value == str(merchant_id)
                     or key == 'v' and value == 'tek-ebat'
                     or key == 'boutiqueId' and re.fullmatch(r'[1-9]\d{0,11}', value)):
@@ -116,6 +124,12 @@ def selected_sku_evidence(offer):
         proof['listing_id'] = listing
     else:
         proof['group_id'] = group
+        for key, field in (('merchant_slug', 'selected_n11_seller_slug'), ('color_slug', 'selected_n11_color_slug')):
+            value = offer.get(field)
+            if value is not None:
+                if not isinstance(value, str) or len(value) > 100 or not re.fullmatch(r'[a-z0-9]+(?:-[a-z0-9]+)*', value):
+                    return None
+                proof[key] = value
     if offer.get('price_kind') == 'basket':
         listed, payable = offer.get('listed_price'), offer.get('price')
         if (prefix not in ('n11', 'trendyol') or type(listed) not in (int, float) or type(payable) not in (int, float)

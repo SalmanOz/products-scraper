@@ -267,6 +267,19 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
             seller_counts[product['slug']] += 1
             result['queued'] += 1
             process_target(destination, product)
+        if product_host(row.get('observed_url')) == 'www.n11.com':
+            for candidate in row.get('discovered_sellers', []):
+                destination = candidate.get('source_url') if isinstance(candidate, dict) else None
+                key = ('n11', product['slug'])
+                if (seller_counts[key] >= 3 or product_host(destination) != 'www.n11.com'
+                        or candidate.get('discovery_scope') != 'public_other_seller_selector'
+                        or candidate.get('source_document_url') != row.get('resolved_url', row.get('observed_url'))
+                        or destination in refresh_urls or observed_url(destination) in inventory_urls
+                        or (product['slug'], destination) in processed):
+                    continue
+                seller_counts[key] += 1
+                result['queued'] += 1
+                process_target(destination, product)
         # Expand only original refresh seeds after category discovery. This
         # prevents recursively expanding colors or counting future queued
         # category/refresh targets twice. A sibling is a new GET, never a quote

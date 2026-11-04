@@ -11,7 +11,7 @@ from urllib.parse import parse_qs, urljoin, urlparse
 from bs4 import BeautifulSoup
 
 from mediamarkt_marketplace_audit import _gtin13
-from priority_retailer_transport import PriorityRetailerTransport, product_host
+from priority_retailer_transport import PriorityRetailerTransport, product_host, n11_product_selectors
 from teknosa_reviewed_source import _amount
 from tr_price_scraper import TRPriceScraper
 
@@ -23,7 +23,11 @@ def _cash(value):
 
 
 def catalog_request_url(url):
-    return urlparse(url)._replace(query='').geturl() if product_host(url) == 'www.n11.com' else None
+    return url if n11_product_selectors(url) is not None else None
+
+
+def canonical_product_url(url):
+    return urlparse(url)._replace(query='').geturl() if catalog_request_url(url) else None
 
 
 def discover_catalog_targets(html, name, specs, maximum=2, *, excluded_urls=()):
@@ -33,7 +37,7 @@ def discover_catalog_targets(html, name, specs, maximum=2, *, excluded_urls=()):
         return []
     soup, matcher = BeautifulSoup(html, 'html.parser'), TRPriceScraper()
     result, seen = [], {canonical for url in excluded_urls
-                        if (canonical := catalog_request_url(url)) is not None}
+                        if (canonical := canonical_product_url(url)) is not None}
     for anchor in soup.select('a[href]'):
         headings = anchor.select('h2.product-item-title')
         if len(headings) != 1:
@@ -43,8 +47,10 @@ def discover_catalog_targets(html, name, specs, maximum=2, *, excluded_urls=()):
         if (product_host(url) != 'www.n11.com' or
                 not matcher.is_strict_match(name, title, specs)):
             continue
-        canonical = catalog_request_url(url)
+        canonical = canonical_product_url(url)
         if canonical not in seen:
+            if canonical is None:
+                continue
             seen.add(canonical)
             result.append({'source_url': canonical, 'discovery_title': title})
         if len(result) >= maximum:
@@ -58,14 +64,14 @@ def discover_catalog_memory_targets(html, product, *, excluded_urls=()):
         return []
     from automatic_memory_variants import memory_variant_destinations
     seen = {canonical for url in excluded_urls
-            if (canonical := catalog_request_url(url)) is not None}
+            if (canonical := canonical_product_url(url)) is not None}
     cards = []
     for anchor in BeautifulSoup(html, 'html.parser').select('a[href]'):
         headings = anchor.select('h2.product-item-title')
         if len(headings) != 1:
             continue
         url = urljoin('https://www.n11.com/', anchor['href'])
-        canonical = catalog_request_url(url)
+        canonical = canonical_product_url(url)
         if canonical is None or canonical in seen:
             continue
         seen.add(canonical)
@@ -75,9 +81,56 @@ def discover_catalog_memory_targets(html, product, *, excluded_urls=()):
     return [card for _, card in memory_variant_destinations(cards, [product])][:2]
 
 
+def discover_product_sellers(html, observed_url, maximum=3):
+    """Actual public same-product shop links only; never copy a card price."""
+    canonical = canonical_product_url(observed_url)
+    if (canonical is None or not isinstance(html, str) or len(html.encode()) > 5 * 1024 * 1024
+            or type(maximum) is not int or not 1 <= maximum <= 3):
+        return []
+    soup, states = BeautifulSoup(html, 'html.parser'), []
+    if len(soup.select('.pdpMainInfo h1.title')) != 1:
+        return []
+    for script in soup.select('script:not([src])'):
+        body = script.get_text()
+        for match in re.finditer(r'\bwindow\.model\s*=\s*(?=\{)', body):
+            try:
+                state, end = json.JSONDecoder().raw_decode(body[match.end():])
+                if body[match.end() + end:].strip() not in ('', ';'):
+                    return []
+                states.append(state)
+            except (ValueError, TypeError):
+                return []
+    if len(states) != 1 or not isinstance(states[0], dict):
+        return []
+    product = states[0].get('product')
+    if (not isinstance(product, dict) or product.get('productUrlWithoutSellerShop') != canonical
+            or str(product.get('groupId')) != urlparse(canonical).path.rsplit('-', 1)[1]):
+        return []
+    selected = soup.select('.sidebarSellerArea-top-name[href]')
+    current = selected[0]['href'].removeprefix('/magaza/') if len(selected) == 1 else None
+    rows, seen = [], set()
+    for anchor in soup.select('.unifiedProduct a.titleAndPointWrapper[href]'):
+        labels = anchor.select('.title .name')
+        url = urljoin('https://www.n11.com/', anchor['href'])
+        selectors = n11_product_selectors(url)
+        if (selectors is None or not selectors.get('magaza') or selectors['magaza'] == current
+                or canonical_product_url(url) != canonical or url in seen or len(labels) != 1):
+            continue
+        name = labels[0].get_text(' ', strip=True)
+        if not name or len(name) > 100 or re.search(r'[\x00-\x1f\x7f]', name):
+            continue
+        seen.add(url)
+        rows.append({'source_url': url, 'source_document_url': observed_url,
+            'seller_name': name, 'seller_slug': selectors['magaza'],
+            'discovery_scope': 'public_other_seller_selector'})
+        if len(rows) >= maximum:
+            break
+    return rows
+
+
 def parse_catalog_listing(html, url, name, specs):
-    canonical = catalog_request_url(url)
-    if canonical is None or not isinstance(html, str) or len(html.encode()) > 5 * 1024 * 1024:
+    requested, canonical = catalog_request_url(url), canonical_product_url(url)
+    if requested is None or not isinstance(html, str) or len(html.encode()) > 5 * 1024 * 1024:
         return None, 'invalid_catalog_pdp'
     soup = BeautifulSoup(html, 'html.parser')
     states = []
@@ -242,7 +295,9 @@ def parse_catalog_listing(html, url, name, specs):
             'selected_n11_variant_verified': True, 'sku': str(sku['id']),
             'product_id': str(product['id']), 'group_id': group, 'gtin13': gtin,
             'source_render_state': 'ssr_placeholder' if pending else 'hydrated_selected',
-            'source_title': title, 'url': canonical, 'price': float(price), 'currency': 'TRY',
+            'selected_n11_seller_slug': seller_slug,
+            'selected_n11_color_slug': matcher._normalize_words(values['Renk']).replace(' ', '-'),
+            'source_title': title, 'url': requested, 'price': float(price), 'currency': 'TRY',
             'condition': 'new', 'availability': 'in_stock',
             **physical, 'observed_at': datetime.now(timezone.utc).isoformat()}
     if basket:
@@ -258,15 +313,17 @@ def parse_catalog_listing(html, url, name, specs):
 
 
 def catalog_offer_matches(offer, name, specs):
+    expected_radio = specs.get('network_generation') or TRPriceScraper._radio_generation(name)
     return (isinstance(offer, dict) and offer.get('platform') == 'n11'
             and offer.get('selected_n11_variant_verified') is True
             and offer.get('merchant') == offer.get('selected_n11_seller')
             and offer.get('merchant_id') == offer.get('selected_n11_merchant_id')
             and type(offer.get('merchant_id')) is int and offer['merchant_id'] > 0
             and catalog_request_url(offer.get('url')) == offer.get('url')
-            and offer.get('url', '').endswith('-' + str(offer.get('group_id')))
+            and urlparse(offer.get('url', '')).path.endswith('-' + str(offer.get('group_id')))
             and _gtin13(offer.get('gtin13')) is not None
             and offer.get('currency') == 'TRY' and offer.get('condition') == 'new'
+            and (not expected_radio or offer.get('network_generation') == expected_radio)
             and offer.get('availability') == 'in_stock'
             and TRPriceScraper().has_observed_offer_evidence(name, offer, specs))
 

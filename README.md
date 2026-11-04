@@ -551,6 +551,20 @@ public seller/URL/price readback; an unconfirmed commit or mismatch stops later
 writes while GET-only diagnosis continues. The 80% gate uses the full enlarged
 catalog, with the original catalog's coverage reported separately.
 
+n11 PDP reads retain only the observed public `magaza`, `renk` and
+`dahili-hafiza` selectors. The selected shop slug, color and capacity must
+independently match the URL, public seller profile, SKU, GTIN, stock, serialized
+cash/basket values and JSON-LD. Up to three actual same-product "Diğer Mağazalar"
+links per catalog SKU can receive fresh reads, each followed by a separate
+publication readback. Card prices never become offers. Invalid selectors and
+private/tracking parameters remain rejected by both collector and ingestion.
+
+Current commercial readback uses the authenticated
+`/api/ingestion/offer-identity-readiness` endpoint and the same full commercial
+matching audit. Historical price-index queries are not required to confirm a
+newly accepted seller/URL/price. A missing or failed current audit still stops
+later price writes; no cached result or successful empty audit substitutes it.
+
 Technical documents use normal rendered GETs in the job's existing anonymous
 browser service. Accepted URLs are limited to public Kimovil model pages and
 its existing model autocomplete. Changed URLs, non-200 responses, challenge

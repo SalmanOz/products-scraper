@@ -118,12 +118,13 @@ def inspect_target(transport, url, product):
     if html is not None:
         row.update(document_evidence(html, url))
         if host == 'www.n11.com':
-            from n11_catalog_source import parse_catalog_listing
+            from n11_catalog_source import parse_catalog_listing, discover_product_sellers
             specs = with_reviewed_radio(product, PriceUpdater.get_expected_specs(product.get('attributes')))
             final_url = transport.resolved_url(observed_url)
             offer, why = parse_catalog_listing(html, final_url, product['name'], specs)
             row['resolved_url'] = final_url
             row.update(reader_reason=why, prepared_offer=offer)
+            row['discovered_sellers'] = discover_product_sellers(html, final_url)
             if offer is None:
                 from observed_memory_variants import inspect_n11_memory_variant
                 other = inspect_n11_memory_variant(html, final_url, product['name'], specs)

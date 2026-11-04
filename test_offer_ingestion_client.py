@@ -1015,6 +1015,29 @@ class TechnicalSourceHintContractTests(TestCase):
 
 
 class N11CollectorBoundaryTests(TestCase):
+    def test_current_commercial_readback_uses_its_authenticated_history_independent_endpoint(self):
+        identity = {'evidenceVersion': 'product-offer-match-v1', 'mode': 'shadow_audit_only',
+                    'productCoverage': [], 'auditedAt': datetime.now(timezone.utc).isoformat()}
+        session = FakeSession([FakeResponse(200, {'offerIdentity': identity})])
+        client = OfferIngestionClient('https://teknoskor.com', TEST_SECRET, session=session)
+        self.assertEqual(client.get_offer_identity_readiness(), identity)
+        self.assertEqual(session.calls[0][0:2], ('GET', 'https://teknoskor.com/api/ingestion/offer-identity-readiness'))
+        self.assertEqual(session.calls[0][2]['headers']['Authorization'], 'Bearer ' + TEST_SECRET)
+
+    def test_public_seller_selector_keeps_exact_shop_and_never_accepts_private_queries(self):
+        target = 'https://www.n11.com/urun/samsung-galaxy-a37-8-gb-256-gb-123382261?magaza=teknosa&renk=lavanta-moru'
+        body = {'purpose': 'public_n11_document', 'writes': False, 'url': target, 'source_status': 200,
+                'observed_at': datetime.now(timezone.utc).isoformat(), 'document': '<h1>Phone</h1>', 'content_type': 'text/html'}
+        session = FakeSession([FakeResponse(200, body)])
+        client = OfferIngestionClient('https://teknoskor.com', TEST_SECRET, session=session)
+        self.assertEqual(client.n11_document_get(target).status_code, 200)
+        self.assertEqual(session.calls[0][2]['json'], {'url': target})
+        for wrong in (target + '&token=private', target + '&magaza=other', target.replace('teknosa', 'bad%0a'),
+                      target.replace('?magaza=teknosa&renk=', '?renk='), target + '&dahili-hafiza=1-gb'):
+            with self.assertRaises(requests.RequestException):
+                client.n11_document_get(wrong)
+        self.assertEqual(len(session.calls), 1)
+
     def test_phone_family_search_stays_on_the_public_collector_and_rejects_other_query_routes(self):
         target = 'https://www.n11.com/telefon-ve-aksesuarlari/cep-telefonu?iw=Samsung+Galaxy+A37'
         body = {'purpose': 'public_n11_document', 'writes': False, 'url': target,
