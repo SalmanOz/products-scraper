@@ -63,7 +63,7 @@ def catalog_queue(products, prices):
 def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None,
           discover_n11=False, discover_teknosa=False, discover_trendyol=False,
           discover_hepsiburada=False, current_listing_inventory=None, coverage_first=False,
-          category_audit_only=False):
+          category_audit_only=False, category_frontier_path=None):
     if category_audit_only and (publish or discover_n11):
         raise ValueError('Category routing audits cannot publish or fetch product search results')
     products, prices = client.get_published_products(), client.get_public_price_priority()
@@ -83,6 +83,15 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
               'publish': publish, 'writes': False, 'status': 'running', 'queued': len(targets),
               'rows': [], 'accepted': 0, 'discovery': [], 'models_without_priority_hints': sorted(
                   {p['slug'] for p in products} - {p['slug'] for _, p in targets})}
+    from hepsiburada_category_frontier import load_frontier
+    frontier, frontier_status = load_frontier(
+        category_frontier_path if discover_hepsiburada and not category_audit_only else None, products)
+    if frontier_status != 'disabled':
+        result['hepsiburada_category_continuation'] = {
+            'status': frontier_status, 'catalog_fingerprint': frontier['catalog_fingerprint'],
+            'cycle_started_at': frontier['cycle_started_at'],
+            'restored_pending': len(frontier['pending']), 'restored_visited': len(frontier['visited']),
+            'prices_or_offer_evidence_restored': False}
     # The catalog's 12 refresh hints are not a complete list of current listing
     # resources. Do not let those omitted, already verified colors consume the
     # small discovery allowance again. This inventory is only an exclusion set:
@@ -212,7 +221,13 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
     def discover_category(retailer, report_key, module, read_category, resume=None):
         from teknosa_catalog_discovery import match_catalog_destinations
         if resume is None:
-            cards, category_url, category_seen, pending_branches = [], module.CATEGORY_URL, set(), []
+            is_hb = report_key == 'hepsiburada_category_discovery'
+            history = frontier['visited'] if is_hb else []
+            pending_branches = [u for u in frontier['pending'] if u != module.CATEGORY_URL] if is_hb else []
+            # Always re-read the public root, then prioritize the actual unread
+            # frontier. Previously parsed categories are not price evidence.
+            cards, category_url = [], module.CATEGORY_URL
+            category_seen = set(history) - {module.CATEGORY_URL}
             discovery = result[report_key] = {'retailer': retailer, 'pages': [],
                                             'new_targets': [], 'pagination_complete': False}
         else:
@@ -291,8 +306,14 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
             if checkpoint:
                 checkpoint(result)
         discovery['pagination_complete'] = category_url is None
-        discovery['remaining_observed_pages'] = len({pending for pending in
-            ([category_url] if category_url else []) + pending_branches if pending not in category_seen})
+        pending_urls = list(dict.fromkeys(pending for pending in
+            ([category_url] if category_url else []) + pending_branches if pending not in category_seen))
+        discovery['remaining_observed_pages'] = len(pending_urls)
+        if report_key == 'hepsiburada_category_discovery':
+            discovery['pending_observed_urls'] = pending_urls
+            discovery['visited_category_urls'] = list(dict.fromkeys(frontier['visited'] + [
+                page['url'] for page in discovery['pages']
+                if (page.get('parser') or {}).get('status') == 'parsed']))
         discovery['category_budget_exhausted'] = bool(category_url and len(discovery['pages']) >= module.MAX_CATEGORY_PAGES)
         if getattr(module, 'DISCOVERY_SCOPE', None):
             discovery.update(scope=module.DISCOVERY_SCOPE,
@@ -416,6 +437,12 @@ def save_report(result):
     lines += ['', 'Reasons: ' + json.dumps(counts, ensure_ascii=False), '',
               'Sources: ' + json.dumps(result.get('sources'), ensure_ascii=False), '',
               'No-hint models: ' + ', '.join(result['models_without_priority_hints'])]
+    if result.get('hepsiburada_category_continuation'):
+        lines += ['', 'Hepsiburada category continuation: ' + json.dumps(
+            result['hepsiburada_category_continuation'], ensure_ascii=False)]
+    if result.get('hepsiburada_category_frontier_saved'):
+        lines += ['', 'Hepsiburada category frontier saved: ' + json.dumps(
+            result['hepsiburada_category_frontier_saved'], ensure_ascii=False)]
     if result.get('discovery_inventory'):
         lines += ['', 'Discovery inventory: ' + json.dumps(result['discovery_inventory'], ensure_ascii=False)]
     if result.get('coverage_priority'):
@@ -583,17 +610,21 @@ def main():
     except IngestionClientError:
         # A missing optimization cannot suppress the ordinary fresh reads.
         listing_inventory = {}
+    from hepsiburada_category_frontier import save_frontier, STATE_PATH
     result = sweep(client=client, publish=args.publish, checkpoint=checkpoint,
                    discover_n11=not args.hepsiburada_category_audit,
                    discover_teknosa=not args.hepsiburada_category_audit,
                    discover_trendyol=not args.hepsiburada_category_audit,
                    discover_hepsiburada=True, current_listing_inventory=listing_inventory,
                    coverage_first=args.coverage_first or args.hepsiburada_category_audit,
-                   category_audit_only=args.hepsiburada_category_audit)
+                   category_audit_only=args.hepsiburada_category_audit,
+                   category_frontier_path=None if args.hepsiburada_category_audit else STATE_PATH)
     if args.hepsiburada_category_audit:
         save_report(result)
         print(Path('priority-catalog-sweep.md').read_text())
         return
+    result['hepsiburada_category_frontier_saved'] = save_frontier(STATE_PATH, result)
+    save_report(result)  # Keep category progress if public price readback is temporarily unavailable.
     result['public_coverage'] = coverage_readback(result, client.get_public_price_priority())
     save_report(result)
     print(Path('priority-catalog-sweep.md').read_text())

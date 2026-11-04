@@ -450,6 +450,18 @@ bütçenin geride bıraktığı bağlantıları görünür kılar; bulunan adres
 kapsamı sayılmaz. `other_memory_variant` tam doğrulanmış başka kapasitenin
 önizlemesidir; özgün SKU'ya fiyat yazmaz ve kapsam yüzdesini artırmaz.
 
+Tam taramalar gözlenen ama henüz okunmayan Hepsiburada kategori adreslerini
+`.discovery-state/priority-hb-category.json` içinde korur. Sonraki tur kök
+kategoriyi yeniden okur, ardından bu kuyruğu önce işler; aynı keşif çevriminde
+daha önce doğrulanan kategori sayfaları kotayı yeniden tüketmez. Her turdaki
+80 kategori ve ayrı ürün sayfası bütçesi değişmez. Kayıtta fiyat, mağaza/SKU
+kanıtı veya kaynak HTML bulunmaz; teklifler yine canlı sayfalardan doğrulanır.
+Kapasite/model kimliği değişirse veya keşif çevrimi altı saati geçerse kayıt
+geçersizleşir. Kuyruk boşaldığında sonraki tur yeni bir keşif çevrimi başlatır.
+Actions cache yalnız `full` ve `coverage-first` modlarında bu adres kaydını
+taşır; katalog fiyat eşiği başarısız olsa da tamamlanan kategori ilerlemesi
+korunur. Salt okunur tek-ilan ve kategori denetimleri bu kaydı kullanmaz.
+
 Son kapsam eşiği geçilmezse Actions sonucu başarısız olabilir; daha önce
 sunucuda doğrulanıp kabul edilen teklifler geri alınmış sayılmaz. `accepted`,
 `public_coverage` ve kaynak ret nedenleri ayrı okunmalıdır. Birkaç teklifin
