@@ -457,6 +457,12 @@ bağlantıları kullanılır; en fazla 2 adres/varyant, aynı mağaza istek büt
 ve kaynak kesicisi geçerlidir. Eski/eksik denetim bu ek kuyruğu açmaz.
 `teknosa_store_gap_discovery` uygun ve incelenen varyantları ayrıca raporlar.
 
+n11'in ürün URL'sinde Plus gibi bir model eki eksikse, aynı turdaki tam
+seçili SKU/satıcı/GTIN/varyant kanıtı yalnız o adresin yeniden okunmasına
+izin verebilir. Eski gözlem fiyat veya satıcı kaynağı olarak kullanılmaz.
+İkinci okumada gerçek model, kapasite, stok, satıcı, GTIN veya fiyat değişirse
+yazım yapılmaz; çelişen katalog sahipliği ve açık URL çelişkileri reddedilir.
+
 Trendyol'da mevcut yenileme hedeflerinden en fazla sekiz farklı markanın ürünü
 kategori keşfinden önce okunur; diğer katalog hedefleri normal turunda kalır.
 Bu sayfaların gözlenen telefon/Android telefon marka kategorileri, zorunlu

@@ -27,6 +27,52 @@ def document(change=None):
 
 
 class N11CatalogTests(unittest.TestCase):
+    def test_observed_selected_sku_routes_exact_reread_when_slug_omits_plus(self):
+        html = Path(__file__).with_name('fixtures').joinpath('n11-selected-s26plus-omitted-url-qualifier.html').read_text()
+        url = 'https://www.n11.com/urun/samsung-galaxy-s26-256-gb-samsung-turkiye-garantili-120594803?magaza=mediamarkt&renk=kobalt-mor'
+        specs = {'ram_gb': 12, 'storage_gb': 256, 'network_generation': '5g'}
+        offer, reason = parse_catalog_listing(html, url, 'Samsung Galaxy S26+', specs)
+        self.assertIsNotNone(offer, reason)
+        calls = []
+        class Transport:
+            def read_document(self, target):
+                calls.append(target)
+                return html, 'document_read', 200
+            def resolved_url(self, target):
+                return target
+        reader = N11CatalogSource(transport=Transport())
+        reader.register_catalog_targets('Samsung Galaxy S26+', [{'source_url': url}], specs)
+        self.assertEqual(reader.read_offer(url)[1], 'unmatched_catalog_pdp')
+        self.assertEqual(calls, [])
+        reader.register_catalog_targets('Samsung Galaxy S26+', [{'source_url': url, 'observed_offer': offer}], specs)
+        fresh, reason, status = reader.read_offer(url)
+        self.assertEqual(calls, [url])
+        self.assertEqual((reason, status), ('selected_n11_cash_offer', 200))
+        self.assertEqual((fresh['merchant'], fresh['gtin13'], fresh['price']), ('MEDIAMARKT', '8806097865865', 77600))
+        self.assertEqual(fresh['source_title'], 'Samsung Galaxy S26+ 256 GB (Samsung Türkiye Garantili)')
+
+    def test_selected_routing_hint_cannot_override_wrong_catalog_seller_gtin_url_or_conflicting_owner(self):
+        html = Path(__file__).with_name('fixtures').joinpath('n11-selected-s26plus-omitted-url-qualifier.html').read_text()
+        url = 'https://www.n11.com/urun/samsung-galaxy-s26-256-gb-samsung-turkiye-garantili-120594803?magaza=mediamarkt&renk=kobalt-mor'
+        specs = {'ram_gb': 12, 'storage_gb': 256, 'network_generation': '5g'}
+        observed, reason = parse_catalog_listing(html, url, 'Samsung Galaxy S26+', specs)
+        self.assertIsNotNone(observed, reason)
+        class NoRead:
+            def read_document(self, target):
+                raise AssertionError('Invalid routing hint must not send a request')
+        for fields in [{'selected_n11_variant_verified': False}, {'merchant': 'Other seller'},
+                       {'merchant_id': 10001}, {'gtin13': '8806097865866'}, {'ram_gb': 8},
+                       {'storage_gb': 512}, {'network_generation': '4g'}, {'sku': 'wrong'},
+                       {'url': url.replace('120594803', '120594804')}, {'group_id': '120594804'}]:
+            reader = N11CatalogSource(transport=NoRead())
+            reader.register_catalog_targets('Samsung Galaxy S26+',
+                [{'source_url': url, 'observed_offer': {**observed, **fields}}], specs)
+            self.assertEqual(reader.read_offer(url)[1], 'unmatched_catalog_pdp', fields)
+        reader = N11CatalogSource(transport=NoRead())
+        reader.register_catalog_targets('Samsung Galaxy S26', [{'source_url': url}], specs)
+        reader.register_catalog_targets('Samsung Galaxy S26+', [{'source_url': url, 'observed_offer': observed}], specs)
+        self.assertEqual(reader.read_offer(url)[1], 'unmatched_catalog_pdp')
+
     def test_same_run_search_hint_document_cannot_retain_prices_scripts_private_state_or_foreign_links(self):
         title = NAME + ' 8 GB 256 GB (Samsung Türkiye Garantili)'
         body = ('<script>window.model={"private_account":"do-not-retain"}</script>'

@@ -55,6 +55,51 @@ def reader():
 
 
 class PriorityCandidateTests(unittest.TestCase):
+    def test_n11_missing_url_qualifier_uses_selected_hint_only_for_fresh_atomic_publication(self):
+        from pathlib import Path
+        from n11_catalog_source import N11CatalogSource, parse_catalog_listing
+        html = Path(__file__).with_name('fixtures').joinpath('n11-selected-s26plus-omitted-url-qualifier.html').read_text()
+        url = 'https://www.n11.com/urun/samsung-galaxy-s26-256-gb-samsung-turkiye-garantili-120594803?magaza=mediamarkt&renk=kobalt-mor'
+        name, specs = 'Samsung Galaxy S26+', {'ram_gb': 12, 'storage_gb': 256, 'network_generation': '5g'}
+        observed, reason = parse_catalog_listing(html, url, name, specs)
+        self.assertIsNotNone(observed, reason)
+        class ScopedClient(Client):
+            def ingest_listing_offers(self, rows, *, require_all_accepted):
+                return {**super().ingest_offers(rows, require_all_accepted=require_all_accepted),
+                        'offer_identity_contract': 'seller-source-url-v1', 'server_scores_recalculated': True}
+        class SourceTransport:
+            def __init__(self, body):
+                self.body, self.calls = body, []
+            def read_document(self, target):
+                self.calls.append(target)
+                return self.body, 'document_read', 200
+            def resolved_url(self, target):
+                return target
+        for change in ('none', 'title', 'price'):
+            with self.subTest(change=change):
+                client = ScopedClient()
+                client.product.update(name=name, slug='samsung-galaxy-s26-plus',
+                    attributes={**specs, 'Connectivity': {'5G': True}},
+                    offer_targets=[{'merchant_name': observed['merchant'], 'source_url': url}])
+                report = {'purpose': 'automatic_priority_retailer_diagnosis', 'writes': False, 'catalog_count': 1,
+                    'rows': [{'slug': client.product['slug'], 'retailer': 'n11', 'reason': 'document_read',
+                              'http_status': 200, 'prepared_offer': observed}]}
+                body = (html.replace('S26+', 'S26 Ultra') if change == 'title' else
+                        html.replace('77600', '77500').replace('77.600', '77.500') if change == 'price' else html)
+                source = SourceTransport(body)
+                refresher = RetailerOfferRefresher(n11_catalog_source=N11CatalogSource(transport=source))
+                result = refresh_candidates(report, client=client, reader=refresher)
+                self.assertEqual(source.calls, [url])
+                if change != 'none':
+                    self.assertEqual(client.writes, [])
+                    self.assertFalse(result['writes'])
+                else:
+                    self.assertEqual(len(client.writes), 1)
+                    self.assertTrue(result['commercial_readback_verified'])
+                    self.assertEqual(client.writes[0][0]['price'], 77600)
+                    self.assertEqual(client.writes[0][0]['source_variant_evidence']['group_id'], '120594803')
+                    self.assertNotIn('observed_offer', client.writes[0][0])
+
     def test_teknosa_omitted_ram_offer_requires_fresh_physical_table_before_exact_publication(self):
         from pathlib import Path
         from teknosa_marketplace_source import parse_selected_marketplace

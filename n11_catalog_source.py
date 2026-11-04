@@ -363,9 +363,18 @@ class N11CatalogSource:
         matcher = TRPriceScraper()
         for target in targets:
             url = target.get('source_url') if isinstance(target, dict) else None
-            if (product_host(url) != 'www.n11.com'
-                    or not matcher.is_strict_match(name, urlparse(url).path.replace('-', ' '), specs)):
+            if product_host(url) != 'www.n11.com':
                 continue
+            if not matcher.is_strict_match(name, urlparse(url).path.replace('-', ' '), specs):
+                from selected_sku_evidence import selected_sku_evidence
+                observed = target.get('observed_offer')
+                if (not isinstance(observed, dict) or observed.get('url') != url
+                        or selected_sku_evidence(observed) is None
+                        or not catalog_offer_matches(observed, name, specs)):
+                    continue
+                # A fully selected same-run SKU can route an exact reread when
+                # the public slug omits Plus/Pro/etc. Do not retain any quote:
+                # fresh product/title/SKU/seller/GTIN/stock checks still run.
             profile = {'name': name, 'specs': dict(specs)}
             if url in self._profiles and self._profiles[url] != profile:
                 self._ambiguous.add(url)

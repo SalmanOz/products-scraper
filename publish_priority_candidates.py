@@ -95,7 +95,13 @@ def refresh_candidates(audit, *, client, reader=None):
         specs = with_reviewed_radio(product, updater.get_expected_specs(product.get('attributes')))
         # Read the exact newly observed source again; no offer/profile is copied
         # out of an old artifact and no new catalog row can be created here.
-        offers = reader.refresh_existing_offer_targets(product['name'], [{'source_url': url}], specs)
+        target = {'source_url': url}
+        if host == 'www.n11.com':
+            # An n11 slug may omit a model qualifier present in its proven
+            # selected SKU. This observation authorizes only the exact fresh
+            # source read, never reuse of its price or identity as that read.
+            target['observed_offer'] = old
+        offers = reader.refresh_existing_offer_targets(product['name'], [target], specs)
         record = {'slug': slug, 'url': url, 'status': 'blocked'}
         result['rows'].append(record)
         if len(offers) != 1:
