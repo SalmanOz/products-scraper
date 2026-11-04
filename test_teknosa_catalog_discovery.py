@@ -31,6 +31,22 @@ PRODUCT = {'id': 1, 'slug': 'apple-iphone-15', 'name': 'Apple iPhone 15',
 
 
 class DiscoveryTests(unittest.TestCase):
+    def test_explicit_matching_radio_is_not_crowded_out_by_omitted_radio_memory_duplicates(self):
+        product = {'id': 262, 'slug': 'samsung-galaxy-a17-5g', 'name': 'Samsung Galaxy A17 5G',
+                   'attributes': {'ram_gb': 4, 'storage_gb': 128}}
+        rows = [{'source_url': f'https://www.trendyol.com/samsung/{slug}-p-{identity}',
+                 'discovery_title': title, 'stock_priority': True}
+                for slug, identity, title in [
+                    ('galaxy-a17-4-128-gb-gri', 975557871, 'Samsung Galaxy A17 4/128 GB Gri Cep Telefonu'),
+                    ('galaxy-a17-4-128-gb-mavi', 1116303517, 'Samsung Galaxy A17 4/128 GB Mavi'),
+                    ('galaxy-a17-4gb-ram-128gb-5g-black', 974373405, 'Samsung Galaxy A17, 4GB RAM, 128GB, 5G, Black'),
+                    ('galaxy-a17-4g-4gb-128gb', 974373406, 'Samsung Galaxy A17 4GB RAM 128GB')]]
+        matched = match_catalog_destinations(rows, [product])[262]
+        self.assertEqual(matched[0]['source_url'], rows[2]['source_url'])
+        self.assertEqual(len(matched), 2)
+        self.assertNotIn(rows[3], matched)
+        self.assertNotIn('price', matched[0])
+
     def test_observed_magic_generation_spacing_keeps_exact_generation_and_qualifiers(self):
         product = {'id': 1, 'name': 'Honor Magic8 Pro',
                    'attributes': {'ram_gb': 12, 'storage_gb': 512}}

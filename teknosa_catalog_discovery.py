@@ -118,8 +118,17 @@ def match_catalog_destinations(cards, products, *, maximum_per_model=2):
         specificity = 0 if ambiguous else sum(
             actual is not None and actual == matcher._spec_int(expected.get(key))
             for key, actual in (('ram_gb', ram), ('storage_gb', storage)))
-        candidates.setdefault(product['id'], []).append((card, specificity))
+        expected_radio = expected.get('network_generation') or matcher._radio_generation(product['name'])
+        title_radio = matcher._radio_generation(title)
+        url_radio = matcher._radio_generation(urlparse(url).path.replace('-', ' '))
+        if expected_radio and url_radio and url_radio != expected_radio:
+            continue
+        # Same-memory 4G/5G families can have dozens of titles omitting radio.
+        # Spend the two-PDP allowance on explicitly matching radio first when
+        # memory specificity is equal. This is hint ordering, never SKU proof.
+        radio_specificity = int(expected_radio is not None and title_radio == expected_radio)
+        candidates.setdefault(product['id'], []).append((card, specificity, radio_specificity))
     for product_id, group in candidates.items():
-        group.sort(key=lambda row: (not row[0]['stock_priority'], -row[1], row[0]['source_url']))
+        group.sort(key=lambda row: (not row[0]['stock_priority'], -row[1], -row[2], row[0]['source_url']))
         matched[product_id] = [row[0] for row in group[:maximum_per_model]]
     return matched
