@@ -88,7 +88,6 @@ def parse_catalog_listing(html, url, name, specs):
             or matcher._normalize_words(brand.get('name')) not in allowed_brand_names):
         return None, 'selected_brand_mismatch'
     if (not title or matcher._normalize_words(title) != matcher._normalize_words(state_title)
-            or not matcher.is_strict_match(name, title, specs)
             or re.search(r'yenilenmi[sş]|refurbished|ikinci\s*el', title, re.I)):
         return None, 'catalog_title_mismatch'
     features = {}

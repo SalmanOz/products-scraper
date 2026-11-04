@@ -26,7 +26,7 @@ def amount(raw):
 def cash(raw):
     if not isinstance(raw, str):
         return None
-    match = re.fullmatch(r'(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?)\s*(?:TL|₺)', raw.strip())
+    match = re.fullmatch(r'((?:\d{1,7}|\d{1,3}(?:\.\d{3})+)(?:,\d{1,2})?)\s*(?:TL|₺)', raw.strip())
     return amount(match[1].replace('.', '').replace(',', '.')) if match else None
 
 
@@ -49,7 +49,7 @@ def valid_basket_promotion(proof, listed, payable):
     deadline = validity_deadline(proof.get('promotion_end_date'))
     discount = amount(proof.get('discount_amount'))
     listed, payable = amount(listed), amount(payable)
-    label = re.fullmatch(r'Sepette (\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?) TL İndirim', str(proof.get('name') or ''))
+    label = re.fullmatch(r'Sepette ((?:\d{1,7}|\d{1,3}(?:\.\d{3})+)(?:,\d{1,2})?) TL İndirim', str(proof.get('name') or ''))
     return (proof.get('version') == 'trendyol-public-fixed-basket-v1'
             and isinstance(proof.get('id'), str) and re.fullmatch(r'[1-9]\d{0,19}', proof['id']) is not None
             and type(proof.get('discount_type')) is int and proof['discount_type'] == 2

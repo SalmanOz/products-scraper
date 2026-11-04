@@ -713,15 +713,15 @@ class TRPriceScraper:
         model_name = self._catalog_model_name(product_name, expected_specs)
         if not model_name:
             return False
-        if not self.is_strict_match(product_name, title, expected_specs):
+        from selected_sku_evidence import selected_sku_evidence, selected_capacity_title
+        selected = selected_sku_evidence(offer)
+        if not self.is_strict_match(product_name, selected_capacity_title(title, selected), expected_specs):
             return False
         expected_specs = expected_specs or {}
         expected_ram = self._spec_int(expected_specs.get('ram_gb'))
         expected_storage = self._spec_int(expected_specs.get('storage_gb'))
         if not expected_storage:
             return False
-        from selected_sku_evidence import selected_sku_evidence, selected_capacity_title
-        selected = selected_sku_evidence(offer)
         is_iphone = 'iphone' in self._identity_words(product_name)
         ram, storage, ambiguous = self._unambiguous_listing_capacities(selected_capacity_title(title, selected),
             allow_iphone_64_storage=is_iphone and 'iphone' in self._identity_words(title))

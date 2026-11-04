@@ -52,6 +52,49 @@ def document(changes=None):
 
 
 class TrendyolCatalogTests(unittest.TestCase):
+    def test_observed_g_shorthand_and_ungrouped_basket_caption_require_all_selected_proof(self):
+        from pathlib import Path
+        from datetime import datetime, timedelta, timezone
+        from bs4 import BeautifulSoup
+        from tr_price_scraper import TRPriceScraper
+        from selected_sku_evidence import selected_sku_evidence
+        soup = BeautifulSoup(Path('fixtures/trendyol-selected-g-shorthand.html').read_text(), 'html.parser')
+        state = json.loads(soup.select_one('script').get_text().split('=', 1)[1].rstrip(';'))
+        p = state['product']
+        # Only advance the expiry clock; the observed quote and identity stay intact.
+        future = (datetime.now(timezone.utc) + timedelta(days=30)).strftime('%Y-%m-%dT23:00:00')
+        for row in p['merchantListing']['promotions'] + p['merchantListing']['filteredPromotions']:
+            row['promotionEndDate'] = future
+        soup.select_one('script').string = 'window["__envoy__SHARED_PROPS"]=' + json.dumps(state) + ';'
+        url = 'https://www.trendyol.com/xiaomi/17-12g-256g-siyah-p-1110127495'
+        specs = {'ram_gb': 12, 'storage_gb': 256, 'network_generation': '5g'}
+        offer, reason = parse_catalog_listing(str(soup), url, 'Xiaomi 17', specs)
+        self.assertEqual(reason, 'selected_trendyol_public_basket_offer')
+        self.assertEqual((offer['merchant'], offer['price'], offer['source_title']),
+                         ('Xiaomi Resmi Mağazası', 71999, 'Xiaomi 17 12G+256G Siyah'))
+        self.assertIsNotNone(selected_sku_evidence(offer))
+        from trendyol_basket_price import valid_basket_promotion
+        promotion = offer['basket_promotion']
+        self.assertTrue(valid_basket_promotion(dict(promotion, name='Sepette 8.000 TL İndirim'), 79999, 71999))
+        for label in ['Sepette 8.00 TL İndirim', 'Sepette 80,00 TL İndirim',
+                      'Sepette 8,000 TL İndirim', 'Sepette 80000 TL İndirim',
+                      'Sepette 8000 TL Kupon', 'Üyelere Sepette 8000 TL İndirim']:
+            self.assertFalse(valid_basket_promotion(dict(promotion, name=label), 79999, 71999), label)
+        matcher = TRPriceScraper()
+        self.assertTrue(matcher.has_observed_offer_evidence('Xiaomi 17', offer, specs))
+        for title in ['Xiaomi 17 8G+256G Siyah', 'Xiaomi 17 12G+512G Siyah',
+                      'Xiaomi 17 12G+256G RAM', 'Xiaomi 17 RAM 12G+256G',
+                      'Xiaomi 17 12G+256G Sanal RAM', 'Xiaomi 17 Plus 12G+256G',
+                      'Xiaomi 17 12G+256G 8GB RAM', 'Xiaomi 17 12G+256G 128GB',
+                      'Xiaomi 17 12G+256G / 12G+512G', 'Xiaomi 17 12G+256G 4G',
+                      'Xiaomi 17 12G+256G 12G+256G']:
+            self.assertFalse(matcher.has_observed_offer_evidence('Xiaomi 17', dict(offer, source_title=title), specs), title)
+        self.assertFalse(matcher.has_observed_offer_evidence('Xiaomi 17',
+            dict(offer, selected_trendyol_variant_verified=False), specs))
+        for title in ['Xiaomi 17 Plus 12G+256G Siyah', 'Xiaomi 17 8G+256G Siyah']:
+            changed = str(soup).replace('17 12G+256G Siyah', title.removeprefix('Xiaomi '))
+            self.assertIsNone(parse_catalog_listing(changed, url, 'Xiaomi 17', specs)[0])
+
     def test_public_retailer_product_code_is_distinct_from_gtin_and_still_binds_selected_sku(self):
         from selected_sku_evidence import selected_sku_evidence
         from tr_price_scraper import TRPriceScraper

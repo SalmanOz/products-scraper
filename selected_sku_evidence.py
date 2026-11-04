@@ -13,8 +13,22 @@ def selected_capacity_title(title, selected):
     This is parsing text, never the stored source title. Virtual RAM, choices,
     attached RAM labels and conflicting additional declarations remain unsafe.
     """
-    if not selected or re.search(r'\b(?:virtual|sanal|extended)\s*ram\b|\bram\s*(?:virtual|sanal|extended)\b', title, re.I):
+    if (not isinstance(title, str) or not selected or type(selected.get('ram_gb')) is not int or type(selected.get('storage_gb')) is not int
+            or re.search(r'\b(?:virtual|sanal|extended)\s*ram\b|\bram\s*(?:virtual|sanal|extended)\b', title, re.I)):
         return title
+    # Observed Xiaomi selected PDPs spell both units as G (12G+256G).
+    # Interpret only one complete pair agreeing with independently selected
+    # attributes; a lone 4G/5G remains connectivity, never capacity evidence.
+    shorthand = re.compile(r'(?<![\w.,])([1-9]|1\d|2[0-4])\s*G\s*\+\s*'
+                           r'(64|128|256|512|1024)\s*G(?!\w)', re.I)
+    matches = list(shorthand.finditer(title))
+    if len(matches) == 1:
+        match = matches[0]
+        before, after = title[max(0, match.start()-24):match.start()], title[match.end():match.end()+24]
+        if (int(match[1]) == selected['ram_gb'] and int(match[2]) == selected['storage_gb']
+                and not re.search(r'\b(?:iphone|ram|rom|depolama|haf[ıi]za)\s*:?\s*$', before, re.I)
+                and not re.match(r'\s*ram\b', after, re.I)):
+            title = title[:match.start()] + f'RAM {match[1]} GB; ROM {match[2]} GB' + title[match.end():]
     pair = re.compile(r'(?<![\w.,])(?P<ram>[1-9]|1\d|2[0-4])\s*(?P<ram_unit>GB)?\s*\+\s*'
                       r'(?P<storage>64|128|256|512|1024)\s*(?P<storage_unit>GB)?(?!\w)', re.I)
     def replace(match):

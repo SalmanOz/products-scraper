@@ -135,7 +135,8 @@ def catalog_variant_matches(evidence, expected_name, expected_specs):
     if not isinstance(evidence, dict) or not isinstance(expected_specs, dict):
         return False
     matcher = TRPriceScraper()
-    if not matcher.is_strict_match(expected_name, evidence.get('source_title', ''),
+    from selected_sku_evidence import selected_capacity_title
+    if not matcher.is_strict_match(expected_name, selected_capacity_title(evidence.get('source_title', ''), evidence),
                                    expected_specs):
         return False
     try:
