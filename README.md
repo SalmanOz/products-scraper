@@ -601,3 +601,33 @@ renewing their observed time.
 These modes are manual invocations in the existing serialized recovery
 workflow. They add no schedule and do not relax the overall 80% price gate.
 
+## Missing catalog radio from manufacturer specifications
+
+The optional `resolve_radio` checkbox (default off) adds `--manufacturer-radio`
+only to `--memory-variants` sweeps. It proves a missing radio before the sweep
+takes its original catalog identity baseline. Do not run a separate metadata
+writer during a live sweep: changing that baseline must fail verification.
+
+The initial provider reads Infinix's public website specification mapping and
+the exact specification ID observed there, under the site's robots rules and
+a six-JSON-document limit (plus robots). It uses no account, cookies, redirects or retries after
+a denial. The physical RAM/ROM cells and exact manufacturer model code must
+match the existing catalog; extended RAM and Wi-Fi 5 GHz never establish these
+facts. Only the explicit device `NETWORK / TECHNOLOGY` enumeration establishes
+4G/5G. Other manufacturers remain unsupported rather than guessed.
+
+The dedicated authenticated `/api/ingestion/catalog-radio` contract supports
+read-only validation and atomic publication. It can add only the absent
+`network_generation` scalar. It rechecks the full current model, model-code
+alias, RAM, storage, existing radio and provenance under a product row lock.
+Known values and every other attribute remain unchanged, including the old
+Connectivity group's source hash. A matching committed observation can be
+retried after a scoring failure; a different known radio cannot be replaced.
+
+`catalog-radio-resolution.json` records observations, server validation and
+whole-catalog attribute readback. A failed/unconfirmed publication stops before
+any price sweep begins. Manufacturer data never supplies a retailer price,
+seller or stock state; those still need the ordinary fresh selected-PDP proof,
+publication read and exact commercial readback. The catalog size and 80% gate
+are unchanged by this optional phase.
+

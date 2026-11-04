@@ -652,6 +652,27 @@ class OfferIngestionClient:
                 continue
         return status
 
+    def resolve_catalog_radio(self, product, observation, *, publish=False):
+        """Dedicated missing-only manufacturer contract; never the generic source writer."""
+        contract = 'manufacturer-catalog-radio-v1'
+        payload = {'contract': contract, 'mode': 'publish' if publish else 'validate',
+                   'product': {key: product[key] for key in ('id', 'slug', 'name')},
+                   'observation': observation}
+        body = self._request_json('POST', '/api/ingestion/catalog-radio', json=payload,
+            headers={'Authorization': f'Bearer {self.secret}', 'Accept': 'application/json'})
+        generation = '5g' if '5g' in observation['network_technologies'] else '4g'
+        if (not isinstance(body, dict) or body.get('contract') != contract
+                or body.get('network_generation') != generation):
+            raise IngestionClientError('Manufacturer radio contract not confirmed')
+        if not publish:
+            if body.get('eligible') is not True or body.get('committed') is not False or body.get('writes') is not False:
+                raise IngestionClientError('Manufacturer radio validation was not read-only')
+        elif (body.get('committed') is not True or type(body.get('product_id')) is not int or body.get('product_id') != product['id']
+                or body.get('product_slug') != product['slug'] or body.get('ram_storage_unchanged') is not True
+                or body.get('scores_recalculated') is not True or body.get('outcome') not in ('resolved', 'already_current')):
+            raise IngestionClientError('Manufacturer radio publication not fully confirmed')
+        return body
+
     def get_offer_identity_readiness(self):
         """Authenticated, current commercial-offer identity readback."""
         body = self._request_json(

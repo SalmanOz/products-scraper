@@ -20,6 +20,11 @@ on:
         type: boolean
         required: true
         default: false
+      resolve_radio:
+        description: 'Resolve only absent catalog radio from exact public manufacturer model/code/memory before the memory sweep'
+        type: boolean
+        required: true
+        default: false
       target_slug:
         description: 'Read-only target-preflight only: existing published product slug'
         type: string
@@ -51,7 +56,7 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt
       - name: Test full queue and live publication boundaries
-        run: python -m unittest -q test_offer_ingestion_client test_hepsiburada_catalog_discovery test_hepsiburada_category_frontier test_trendyol_catalog_discovery test_teknosa_catalog_discovery test_teknosa_seller_cards test_automatic_marketplace_refresh test_selected_sku_evidence test_priority_catalog_budget test_priority_catalog_sweep test_priority_candidates test_priority_retailers test_hepsiburada_catalog_source test_trendyol_catalog_source test_trendyol_basket_price test_teknosa_catalog_source test_teknosa_marketplace_source test_n11_catalog_source test_raw_seller_collision_proof test_observed_memory_variants test_automatic_memory_variants test_incremental_memory_recovery
+        run: python -m unittest -q test_offer_ingestion_client test_hepsiburada_catalog_discovery test_hepsiburada_category_frontier test_trendyol_catalog_discovery test_teknosa_catalog_discovery test_teknosa_seller_cards test_automatic_marketplace_refresh test_selected_sku_evidence test_priority_catalog_budget test_priority_catalog_sweep test_priority_candidates test_priority_retailers test_hepsiburada_catalog_source test_trendyol_catalog_source test_trendyol_basket_price test_teknosa_catalog_source test_teknosa_marketplace_source test_n11_catalog_source test_raw_seller_collision_proof test_observed_memory_variants test_automatic_memory_variants test_incremental_memory_recovery test_manufacturer_catalog_radio
       - name: Restore observed category URL frontier
         if: inputs.mode == 'full' || inputs.mode == 'coverage-first' || inputs.mode == 'memory-variants'
         id: category-frontier
@@ -76,6 +81,7 @@ jobs:
           SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
           PUBLISH: ${{ inputs.publish }}
           MODE: ${{ inputs.mode }}
+          RESOLVE_RADIO: ${{ inputs.resolve_radio }}
           TARGET_SLUG: ${{ inputs.target_slug }}
           TARGET_URL: ${{ inputs.target_url }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
@@ -84,6 +90,14 @@ jobs:
           R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
           R2_PUBLIC_DOMAIN: ${{ secrets.R2_PUBLIC_DOMAIN }}
         run: |
+          set --
+          if test "$RESOLVE_RADIO" = true; then
+            if test "$MODE" != memory-variants; then
+              echo 'Manufacturer radio resolution requires memory-variants mode'
+              exit 1
+            fi
+            set -- --manufacturer-radio
+          fi
           if test "$MODE" = memory-variant-preflight; then
             python -u sweep_priority_catalog.py --memory-variant-preflight
           elif test "$MODE" = target-preflight; then
@@ -98,9 +112,9 @@ jobs:
             # independently observed other capacities, not another refresh of
             # every currently verified color/seller resource.
             if test "$PUBLISH" = true; then
-              python -u sweep_priority_catalog.py --memory-variants --coverage-first --publish
+              python -u sweep_priority_catalog.py --memory-variants --coverage-first --publish "$@"
             else
-              python -u sweep_priority_catalog.py --memory-variants --coverage-first
+              python -u sweep_priority_catalog.py --memory-variants --coverage-first "$@"
             fi
           elif test "$MODE" = coverage-first; then
             if test "$PUBLISH" = true; then
@@ -133,5 +147,6 @@ jobs:
           path: |
             priority-catalog-sweep.*
             automatic-memory-variants.json
+            catalog-radio-resolution.json
             priority-source-service.log
           retention-days: 30

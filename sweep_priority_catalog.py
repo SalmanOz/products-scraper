@@ -655,6 +655,10 @@ def save_report(result):
         lines += ['', 'n11 platform-gap routing: ' + json.dumps({
             'eligible_models': len(gaps['eligible_models']), 'scheduled_models': len(gaps['admitted_models']),
             'same_run_query_reuses': gaps['same_run_query_reuses'], 'prices_or_offer_evidence_reused': False})]
+    if result.get('manufacturer_radio_resolution'):
+        radio = result['manufacturer_radio_resolution']
+        lines += ['', 'Manufacturer radio resolution: ' + json.dumps({
+            key: radio[key] for key in ('status', 'catalog_count', 'resolved', 'writes', 'price_writes', 'manufacturer_documents')})]
     for stage in ('before', 'after'):
         if result.get('priority_store_coverage_' + stage):
             lines += ['', 'Priority store coverage ' + stage + ': ' +
@@ -801,9 +805,14 @@ def main():
     parser.add_argument('--target-slug', metavar='EXISTING_PUBLISHED_SLUG')
     parser.add_argument('--memory-variants', action='store_true',
                         help='Discover other capacities and independently prepare/publish existing-model variants')
+    parser.add_argument('--manufacturer-radio', action='store_true',
+                        help='Before the memory sweep, prove only absent radio from exact manufacturer model/code/memory')
     parser.add_argument('--memory-variant-preflight', action='store_true',
                         help='Read-only automatic capacity hints and selected technical-source diagnostic')
     args = parser.parse_args()
+    if args.manufacturer_radio and (not args.memory_variants or any((args.memory_variant_preflight,
+            args.n11_preflight, args.target_preflight, args.target_slug, args.hepsiburada_category_audit))):
+        raise ValueError('manufacturer_radio_requires_memory_sweep')
     if args.memory_variant_preflight:
         if any((args.publish, args.memory_variants, args.target_preflight, args.target_slug, args.n11_preflight,
                 args.coverage_first, args.hepsiburada_category_audit)):
@@ -889,6 +898,16 @@ def main():
                 'physical_facts': row.get('physical_facts'), 'publication': row.get('publication')},
                 ensure_ascii=False), flush=True)
     client = OfferIngestionClient.from_env()
+    radio_report = None
+    if args.manufacturer_radio:
+        from manufacturer_catalog_radio import resolve_catalog_radios
+        from daily_discovery import write_json_checkpoint
+        def checkpoint_radio(report):
+            write_json_checkpoint(Path('catalog-radio-resolution.json'), report)
+        # A missing radio is resolved before the sweep takes its original
+        # identity baseline, never in the middle of variant publication.
+        radio_report = resolve_catalog_radios(client, publish=args.publish, checkpoint=checkpoint_radio)
+        print('Manufacturer catalog radio: ' + json.dumps(radio_report, ensure_ascii=False), flush=True)
     try:
         listing_inventory = client.get_offer_identity_readiness()
     except IngestionClientError:
@@ -928,6 +947,9 @@ def main():
                    memory_discovery=args.memory_variants,
                    memory_recovery=memory_recovery,
                    category_frontier_path=None if args.hepsiburada_category_audit else STATE_PATH)
+    if radio_report is not None:
+        result['manufacturer_radio_resolution'] = radio_report
+        result['writes'] |= radio_report['writes']
     if args.hepsiburada_category_audit:
         save_report(result)
         print(Path('priority-catalog-sweep.md').read_text())

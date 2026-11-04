@@ -98,6 +98,11 @@ class PriceUpdater:
                     'no', 'false', 'yok', 'hayır', 'hayir', 'not supported', 'desteklenmiyor',
                 }):
                     expected['network_generation'] = '4g'
+        canonical_radio = attributes.get('network_generation')
+        if canonical_radio in ('4g', '5g'):
+            if expected.get('network_generation') not in (None, canonical_radio):
+                raise ValueError('catalog_radio_conflict')
+            expected['network_generation'] = canonical_radio
         return expected
 
     @staticmethod
