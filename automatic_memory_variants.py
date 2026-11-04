@@ -88,6 +88,22 @@ def observed_technical_link(raw, base):
         return None
 
 
+def declared_technical_targets(node, base):
+    """DOM-declared public version navigation, including non-anchor cards."""
+    found = []
+    for element in [node, *node.select('[href], [data-href], [data-url], [data-link], [data-slug]')]:
+        for key in ('href', 'data-href', 'data-url', 'data-link', 'data-slug'):
+            value = element.get(key)
+            if not isinstance(value, str):
+                continue
+            if key == 'data-slug' and re.fullmatch(r'[a-z0-9]+(?:-[a-z0-9]+)+', value):
+                value = 'https://www.kimovil.com/en/where-to-buy-' + value
+            target = observed_technical_link(value, base)
+            if target and target not in found:
+                found.append(target)
+    return found
+
+
 def variant_selected_evidence(offer, name, specs):
     ordinary = selected_sku_evidence(offer)
     if ordinary is not None:
@@ -156,10 +172,10 @@ def selected_technical_document(html, url, model, specs, *, canonical_model_url=
         # Observed Kimovil variants share their model canonical. This is
         # acceptable only after the caller separately verifies that exact
         # model page and this page independently selects the requested slug.
-        selected = soup.select('.versions-list > li.item.active > a[href]')
+        selected = soup.select('.versions-list > .item.active')
         if (actual_canonical != canonical_model_url or not technical_url(actual_canonical)
                 or selected_slug != url.rsplit('/where-to-buy-', 1)[-1]
-                or len(selected) != 1 or observed_technical_link(selected[0]['href'], url) != url):
+                or len(selected) != 1 or declared_technical_targets(selected[0], url) != [url]):
             return None
     sections = extract_spec_sections(soup)
     actual = {'ram_gb': exact_capacity(find_section_spec(sections, 'Hardware', 'Memory RAM', 'RAM')),
@@ -221,6 +237,14 @@ class TechnicalVariantReader:
                     candidates.append(target)
             self.diagnostics.append({'scope': 'public_technical_model_discovery', 'model': model,
                 'result_count': len(data.get('results', [])), 'matching_model_urls': list(dict.fromkeys(candidates))[:6]})
+            unique = list(dict.fromkeys(candidates))
+            roots = {re.sub(r'-[45]g$', '', url) for url in unique}
+            if len(unique) > 1 and len(roots) == 1 and next(iter(roots)) in unique:
+                # Both the radio spelling and bare model URL were actually
+                # returned by the provider. Its bare canonical still needs a
+                # fresh technical radio match; URL omission proves nothing.
+                candidates = [next(iter(roots))]
+                self.diagnostics[-1]['observed_radio_aliases'] = True
             if len(set(candidates)) != 1:
                 raise ValueError('technical_model_discovery_ambiguous_or_missing')
             base = candidates[0]
@@ -243,18 +267,21 @@ class TechnicalVariantReader:
             raise ValueError('technical_model_family_not_verified')
         observed = []
         version_hints = []
-        anchors = soup.select('.versions-list a[href]') or soup.select('a[href]')
-        for anchor in anchors:
-            url = observed_technical_link(anchor['href'], base)
+        version_nodes = soup.select('.versions-list > .item')
+        if not version_nodes:
+            version_nodes = soup.select('.versions-list [href], .versions-list [data-href], .versions-list [data-url], .versions-list [data-slug]')
+        for node in version_nodes:
             # Link text and the actually observed path are routing hints only;
             # the selected page must independently prove all specifications.
-            label_node = anchor.find_parent('li', class_='item') or anchor
-            label = label_node.get_text(' ', strip=True)
+            label = node.get_text(' ', strip=True)
+            targets = declared_technical_targets(node, base)
             if len(version_hints) < 8:
-                version_hints.append({'source_url': url,
-                    'capacity_tokens': re.findall(r'(?<!\d)\d{1,4}\s*(?:GB|TB)\b', label, re.I),
-                    'fragment': urlparse(urljoin(base, anchor['href'])).fragment[:60]})
-            if url and url != base and url not in observed:
+                version_hints.append({'source_urls': targets, 'node': node.name,
+                    'attribute_names': list(node.attrs),
+                    'capacity_tokens': re.findall(r'(?<!\d)\d{1,4}\s*(?:GB|TB)\b', label, re.I)})
+            for url in targets:
+                if url == base or url in observed:
+                    continue
                 ram, storage = specs['ram_gb'], specs['storage_gb']
                 path = urlparse(url).path
                 if (re.search(rf'(?<!\d){ram}\s*GB\b', label, re.I) and re.search(rf'(?<!\d){storage}\s*GB\b', label, re.I)
@@ -264,7 +291,16 @@ class TechnicalVariantReader:
         self.diagnostics.append({'scope': 'observed_technical_capacity_links', 'model': model,
             'source_url': base, 'selected_default_specs': default_specs,
             'requested_specs': specs, 'version_lists': len(soup.select('.versions-list')),
-            'observed_capacity_urls': observed[:6], 'version_hints': version_hints})
+            'observed_capacity_urls': observed[:6], 'version_hints': version_hints,
+            'version_structure': [
+                {'tag': container.name, 'attribute_names': list(container.attrs),
+                 'children': [{'tag': node.name, 'attribute_names': list(node.attrs),
+                    'attributes': {key: value for key, value in node.attrs.items() if key in {
+                        'class', 'href', 'data-url', 'data-href', 'data-link', 'data-slug',
+                        'data-ram', 'data-rom', 'data-mk', 'data-id'}},
+                    'child_tags': [child.name for child in node.find_all(recursive=False)[:4]]}
+                    for node in container.find_all(recursive=False)[:3]]}
+                for container in soup.select('.versions-list')[:2]]})
         for url in observed[:3]:
             html = self.read(url)
             proof = selected_technical_document(html, url, model, specs, canonical_model_url=base)
@@ -316,7 +352,7 @@ class PublicBrowserTechnicalReader:
             self.ready = True
         response = self.post('http://localhost:8191/v1',
             json={'cmd': 'request.get', 'url': url, 'session': self.session, 'maxTimeout': 45000,
-                  'waitInSeconds': 2 if technical_url(url) else 0}, timeout=60)
+                  'waitInSeconds': 5 if technical_url(url) else 0}, timeout=60)
         response.raise_for_status()
         body = response.json()
         solution = body.get('solution') if isinstance(body, dict) else None

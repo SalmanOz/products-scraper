@@ -59,7 +59,7 @@ class AutomaticMemoryVariantTests(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertEqual(calls[1][0], 'http://localhost:8191/v1')
         self.assertEqual(set(calls[1][1]['json']), {'cmd', 'url', 'session', 'maxTimeout', 'waitInSeconds'})
-        self.assertEqual(calls[1][1]['json']['waitInSeconds'], 2)
+        self.assertEqual(calls[1][1]['json']['waitInSeconds'], 5)
         self.assertLessEqual(calls[1][1]['timeout'], 60)
 
     def test_rendered_public_reader_rejects_changed_url_and_challenge_documents(self):
@@ -151,7 +151,8 @@ class AutomaticMemoryVariantTests(unittest.TestCase):
 
     def test_locates_only_observed_capacity_link_and_stages_fresh_technical_facts_not_parent_copy(self):
         base = tech_document(TECH_URL, storage=128).replace('</body>',
-            '<a href="' + ALT_TECH_URL + '">Global 8 GB 256 GB</a><a href="https://evil.test/8gb-256gb">8 GB 256 GB</a></body>')
+            '<ul class="versions-list"><li class="item"><a href="' + ALT_TECH_URL + '">Global 8 GB 256 GB</a></li>'
+            '<li class="item"><a href="https://evil.test/8gb-256gb">8 GB 256 GB</a></li></ul></body>')
         visited = []
         class Reader:
             def read(self, url):
@@ -193,6 +194,41 @@ class AutomaticMemoryVariantTests(unittest.TestCase):
                 return tech_document(target, ram=8, storage=512) if url == target else super().read(url)
         with self.assertRaisesRegex(ValueError, 'not_observed'):
             TechnicalVariantReader(WrongReader()).locate(PARENT, specs)
+
+    def test_non_anchor_version_card_uses_only_its_declared_public_target(self):
+        base = tech_document(TECH_URL, storage=128).replace('</body>',
+            f'<ul class="versions-list"><li class="item" data-url="{ALT_TECH_URL}">8GB · 256GB</li></ul></body>')
+        class Reader:
+            def read(self, url):
+                if '_json/autocomplete' in url:
+                    return json.dumps({'results': [{'full_name': NAME, 'url': TECH_URL.rsplit('where-to-buy-', 1)[1]}]})
+                return {TECH_URL: base, ALT_TECH_URL: tech_document()}[url]
+        _, proof = TechnicalVariantReader(Reader()).locate(PARENT, dict(SPECS, storage_gb=256))
+        self.assertEqual(proof['source_url'], ALT_TECH_URL)
+
+    def test_two_observed_radio_aliases_can_use_the_bare_model_only_with_actual_4g_facts(self):
+        base = 'https://www.kimovil.com/en/where-to-buy-xiaomi-redmi-note-15'
+        parent = {'id': 456, 'name': 'Xiaomi Redmi Note 15 4G', 'slug': 'xiaomi-redmi-note-15-4g',
+                  'attributes': {'ram_gb': 6, 'storage_gb': 128, 'Connectivity': {'5G': False}}}
+        calls = []
+        class Reader:
+            def read(self, url):
+                calls.append(url)
+                if '_json/autocomplete' in url:
+                    return json.dumps({'results': [
+                        {'full_name': 'Xiaomi Redmi Note 15 4G', 'url': 'xiaomi-redmi-note-15-4g'},
+                        {'full_name': 'Xiaomi Redmi Note 15', 'url': 'xiaomi-redmi-note-15'}]})
+                self_outer.assertEqual(url, base)
+                return tech_document(base, name='Xiaomi Redmi Note 15').replace('n78', 'No')
+        self_outer = self
+        reader = TechnicalVariantReader(Reader())
+        specs = {'ram_gb': 8, 'storage_gb': 256, 'network_generation': '4g'}
+        _, proof = reader.locate(parent, specs)
+        self.assertEqual(proof['source_url'], base)
+        self.assertTrue(reader.diagnostics[0]['observed_radio_aliases'])
+        self.assertEqual(len(calls), 2)
+        with self.assertRaises(ValueError):
+            TechnicalVariantReader(Reader()).locate(parent, dict(specs, network_generation='5g'))
 
     def test_discovery_deduplicates_existing_variants_and_never_uses_other_memory_as_parent_price(self):
         result = self.candidate_result()
