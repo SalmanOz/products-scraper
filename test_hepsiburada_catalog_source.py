@@ -227,13 +227,67 @@ class HepsiburadaCatalogTests(unittest.TestCase):
         hint = TARGET + '?magaza=Historical+Seller'
         source.register_catalog_targets(NAME, [{'source_url': hint}], SPECS)
         offer, reason, status = source.read_offer(hint)
-        self.assertEqual(calls, [TARGET])
+        self.assertEqual(calls, [hint, TARGET])
         self.assertEqual(offer['url'], TARGET)
         self.assertNotEqual(offer['merchant'], 'Historical Seller')
         self.assertEqual(reason, 'selected_new_cash_offer_observed')
         self.assertEqual(status, 200)
         # Direct seller-scoped parsing still rejects a changed selected seller.
         self.assertIsNone(parse_catalog_buy_box(document(), hint, NAME, SPECS)[0])
+
+    def test_explicit_live_seller_selection_keeps_its_query_and_never_falls_back_after_denial(self):
+        import json
+        from urllib.parse import urlencode
+        from hepsiburada_catalog_source import catalog_request_url
+        selected = json.loads(BeautifulSoup(document(), 'html.parser').select_one('#reduxStore').text)['productState']['product']['merchant']
+        target = TARGET + '?' + urlencode({'magaza': selected['name']})
+        calls = []
+        class Transport:
+            denied = False
+            def read_document(self, url):
+                calls.append(url)
+                return (None, 'robots_disallowed', None) if self.denied else (document(), 'document_read', 200)
+        transport = Transport()
+        source = HepsiburadaCatalogSource(transport=transport)
+        source.register_catalog_targets(NAME, [{'source_url': target}], SPECS)
+        quote, reason, _ = source.read_offer(target)
+        self.assertIsNotNone(quote, reason)
+        self.assertEqual(quote['url'], target)
+        self.assertEqual(quote['merchant'], selected['name'])
+        self.assertEqual(calls, [target])
+        self.assertEqual(catalog_request_url(target.replace('+', '%20') + '&'), target)
+        calls.clear()
+        transport.denied = True
+        self.assertIsNone(source.read_offer(target)[0])
+        self.assertEqual(calls, [target])
+
+    def test_another_selected_seller_requires_its_own_fresh_matching_document(self):
+        import json
+        from urllib.parse import urlencode
+        original = document()
+        selected = json.loads(BeautifulSoup(original, 'html.parser').select_one('#reduxStore').text)['productState']['product']
+        other_name = 'Other Public Shop'
+        other_doc = original.replace(selected['merchant']['name'], other_name)
+        for old, new in [(selected['merchant']['id'], '11111111-2222-3333-4444-555555555555'),
+                         (selected['listingId'], '66666666-7777-8888-9999-000000000000'),
+                         (selected['merchant']['urlPostfix'], 'other-public-shop')]:
+            other_doc = other_doc.replace(old, new)
+        target = TARGET + '?' + urlencode({'magaza': other_name})
+        class Transport:
+            def __init__(self):
+                self.calls = []
+            def read_document(self, url):
+                self.calls.append(url)
+                return (other_doc if url == target else original), 'document_read', 200
+        transport = Transport()
+        source = HepsiburadaCatalogSource(transport=transport)
+        source.register_catalog_targets(NAME, [{'source_url': target}], SPECS)
+        quote, reason, _ = source.read_offer(target)
+        self.assertIsNotNone(quote, reason)
+        self.assertEqual((quote['merchant'], quote['merchant_id'], quote['url']),
+                         (other_name, '11111111-2222-3333-4444-555555555555', target))
+        self.assertEqual(transport.calls, [target])
+        self.assertIsNone(parse_catalog_buy_box(original, target, NAME, SPECS)[0])
 
     def test_generic_selected_cash_does_not_depend_on_redundant_apple_summary_flags(self):
         changes = {('redux', 'productState', 'product', key): None for key in (

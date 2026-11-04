@@ -2,7 +2,7 @@ from copy import deepcopy
 import unittest
 from unittest.mock import patch
 
-from hepsiburada_catalog_discovery import CATEGORY_URL, card_destination, category_identity, parse_category_document, discovery_links, discover_product_siblings
+from hepsiburada_catalog_discovery import CATEGORY_URL, card_destination, category_identity, parse_category_document, discovery_links, discover_product_siblings, discover_product_sellers
 from priority_retailer_transport import PriorityRetailerTransport
 from test_pasaj_source import Response
 from test_teknosa_catalog_discovery import PRODUCT
@@ -21,6 +21,43 @@ def document(brand=False):
 
 
 class HepsiburadaDiscoveryTests(unittest.TestCase):
+    def test_other_seller_selector_requires_visible_link_and_same_selected_sku_inventory_without_prices(self):
+        import html as html_module
+        import json
+        from pathlib import Path
+        fixture = json.loads(Path(__file__).with_name('fixtures').joinpath('hepsiburada-public-seller-selector-hints.json').read_text())
+        def document(data):
+            script = '<script id="reduxStore">' + json.dumps({'productState': {'product': data['product']}}) + '</script>'
+            return script + ''.join('<div data-hbus="' + html_module.escape(json.dumps({'data': p['event']}), quote=True) + '">' +
+                ''.join(f'<a href="{a["href"]}">{a["text"]}</a>' for a in p['links']) + '<button>Ürüne git</button></div>'
+                for p in data['panels'])
+        found = discover_product_sellers(document(fixture), fixture['url'])
+        self.assertEqual([r['source_url'] for r in found], [fixture['url'] + '?magaza=Ada+iletisim+mersin'])
+        self.assertEqual(found[0]['discovery_merchant_id'], fixture['product']['listings'][0]['merchantId'])
+        self.assertNotIn('price', found[0])
+        for path, value in [
+            (('panels', 0, 'event', 'page_value'), 'HBCV0000OTHER00'),
+            (('panels', 0, 'event', 'listing_id'), 'wrong'),
+            (('panels', 0, 'event', 'merchant_id'), 'wrong'),
+            (('panels', 0, 'event', 'product_id'), 'wrong'),
+            (('panels', 0, 'links', 0, 'text'), 'Other shop'),
+            (('panels', 0, 'links', 0, 'href'), 'https://evil.test/magaza/shop'),
+            (('product', 'listings', 0, 'merchantId'), 'wrong'),
+            (('product', 'listings', 0, 'listingId'), 'wrong'),
+            (('product', 'listings', 0, 'isSalable'), False),
+            (('product', 'listings', 0, 'isBundle'), True),
+        ]:
+            changed = deepcopy(fixture)
+            node = changed
+            for key in path[:-1]:
+                node = node[key]
+            node[path[-1]] = value
+            self.assertEqual(discover_product_sellers(document(changed), fixture['url']), [], path)
+        self.assertEqual(discover_product_sellers(document(fixture), fixture['url'] + '?magaza=Other'), [])
+        changed = deepcopy(fixture)
+        changed['panels'].append(deepcopy(changed['panels'][0]))
+        self.assertEqual(discover_product_sellers(document(changed), fixture['url']), [])
+
     def test_sibling_destinations_require_explicit_same_memory_phone_links_not_variant_prices(self):
         import json
         root = 'https://www.hepsiburada.com/apple-iphone-11-64-gb-beyaz-p-HBV0000120X66'

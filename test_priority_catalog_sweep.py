@@ -26,6 +26,36 @@ def sweep_reader():
 
 
 class SweepTests(unittest.TestCase):
+    def test_hb_seller_seeds_keep_exact_selection_and_also_queue_the_default_sku_once(self):
+        client = Client()
+        base = client.product['offer_targets'][0]['source_url']
+        client.product['offer_targets'] = [{'source_url': base + '?magaza=Shop%20One&'},
+                                           {'source_url': base + '?magaza=Shop+One'},
+                                           {'source_url': base + '?magaza=Shop+Two'}]
+        self.assertEqual([url for url, _ in catalog_queue([client.product], {})],
+                         [base, base + '?magaza=Shop+One', base + '?magaza=Shop+Two'])
+
+    def test_other_hb_sellers_are_separately_read_once_with_a_shared_two_seller_budget(self):
+        client = Client()
+        client.get_public_price_priority = lambda: {}
+        root = 'https://www.hepsiburada.com/samsung-galaxy-a54-128-gb-p-HBCV0000TEST01'
+        links = [root + '?magaza=Shop+' + str(i) for i in range(3)]
+        client.product['offer_targets'] = [{'source_url': root}]
+        inspected = []
+        def inspect(transport, url, product):
+            inspected.append(url)
+            return {'slug': product['slug'], 'retailer': 'Hepsiburada', 'url': url, 'observed_url': url,
+                'http_status': 200, 'reason': 'document_read', 'prepared_offer': None,
+                'discovered_sellers': [{'source_url': target, 'source_document_url': url,
+                                       'discovery_scope': 'public_other_seller_selector'} for target in links]}
+        with patch('sweep_priority_catalog.inspect_target', side_effect=inspect), \
+                patch('sweep_priority_catalog.refresh_candidates') as writer:
+            result = sweep(client=client, transport=Transport(), publish=True, reader=sweep_reader())
+        self.assertEqual(inspected, [root, links[0], links[1]])
+        self.assertEqual(result['queued'], 3)
+        self.assertEqual(result['accepted'], 0)
+        writer.assert_not_called()  # A row hint never supplies a quote to publish.
+
     def test_observed_siblings_get_separate_fresh_reads_with_two_per_model_budget_and_no_recursion(self):
         client = Client()
         client.get_public_price_priority = lambda: {}

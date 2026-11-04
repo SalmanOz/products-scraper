@@ -7,6 +7,7 @@ import argparse
 from collections import Counter, defaultdict
 import json
 from pathlib import Path
+from urllib.parse import urlparse
 
 from audit_priority_retailers import inspect_target
 from offer_ingestion_client import IngestionClientError, OfferIngestionClient
@@ -40,7 +41,11 @@ def catalog_queue(products, prices):
         for target in product.get('offer_targets', []):
             url = target.get('source_url') if isinstance(target, dict) else None
             if product_host(url):
-                owners[observed_url(url)][product['id']] = product
+                canonical = observed_url(url)
+                owners[canonical][product['id']] = product
+                if product_host(canonical) == 'www.hepsiburada.com':
+                    default = urlparse(canonical)._replace(query='').geturl()
+                    owners[default][product['id']] = product
     for url, matches in owners.items():
         if len(matches) == 1:
             product = next(iter(matches.values()))
@@ -116,6 +121,7 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
     processed = set()
     refresh_urls = {url for url, _ in refresh_targets}
     sibling_counts = Counter()
+    seller_counts = Counter()
     def process_target(url, product, audited_row=None):
         nonlocal publication_failed
         if (product['slug'], url) in processed:
@@ -154,6 +160,20 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
         result['sources'] = transport.report()
         if checkpoint:
             checkpoint(result)
+        seller_candidates = (row.get('discovered_sellers', [])
+            if product_host(row.get('observed_url')) == 'www.hepsiburada.com'
+            and not urlparse(row['observed_url']).query else [])
+        for candidate in seller_candidates:
+            destination = candidate.get('source_url') if isinstance(candidate, dict) else None
+            if (seller_counts[product['slug']] >= 2 or product_host(destination) != 'www.hepsiburada.com'
+                    or candidate.get('discovery_scope') != 'public_other_seller_selector'
+                    or candidate.get('source_document_url') != row.get('observed_url')
+                    or destination in refresh_urls or observed_url(destination) in inventory_urls
+                    or (product['slug'], destination) in processed):
+                continue
+            seller_counts[product['slug']] += 1
+            result['queued'] += 1
+            process_target(destination, product)
         # Expand only original refresh seeds after category discovery. This
         # prevents recursively expanding colors or counting future queued
         # category/refresh targets twice. A sibling is a new GET, never a quote

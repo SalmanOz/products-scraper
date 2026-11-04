@@ -1,0 +1,20 @@
+{
+  "url": "https://www.hepsiburada.com/xiaomi-14t-pro-512-gb-12-gb-ram-xiaomi-turkiye-garantili-mavi-titanyum-p-HBCV00006YA8AY",
+  "product": {
+    "productId": "HBC00006YA8B1",
+    "sku": "HBCV00006YA8AY",
+    "listingId": "fc2078c7-959a-47a2-9f24-87ca9162eefd",
+    "merchant": {"id": "b997b8a4-4643-4b8b-9a14-cf4dfba2a928", "name": "CeSE Market"},
+    "listings": [{"merchantId": "425f792b-f8cf-428b-97cb-408ec45af6f7", "merchantName": "Ada iletisim mersin", "listingId": "5fbbb96d-6132-4d35-915b-8af2738df863", "isSalable": true, "isBundle": false}]
+  },
+  "panels": [{
+    "event": {
+      "component": "Other Sellers", "placement": "Other Sellers", "page_type": "pdp",
+      "page_value": "HBCV00006YA8AY", "product_id": "HBC00006YA8B1",
+      "listing_id": "fc2078c7-959a-47a2-9f24-87ca9162eefd",
+      "merchant_id": "b997b8a4-4643-4b8b-9a14-cf4dfba2a928", "merchant_name": "CeSE Market",
+      "other_seller": [{"merchant_id": "425f792b-f8cf-428b-97cb-408ec45af6f7", "merchant_name": "Ada iletisim mersin"}]
+    },
+    "links": [{"href": "/magaza/ada-iletisim-mersin", "text": "Ada iletisim mersin"}]
+  }]
+}

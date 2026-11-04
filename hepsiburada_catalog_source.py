@@ -2,7 +2,7 @@
 
 import json
 import re
-from urllib.parse import parse_qsl, urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse
 
 from bs4 import BeautifulSoup
 
@@ -24,15 +24,15 @@ def _identity(url, product_id, sku):
 
 
 def catalog_request_url(url):
-    """A stored seller hint discovers a SKU; fetch its current default buy box.
+    """Keep an explicit seller selector; it must match the fresh selected seller.
 
-    The returned offer uses this query-free observed URL and the freshly proven
-    seller, never the historical magaza name. Exact/seller-scoped audit callers
-    can still pass their original URL to the strict parser and require its seller.
+    Only normalize query encoding. The query-free SKU is a separate fallback,
+    never an offer attributed to the historical or newly discovered seller.
     """
     if product_host(url) != 'www.hepsiburada.com':
         return None
-    return urlparse(url)._replace(query='').geturl()
+    parsed = urlparse(url)
+    return parsed._replace(query=urlencode(parse_qsl(parsed.query))).geturl()
 
 
 def selected_technical_text(soup, sku, product_id, listing_id, merchant_id):
@@ -193,6 +193,16 @@ class HepsiburadaCatalogSource:
         if html is None:
             return None, reason, status
         offer, reason = parse_catalog_buy_box(html, observed_url, profile['name'], profile['specs'])
+        if (offer is None and urlparse(observed_url).query and reason in {
+                'selected_query_seller_mismatch', 'selected_redux_identity_missing'}):
+            # Preserve default-buy-box recovery for retired historical sellers.
+            # The fallback gets its own fresh document and query-free source;
+            # exact candidate publication will reject a changed source identity.
+            fallback = urlparse(observed_url)._replace(query='').geturl()
+            html, transport_reason, status = self.transport.read_document(fallback)
+            if html is None:
+                return None, transport_reason, status
+            offer, reason = parse_catalog_buy_box(html, fallback, profile['name'], profile['specs'])
         return offer, reason, status
 
     def configure_catalog_budget(self, count):

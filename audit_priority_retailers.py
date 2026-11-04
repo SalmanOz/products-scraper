@@ -136,11 +136,12 @@ def inspect_target(transport, url, product):
                     {'name': product['name'], 'specs': specs}, maximum=3)
         if host == 'www.hepsiburada.com':
             from hepsiburada_catalog_source import parse_catalog_buy_box
-            from hepsiburada_catalog_discovery import discover_product_siblings
+            from hepsiburada_catalog_discovery import discover_product_siblings, discover_product_sellers
             specs = with_reviewed_radio(product, PriceUpdater.get_expected_specs(product.get('attributes')))
             offer, why = parse_catalog_buy_box(html, observed_url, product['name'], specs)
             row.update(reader_reason=why, prepared_offer=offer)
             row['discovered_siblings'] = discover_product_siblings(html, observed_url, product)
+            row['discovered_sellers'] = discover_product_sellers(html, observed_url)
         if host == 'www.trendyol.com':
             from trendyol_catalog_source import parse_catalog_listing
             specs = with_reviewed_radio(product, PriceUpdater.get_expected_specs(product.get('attributes')))

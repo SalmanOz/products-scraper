@@ -55,6 +55,20 @@ def reader():
 
 
 class PriorityCandidateTests(unittest.TestCase):
+    def test_selected_hb_seller_is_read_again_and_retained_in_the_published_source(self):
+        from urllib.parse import urlencode
+        client = Client()
+        report = audit()
+        original = report['rows'][0]['prepared_offer']
+        target = TARGET + '?' + urlencode({'magaza': original['merchant']})
+        scoped, why = parse_catalog_buy_box(document(), target, NAME, SPECS)
+        self.assertIsNotNone(scoped, why)
+        report['rows'][0]['prepared_offer'] = scoped
+        result = refresh_candidates(report, client=client, reader=reader())
+        self.assertEqual(result['ingestion']['accepted'], 1)
+        self.assertEqual(client.writes[0][0]['source_url'], target)
+        self.assertEqual(client.writes[0][0]['seller'], original['merchant'])
+
     def test_a37_priority_listing_uses_strict_resource_writer_without_touching_the_paired_mediamarkt_job(self):
         # The paired MediaMarkt route remains protected. This fixture exercises
         # an independently observed priority-retailer resource on the same model.

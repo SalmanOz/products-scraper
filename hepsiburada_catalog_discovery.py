@@ -5,7 +5,7 @@ Report the bounded discovery scope honestly, without guessing pages.
 """
 import json
 import re
-from urllib.parse import parse_qs, urljoin, urlparse
+from urllib.parse import parse_qs, urlencode, urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
@@ -209,4 +209,80 @@ def discover_product_siblings(html, url, product):
         found[target] = {'source_url': target, 'discovery_title': title,
                          'discovery_sku': sku, 'stock_priority': True,
                          'discovery_scope': 'public_product_variant_link'}
+    return list(found.values())
+
+
+def discover_product_sellers(html, url):
+    """Discover the public 'Ürüne git' seller selection, never its row price.
+
+    The observed UI selects ?magaza=<visible merchant name> on the same SKU.
+    Require its Other Sellers event, rendered shop link and selected product's
+    listing inventory to agree before issuing a separate full fresh PDP read.
+    """
+    if (product_host(url) != 'www.hepsiburada.com' or urlparse(url).query
+            or not isinstance(html, str) or len(html.encode()) > MAX_HTML_BYTES):
+        return []
+    soup = BeautifulSoup(html, 'html.parser')
+    scripts = soup.select('script#reduxStore')
+    if len(scripts) != 1:
+        return []
+    uuid = re.compile(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}')
+    try:
+        selected = json.loads(scripts[0].get_text())['productState']['product']
+        sku, product_id = selected['sku'], selected['productId']
+        current, listing_id, listings = selected['merchant'], selected['listingId'], selected['listings']
+        if (not isinstance(sku, str) or not urlparse(url).path.endswith('-p-' + sku)
+                or not isinstance(product_id, str) or not isinstance(current, dict)
+                or not all(isinstance(v, str) and uuid.fullmatch(v) for v in (current.get('id'), listing_id))
+                or not isinstance(listings, list) or len(listings) > 50):
+            return []
+    except (TypeError, ValueError, KeyError):
+        return []
+    panels = []
+    for node in soup.select('[data-hbus]'):
+        try:
+            data = json.loads(node['data-hbus']).get('data')
+        except (ValueError, TypeError, AttributeError):
+            continue
+        if isinstance(data, dict) and data.get('component') == 'Other Sellers':
+            panels.append((node, data))
+    if len(panels) != 1:
+        return []
+    panel, data = panels[0]
+    others = data.get('other_seller')
+    if (data.get('placement') != 'Other Sellers' or data.get('page_type') != 'pdp'
+            or data.get('page_value') != sku or data.get('product_id') != product_id
+            or data.get('listing_id') != listing_id or data.get('merchant_id') != current['id']
+            or data.get('merchant_name') != current.get('name')
+            or not isinstance(others, list) or len(others) > 20):
+        return []
+    found = {}
+    for other in others:
+        if not isinstance(other, dict):
+            continue
+        name, merchant_id = other.get('merchant_name'), other.get('merchant_id')
+        if (not isinstance(name, str) or not 1 <= len(name.strip()) <= 100
+                or re.search(r'[\x00-\x1f]', name) or not isinstance(merchant_id, str)
+                or not uuid.fullmatch(merchant_id) or merchant_id == current['id']):
+            continue
+        matches = [row for row in listings if isinstance(row, dict)
+                   and row.get('merchantId') == merchant_id and row.get('merchantName') == name]
+        if (len(matches) != 1 or matches[0].get('isSalable') is not True
+                or matches[0].get('isBundle') is not False
+                or not isinstance(matches[0].get('listingId'), str)
+                or not uuid.fullmatch(matches[0]['listingId'])):
+            continue
+        links = [a for a in panel.select('a[href]') if a.get_text(' ', strip=True) == name]
+        if len(links) != 1:
+            continue
+        shop = urlparse(urljoin(CATEGORY_URL, links[0]['href']))
+        if (shop.scheme != 'https' or shop.netloc != 'www.hepsiburada.com' or shop.query or shop.fragment
+                or not re.fullmatch(r'/magaza/[a-z0-9-]{1,100}', shop.path)):
+            continue
+        destination = urlparse(url)._replace(query=urlencode({'magaza': name})).geturl()
+        if product_host(destination) != 'www.hepsiburada.com':
+            continue
+        found[destination] = {'source_url': destination, 'discovery_seller': name,
+            'discovery_merchant_id': merchant_id, 'discovery_listing_id': matches[0]['listingId'],
+            'source_document_url': url, 'discovery_scope': 'public_other_seller_selector'}
     return list(found.values())
