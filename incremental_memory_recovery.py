@@ -17,6 +17,8 @@ from priority_retailer_transport import HOSTS, product_host
 from publish_priority_candidates import _exact_current, _matched_rows
 from tr_price_scraper import TRPriceScraper
 
+MAX_EARLY_COVERED_FAMILIES = 2
+
 
 class FreshVariantTransport:
     """Bound fresh publication reads without resetting the underlying source."""
@@ -59,6 +61,7 @@ class IncrementalMemoryRecovery:
         self.failed = False
         self.attempted = set()
         self.early_families = set()
+        self.early_covered_families = set()
         self.report = {'contract': CONTRACT, 'purpose': 'automatic_existing_model_memory_variants',
             'timing': 'during_discovery_and_final_remainder', 'publish': publish,
             'writes': False, 'rows': [], 'created': 0, 'existing': 0, 'attempt_limit': MAX_VARIANTS}
@@ -137,6 +140,9 @@ class IncrementalMemoryRecovery:
                     'variant': {**variant_identity(candidate['parent'], specs['ram_gb'], specs['storage_gb']), **specs},
                     'reason': 'all_observed_variant_sources_blocked_for_run', 'retailers': sorted(retailers)})
         self.report.update(observed_candidates=len(observed), attempted_candidates=len(self.attempted),
+            early_covered_family_attempts=len(self.early_covered_families),
+            early_covered_family_limit=min(MAX_EARLY_COVERED_FAMILIES, max(0, MAX_VARIANTS - 1)),
+            early_unpriced_family_attempts=len(self.early_families - self.early_covered_families),
             eligible_source_candidates=len(observed) - len(deferred),
             deferred_source_candidates=len(deferred), source_deferrals=deferred,
             technical_documents=self.technical_reader.documents,
@@ -160,10 +166,14 @@ class IncrementalMemoryRecovery:
         if self.failed or len(self.attempted) >= MAX_VARIANTS:
             return
         try:
-            # Only a family with no current priced capacity can spend an early
-            # slot. Other options wait until every retailer has had its turn.
+            # Other capacities of a covered model can disappear behind a
+            # source circuit by the final pass. Admit at most two known-priced
+            # families early, reserving the other ten shared slots for missing
+            # families until discovery finishes. Unknown price hints wait.
             priorities = memory_parent_priority(products, prices)['parent_priorities']
-            if priorities.get(row['slug']) != 0:
+            level = priorities.get(row['slug'], 2)
+            covered_limit = min(MAX_EARLY_COVERED_FAMILIES, max(0, MAX_VARIANTS - 1))
+            if level not in (0, 1) or level == 1 and len(self.early_covered_families) >= covered_limit:
                 return
             subset = {**result, 'rows': [row]}
             candidates = [c for c in observed_variant_candidates(subset, products)
@@ -178,6 +188,8 @@ class IncrementalMemoryRecovery:
                 self._prepare(subset, products, prices, candidates, 1)
                 if len(self.attempted) > previous:
                     self.early_families.add(family)
+                    if level == 1:
+                        self.early_covered_families.add(family)
                 self._summary(result)
         except Exception as error:
             self._fail(error)

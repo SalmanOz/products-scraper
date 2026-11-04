@@ -209,7 +209,7 @@ class IncrementalMemoryRecoveryTests(unittest.TestCase):
         recovery.image_store.upload.assert_not_called()
         self.assertFalse(any(e[0] == 'atomic' for e in client.events))
 
-    def test_priced_family_waits_until_final_pass(self):
+    def test_priced_family_can_use_one_bounded_early_slot_without_a_duplicate_final_attempt(self):
         client = GrowingClient()
         transport = source(client)
         recovery = self.recovery(client, transport, publish=False)
@@ -220,9 +220,77 @@ class IncrementalMemoryRecoveryTests(unittest.TestCase):
         result = {'status': 'completed', 'catalog_count': 1, 'writes': False, 'rows': [row]}
         with patch('automatic_memory_variants.technical_records', return_value=([], {}, ['source-image'])) as technical:
             recovery.observe(result, row, products, prices)
+            self.assertEqual(technical.call_count, 1)
+            self.assertEqual(recovery.report['early_covered_family_attempts'], 1)
+            recovery.finish(result, products, prices)
+            self.assertEqual(technical.call_count, 1)
+
+    def test_covered_family_live_offer_is_published_and_verified_before_later_source_denial(self):
+        class PricedClient(GrowingClient):
+            def get_public_price_priority(self):
+                return {p['id']: (p['slug'], True) for p in self.catalog}
+        client = PricedClient()
+        transport = source(client, category_denial=True)
+        recovery = self.recovery(client, transport)
+        original = deepcopy(client.product)
+        with patch('automatic_memory_variants.technical_records', return_value=([], {}, ['source-image'])):
+            result = sweep(client=client, transport=transport, publish=True, discover_hepsiburada=True,
+                memory_discovery=True, memory_recovery=recovery)
+        self.assertFalse(recovery.failed, recovery.report)
+        self.assertEqual(recovery.report['created'], 1)
+        self.assertEqual(recovery.report['early_covered_family_attempts'], 1)
+        self.assertTrue(recovery.report['rows'][0]['commercial_readback_verified'])
+        self.assertTrue(result['sources']['Hepsiburada']['blocked'])
+        kinds = [event[0] for event in client.events]
+        self.assertLess(kinds.index('atomic'), kinds.index('category'))
+        self.assertEqual(client.product, original)
+
+    def test_covered_family_early_cap_preserves_slots_for_a_later_missing_family(self):
+        client = GrowingClient()
+        parents, rows = [], []
+        for number in (36, 37, 38, 39):
+            parent = deepcopy(client.product)
+            parent.update(id=number, slug=f'samsung-galaxy-a{number}-5g', name=NAME.replace('A36', f'A{number}'))
+            url = TARGET.replace('a36', f'a{number}')
+            html = document().replace('A36', f'A{number}').replace('a36', f'a{number}')
+            transport = SimpleNamespace(read_document=lambda url, body=html: (body, 'document_read', 200),
+                resolved_url=lambda url: url)
+            rows.append(inspect_target(transport, url, parent))
+            parents.append(parent)
+        prices = {p['id']: (p['slug'], p['id'] != 39) for p in parents}
+        recovery = self.recovery(client, SimpleNamespace(report=lambda: {}), publish=False)
+        recovery.start(parents, prices)
+        result = {'status': 'completed', 'catalog_count': 4, 'writes': False, 'rows': []}
+        with patch('incremental_memory_recovery.MAX_VARIANTS', 4), \
+             patch('automatic_memory_variants.technical_records', side_effect=ValueError('fixture_unavailable')) as technical:
+            for row in rows:
+                result['rows'].append(row)
+                recovery.observe(result, row, parents, prices)
+            self.assertEqual(technical.call_count, 3)
+            self.assertEqual([call.args[0]['id'] for call in technical.call_args_list], [36, 37, 39])
+            self.assertEqual(recovery.report['early_covered_family_attempts'], 2)
+            self.assertEqual(recovery.report['early_unpriced_family_attempts'], 1)
+            recovery.finish(result, parents, prices)
+            self.assertEqual([call.args[0]['id'] for call in technical.call_args_list], [36, 37, 39, 38])
+        self.assertFalse(recovery.failed, recovery.report)
+        self.assertEqual(recovery.report['attempted_candidates'], 4)
+        self.assertFalse(recovery.report['writes'])
+
+    def test_unknown_public_price_hint_cannot_use_a_covered_family_early_slot(self):
+        client = GrowingClient()
+        transport = source(client)
+        recovery = self.recovery(client, transport, publish=False)
+        products = client.get_published_products()
+        prices = {products[0]['id']: (products[0]['slug'], None)}
+        recovery.start(products, prices)
+        row = inspect_target(transport, TARGET, products[0])
+        result = {'status': 'completed', 'catalog_count': 1, 'writes': False, 'rows': [row]}
+        with patch('automatic_memory_variants.technical_records', return_value=([], {}, ['source-image'])) as technical:
+            recovery.observe(result, row, products, prices)
             technical.assert_not_called()
             recovery.finish(result, products, prices)
             self.assertEqual(technical.call_count, 1)
+        self.assertEqual(recovery.report['early_covered_family_attempts'], 0)
 
     def test_global_candidate_allowance_is_shared_between_early_and_final_preparation(self):
         client = GrowingClient()

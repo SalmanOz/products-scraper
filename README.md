@@ -552,7 +552,14 @@ recovery separately from successful publication.
 
 Families with no current priced capacity get an immediate preparation attempt
 when a fully observed other-capacity preview is discovered. Each missing family
-gets one early slot; remaining candidates wait until the full discovery pass.
+gets one early slot. Up to two families already known to have a current price
+may also prepare one newly observed capacity immediately, before their live
+source can become unavailable late in discovery. The other ten shared slots
+stay reserved for unpriced families until discovery finishes; unknown public
+price hints do not qualify for the covered-family allowance. A second capacity
+of any early family and candidates beyond the allowance wait for the final pass.
+The artifact reports covered/unpriced early attempts separately; neither an
+early slot nor a category card establishes a price or published capacity.
 Early and final work share the same 12-candidate and 48-technical-request limits.
 Publication rechecks share the discovery transport's robots, denial circuit,
 cooldown and total request budget, with at most 24 fresh PDP rechecks per retailer.
