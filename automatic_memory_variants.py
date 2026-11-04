@@ -700,8 +700,23 @@ def prepare_memory_variants(result, products, *, transport, technical_reader=Non
     report = {'contract': CONTRACT, 'purpose': 'automatic_existing_model_memory_variants',
               'publish': publish, 'writes': False, 'observed_candidates': len(candidates),
               'attempt_limit': MAX_VARIANTS, 'rows': [], 'created': 0, 'existing': 0,
-              'technical_diagnostics': getattr(technical_reader, 'diagnostics', [])}
-    for candidate in candidates[:MAX_VARIANTS]:
+              'technical_diagnostics': getattr(technical_reader, 'diagnostics', []),
+              'source_deferrals': []}
+    reachable = []
+    for candidate in candidates:
+        targets = [url for url in candidate['targets']
+                   if result.get('sources', {}).get(HOSTS.get(product_host(url)), {}).get('blocked') is not True]
+        if targets:
+            reachable.append({**candidate, 'targets': targets})
+        else:
+            report['source_deferrals'].append({'parent_slug': candidate['parent']['slug'],
+                'variant': {**variant_identity(candidate['parent'], candidate['specs']['ram_gb'], candidate['specs']['storage_gb']),
+                            **candidate['specs']},
+                'reason': 'all_observed_variant_sources_blocked_for_run',
+                'retailers': sorted({HOSTS[product_host(url)] for url in candidate['targets']})})
+    report.update(eligible_source_candidates=len(reachable),
+                  deferred_source_candidates=len(report['source_deferrals']))
+    for candidate in reachable[:MAX_VARIANTS]:
         parent, specs = candidate['parent'], candidate['specs']
         identity = variant_identity(parent, specs['ram_gb'], specs['storage_gb'])
         row = {'parent_slug': parent['slug'], 'variant': {**identity, **specs}, 'status': 'pending', 'writes': False}
@@ -776,6 +791,7 @@ def prepare_memory_variants(result, products, *, transport, technical_reader=Non
     report['score_refresh_pending'] = sum(row.get('score_refresh_pending') is True for row in report['rows'])
     report['verified_candidates'] = sum(row['status'] in {'technical_and_live_offer_verified', 'created', 'existing'}
                                         for row in report['rows'])
+    report['attempted_candidates'] = len(report['rows'])
     return report
 
 

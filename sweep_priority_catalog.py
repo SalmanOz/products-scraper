@@ -753,7 +753,8 @@ def main():
         variant_checkpoint(variant_report)
         readback = verify_variant_catalog_readback(products, client.get_published_products(), variant_report)
         result['automatic_memory_variants'] = {key: variant_report[key] for key in
-            ('observed_candidates', 'technical_documents', 'created', 'existing', 'writes', 'score_refresh_pending')}
+            ('observed_candidates', 'eligible_source_candidates', 'deferred_source_candidates',
+             'attempted_candidates', 'technical_documents', 'created', 'existing', 'writes', 'score_refresh_pending')}
         result['automatic_memory_variants']['catalog_readback'] = readback
         current_prices = client.get_public_price_priority()
         result['original_catalog_coverage'] = coverage_readback(result,

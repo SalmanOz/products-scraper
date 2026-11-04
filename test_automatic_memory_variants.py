@@ -452,6 +452,51 @@ class AutomaticMemoryVariantTests(unittest.TestCase):
         client.session.request.assert_not_called()
         store.upload.assert_not_called()
 
+    def test_blocked_only_candidate_does_not_consume_the_next_reachable_models_attempt(self):
+        from test_n11_catalog_source import document, URL as n11_url, NAME as n11_name
+        from observed_memory_variants import inspect_n11_memory_variant
+        parent = {'id': 124, 'slug': 'samsung-galaxy-a57', 'name': n11_name,
+                  'attributes': {'ram_gb': 6, 'storage_gb': 128, 'Connectivity': {'5G': True}}}
+        preview = inspect_n11_memory_variant(document(), n11_url, n11_name,
+            {'ram_gb': 6, 'storage_gb': 128, 'network_generation': '5g'})
+        result = self.candidate_result()
+        result['rows'].append({'slug': parent['slug'], 'other_memory_variant': preview})
+        result['sources'] = {'Trendyol': {'blocked': True}, 'n11': {'blocked': False}}
+        original = deepcopy(result)
+        with patch('automatic_memory_variants.MAX_VARIANTS', 1), \
+             patch('automatic_memory_variants.technical_records', return_value=([], {}, ['source-image'])) as technical, \
+             patch('audit_priority_retailers.inspect_target', return_value={'prepared_offer': preview['offer']}) as inspect:
+            report = prepare_memory_variants(result, [PARENT, parent],
+                transport=SimpleNamespace(report=lambda: {}), technical_reader=SimpleNamespace(documents=3))
+        self.assertEqual((report['observed_candidates'], report['eligible_source_candidates'],
+                          report['deferred_source_candidates'], report['attempted_candidates']), (2, 1, 1, 1))
+        self.assertEqual(report['rows'][0]['parent_slug'], parent['slug'])
+        self.assertEqual(report['rows'][0]['status'], 'technical_and_live_offer_verified')
+        self.assertEqual(report['source_deferrals'][0]['parent_slug'], PARENT['slug'])
+        self.assertEqual(report['source_deferrals'][0]['reason'], 'all_observed_variant_sources_blocked_for_run')
+        self.assertEqual(technical.call_count, 1)
+        self.assertEqual(inspect.call_args.args[1], n11_url)
+        self.assertFalse(report['writes'])
+        self.assertEqual(result, original)
+
+    def test_all_sources_blocked_preserves_candidates_as_deferrals_without_technical_requests(self):
+        result = self.candidate_result()
+        result['sources'] = {'Trendyol': {'blocked': True}}
+        client, store = unittest.mock.Mock(), unittest.mock.Mock()
+        with patch('automatic_memory_variants.technical_records') as technical, \
+             patch('audit_priority_retailers.inspect_target') as inspect:
+            report = prepare_memory_variants(result, [PARENT],
+                transport=SimpleNamespace(report=lambda: {}), technical_reader=SimpleNamespace(documents=0),
+                publish=True, source_client=client, image_store=store)
+        self.assertEqual(report['deferred_source_candidates'], 1)
+        self.assertEqual(report['attempted_candidates'], 0)
+        self.assertEqual(report['rows'], [])
+        self.assertFalse(report['writes'])
+        technical.assert_not_called()
+        inspect.assert_not_called()
+        client.session.request.assert_not_called()
+        store.upload.assert_not_called()
+
     def test_atomic_writer_receives_new_capacity_proof_and_immutable_parent_in_one_payload(self):
         result = self.candidate_result()
         fresh = deepcopy(result['rows'][0]['other_memory_variant']['offer'])
