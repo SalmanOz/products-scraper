@@ -433,6 +433,17 @@ Kategori bütçeleri ürün sayfası bütçesinden ayrıdır; gecikme, robots ve
 kesicisi her iki yolda da uygulanır. Ürün sayfasında kapasite, 4G/5G, seçili
 ilan/satıcı, GTIN, stok ve normal veya açıkça ayrılmış sepette fiyat kanıtlanır.
 
+Trendyol'da mevcut yenileme hedeflerinden en fazla sekiz farklı markanın ürünü
+kategori keşfinden önce okunur; diğer katalog hedefleri normal turunda kalır.
+Bu sayfaların gözlenen telefon/Android telefon marka kategorileri, zorunlu
+genel kategori okumasından sonra aynı 100 sayfalık kuyruğa alınır. Marka kimliği
+ve kategori başlığı tam eşleşir; sayfalama yalnız aynı kategori yolunda ilerler.
+Marka numarası veya kategori adresi üretilmez. Tükenmiş bir ilanın kategori
+bağlantısı keşif için kullanılabilir; teklif yazımı canlı seçili ürün ve satıcı
+kanıtını ayrıca gerektirir. Kart fiyatları, eski satıcı fiyatları ve teknik
+özellikler keşif üzerinden taşınmaz. `trendyol_brand_category_discovery` alanı
+erkene alınan mevcut modelleri ve gözlenen kategori adreslerini raporlar.
+
 `hepsiburada-category-audit` yalnız kategori yönlerini sınar: ürün sayfası
 okumaz ve fiyat yazmaz. `n11-preflight` salt okunur kaynak tanısı içindir.
 `target-preflight`, `target_slug` ile mevcut yayımlanmış ürünü ve `target_url`

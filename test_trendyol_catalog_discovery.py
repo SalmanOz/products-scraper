@@ -4,6 +4,8 @@ from priority_retailer_transport import PriorityRetailerTransport
 from trendyol_catalog_discovery import CATEGORY_URL, category_page_number, parse_category_document
 from teknosa_catalog_discovery import match_catalog_destinations
 from test_pasaj_source import Response
+from pathlib import Path
+from trendyol_catalog_discovery import category_identity, discovery_links, recovery_seed_targets
 
 
 TITLE = 'Xiaomi REDMI A7 Pro 4GB+128GB Siyah (Xiaomi Türkiye Garantili)'
@@ -22,6 +24,147 @@ def document(body=None, page=1):
 
 
 class TrendyolDiscoveryTests(unittest.TestCase):
+    def test_observed_public_brand_page_has_only_raw_product_hints_and_exact_brand_heading(self):
+        url = 'https://www.trendyol.com/infinix-android-cep-telefonu-x-b158303-c164461'
+        body = Path('fixtures/trendyol-public-brand-category.html').read_text()
+        diagnostic = {}
+        rows, _ = parse_category_document(body, url, diagnostic)
+        self.assertEqual(len(rows), 4)
+        self.assertEqual(diagnostic['category_scope'], 'phone_brand')
+        self.assertEqual(diagnostic['status'], 'parsed')
+        for row in rows:
+            self.assertNotIn('?', row['source_url'])
+            for key in ('price', 'merchant_name', 'ram_gb', 'storage_gb', 'source_variant_evidence'):
+                self.assertNotIn(key, row)
+        for wrong in ['Samsung Android Cep Telefonu', 'INFINIX Cep Telefonu', 'INFINIX Telefon Kılıfları']:
+            self.assertEqual(parse_category_document(body.replace('INFINIX Android Cep Telefonu', wrong), url)[0], [])
+        product = {'id': 219, 'name': 'Infinix Note 40', 'attributes': {'ram_gb': 8, 'storage_gb': 256}}
+        self.assertEqual(match_catalog_destinations(rows, [product]), {})
+
+    def test_brand_scope_and_pagination_never_mix_other_categories_or_private_query_parameters(self):
+        brand = 'https://www.trendyol.com/infinix-android-cep-telefonu-x-b158303-c164461'
+        body = '<h1 class="title">INFINIX Android Cep Telefonu</h1>' + card() + ''.join(
+            f'<a href="{u}">Page</a>' for u in (brand, brand+'?pi=2', CATEGORY_URL+'?pi=2',
+                brand.replace('infinix', 'samsung')+'?pi=2'))
+        self.assertEqual(parse_category_document(body, brand)[1], brand+'?pi=2')
+        for bad in [brand+'?pi=2&token=x',brand+'?b=158303',brand+'?pi=01',brand+'#x',
+                brand.replace('https:', 'http:'),brand.replace('.com/', '.com.evil.test/'),
+                brand.replace('-c164461','-c103498'),brand.replace('infinix','inventedbrand')]:
+            self.assertIsNone(category_identity(bad), bad)
+
+    def test_pdp_breadcrumbs_discover_only_observed_catalog_brand_phone_routes_even_when_sold_out(self):
+        from audit_priority_retailers import inspect_target
+        from test_trendyol_catalog_source import document as pdp, URL as target, NAME, SPECS
+        brand = 'https://www.trendyol.com/samsung-cep-telefonu-x-b794-c103498'
+        # Isolated fixture category ID; production uses only freshly observed hrefs.
+        links = [brand,brand,brand.replace('samsung','infinix'),brand+'?token=private',
+            brand.replace('.com/', '.com.evil.test/'),brand.replace('-c103498','-c104025')]
+        extra = ''.join(f'<a href="{u}">Brand</a>' for u in links)
+        body = pdp({('state','product','inStock'):False,('cart_attributes',):'disabled',('extra',):extra})
+        parent = {'id':1,'slug':'samsung-galaxy-a54-5g','name':NAME,'attributes':SPECS}
+        class Transport:
+            def read_document(self,url): return body,'document_read',200
+            def resolved_url(self,url): return url
+        row = inspect_target(Transport(),target,parent)
+        self.assertIsNone(row['prepared_offer'])
+        self.assertEqual(row['reader_reason'],'selected_product_mismatch')
+        self.assertEqual([h['source_url'] for h in row['discovered_categories']],[brand])
+        self.assertEqual(row['discovered_categories'][0]['source_document_url'],target.split('?')[0])
+        self.assertEqual(discovery_links(body.replace(NAME,NAME.replace(' 5G','')),target,[parent]),[brand])
+        self.assertEqual(discovery_links(body.replace(NAME,'Samsung Galaxy A55 5G'),target,[parent]),[])
+
+    def test_brand_seeds_reorder_only_existing_targets_and_are_capped_without_promoting_price_hints(self):
+        rows=[]
+        for index,brand in enumerate(['Samsung','Samsung','Infinix','Tecno','Apple','Honor','Vivo','Oppo','Realme','Nothing']):
+            p={'id':index+1,'slug':f'phone-{index}','name':brand+' Phone 10','attributes':{}}
+            rows.append((f'https://www.trendyol.com/{brand.lower()}/phone-10-p-{5000+index}',p))
+        prices={p['id']:(p['slug'],True) for _,p in rows}
+        prices[2]=(rows[1][1]['slug'],False)
+        before=[(u,dict(p)) for u,p in rows]
+        seeds=recovery_seed_targets(rows,prices)
+        self.assertEqual(len(seeds),8)
+        self.assertEqual(seeds[0],rows[1])
+        self.assertNotIn(rows[0],seeds)
+        self.assertEqual(rows,before)
+        self.assertEqual(recovery_seed_targets(rows,prices,maximum=0),[])
+        with self.assertRaises(ValueError): recovery_seed_targets(rows,prices,maximum=9)
+        subbrands=[(f'https://www.trendyol.com/xiaomi/phone-p-{6000+i}',
+            {'id':100+i,'slug':f'redmi-{i}','name':name}) for i,name in
+            enumerate(['Xiaomi Redmi Note 14','Redmi Note 13'])]
+        self.assertEqual(recovery_seed_targets(subbrands,{}),subbrands[:1])
+
+    def test_brand_and_root_pages_share_existing_category_budget_and_robots_with_pdp_quota_preserved(self):
+        brand='https://www.trendyol.com/infinix-android-cep-telefonu-x-b158303-c164461'
+        calls=[]
+        def get(url,**_):
+            calls.append(url)
+            return Response(url,'User-agent: *\nAllow: /\n' if url.endswith('robots.txt') else '<h1>Public</h1>')
+        transport=PriorityRetailerTransport(get=get,sleep=lambda _:None,maximum_per_host=1)
+        for root in (CATEGORY_URL,brand):
+            for page in range(1,51):
+                self.assertEqual(transport.read_trendyol_category(root+(f'?pi={page}' if page>1 else ''))[1],'document_read')
+        self.assertEqual(transport.read_trendyol_category(brand+'?pi=51')[1],'category_budget_exhausted')
+        self.assertEqual(transport.read_document(URL)[1],'document_read')
+        self.assertEqual((transport.report()['Trendyol']['category_requests'],transport.report()['Trendyol']['pdp_requests']),(100,1))
+        self.assertEqual(len(calls),102)
+        denied=PriorityRetailerTransport(get=lambda url,**_:Response(url,
+            'User-agent: *\nDisallow: /infinix-android-cep-telefonu-x-b158303-c164461\n'),sleep=lambda _:None)
+        self.assertEqual(denied.read_trendyol_category(brand)[1],'robots_disallowed')
+
+    def test_sold_out_seed_breadcrumb_reaches_new_brand_listing_then_fresh_atomic_publication(self):
+        from sweep_priority_catalog import sweep
+        from test_priority_candidates import Client
+        from test_trendyol_catalog_source import document as pdp, URL as seed, NAME, SPECS
+        from retailer_offer_refresh import RetailerOfferRefresher
+        from trendyol_catalog_source import TrendyolCatalogSource
+        canonical = seed.split('?')[0]
+        destination = canonical.replace('676507062','676507063')
+        brand = 'https://www.trendyol.com/samsung-cep-telefonu-x-b794-c103498'
+        for valid_heading in (True,False):
+            class ScopedClient(Client):
+                def ingest_listing_offers(self,records,*,require_all_accepted=True):
+                    return {**super().ingest_offers(records,require_all_accepted=require_all_accepted),
+                        'offer_identity_contract':'seller-source-url-v1'}
+            client=ScopedClient()
+            client.product.update(name=NAME,attributes=SPECS,offer_targets=[{'source_url':canonical}])
+            client.get_public_price_priority=lambda:{client.product['id']:(client.product['slug'],False)}
+            calls=[]
+            class Transport:
+                def configure_catalog_budget(self,count): pass
+                def read_document(self,url):
+                    calls.append(('pdp',url))
+                    if url==canonical:
+                        return pdp({('state','product','inStock'):False,('cart_attributes',):'disabled',
+                            ('extra',):f'<a href="{brand}">Samsung Cep Telefonu</a>'}),'document_read',200
+                    self_case.assertEqual(url,destination)
+                    return pdp().replace('676507062','676507063'),'document_read',200
+                def read_trendyol_category(self,url):
+                    calls.append(('category',url))
+                    if url==CATEGORY_URL:
+                        return document('',page=2),'document_read',200
+                    self_case.assertEqual(url,brand)
+                    title='Samsung Cep Telefonu' if valid_heading else 'Huawei Cep Telefonu'
+                    return (f'<h1 class="title">{title}</h1>'+card(NAME+' 8GB RAM 128GB',destination)+
+                        f'<a href="{brand}">1</a>'),'document_read',200
+                def resolved_url(self,url): return url
+                def report(self): return {}
+            self_case=self
+            transport=Transport()
+            reader=RetailerOfferRefresher(trendyol_catalog_source=TrendyolCatalogSource(transport=transport))
+            result=sweep(client=client,publish=True,transport=transport,reader=reader,discover_trendyol=True)
+            self.assertEqual(calls[:3],[('pdp',canonical),('category',CATEGORY_URL),('category',brand)])
+            self.assertEqual(result['trendyol_brand_category_discovery']['observed_category_urls'],[brand])
+            self.assertIsNone(result['rows'][0]['prepared_offer'])
+            self.assertEqual(result['accepted'],int(valid_heading))
+            self.assertEqual(len(client.writes),int(valid_heading))
+            if valid_heading:
+                self.assertEqual(calls[3:],[('pdp',destination),('pdp',destination)])
+                self.assertEqual(client.writes[0][0]['source_url'],destination)
+                self.assertEqual(client.writes[0][0]['price'],34997)
+                self.assertTrue(result['rows'][1]['publication']['commercial_readback_verified'])
+            else:
+                self.assertEqual(len(calls),3)
+
     def test_observed_g_pair_category_card_is_a_raw_destination_hint_not_selected_memory_or_price(self):
         product = {'id': 1, 'name': 'Xiaomi 17', 'slug': 'xiaomi-17',
                    'attributes': {'ram_gb': 12, 'storage_gb': 256}}

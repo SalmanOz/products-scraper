@@ -217,6 +217,11 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
     seller_counts = Counter()
     memory_counts = Counter()
     memory_retailer_counts = Counter()
+    trendyol_category_hints = []
+    if discover_trendyol and not category_audit_only:
+        result['trendyol_brand_category_discovery'] = {'scope': 'observed_pdp_breadcrumbs_only',
+            'initial_model_limit': 8, 'seed_models': [], 'observed_category_urls': trendyol_category_hints,
+            'prices_or_offer_evidence_reused': False, 'source_budget_shared': True}
     def process_target(url, product, audited_row=None):
         nonlocal publication_failed
         if (product['slug'], url) in processed:
@@ -231,6 +236,16 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
             key: value for key, value in PriceUpdater.get_expected_specs(
                 product['attributes']).items() if key in ('ram_gb', 'storage_gb')}
         result['rows'].append(row)
+        if discover_trendyol and product_host(row.get('observed_url')) == 'www.trendyol.com':
+            from trendyol_catalog_discovery import category_identity
+            for hint in row.get('discovered_categories', []):
+                target = hint.get('source_url') if isinstance(hint, dict) else None
+                identity = category_identity(target)
+                if (identity and identity['brand'] and identity['page'] == 1
+                        and hint.get('discovery_scope') == 'public_phone_brand_category'
+                        and hint.get('source_document_url') == row.get('resolved_url', row['observed_url'])
+                        and target not in trendyol_category_hints):
+                    trendyol_category_hints.append(target)
         if row.get('prepared_offer') is not None and publish and not publication_failed:
             if product['slug'] == 'samsung-galaxy-a37-5g' and not listing_scoped:
                 row['publication'] = {'status': 'protected_paired_workflow_required'}
@@ -381,7 +396,8 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
         if resume is None:
             is_hb = report_key == 'hepsiburada_category_discovery'
             history = frontier['visited'] if is_hb else []
-            pending_branches = [u for u in frontier['pending'] if u != module.CATEGORY_URL] if is_hb else []
+            pending_branches = ([u for u in frontier['pending'] if u != module.CATEGORY_URL] if is_hb else
+                list(trendyol_category_hints) if report_key == 'trendyol_category_discovery' else [])
             # Always re-read the public root, then prioritize the actual unread
             # frontier. Previously parsed categories are not price evidence.
             cards, category_url = [], module.CATEGORY_URL
@@ -514,6 +530,13 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                               transport.read_teknosa_category)
         if discover_trendyol:
             import trendyol_catalog_discovery
+            if not category_audit_only:
+                seeds = trendyol_catalog_discovery.recovery_seed_targets(refresh_targets, prices)
+                for url, product in seeds:
+                    if transport.report().get('Trendyol', {}).get('blocked') is True:
+                        break
+                    process_target(url, product)
+                    result['trendyol_brand_category_discovery']['seed_models'].append(product['slug'])
             discover_category('Trendyol', 'trendyol_category_discovery', trendyol_catalog_discovery,
                               transport.read_trendyol_category)
         for url, product in ([] if category_audit_only else refresh_targets):
@@ -656,6 +679,12 @@ def save_report(result):
     lines += ['', 'Reasons: ' + json.dumps(counts, ensure_ascii=False), '',
               'Sources: ' + json.dumps(result.get('sources'), ensure_ascii=False), '',
               'No-hint models: ' + ', '.join(result['models_without_priority_hints'])]
+    if result.get('trendyol_brand_category_discovery'):
+        brands = result['trendyol_brand_category_discovery']
+        lines += ['', 'Trendyol observed brand routing: ' + json.dumps({
+            'seed_models': len(brands['seed_models']), 'model_limit': brands['initial_model_limit'],
+            'observed_category_urls': len(brands['observed_category_urls']),
+            'source_budget_shared': True, 'prices_or_offer_evidence_reused': False})]
     if result.get('n11_store_gap_discovery'):
         gaps = result['n11_store_gap_discovery']
         lines += ['', 'n11 platform-gap routing: ' + json.dumps({

@@ -160,8 +160,11 @@ def inspect_target(transport, url, product):
                     row['other_memory_variant'] = other
         if host == 'www.trendyol.com':
             from trendyol_catalog_source import parse_catalog_listing
+            from trendyol_catalog_discovery import discovery_links
             specs = with_reviewed_radio(product, PriceUpdater.get_expected_specs(product.get('attributes')))
             final_url = transport.resolved_url(observed_url)
+            row['discovered_categories'] = [{'source_url': target, 'source_document_url': final_url,
+                'discovery_scope': 'public_phone_brand_category'} for target in discovery_links(html, final_url, [product])]
             offer, why = parse_catalog_listing(html, final_url, product['name'], specs)
             row['resolved_url'] = final_url
             row.update(reader_reason=why, prepared_offer=offer)
