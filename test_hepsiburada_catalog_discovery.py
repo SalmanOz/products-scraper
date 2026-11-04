@@ -21,6 +21,25 @@ def document(brand=False):
 
 
 class HepsiburadaDiscoveryTests(unittest.TestCase):
+    def test_observed_model_editorial_headings_keep_full_generation_and_pro_max_boundaries(self):
+        cases = [
+            ('https://www.hepsiburada.com/iphone-16-pro-iphone-ios-telefonlar-xc-60005202-t29',
+             'iPhone 16 Pro Özellikleri'),
+            ('https://www.hepsiburada.com/iphone-15-pro-iphone-ios-telefonlar-xc-60005202-t2',
+             'iPhone 15 Pro Modelleri 2026')]
+        for url, title in cases:
+            html = document().replace('Cep Telefonu Fiyatları ve Modelleri', title)
+            diagnostic = {}
+            self.assertEqual(len(parse_category_document(html, url, diagnostic)[0]), 1)
+            self.assertEqual(diagnostic['status'], 'parsed')
+            for changed in [title.replace(' Pro', ' Pro Max'), title.replace(' Pro', ''),
+                            title.replace('16', '17').replace('15', '14'), title + ' ve Aksesuarları']:
+                if changed == title:
+                    continue
+                altered = html.replace(title, changed)
+                self.assertEqual(parse_category_document(altered, url)[0], [], (url, changed))
+            self.assertEqual(parse_category_document(html, SAMSUNG)[0], [])
+
     def test_other_seller_selector_requires_visible_link_and_same_selected_sku_inventory_without_prices(self):
         import html as html_module
         import json

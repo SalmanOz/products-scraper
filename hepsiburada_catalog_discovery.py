@@ -87,7 +87,12 @@ def _category_soup(html, url):
     if model:
         name = TRPriceScraper._normalize_words(model[0].replace('-', ' '))
         expected = {name + ' indirimleri', name + ' fiyatlari ve modelleri',
-                    name + ' android telefon modelleri ve ozellikleri'}
+                    name + ' android telefon modelleri ve ozellikleri', name + ' ozellikleri'}
+        # Observed model taxonomies use editorial SEO H1s as well as the
+        # ordinary category template. Keep the complete exact model prefix;
+        # Pro/Max/Plus and generation words must not be dropped.
+        if re.fullmatch(re.escape(name) + r' modelleri 20\d{2}', title):
+            expected.add(title)
     if urlparse(url).query:
         expected.add('cep telefonu' if brand == '' else brand + ' cep telefonu')
     return soup if title in expected else None
