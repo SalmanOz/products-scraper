@@ -102,6 +102,14 @@ def match_catalog_destinations(cards, products, *, maximum_per_model=2):
                 continue
         # Capacity punctuation is observed on the category card itself.
         title = re.sub(r'(?<=\d)GB[/_](?=\d)', ' GB ', title, flags=re.I)
+        # Observed category cards also use 12G+256G. This temporary text is
+        # solely for finding/prioritizing a PDP hint; retain its raw title and
+        # never attach selected-SKU facts or a card price to the candidate.
+        # A lone 4G/5G is not touched. The PDP must independently prove memory.
+        shorthand = re.compile(r'(?<![\w.,])([1-9]|1\d|2[0-4])\s*G\s*\+\s*'
+                               r'(64|128|256|512|1024)\s*G(?!\w)', re.I)
+        if len(list(shorthand.finditer(title))) == 1:
+            title = shorthand.sub(r'RAM \1 GB; ROM \2 GB', title)
         owners = [p for p in products if matcher.is_strict_match(p['name'], title, specs[p['id']])]
         if len(owners) != 1:
             continue

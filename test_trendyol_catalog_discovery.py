@@ -22,6 +22,24 @@ def document(body=None, page=1):
 
 
 class TrendyolDiscoveryTests(unittest.TestCase):
+    def test_observed_g_pair_category_card_is_a_raw_destination_hint_not_selected_memory_or_price(self):
+        product = {'id': 1, 'name': 'Xiaomi 17', 'slug': 'xiaomi-17',
+                   'attributes': {'ram_gb': 12, 'storage_gb': 256}}
+        title = 'Xiaomi 17 12G+256G Siyah'
+        url = 'https://www.trendyol.com/xiaomi/17-12g-256g-siyah-p-1110127495'
+        rows, _ = parse_category_document(document(card(title, url)), CATEGORY_URL)
+        before = [dict(r) for r in rows]
+        self.assertEqual(match_catalog_destinations(rows, [product])[1], rows)
+        self.assertEqual(rows, before)
+        self.assertEqual(rows[0]['discovery_title'], title)
+        for forbidden in ['price', 'ram_gb', 'storage_gb', 'source_variant_evidence']:
+            self.assertNotIn(forbidden, rows[0])
+        for changed in ['Xiaomi 17 8G+256G Siyah', 'Xiaomi 17 12G+512G Siyah',
+                        'Xiaomi 17 Plus 12G+256G Siyah', 'Xiaomi 17 Pro 12G+256G Siyah',
+                        'Xiaomi 17 12G+256G / 12G+512G Siyah']:
+            other, _ = parse_category_document(document(card(changed, url)), CATEGORY_URL)
+            self.assertEqual(match_catalog_destinations(other, [product]), {}, changed)
+
     def test_real_card_shape_discovers_only_canonical_destinations_not_card_amounts(self):
         rows, next_url = parse_category_document(document(), CATEGORY_URL)
         self.assertEqual(len(rows), 1)
