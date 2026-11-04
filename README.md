@@ -543,7 +543,8 @@ client can replay the identical transaction once. It reuses the already uploaded
 images and fresh observations; it performs no extra retailer reads and never
 retries an explicit quality/identity rejection. A replay may acknowledge a
 committed new capacity as `existing`; it is counted as created only when its ID
-was absent from the pre-attempt catalog and its expected slug still matches.
+was absent from the pre-attempt catalog, a second request was actually made,
+and its expected slug still matches.
 The full identity and exact commercial readbacks remain mandatory. Two uncertain
 replies cannot count a variant as published, and an unacknowledged new catalog
 row still stops the sweep. The artifact records the attempt count and reply

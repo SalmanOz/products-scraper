@@ -956,7 +956,7 @@ def prepare_memory_variants(result, products, *, transport, technical_reader=Non
                     # The first reply may have been lost after commit. The
                     # replay acknowledges that exact new SKU as existing;
                     # it must still appear as a new child in baseline checks.
-                    if body.get('slug') != identity['slug']:
+                    if row.get('publication_attempts') != 2 or body.get('slug') != identity['slug']:
                         raise ValueError('recovered_variant_identity_conflict')
                     outcome = 'created'
                     row['server_outcome'] = body['outcome']

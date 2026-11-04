@@ -845,6 +845,24 @@ class AutomaticMemoryVariantTests(unittest.TestCase):
         self.assertEqual(report['created'], 0)
         self.assertEqual(report['rows'][0]['server_issues'], ['technical_model_identity_mismatch'])
 
+    def test_first_reply_cannot_claim_an_unexpected_existing_id_as_our_new_variant(self):
+        result = self.candidate_result()
+        fresh = deepcopy(result['rows'][0]['other_memory_variant']['offer'])
+        identity = variant_identity(PARENT, 8, 256)
+        client = unittest.mock.Mock(base_url='https://teknoskor.com', secret='fixture-only')
+        client.session.request.return_value = SimpleNamespace(status_code=200)
+        client._json_body.return_value = {'committed': True, 'contract': CONTRACT, 'parent_unchanged': True,
+            'outcome': 'existing', 'product_id': 987, 'slug': identity['slug'],
+            'parent_product_id': PARENT['id'], 'scores_recalculated': True}
+        with patch('automatic_memory_variants.technical_records', return_value=([{'attribute_key': 'ram_gb'}], {}, ['source-image'])), \
+             patch('audit_priority_retailers.inspect_target', return_value={'prepared_offer': fresh}):
+            report = prepare_memory_variants(result, [PARENT], transport=SimpleNamespace(report=lambda: {}),
+                technical_reader=SimpleNamespace(documents=3), publish=True, source_client=client,
+                image_store=unittest.mock.Mock(upload=unittest.mock.Mock(return_value='https://cdn.teknoskor.com/fixture.webp')))
+        client.session.request.assert_called_once()
+        self.assertEqual((report['created'], report['existing']), (0, 0))
+        self.assertEqual(report['rows'][0]['reason'], 'recovered_variant_identity_conflict')
+
     def test_one_failed_source_image_can_recover_but_no_image_cannot_create_a_variant(self):
         result = self.candidate_result()
         fresh = deepcopy(result['rows'][0]['other_memory_variant']['offer'])
