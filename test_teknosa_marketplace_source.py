@@ -1,4 +1,5 @@
 from copy import deepcopy
+import json
 from pathlib import Path
 import unittest
 
@@ -18,6 +19,46 @@ def document():
 
 
 class TeknosaMarketplaceTests(unittest.TestCase):
+    def test_observed_ordinary_sale_binds_list_and_payable_amounts_to_their_own_fields(self):
+        from bs4 import BeautifulSoup
+        html = Path(__file__).with_name('fixtures').joinpath('teknosa-selected-ordinary-sale.html').read_text()
+        url = 'https://www.teknosa.com/xiaomi-17t-12gb-512gb-beyaz-android-telefon-xiaomi-turkiye-garantili-p-780010982'
+        profile = {'name': 'Xiaomi 17T', 'specs': {'ram_gb': 12, 'storage_gb': 512, 'network_generation': '5g'}}
+        offer, reason = parse_selected_marketplace(html, url, profile)
+        self.assertEqual(reason, 'selected_teknosa_marketplace_cash_offer')
+        self.assertEqual((offer['merchant'], offer['price'], offer['gtin13'], offer['listing_id']),
+                         ('ES VİSİON', 51249, '6932554447908', '1990011'))
+        for attribute, value in [('data-price-without-discount', '54998'),
+                                 ('data-price-without-discount', '50000'),
+                                 ('data-price-with-discount', '51248'),
+                                 ('data-price-with-discount', '54999'),
+                                 ('data-shop-name', 'Other'),
+                                 ('data-product-ean', '6932554447909')]:
+            soup = BeautifulSoup(html, 'html.parser')
+            soup.select_one('button#addToCartButton')[attribute] = value
+            self.assertIsNone(parse_selected_marketplace(str(soup), url, profile)[0], attribute)
+        for key, value in [('unit_price', 51249), ('unit_price', 54998), ('unit_sale_price', 54999)]:
+            soup = BeautifulSoup(html, 'html.parser')
+            script = next(n for n in soup.select('script') if n.get_text().startswith('window.insider_object = '))
+            state = json.loads(script.get_text().removeprefix('window.insider_object = ').rstrip(';'))
+            state['product'][key] = value
+            script.string = 'window.insider_object = ' + json.dumps(state) + ';'
+            self.assertIsNone(parse_selected_marketplace(str(soup), url, profile)[0], key)
+        for change in ('schema_price', 'schema_member', 'visible_price', 'coupon', 'stock'):
+            soup = BeautifulSoup(html, 'html.parser')
+            if change in ('schema_price', 'schema_member', 'stock'):
+                script = soup.select_one('script[type="application/ld+json"]')
+                schema = json.loads(script.get_text())
+                field, value = {'schema_price': ('price', 54999), 'schema_member': ('validForMemberTier', 'members'),
+                                'stock': ('availability', 'https://schema.org/OutOfStock')}[change]
+                schema['@graph']['offers'][field] = value
+                script.string = json.dumps(schema)
+            elif change == 'visible_price':
+                soup.select_one('.prc-third').string = '54.999 TL'
+            else:
+                soup.select_one('.pdp-prices').append(BeautifulSoup('<span>Kuponla 51.249 TL</span>', 'html.parser'))
+            self.assertIsNone(parse_selected_marketplace(str(soup), url, profile)[0], change)
+
     def test_observed_repeated_brand_rendering_binds_original_heading_cart_schema_and_shop(self):
         from bs4 import BeautifulSoup
         html = Path(__file__).with_name('fixtures').joinpath('teknosa-selected-brand-rendering.html').read_text()

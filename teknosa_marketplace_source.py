@@ -80,7 +80,11 @@ def parse_selected_marketplace(html, url, profile):
             or 'js-shop_offer_' + listing[1] not in cart.get('class', [])):
         return None, 'selected_shop_or_listing_mismatch'
     price = _amount(cart.get('data-price-with-discount'))
-    if price is None or _amount(cart.get('data-price-without-discount')) != price:
+    list_price = _amount(cart.get('data-price-without-discount'))
+    # A normal public sale has two different amounts. Keep each bound to
+    # its own selected-shop state field; only the sale amount may agree with
+    # the visible cash price and schema. Conditional prices still fail below.
+    if price is None or list_price is None or list_price < price:
         return None, 'selected_marketplace_cash_price_missing'
     # These fields describe Teknosa's own inventory, not the selected shop's
     # offer. For a marketplace-only PDP they are empty and stock is N. Do not
@@ -102,7 +106,7 @@ def parse_selected_marketplace(html, url, profile):
             or state.get('name') != title or state.get('currency') != 'TRY'
             or state.get('url') != url + '?shopId=' + shop
             or custom.get('shop_name') != seller or str(custom.get('shop_id')) != shop
-            or _amount(state.get('unit_price')) != price or _amount(state.get('unit_sale_price')) != price):
+            or _amount(state.get('unit_price')) != list_price or _amount(state.get('unit_sale_price')) != price):
         return None, 'selected_product_state_mismatch'
     from retailer_offer_refresh import _schema_nodes, _type_is, _is_conditional_price
     schemas = [p for p in _schema_nodes(soup, url) if _type_is(p, 'Product')]
