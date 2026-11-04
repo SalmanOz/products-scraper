@@ -148,13 +148,17 @@ def _category_soup(html, url):
     if model:
         name = TRPriceScraper._normalize_words(model[0].replace('-', ' '))
         labels = {name}
+        parts = name.split()
+        brand_words = {a for aliases in TRPriceScraper.PHONE_BRAND_ALIASES.values() for a in aliases}
+        if len(parts) > 2 and parts[0] == parts[1] and parts[0] in brand_words:
+            labels.add(' '.join(parts[1:]))
         if name.startswith('xiaomi redmi ') or name.startswith('xiaomi poco '):
             labels.add(name.removeprefix('xiaomi '))
         if name.startswith('samsung galaxy '):
             labels.add(name.replace('samsung galaxy ', 'samsung ', 1))
         labels |= {re.sub(r' (?:4g|5g|lte)$', '', label) for label in labels}
         candidate = re.sub(r'^20\d{2} ', '', title)
-        return soup if any(candidate.startswith(label + ' ') and
+        return soup if any(candidate == label or candidate.startswith(label + ' ') and
             category_tail(candidate[len(label) + 1:].split()) for label in labels) else None
     words = set(title.split())
     phone_markers = {'telefon', 'telefonu', 'telefonlar', 'telefonlari', 'iphone'}

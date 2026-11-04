@@ -26,6 +26,34 @@ def document(changes=None):
 
 
 class HepsiburadaCatalogTests(unittest.TestCase):
+    def test_literal_storage_presence_cell_requires_actual_selected_sku_capacity_and_visible_control(self):
+        # Public Redmi Note 15 Pro PDPs observed Nov 4: "Dahili Hafıza Var"
+        # with separately selected 256 GB controls and SKU properties.
+        soup = BeautifulSoup(document(), 'html.parser')
+        table = soup.select_one('#techSpecs')
+        table.string = table.get_text(' ', strip=True).replace('Dahili Hafıza 128 GB', 'Dahili Hafıza Var')
+        html = str(soup)
+        offer, reason = parse_catalog_buy_box(html, TARGET, NAME, SPECS)
+        self.assertIsNotNone(offer, reason)
+        self.assertEqual(offer['storage_gb'], 128)
+        self.assertEqual(offer['storage_evidence_source'], 'selected_sku_and_visible_capacity_control')
+        self.assertTrue(catalog_offer_matches(offer, NAME, SPECS))
+        for before, after in [
+                ('Dahili Hafıza Var', 'Dahili Hafıza Yok'),
+                ('Dahili Hafıza Var', 'Dahili Hafıza Unknown'),
+                ('Dahili Hafıza Var', 'Dahili Hafıza 256 GB'),
+                ('Dahili Hafıza Var', 'Dahili Hafıza Var Dahili Hafıza 256 GB'),
+                ('Seçili Kapasite 128 GB', 'Kapasite 128 GB'),
+                ('variant-box-Kapasite-128 GB', 'variant-box-Kapasite-256 GB'),
+                ('"actualValue": "128 GB"', '"actualValue": "256 GB"'),
+                ('8 GB RAM', '12 GB RAM'),
+                ('Mobil Bağlantı Hızı 5G', 'Mobil Bağlantı Hızı 4.5G'),
+                ('8806094821437', '8806094821438'),
+                ('data-test-id="addToCart"', 'disabled data-test-id="addToCart"')]:
+            with self.subTest(before=before, after=after):
+                self.assertIn(before, html)
+                self.assertIsNone(parse_catalog_buy_box(html.replace(before, after), TARGET, NAME, SPECS)[0])
+
     def test_64gb_iphone_storage_is_observed_without_inventing_ram_or_accepting_other_capacities(self):
         from tr_price_scraper import TRPriceScraper
         url = 'https://www.hepsiburada.com/apple-iphone-11-64-gb-beyaz-p-HBV0000120X66'

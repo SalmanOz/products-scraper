@@ -21,6 +21,16 @@ def document(brand=False):
 
 
 class HepsiburadaDiscoveryTests(unittest.TestCase):
+    def test_observed_bare_vivo_heading_matches_duplicated_brand_taxonomy_without_losing_model_qualifiers(self):
+        url = 'https://www.hepsiburada.com/vivo-vivo-x300-android-telefonlar-xc-60005201-b8855-t6828'
+        diagnostic = {}
+        parse_category_document('<h1>Vivo X300</h1>', url, diagnostic)
+        self.assertEqual(diagnostic['status'], 'parsed')
+        for title in ['Vivo', 'X300', 'Vivo X300 Pro', 'Vivo X300 Ultra', 'Vivo X200', 'Xiaomi X300']:
+            diagnostic = {}
+            parse_category_document('<h1>' + title + '</h1>', url, diagnostic)
+            self.assertEqual(diagnostic['status'], 'category_identity_missing', title)
+
     def test_observed_taxonomy_move_is_only_a_same_model_same_page_hint(self):
         from hepsiburada_catalog_discovery import category_redirect_target
         old = 'https://www.hepsiburada.com/samsung-galaxy-s25-fe-android-telefonlar-xc-60005201-b8848-t6765'

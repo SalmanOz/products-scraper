@@ -242,7 +242,17 @@ def parse_exact_buy_box(html: str, final_url: str = URL, *, scope=None):
         from hepsiburada_catalog_source import selected_technical_text
         detail = selected_technical_text(soup, scope['SKU'], scope['PRODUCT_ID'],
                                          scope['LISTING_ID'], scope['MERCHANT_ID'])
-    if (not re.search(rf"\bDahili Hafıza\s+{scope['SPECS']['storage_gb']} GB\b", detail)
+    storage_matches = bool(re.search(rf"\bDahili Hafıza\s+{scope['SPECS']['storage_gb']} GB\b", detail))
+    # Observed Redmi Note 15 Pro pages put literal "Var" in this table cell.
+    # It does not assert a capacity. The already validated selected SKU's
+    # Kapasite property AND its visible selected control still state the exact
+    # amount independently; neither can be missing or disagree with the title.
+    selected_storage_fallback = (generic and not storage_matches
+        and len(re.findall(r'\bDahili Hafıza\b', detail)) == 1
+        and bool(re.search(r'\bDahili Hafıza\s+Var\b', detail))
+        and any(p.get('name') == 'Kapasite' and p.get('valueObject', {}).get('actualValue') ==
+                str(scope['SPECS']['storage_gb']) + ' GB' for p in variant['properties']))
+    if (not (storage_matches or selected_storage_fallback)
             or not re.search(rf"\bRAM Kapasitesi\s+{scope['SPECS']['ram_gb']} GB(?: RAM)?\b", detail)
             or (scope['SPECS']['network_generation'] is not None and not re.search((r'\bMobil Bağlantı Hızı\s+5G\b' if scope['SPECS']['network_generation'] == '5g' else r'\bMobil Bağlantı Hızı\s+4(?:[.,]5)?G\b'), detail))
             or not re.search(r'\bStok Kodu\s+' + scope['SKU'] + r'\b', detail)):
@@ -297,6 +307,8 @@ def parse_exact_buy_box(html: str, final_url: str = URL, *, scope=None):
              'observed_at': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')}
     if generic:
         offer['observed_gtins'] = list(scope['GTIN13S'])
+        if selected_storage_fallback:
+            offer['storage_evidence_source'] = 'selected_sku_and_visible_capacity_control'
     matches = matcher.has_observed_offer_evidence(scope['CATALOG']['name'], offer,
                   scope['CATALOG_SPECS'] if generic else scope['SPECS'])
     if not matches:
