@@ -854,7 +854,16 @@ def prepare_memory_variants(result, products, *, transport, technical_reader=Non
                 fresh = inspect_target(transport, url, profile)
                 offer = fresh.get('prepared_offer')
                 selected = variant_selected_evidence(offer, identity['name'], specs)
-                if not selected or not TRPriceScraper().has_observed_offer_evidence(identity['name'], offer, specs):
+                verified = bool(selected and TRPriceScraper().has_observed_offer_evidence(identity['name'], offer, specs))
+                reason = fresh.get('reader_reason', fresh.get('reason'))
+                row.setdefault('retailer_checks', []).append({
+                    'source_url': url,
+                    'reader_reason': reason if isinstance(reason, str) and re.fullmatch(r'[a-z0-9_]{1,100}', reason)
+                                     else 'unclassified_reader_result',
+                    'http_status': fresh.get('http_status'),
+                    'selected_sku_verified': selected is not None,
+                    'offer_evidence_verified': verified})
+                if not verified:
                     continue
                 observed_at = canonical_observation_time(offer['observed_at'])
                 offers.append({'merchant_name': offer['merchant'], 'price': offer['price'], 'currency': 'TRY',

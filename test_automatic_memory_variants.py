@@ -611,6 +611,25 @@ class AutomaticMemoryVariantTests(unittest.TestCase):
         client.session.request.assert_not_called()
         store.upload.assert_not_called()
 
+    def test_fresh_retailer_rejection_preserves_its_reason_without_source_bodies_or_writes(self):
+        client, store = unittest.mock.Mock(), unittest.mock.Mock()
+        response = {'prepared_offer': None, 'reader_reason': 'schema_selected_cash_offer_mismatch',
+                    'http_status': 200, 'private_state': {'visitor': 'not-for-report'}}
+        with patch('automatic_memory_variants.technical_records', return_value=([], {}, ['image'])), \
+                patch('audit_priority_retailers.inspect_target', return_value=response):
+            report = prepare_memory_variants(self.candidate_result(), [PARENT],
+                transport=SimpleNamespace(report=lambda: {}), technical_reader=SimpleNamespace(documents=3),
+                publish=True, source_client=client, image_store=store)
+        row = report['rows'][0]
+        self.assertEqual(row['reason'], 'fresh_selected_variant_offer_missing')
+        self.assertEqual(row['retailer_checks'], [{'source_url': ALT_URL,
+            'reader_reason': 'schema_selected_cash_offer_mismatch', 'http_status': 200,
+            'selected_sku_verified': False, 'offer_evidence_verified': False}])
+        self.assertNotIn('private_state', json.dumps(report))
+        self.assertFalse(report['writes'])
+        client.session.request.assert_not_called()
+        store.upload.assert_not_called()
+
     def test_blocked_only_candidate_does_not_consume_the_next_reachable_models_attempt(self):
         from test_n11_catalog_source import document, URL as n11_url, NAME as n11_name
         from observed_memory_variants import inspect_n11_memory_variant
