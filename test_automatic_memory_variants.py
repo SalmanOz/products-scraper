@@ -40,6 +40,35 @@ def tech_document(url=ALT_TECH_URL, ram=8, storage=256, name=NAME):
 
 
 class AutomaticMemoryVariantTests(unittest.TestCase):
+    def test_actual_native_one_tb_hint_precedes_another_ram_equal_capacity_and_still_needs_selected_proof(self):
+        from pathlib import Path
+        base = 'https://www.kimovil.com/en/where-to-buy-apple-iphone-17-pro'
+        target = base + '-12gb-1tb'
+        search = 'https://www.kimovil.com/_json/autocomplete_devicemodels_joined.json?device_type=0&name=Apple%20iPhone%2017%20Pro'
+        root = Path('fixtures')
+        documents = {search: (root / 'kimovil-iphone17pro-public-variant-routes.json').read_text(),
+                     base: (root / 'kimovil-iphone17pro-base-public-technical.html').read_text(),
+                     target: (root / 'kimovil-iphone17pro-1tb-public-technical.html').read_text()}
+        class Source:
+            def __init__(self): self.calls = []
+            def read(self, url):
+                self.calls.append(url)
+                if url not in documents:
+                    raise AssertionError('Exact native 1TB hint should precede unrelated capacity: ' + url)
+                return documents[url]
+        parent = {'name': 'Apple iPhone 17 Pro', 'attributes': {'ram_gb': 12, 'storage_gb': 256}}
+        before = deepcopy(parent)
+        requested = {'ram_gb': 12, 'storage_gb': 1024, 'network_generation': '5g'}
+        source = Source(); reader = TechnicalVariantReader(source)
+        document, proof = reader.locate(parent, requested)
+        self.assertEqual(source.calls, [search, base, target])
+        self.assertEqual((proof['model_name'], proof['ram_gb'], proof['storage_gb']), ('Apple iPhone 17 Pro', 12, 1024))
+        self.assertEqual(parent, before)
+        for patch in ({'ram_gb': 8}, {'storage_gb': 1000}, {'storage_gb': 512}, {'network_generation': '4g'}):
+            self.assertIsNone(selected_technical_document(document, target, parent['name'], {**requested, **patch}, canonical_model_url=base))
+        self.assertIsNone(selected_technical_document(document, target, 'Apple iPhone 17 Pro Max', requested, canonical_model_url=base))
+        self.assertIsNone(selected_technical_document(document, target, parent['name'], requested, canonical_model_url=base+'-max'))
+
     def test_compact_iphone_name_uses_spaced_search_without_changing_catalog_identity_or_matching(self):
         root = 'https://www.kimovil.com/en/where-to-buy-apple-iphone16e'
         parent = {'id': 338, 'name': 'Apple iPhone16e 8GB 512GB', 'slug': 'apple-iphone16e-8gb-512gb',

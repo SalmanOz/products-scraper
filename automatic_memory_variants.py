@@ -521,13 +521,20 @@ class TechnicalVariantReader:
                     continue
                 ram, storage = specs['ram_gb'], specs['storage_gb']
                 path = urlparse(url).path
-                if (re.search(rf'(?<!\d){ram}\s*GB\b', label, re.I) and re.search(rf'(?<!\d){storage}\s*GB\b', label, re.I)
+                storage_labels = [rf'{storage}\s*GB']
+                if storage >= 1024 and storage % 1024 == 0:
+                    storage_labels.append(rf'{storage // 1024}\s*TB')
+                exact_label = bool(re.search(rf'(?<!\d){ram}\s*GB\b', label, re.I)
+                    and re.search(r'(?<!\d)(?:' + '|'.join(storage_labels) + r')\b', label, re.I))
+                # Native 12GB · 1TB labels identify an already declared URL.
+                # Rank that exact hint before another 12GB capacity, without
+                # inventing a slug or making the label selected-page proof.
+                if (exact_label
                         or re.search(rf'(?:-|global|china){ram}gb(?:-|$)', path)
                         or re.search(rf'(?:-|global|china){storage}gb(?:-|$)', path)):
                     observed.append(url)
                     observed_priority[url] = (
-                        int(bool(re.search(rf'(?<!\d){ram}\s*GB\b', label, re.I)
-                            and re.search(rf'(?<!\d){storage}\s*GB\b', label, re.I))),
+                        int(exact_label),
                         int(base_region is not None and node.get('data-mk') == base_region))
         observed.sort(key=lambda url: tuple(-value for value in observed_priority[url]))
         declared = {item['source_url'] for item in self.provider_variants.get(base, [])

@@ -634,6 +634,11 @@ amounts, extra storage rows, missing fields or a `Var` cell do not prove TB.
 The same independent conversion feeds other-memory discovery. Raw titles,
 schema prices, selected seller/SKU/GTIN/stock/radio proof and the separate
 technical-document verification before new variant publication stay required.
+The technical provider's native `12GB · 1TB` version label now ranks that
+already-declared destination before another 12GB capacity. This only orders
+the existing bounded reads; the selected page's full model, canonical/active
+variant, RAM, storage and radio still have to pass independently. No capacity
+slug or technical fact is synthesized from the label.
 
 If that atomic publication loses its reply or returns HTTP 502/503/504, the
 client can replay the identical transaction once. It reuses the already uploaded
