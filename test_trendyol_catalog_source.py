@@ -86,6 +86,8 @@ class TrendyolCatalogTests(unittest.TestCase):
                       'Xiaomi 17 12G+256G RAM', 'Xiaomi 17 RAM 12G+256G',
                       'Xiaomi 17 12G+256G Sanal RAM', 'Xiaomi 17 Plus 12G+256G',
                       'Xiaomi 17 12G+256G 8GB RAM', 'Xiaomi 17 12G+256G 128GB',
+                      'Xiaomi 17 12G+256G/512G', 'Xiaomi 17 12G+256G 8G RAM',
+                      'Xiaomi 17 12G+256G 5G RAM', 'Xiaomi 17 12G+256G RAM 5G',
                       'Xiaomi 17 12G+256G / 12G+512G', 'Xiaomi 17 12G+256G 4G',
                       'Xiaomi 17 12G+256G 12G+256G']:
             self.assertFalse(matcher.has_observed_offer_evidence('Xiaomi 17', dict(offer, source_title=title), specs), title)

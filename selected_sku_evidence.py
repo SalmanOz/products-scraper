@@ -25,7 +25,12 @@ def selected_capacity_title(title, selected):
     if len(matches) == 1:
         match = matches[0]
         before, after = title[max(0, match.start()-24):match.start()], title[match.end():match.end()+24]
+        rest = title[:match.start()] + ' ' * len(match[0]) + title[match.end():]
+        extra_g = [m for m in re.finditer(r'(?<![\w.,])(\d+)\s*G(?!\w)', rest, re.I)
+                   if m[1] not in {'4', '5'} or re.search(r'\b(?:ram|rom)\s*:?\s*$', rest[:m.start()], re.I)
+                   or re.match(r'\s*(?:ram|rom)\b', rest[m.end():], re.I)]
         if (int(match[1]) == selected['ram_gb'] and int(match[2]) == selected['storage_gb']
+                and not extra_g
                 and not re.search(r'\b(?:iphone|ram|rom|depolama|haf[ıi]za)\s*:?\s*$', before, re.I)
                 and not re.match(r'\s*ram\b', after, re.I)):
             title = title[:match.start()] + f'RAM {match[1]} GB; ROM {match[2]} GB' + title[match.end():]
