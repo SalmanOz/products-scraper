@@ -124,6 +124,11 @@ def inspect_target(transport, url, product):
             offer, why = parse_catalog_listing(html, final_url, product['name'], specs)
             row['resolved_url'] = final_url
             row.update(reader_reason=why, prepared_offer=offer)
+            if offer is None:
+                from observed_memory_variants import inspect_n11_memory_variant
+                other = inspect_n11_memory_variant(html, final_url, product['name'], specs)
+                if other is not None:
+                    row['other_memory_variant'] = other
         if host == 'www.teknosa.com':
             from teknosa_reviewed_source import parse_catalog_offer
             specs = with_reviewed_radio(product, PriceUpdater.get_expected_specs(product.get('attributes')))

@@ -12,6 +12,78 @@ from tr_price_scraper import TRPriceScraper
 from trendyol_catalog_source import _product_id, parse_catalog_listing, catalog_offer_matches
 
 
+def inspect_n11_memory_variant(html, url, name, catalog_specs):
+    from n11_catalog_source import parse_catalog_listing as parse, catalog_offer_matches as matches
+    if (not isinstance(html, str) or len(html.encode()) > 5 * 1024 * 1024
+            or not isinstance(catalog_specs, dict)):
+        return None
+    states = []
+    for script in BeautifulSoup(html, 'html.parser').select('script:not([src])'):
+        body = script.get_text()
+        for found in re.finditer(r'\bwindow\.model\s*=\s*(?=\{)', body):
+            try:
+                state, end = json.JSONDecoder().raw_decode(body[found.end():])
+                if body[found.end() + end:].strip() not in ('', ';'):
+                    return None
+                states.append(state)
+            except (ValueError, TypeError):
+                return None
+    if len(states) != 1 or not isinstance(states[0], dict):
+        return None
+    state = states[0]
+    product = state.get('product')
+    if not isinstance(product, dict):
+        return None
+    try:
+        skus = json.loads(state['skus']) if isinstance(state.get('skus'), str) else state.get('skus')
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(skus, list):
+        return None
+    selected = [sku for sku in skus if isinstance(sku, dict) and sku.get('productId') == product.get('id')
+                and str(sku.get('id')) == str(product.get('defaultSkuId'))]
+    if len(selected) != 1 or not isinstance(selected[0].get('skuAttributes'), list):
+        return None
+    storage = [a.get('name') for a in selected[0]['skuAttributes'] if isinstance(a, dict)
+               and isinstance(a.get('skuDefinition'), dict) and a['skuDefinition'].get('name') == 'Dahili Hafıza']
+    if len(storage) != 1:
+        return None
+    fields = {}
+    for row in product.get('productAttributes') or []:
+        if not isinstance(row, dict) or row.get('key') not in {'Bellek Kapasitesi', '5G Desteği', '4.5G Desteği'}:
+            continue
+        if row['key'] in fields:
+            return None
+        fields[row['key']] = row.get('value')
+    actual = {}
+    for key, value in (('ram_gb', fields.get('Bellek Kapasitesi')), ('storage_gb', storage[0])):
+        found = re.fullmatch(r'([1-9]\d{0,3}) GB', value) if isinstance(value, str) else None
+        if found is None:
+            return None
+        actual[key] = int(found[1])
+    if not 1 <= actual['ram_gb'] <= 64 or not 32 <= actual['storage_gb'] <= 4096:
+        return None
+    if fields.get('5G Desteği') == 'Var':
+        actual['network_generation'] = '5g'
+    elif fields.get('5G Desteği') == 'Yok' and fields.get('4.5G Desteği') == 'Var':
+        actual['network_generation'] = '4g'
+    else:
+        return None
+    matcher = TRPriceScraper()
+    expected = tuple(matcher._spec_int(catalog_specs.get(k)) for k in ('ram_gb', 'storage_gb'))
+    radio = catalog_specs.get('network_generation') or matcher._radio_generation(name)
+    if (not all(expected) or actual['network_generation'] != radio
+            or tuple(actual[k] for k in ('ram_gb', 'storage_gb')) == expected):
+        return None
+    model = matcher._catalog_model_name(name, catalog_specs)
+    offer, reason = parse(html, url, model, actual)
+    if offer is None or not matches(offer, model, actual):
+        return None
+    return {'scope': 'other_memory_variant_preview_only', 'writes': False,
+            'catalog_memory': dict(zip(('ram_gb', 'storage_gb'), expected)),
+            'observed_specs': actual, 'verification': reason, 'offer': offer}
+
+
 def inspect_hepsiburada_memory_variant(html, url, name, catalog_specs):
     from hepsiburada_catalog_source import selected_technical_text, parse_catalog_buy_box
     from hepsiburada_catalog_source import catalog_offer_matches as matches

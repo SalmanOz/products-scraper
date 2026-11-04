@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import patch
 
 from audit_priority_retailers import inspect_target
-from observed_memory_variants import inspect_trendyol_memory_variant, inspect_hepsiburada_memory_variant
+from observed_memory_variants import inspect_trendyol_memory_variant, inspect_hepsiburada_memory_variant, inspect_n11_memory_variant
 from sweep_priority_catalog import sweep, coverage_readback
 from test_trendyol_catalog_source import document, URL, NAME, SPECS
 
@@ -20,6 +20,25 @@ def alternate_document(changes=None):
 
 
 class ObservedMemoryVariantTests(unittest.TestCase):
+    def test_n11_other_memory_requires_selected_sku_stock_gtin_seller_and_radio(self):
+        from test_n11_catalog_source import document as n11_document, URL as n11_url, NAME as n11_name
+        parent = {'ram_gb': 6, 'storage_gb': 128, 'network_generation': '5g'}
+        before = deepcopy(parent)
+        preview = inspect_n11_memory_variant(n11_document(), n11_url, n11_name, parent)
+        self.assertIsNotNone(preview)
+        self.assertEqual(preview['observed_specs'], dict(parent, ram_gb=8, storage_gb=256))
+        self.assertEqual(parent, before)
+        self.assertFalse(preview['writes'])
+        for mutate in [lambda state, _s: state['product'].update(availableToBuy=False),
+                       lambda state, _s: state['product'].update(defaultGtin='8806094821438'),
+                       lambda state, _s: state['product']['seller'].update(nickName='Different seller'),
+                       lambda state, _s: state['product'].update(defaultSkuId=123)]:
+            self.assertIsNone(inspect_n11_memory_variant(n11_document(mutate), n11_url, n11_name, parent))
+        self.assertIsNone(inspect_n11_memory_variant(n11_document(), n11_url, n11_name,
+            dict(parent, network_generation='4g')))
+        self.assertIsNone(inspect_n11_memory_variant(n11_document(), n11_url, n11_name,
+            dict(parent, ram_gb=8, storage_gb=256)))
+
     def test_hb_other_ram_requires_the_full_ordinary_selected_buy_box_proof(self):
         from test_hepsiburada_catalog_source import document as hb_document, NAME as hb_name, TARGET
         parent = {'ram_gb': 6, 'storage_gb': 128, 'network_generation': '5g'}

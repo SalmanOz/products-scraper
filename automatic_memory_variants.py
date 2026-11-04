@@ -5,6 +5,8 @@ technical page and retailer listing is fetched again in this invocation.
 Only the atomic server endpoint can create a variant; the parent is read-only.
 """
 from copy import deepcopy
+import base64
+import binascii
 from datetime import datetime, timezone
 import html as html_lib
 import json
@@ -91,11 +93,21 @@ def observed_technical_link(raw, base):
 def declared_technical_targets(node, base):
     """DOM-declared public version navigation, including non-anchor cards."""
     found = []
-    for element in [node, *node.select('[href], [data-href], [data-url], [data-link], [data-slug]')]:
-        for key in ('href', 'data-href', 'data-url', 'data-link', 'data-slug'):
+    for element in [node, *node.select('[href], [data-kdecode], [data-href], [data-url], [data-link], [data-slug]')]:
+        for key in ('href', 'data-kdecode', 'data-href', 'data-url', 'data-link', 'data-slug'):
             value = element.get(key)
             if not isinstance(value, str):
                 continue
+            if key == 'data-kdecode':
+                # The site's own public navigation stores the exact URL as
+                # Base64 before JavaScript hydrates href. Never synthesize a
+                # capacity slug or treat the decoded destination as evidence.
+                if len(value) > 4096:
+                    continue
+                try:
+                    value = base64.b64decode(value, validate=True).decode('utf-8')
+                except (binascii.Error, UnicodeError, ValueError):
+                    continue
             if key == 'data-slug' and re.fullmatch(r'[a-z0-9]+(?:-[a-z0-9]+)+', value):
                 value = 'https://www.kimovil.com/en/where-to-buy-' + value
             target = observed_technical_link(value, base)
@@ -240,11 +252,12 @@ class TechnicalVariantReader:
             unique = list(dict.fromkeys(candidates))
             roots = {re.sub(r'-[45]g$', '', url) for url in unique}
             if len(unique) > 1 and len(roots) == 1 and next(iter(roots)) in unique:
-                # Both the radio spelling and bare model URL were actually
-                # returned by the provider. Its bare canonical still needs a
-                # fresh technical radio match; URL omission proves nothing.
-                candidates = [next(iter(roots))]
-                self.diagnostics[-1]['observed_radio_aliases'] = True
+                # A bare name may refer to the other radio generation. Prefer
+                # the actually returned, explicitly matching radio URL, then
+                # still require its newly read technical radio facts.
+                qualified = [url for url in unique if url.endswith('-' + specs['network_generation'])]
+                candidates = qualified if len(qualified) == 1 else [next(iter(roots))]
+                self.diagnostics[-1]['radio_qualified_discovery'] = True
             if len(set(candidates)) != 1:
                 raise ValueError('technical_model_discovery_ambiguous_or_missing')
             base = candidates[0]
@@ -266,10 +279,11 @@ class TechnicalVariantReader:
                 or selected_technical_document(html, base, model, default_specs) is None):
             raise ValueError('technical_model_family_not_verified')
         observed = []
+        observed_priority = {}
         version_hints = []
         version_nodes = soup.select('.versions-list > .item')
         if not version_nodes:
-            version_nodes = soup.select('.versions-list [href], .versions-list [data-href], .versions-list [data-url], .versions-list [data-slug]')
+            version_nodes = soup.select('.versions-list [href], .versions-list [data-kdecode], .versions-list [data-href], .versions-list [data-url], .versions-list [data-slug]')
         for node in version_nodes:
             # Link text and the actually observed path are routing hints only;
             # the selected page must independently prove all specifications.
@@ -288,6 +302,9 @@ class TechnicalVariantReader:
                         or re.search(rf'(?:-|global|china){ram}gb(?:-|$)', path)
                         or re.search(rf'(?:-|global|china){storage}gb(?:-|$)', path)):
                     observed.append(url)
+                    observed_priority[url] = int(bool(re.search(rf'(?<!\d){ram}\s*GB\b', label, re.I)
+                        and re.search(rf'(?<!\d){storage}\s*GB\b', label, re.I)))
+        observed.sort(key=lambda url: -observed_priority[url])
         self.diagnostics.append({'scope': 'observed_technical_capacity_links', 'model': model,
             'source_url': base, 'selected_default_specs': default_specs,
             'requested_specs': specs, 'version_lists': len(soup.select('.versions-list')),

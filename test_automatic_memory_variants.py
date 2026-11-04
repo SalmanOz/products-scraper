@@ -1,4 +1,5 @@
 import html
+import base64
 import json
 import unittest
 from copy import deepcopy
@@ -7,7 +8,8 @@ from unittest.mock import patch
 
 from automatic_memory_variants import (TechnicalVariantReader, PublicBrowserTechnicalReader, exact_capacity, selected_technical_document,
     technical_records, variant_identity, observed_variant_candidates, memory_variant_destinations,
-    prepare_memory_variants, verify_variant_catalog_readback, memory_target_preflight, canonical_observation_time, CONTRACT)
+    prepare_memory_variants, verify_variant_catalog_readback, memory_target_preflight, canonical_observation_time,
+    declared_technical_targets, CONTRACT)
 from observed_memory_variants import inspect_trendyol_memory_variant
 from test_observed_memory_variants import alternate_document, ALT_URL
 from test_trendyol_catalog_source import NAME, SPECS
@@ -206,8 +208,37 @@ class AutomaticMemoryVariantTests(unittest.TestCase):
         _, proof = TechnicalVariantReader(Reader()).locate(PARENT, dict(SPECS, storage_gb=256))
         self.assertEqual(proof['source_url'], ALT_TECH_URL)
 
-    def test_two_observed_radio_aliases_can_use_the_bare_model_only_with_actual_4g_facts(self):
-        base = 'https://www.kimovil.com/en/where-to-buy-xiaomi-redmi-note-15'
+    def test_real_encoded_navigation_shape_discovers_and_verifies_an_unhydrated_selected_variant(self):
+        from bs4 import BeautifulSoup
+        encoded = lambda url: base64.b64encode(url.encode()).decode()
+        menu = lambda active: ('<ul class="versions-list">' + ''.join(
+            f'<li class="item{" active" if active == url else ""}" data-ram="8192" data-rom="{storage*1024}">'
+            f'<a data-kdecode="{encoded(url)}" rel="nofollow">8GB · {storage}GB No prices</a></li>'
+            for url, storage in [(TECH_URL, 128), (ALT_TECH_URL, 256)]) + '</ul>')
+        base = tech_document(TECH_URL, storage=128).replace('</body>', menu(TECH_URL) + '</body>')
+        child = BeautifulSoup(tech_document(), 'html.parser')
+        child.select_one('link[rel="canonical"]')['href'] = TECH_URL
+        meta = child.select_one('meta[name="devicecompare"]')
+        value = json.loads(meta['content']); value['slug'] = ALT_TECH_URL.rsplit('where-to-buy-', 1)[1]
+        meta['content'] = json.dumps(value)
+        child.body.append(BeautifulSoup(menu(ALT_TECH_URL), 'html.parser'))
+        calls = []
+        class Reader:
+            def read(self, url):
+                calls.append(url)
+                if '_json/autocomplete' in url:
+                    return json.dumps({'results': [{'full_name': NAME, 'url': TECH_URL.rsplit('where-to-buy-', 1)[1]}]})
+                return {TECH_URL: base, ALT_TECH_URL: str(child)}[url]
+        _, proof = TechnicalVariantReader(Reader()).locate(PARENT, dict(SPECS, storage_gb=256))
+        self.assertEqual(calls[1:], [TECH_URL, ALT_TECH_URL])
+        self.assertEqual(proof['storage_gb'], 256)
+        for raw in ['not base64!', encoded('https://evil.test/en/where-to-buy-phone'),
+                    encoded(ALT_TECH_URL + '?token=private'), 'A' * 5000]:
+            node = BeautifulSoup(f'<li><a data-kdecode="{raw}">8GB · 256GB</a></li>', 'html.parser').li
+            self.assertEqual(declared_technical_targets(node, TECH_URL), [])
+
+    def test_observed_radio_qualified_model_is_preferred_and_still_needs_actual_4g_facts(self):
+        base = 'https://www.kimovil.com/en/where-to-buy-xiaomi-redmi-note-15-4g'
         parent = {'id': 456, 'name': 'Xiaomi Redmi Note 15 4G', 'slug': 'xiaomi-redmi-note-15-4g',
                   'attributes': {'ram_gb': 6, 'storage_gb': 128, 'Connectivity': {'5G': False}}}
         calls = []
@@ -218,15 +249,16 @@ class AutomaticMemoryVariantTests(unittest.TestCase):
                     return json.dumps({'results': [
                         {'full_name': 'Xiaomi Redmi Note 15 4G', 'url': 'xiaomi-redmi-note-15-4g'},
                         {'full_name': 'Xiaomi Redmi Note 15', 'url': 'xiaomi-redmi-note-15'}]})
-                self_outer.assertEqual(url, base)
-                return tech_document(base, name='Xiaomi Redmi Note 15').replace('n78', 'No')
+                self_outer.assertIn(url, (base, base.removesuffix('-4g')))
+                return tech_document(url, name='Xiaomi Redmi Note 15').replace('n78', 'No')
         self_outer = self
         reader = TechnicalVariantReader(Reader())
         specs = {'ram_gb': 8, 'storage_gb': 256, 'network_generation': '4g'}
         _, proof = reader.locate(parent, specs)
         self.assertEqual(proof['source_url'], base)
-        self.assertTrue(reader.diagnostics[0]['observed_radio_aliases'])
+        self.assertTrue(reader.diagnostics[0]['radio_qualified_discovery'])
         self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[-1], base)
         with self.assertRaises(ValueError):
             TechnicalVariantReader(Reader()).locate(parent, dict(specs, network_generation='5g'))
 
