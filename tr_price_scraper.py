@@ -460,7 +460,7 @@ class TRPriceScraper:
         return any(a != b and (a in models or b in models) for a, b in (match.groups() for match in choices))
 
     @classmethod
-    def _unambiguous_listing_capacities(cls, item_title):
+    def _unambiguous_listing_capacities(cls, item_title, *, allow_iphone_64_storage=False):
         """Physical RAM/storage evidence, not the first of several choices."""
         title = unicodedata.normalize('NFKC', item_title).lower()
         title = re.sub(r'(gb|tb)(?=\d)', r'\1 ', title)
@@ -512,6 +512,16 @@ class TRPriceScraper:
             value = cls._spec_int(match.group(1))
             if value is not None and value >= 128:
                 storage.add(value)
+        if allow_iphone_64_storage:
+            # 64 GB is a retail iPhone storage capacity. Recognize the actual
+            # lone unlabelled amount only in that model context, never RAM64GB,
+            # repeated amounts, choices, or a value copied from catalog specs.
+            labelled = re.compile(rf'(?:{capacity}\s*(?:ram|rom|depolama|haf[ıi]za)\b|'
+                                  rf'\b(?:ram|rom|depolama|haf[ıi]za)\s*:?\s*{capacity})', re.I)
+            bare = labelled.sub(lambda m: ' ' * len(m[0]), remaining)
+            amounts = re.findall(rf'(?<![\w.,])({capacity})(?!\w)', bare, re.I)
+            if len(amounts) == 1 and cls._spec_int(amounts[0]) == 64:
+                storage.add(64)
         ram.discard(None); storage.discard(None)
         return (next(iter(ram)) if len(ram) == 1 else None,
                 next(iter(storage)) if len(storage) == 1 else None,
@@ -712,7 +722,9 @@ class TRPriceScraper:
             return False
         from selected_sku_evidence import selected_sku_evidence, selected_capacity_title
         selected = selected_sku_evidence(offer)
-        ram, storage, ambiguous = self._unambiguous_listing_capacities(selected_capacity_title(title, selected))
+        is_iphone = 'iphone' in self._identity_words(product_name)
+        ram, storage, ambiguous = self._unambiguous_listing_capacities(selected_capacity_title(title, selected),
+            allow_iphone_64_storage=is_iphone and 'iphone' in self._identity_words(title))
         if selected:
             # Actual selected attributes can establish omitted heading facts;
             # explicit conflicting/ambiguous heading facts still reject.
@@ -739,9 +751,10 @@ class TRPriceScraper:
             return False
         # iPhone retail variants are identified by exact model + storage;
         # omitted RAM is not made up, and explicit RAM conflicts still fail.
-        is_iphone = 'iphone' in self._identity_words(product_name)
         # The iPhone exception is mere RAM omission, never virtual/ambiguous RAM.
-        small_unlabelled = any(int(value) <= 64 for value in re.findall(r'\b(\d+)\s*gb\b', title, re.I)) and ram is None
+        small_values = [int(value) for value in re.findall(r'\b(\d+)\s*gb\b', title, re.I) if int(value) <= 64]
+        small_unlabelled = bool(small_values) and ram is None and not (
+            is_iphone and small_values == [64] and storage == expected_storage == 64)
         if not is_iphone and (not expected_ram or ram != expected_ram):
             return False
         if is_iphone and ((ram is not None and expected_ram and ram != expected_ram) or

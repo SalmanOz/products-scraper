@@ -26,6 +26,34 @@ def document(changes=None):
 
 
 class HepsiburadaCatalogTests(unittest.TestCase):
+    def test_64gb_iphone_storage_is_observed_without_inventing_ram_or_accepting_other_capacities(self):
+        from tr_price_scraper import TRPriceScraper
+        url = 'https://www.hepsiburada.com/apple-iphone-11-64-gb-beyaz-p-HBV0000120X66'
+        html = fixture({('visible_ram',): '4 GB RAM'})
+        for old, new in [(URL, url), (SCHEMA_URL, url), ('Apple iPhone 16 Pro Max', 'Apple iPhone 11'),
+                         ('256', '64'), (SKU, 'HBV0000120X66'), (PRODUCT_ID, 'HB00000NSBZ4'), (COLOR, 'Beyaz')]:
+            html = html.replace(old, new)
+        specs = {'ram_gb': 4, 'storage_gb': 64, 'network_generation': '4g'}
+        soup = BeautifulSoup(html, 'html.parser')
+        table = soup.select_one('#techSpecs')
+        detail = table.get_text(' ', strip=True)
+        self.assertIn('Mobil Bağlantı Hızı 5G', detail)
+        table.string = detail.replace('Mobil Bağlantı Hızı 5G', 'Mobil Bağlantı Hızı 4.5G')
+        html = str(soup)
+        offer, why = parse_catalog_buy_box(html, url, 'Apple iPhone 11', specs)
+        self.assertIsNotNone(offer, why)
+        self.assertTrue(catalog_offer_matches(offer, 'Apple iPhone 11', specs))
+        matcher = TRPriceScraper()
+        for title in ['Apple iPhone 11 64 GB Beyaz', 'Apple iPhone 11 64 GB RED Special Edition',
+                      'Apple iPhone 11 64 GB ROM Beyaz']:
+            self.assertTrue(matcher.has_observed_offer_evidence('Apple iPhone 11', dict(offer, source_title=title), specs), title)
+        for title in ['Apple iPhone 11 8GB 64GB', 'Apple iPhone 11 64 GB RAM',
+                      'Apple iPhone 11 64/128 GB', 'Apple iPhone 11 64GB 64GB',
+                      'Apple iPhone 11 64GB Sanal RAM', 'Apple iPhone 11 128GB Beyaz']:
+            self.assertFalse(matcher.has_observed_offer_evidence('Apple iPhone 11', dict(offer, source_title=title), specs), title)
+        for patch in [{'storage_gb': 128}, {'ram_gb': 6}, {'network_generation': '5g'}]:
+            self.assertIsNone(parse_catalog_buy_box(html, url, 'Apple iPhone 11', {**specs, **patch})[0])
+
     def test_legacy_hb_product_and_hbv_sku_keep_the_same_full_selected_offer_contract(self):
         # Public iPhone 11 category/PDP observed Nov 4, including its separately
         # selected accessory-free box. No legacy identifier is rewritten.
