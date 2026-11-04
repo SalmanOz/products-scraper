@@ -26,6 +26,65 @@ def document(changes=None):
 
 
 class HepsiburadaCatalogTests(unittest.TestCase):
+    def test_actual_selected_one_tb_label_control_and_technical_cell_agree_on_1024_gb(self):
+        from automatic_memory_variants import variant_selected_evidence
+        from observed_memory_variants import inspect_hepsiburada_memory_variant
+        from copy import deepcopy
+        html = Path('fixtures/hepsiburada-selected-iphone17pro-1tb-public.html').read_text()
+        url = 'https://www.hepsiburada.com/apple-iphone-17-pro-1-tb-abis-p-HBCV00009Z403Y'
+        specs = {'ram_gb': 12, 'storage_gb': 1024, 'network_generation': '5g'}
+        offer, reason = parse_catalog_buy_box(html, url, 'Apple iPhone 17 Pro', specs)
+        self.assertEqual(reason, 'selected_new_cash_offer_observed')
+        self.assertEqual((offer['merchant'], offer['price'], offer['gtin13']), ('Hepsiburada', 123999, '0195950628807'))
+        self.assertEqual(offer['source_title'], 'Apple iPhone 17 Pro 1 TB Abis')
+        proof = variant_selected_evidence(offer, 'Apple iPhone 17 Pro', specs)
+        self.assertEqual((proof['ram_gb'], proof['storage_gb'], proof['network_generation']), (12, 1024, '5g'))
+        original = {**specs, 'storage_gb': 256}; before = deepcopy(original)
+        preview = inspect_hepsiburada_memory_variant(html, url, 'Apple iPhone 17 Pro', original)
+        self.assertEqual(preview['observed_specs'], specs)
+        self.assertFalse(preview['writes'])
+        self.assertEqual(original, before)
+        for patch in ({'ram_gb': 8}, {'storage_gb': 1000}, {'storage_gb': 2048}, {'network_generation': '4g'}):
+            self.assertIsNone(parse_catalog_buy_box(html, url, 'Apple iPhone 17 Pro', {**specs, **patch})[0])
+
+    def test_tb_unit_conversion_cannot_replace_selected_control_or_disagreeing_commercial_evidence(self):
+        import json
+        from copy import deepcopy
+        from observed_memory_variants import inspect_hepsiburada_memory_variant
+        html = Path('fixtures/hepsiburada-selected-iphone17pro-1tb-public.html').read_text()
+        url = 'https://www.hepsiburada.com/apple-iphone-17-pro-1-tb-abis-p-HBCV00009Z403Y'
+        specs = {'ram_gb': 12, 'storage_gb': 1024, 'network_generation': '5g'}
+        changes = []
+        for text in ('2 TB', '1000 GB', '1 TB / 2 TB', '1 TB + 512 GB', '1 TB veya 512 GB', 'Var', '1,024 TB'):
+            soup = BeautifulSoup(html, 'html.parser')
+            label = soup.select_one('#techSpecs').find(string='Dahili Hafıza')
+            label.parent.find_next_sibling().string = text
+            changes.append(str(soup))
+        for value in ('2 TB', '1000 GB', '1 TB/2 TB', '1tb', '1 TB RAM'):
+            soup = BeautifulSoup(html, 'html.parser'); script = soup.select_one('script#reduxStore')
+            state = json.loads(script.string)
+            selected = next(v for v in state['productState']['product']['variants'] if v['isDefault'])
+            next(p for p in selected['properties'] if p['name'] == 'Kapasite')['valueObject']['actualValue'] = value
+            script.string = json.dumps(state); changes.append(str(soup))
+        soup = BeautifulSoup(html, 'html.parser'); soup.select_one('button[data-test-id="variant-box-Kapasite-1 TB"]').decompose(); changes.append(str(soup))
+        soup = BeautifulSoup(html, 'html.parser'); soup.select_one('button[data-test-id="variant-box-Kapasite-1 TB"]')['aria-label'] = 'Kapasite 1 TB'; changes.append(str(soup))
+        soup = BeautifulSoup(html, 'html.parser'); cell=soup.select_one('#techSpecs').find(string='Dahili Hafıza').parent.parent; cell.insert_after(deepcopy(cell)); changes.append(str(soup))
+        for before, after in [('0195950628807', '0195950628808'), ('"isInStock": true', '"isInStock": false'),
+                              ('123999.00', '123998.00'),
+                              ('>5G<', '>4.5G<'), ('data-test-id="addToCart"', 'disabled data-test-id="addToCart"')]:
+            self.assertIn(before, html)
+            changes.append(html.replace(before, after, 1))
+        for index, changed in enumerate(changes):
+            self.assertIsNone(parse_catalog_buy_box(changed, url, 'Apple iPhone 17 Pro', specs)[0], index)
+            self.assertIsNone(inspect_hepsiburada_memory_variant(changed, url, 'Apple iPhone 17 Pro', {**specs, 'storage_gb': 256}), index)
+        changed = html.replace('>12 GB RAM<', '>8 GB RAM<')
+        self.assertIsNone(parse_catalog_buy_box(changed, url, 'Apple iPhone 17 Pro', specs)[0])
+        preview = inspect_hepsiburada_memory_variant(changed, url, 'Apple iPhone 17 Pro', {**specs, 'storage_gb': 256})
+        # A preview reports the independent source RAM, never the parent's.
+        # It cannot publish before a separate technical document agrees.
+        self.assertEqual(preview['observed_specs']['ram_gb'], 8)
+        self.assertFalse(preview['writes'])
+
     def test_identical_duplicate_selected_tables_keep_full_sku_and_seller_proof(self):
         from copy import deepcopy
         soup = BeautifulSoup(document(), 'html.parser')

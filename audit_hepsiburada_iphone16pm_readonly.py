@@ -129,6 +129,14 @@ def _selected_variant(product, scope=None):
                        all(_valid_gtin13(g) for g in gtins)) if scope.get('generic_catalog') is True else (
                            gtins == [scope['GTIN13']] and _valid_gtin13(scope['GTIN13']))
     expected_properties = {'Renk': scope['COLOR'], 'Kapasite': str(scope['SPECS']['storage_gb']) + ' GB'}
+    if scope.get('generic_catalog') is True:
+        from hepsiburada_capacity import capacity_gb
+        capacity_label = values.get('Kapasite')
+        if capacity_gb(capacity_label) != scope['SPECS']['storage_gb']:
+            return None
+        # Preserve the actual selected label for its exact visible control.
+        # Only numeric equality converts TB to GB; raw state/title stay intact.
+        expected_properties['Kapasite'] = capacity_label
     # The public legacy iPhone template independently selects a box option.
     # Only the observed neutral, accessory-free box can accompany this SKU;
     # bundles, used-condition choices and unknown option values stay rejected.
@@ -248,7 +256,10 @@ def parse_exact_buy_box(html: str, final_url: str = URL, *, scope=None):
                and re.search(r'\bSatıcı\s*:', _normalized(link.parent.get_text(' ', strip=True)))]
     if len(sellers) != 1:
         return None, 'selected_visible_seller_mismatch'
-    controls = (('Kapasite', str(scope['SPECS']['storage_gb']) + ' GB'), ('Renk', scope['COLOR']))
+    capacity_label = str(scope['SPECS']['storage_gb']) + ' GB'
+    if generic:
+        capacity_label = next(p['valueObject']['actualValue'] for p in variant['properties'] if p['name'] == 'Kapasite')
+    controls = (('Kapasite', capacity_label), ('Renk', scope['COLOR']))
     if generic and (neutral_option := _neutral_selected_option(variant['properties'])) is not None:
         controls += (('Seçenek', neutral_option),)
     for kind, value in controls:
@@ -262,6 +273,9 @@ def parse_exact_buy_box(html: str, final_url: str = URL, *, scope=None):
         detail = selected_technical_text(soup, scope['SKU'], scope['PRODUCT_ID'],
                                          scope['LISTING_ID'], scope['MERCHANT_ID'])
     storage_matches = bool(re.search(rf"\bDahili Hafıza\s+{scope['SPECS']['storage_gb']} GB\b", detail))
+    if generic and not storage_matches:
+        from hepsiburada_capacity import selected_tb_storage
+        storage_matches = selected_tb_storage(soup, detail) == scope['SPECS']['storage_gb']
     # Observed Redmi Note 15 Pro pages put literal "Var" in this table cell.
     # It does not assert a capacity. The already validated selected SKU's
     # Kapasite property AND its visible selected control still state the exact

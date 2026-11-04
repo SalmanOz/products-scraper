@@ -625,6 +625,16 @@ The ordinary selected seller, SKU, GTIN, stock, cash/schema checks and later
 fresh publication/readback remain required. The response contains no prices,
 and neither changes catalog technical attributes nor creates products itself.
 
+Hepsiburada's selected storage property can use `1 TB` while the catalog uses
+1024 GB. Generic readers compare one exact GB/TB label numerically, then require
+the visible selected control to retain that property's exact raw spelling.
+TB technical evidence comes only from the own single native storage cell in
+the selected table, with identical duplicate-table handling; ranges, mixed
+amounts, extra storage rows, missing fields or a `Var` cell do not prove TB.
+The same independent conversion feeds other-memory discovery. Raw titles,
+schema prices, selected seller/SKU/GTIN/stock/radio proof and the separate
+technical-document verification before new variant publication stay required.
+
 If that atomic publication loses its reply or returns HTTP 502/503/504, the
 client can replay the identical transaction once. It reuses the already uploaded
 images and fresh observations; it performs no extra retailer reads and never

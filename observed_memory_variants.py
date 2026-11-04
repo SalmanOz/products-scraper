@@ -178,6 +178,12 @@ def inspect_hepsiburada_memory_variant(html, url, name, catalog_specs):
     actual = {}
     for key, label in (('ram_gb', 'RAM Kapasitesi'), ('storage_gb', 'Dahili Hafıza')):
         values = re.findall(r'\b' + label + r'\s+([1-9]\d{0,3})\s+GB\b', text)
+        if key == 'storage_gb' and not values:
+            from hepsiburada_capacity import selected_tb_storage
+            storage = selected_tb_storage(soup, text)
+            if storage is not None:
+                actual[key] = storage
+                continue
         if len(values) != 1 or len(re.findall(r'\b' + label + r'\b', text)) != 1:
             return None
         actual[key] = int(values[0])
