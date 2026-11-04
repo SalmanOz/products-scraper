@@ -37,6 +37,25 @@ def parse_selected_marketplace(html, url, profile):
     # inside replaceName. Select only an actual heading spelling agreeing with
     # the selected cart; never prepend the catalog's brand.
     title = cart.get('data-product-name') if cart.get('data-product-name') in observed_titles else ''
+    if not title and len(full_heading) == 1:
+        # The live template removes every occurrence of its brand from
+        # replaceName, including the warranty suffix. Bind that rendering to
+        # the original PDP input, visible brand and selected cart; never add a
+        # catalog brand or use an arbitrary hidden title as model evidence.
+        heading = full_heading[0]
+        originals = heading.select('input.productNameReplace.hidden')
+        brands = heading.select('input.brandNameReplace.hidden')
+        brand_links = heading.select('a.link')
+        original, brand = cart.get('data-product-name') or '', cart.get('data-product-brand') or ''
+        clean = lambda text: ' '.join(str(text or '').split())
+        if (len(originals) == len(brands) == len(brand_links) == 1
+                and originals[0].get('value') == original and brands[0].get('value') == brand
+                and brand and original.startswith(brand + ' ') and original.count(brand) >= 2
+                and brand_links[0].get_text(' ', strip=True) == brand
+                and re.fullmatch(r'/[a-z0-9-]+-b-[1-9]\d*', brand_links[0].get('href') or '')
+                and clean(original.replace(brand, '')) == clean(headings[0].get_text(' ', strip=True))
+                and clean(brand + ' ' + headings[0].get_text(' ', strip=True)) == clean(heading.get_text(' ', strip=True))):
+            title = original
     sku = url.rsplit('-p-', 1)[1]
     seller_links = sellers[0].find_all('a', recursive=False)
     seller = seller_links[0].get_text(' ', strip=True) if len(seller_links) == 1 else ''
@@ -90,7 +109,9 @@ def parse_selected_marketplace(html, url, profile):
     schema = schemas[0] if len(schemas) == 1 else {}
     offer = schema.get('offers')
     schema_seller = offer.get('seller') if isinstance(offer, dict) else None
-    normalize_pair = lambda text: re.sub(r'(?<=\d)/(?=\d)', ' ', str(text or ''))
+    # The same observed schema omits literal warranty parentheses and uses
+    # spaces for numeric slash pairs. Preserve every word and model qualifier.
+    normalize_pair = lambda text: ' '.join(re.sub(r'(?<=\d)/(?=\d)|[()]', ' ', str(text or '')).split())
     if (str(schema.get('sku')) != sku or normalize_pair(schema.get('name')) != normalize_pair(title)
             or not isinstance(offer, dict) or offer.get('@type') != 'Offer'
             or offer.get('url') != url or offer.get('priceCurrency') != 'TRY'

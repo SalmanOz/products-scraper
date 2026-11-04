@@ -18,6 +18,41 @@ def document():
 
 
 class TeknosaMarketplaceTests(unittest.TestCase):
+    def test_observed_repeated_brand_rendering_binds_original_heading_cart_schema_and_shop(self):
+        from bs4 import BeautifulSoup
+        html = Path(__file__).with_name('fixtures').joinpath('teknosa-selected-brand-rendering.html').read_text()
+        url = 'https://www.teknosa.com/poco-x6-pro-5g-8-gb-ram-256-gb-siyah-cep-telefonu-poco-turkiye-garantili-p-780010584'
+        profile = {'name': 'POCO X6 Pro', 'specs': {'ram_gb': 8, 'storage_gb': 256, 'network_generation': '5g'}}
+        offer, why = parse_selected_marketplace(html, url, profile)
+        self.assertEqual(why, 'selected_teknosa_marketplace_cash_offer')
+        self.assertEqual((offer['merchant'], offer['price'], offer['gtin13']),
+                         ('BAŞARAN İLETİŞİM', 39999, '6941812757994'))
+        self.assertEqual(offer['source_title'], 'Poco X6 Pro 5G 8 GB RAM 256 GB Siyah Cep Telefonu (Poco Türkiye Garantili)')
+        for selector, attribute, value in [
+            ('input.productNameReplace', 'value', 'Poco X6 Pro 5G 12 GB RAM 256 GB'),
+            ('input.brandNameReplace', 'value', 'Samsung'),
+            ('button#addToCartButton', 'data-product-brand', 'Samsung'),
+            ('button#addToCartButton', 'data-product-ean', '6941812757995'),
+            ('button#addToCartButton', 'data-product-shop-id', '1001'),
+            ('button#addToCartButton', 'data-shop-name', 'Other'),
+            ('a.link', 'href', '/magaza/poco'),
+        ]:
+            s = BeautifulSoup(html, 'html.parser');s.select_one(selector)[attribute] = value
+            self.assertIsNone(parse_selected_marketplace(str(s), url, profile)[0], (selector, attribute))
+        for selector in ['input.productNameReplace', 'input.brandNameReplace', 'a.link']:
+            s = BeautifulSoup(html, 'html.parser');s.select_one(selector).decompose()
+            self.assertIsNone(parse_selected_marketplace(str(s), url, profile)[0], selector)
+        for before, after in [('X6 Pro 5G', 'X6 Pro 4G'), ('8 GB RAM', '12 GB RAM'),
+                              ('256 GB', '512 GB'), ('39999', '39998'),
+                              ('InStock', 'OutOfStock'), ('NewCondition', 'UsedCondition')]:
+            s = BeautifulSoup(html, 'html.parser')
+            if before in ['X6 Pro 5G', '8 GB RAM', '256 GB']:
+                s.select_one('span.replaceName').string = s.select_one('span.replaceName').get_text().replace(before, after)
+                changed = str(s)
+            else:
+                changed = html.replace(before, after, 1)
+            self.assertIsNone(parse_selected_marketplace(changed, url, profile)[0], before)
+
     def test_observed_marketplace_layout_retains_actual_shop_cash_and_raw_heading(self):
         offer, reason = parse_selected_marketplace(document(), URL, PROFILE)
         self.assertEqual(reason, 'selected_teknosa_marketplace_cash_offer')
