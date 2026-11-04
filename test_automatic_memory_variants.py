@@ -9,7 +9,8 @@ from unittest.mock import patch
 from automatic_memory_variants import (TechnicalVariantReader, PublicBrowserTechnicalReader, exact_capacity, selected_technical_document,
     technical_records, variant_identity, observed_variant_candidates, memory_variant_destinations,
     prepare_memory_variants, verify_variant_catalog_readback, memory_target_preflight, canonical_observation_time,
-    declared_technical_targets, autocomplete_technical_variants, memory_parent_priority, existing_selected_memory_sibling, CONTRACT)
+    declared_technical_targets, autocomplete_technical_variants, memory_parent_priority, existing_selected_memory_sibling,
+    technical_model_matches, CONTRACT)
 from observed_memory_variants import inspect_trendyol_memory_variant
 from test_observed_memory_variants import alternate_document, ALT_URL
 from test_trendyol_catalog_source import NAME, SPECS
@@ -38,6 +39,37 @@ def tech_document(url=ALT_TECH_URL, ram=8, storage=256, name=NAME):
 
 
 class AutomaticMemoryVariantTests(unittest.TestCase):
+    def test_flagship_technical_discovery_never_follows_a_redmi_result_with_the_same_number(self):
+        calls = []
+        class Reader:
+            def read(self, url):
+                calls.append(url)
+                if '_json/autocomplete' in url:
+                    return json.dumps({'results': [{'full_name': 'Xiaomi Redmi 17 5G',
+                        'url': 'xiaomi-redmi-17-5g', 'is_rumor': False,
+                        'vers': 'Global · 12GB · 512GB=xiaomi-redmi-17-5g-12gb-512gb'}]})
+                raise AssertionError('Wrong model family must not consume a PDP request')
+        parent = {'id': 284, 'name': 'Xiaomi 17', 'slug': 'xiaomi-17',
+                  'attributes': {'ram_gb': 12, 'storage_gb': 256, 'Connectivity': {'5G': True}}}
+        with self.assertRaisesRegex(ValueError, 'technical_model_discovery_ambiguous_or_missing'):
+            TechnicalVariantReader(Reader()).locate(parent, {'ram_gb': 12, 'storage_gb': 512,
+                                                           'network_generation': '5g'})
+        self.assertEqual(len(calls), 1)
+        wrong = 'https://www.kimovil.com/en/where-to-buy-xiaomi-redmi-17-5g'
+        # Even matching memory/radio must never turn that different family into proof.
+        self.assertIsNone(selected_technical_document(
+            tech_document(wrong, ram=12, storage=512, name='Xiaomi Redmi 17 5G'),
+            wrong, 'Xiaomi 17', {'ram_gb': 12, 'storage_gb': 512, 'network_generation': '5g'}))
+
+    def test_technical_model_family_keeps_radio_spelling_compatibility_and_rejects_qualifier_drift(self):
+        for expected, observed in [('Samsung Galaxy A36 5G', 'Samsung Galaxy A36'),
+                                   ('Xiaomi Redmi Note 14 4G', 'Xiaomi Redmi Note 14'),
+                                   ('Xiaomi 17', 'Xiaomi 17 5G')]:
+            self.assertTrue(technical_model_matches(expected, observed), (expected, observed))
+        for observed in ['Xiaomi Redmi 17 5G', 'Xiaomi Redmi Note 17', 'Xiaomi 17 Pro',
+                         'Xiaomi 17 Pro Max', 'Xiaomi 17T', 'Xiaomi 16']:
+            self.assertFalse(technical_model_matches('Xiaomi 17', observed), observed)
+
     def test_storage_only_iphone_card_routes_to_an_unseen_storage_without_copying_parent_ram(self):
         parent = {'id': 1, 'name': 'Apple iPhone 16 Pro Max', 'slug': 'apple-iphone-16-pro-max',
                   'attributes': {'ram_gb': 8, 'storage_gb': 256, 'Connectivity': {'5G': True}}}

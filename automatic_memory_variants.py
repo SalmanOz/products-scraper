@@ -234,6 +234,14 @@ def exact_capacity(raw):
     return int(amounts[0][0]) * (1024 if amounts[0][1].casefold() == 'tb' else 1)
 
 
+def technical_model_matches(expected, observed):
+    """Radio spelling may differ; a Xiaomi/Redmi model family may not."""
+    core = lambda name: re.sub(r'\b[45]g\b', '', name, flags=re.I).strip()
+    return (isinstance(expected, str) and isinstance(observed, str)
+            and KimovilScraper.is_product_name_match(core(expected), core(observed))
+            and TRPriceScraper().is_strict_match(core(expected), core(observed), {}))
+
+
 def selected_technical_radio(connectivity, source_names, soup):
     radio = PriceUpdater.get_expected_specs({'Connectivity': connectivity}).get('network_generation')
     if radio is not None:
@@ -280,8 +288,7 @@ def selected_technical_document(html, url, model, specs, *, canonical_model_url=
                 return None
     # Kimovil may spell radio in metadata while the existing model omits it.
     # The independently read technical connectivity must still prove radio.
-    core = lambda name: re.sub(r'\b[45]g\b', '', name, flags=re.I).strip()
-    if not names or not all(KimovilScraper.is_product_name_match(core(model), core(name)) for name in names):
+    if not names or not all(technical_model_matches(model, name) for name in names):
         return None
     if selected_slug is not None and selected_slug != url.rsplit('/where-to-buy-', 1)[-1]:
         return None
@@ -394,14 +401,13 @@ class TechnicalVariantReader:
             data = json.loads(raw)
             candidates = []
             variants_by_root = {}
-            core = lambda text: re.sub(r'\b[45]g\b', '', text, flags=re.I).strip()
             for row in data.get('results', [])[:30]:
                 if not isinstance(row, dict) or row.get('is_rumor'):
                     continue
                 name = row.get('full_name') or row.get('alias')
                 target = row.get('url')
                 if (not isinstance(name, str) or not isinstance(target, str)
-                        or not KimovilScraper.is_product_name_match(core(model), core(name))
+                        or not technical_model_matches(model, name)
                         or TRPriceScraper._radio_generation(name) not in (None, specs['network_generation'])):
                     continue
                 target = 'https://www.kimovil.com/en/where-to-buy-' + target
