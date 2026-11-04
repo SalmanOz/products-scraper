@@ -177,6 +177,12 @@ def variant_selected_evidence(offer, name, specs):
         from priority_retailer_transport import product_host
         from retailer_barcode import retailer_gtin13
         from teknosa_marketplace_source import catalog_offer_matches as matches
+        # Reuse the independent selected-table proof when the heading omits
+        # RAM. The actual complete model/capacities must still match this
+        # separate variant; expectations never fill source facts.
+        table_proof = selected_sku_evidence(offer)
+        if table_proof is not None:
+            return table_proof if matches(offer, name, specs) else None
         matcher = TRPriceScraper()
         title = offer.get('source_title')
         if not isinstance(title, str):

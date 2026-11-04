@@ -13,7 +13,7 @@ from trendyol_catalog_source import _product_id, parse_catalog_listing, catalog_
 
 
 def inspect_teknosa_memory_variant(html, url, name, catalog_specs):
-    """Read capacities from the selected cart, then prove that entire offer.
+    """Read selected source capacities, then prove that entire offer.
 
     A cart title is only a capacity hint here. The ordinary Teknosa reader
     must bind it to the visible heading, selected SKU, GTIN, seller, stock,
@@ -22,6 +22,7 @@ def inspect_teknosa_memory_variant(html, url, name, catalog_specs):
     """
     from priority_retailer_transport import product_host
     from teknosa_reviewed_source import parse_catalog_offer
+    from teknosa_marketplace_source import selected_technical_specs
     if (product_host(url) != 'www.teknosa.com' or not isinstance(html, str)
             or len(html.encode()) > 5 * 1024 * 1024 or not isinstance(catalog_specs, dict)):
         return None
@@ -45,6 +46,18 @@ def inspect_teknosa_memory_variant(html, url, name, catalog_specs):
     if 'lte' in radios:
         radios.discard('lte')
         radios.add('4g')
+    # The selected PDP can omit RAM in its heading while explicitly listing
+    # physical RAM/storage/5G/model in its own complete technical table. Use
+    # the same independent extractor as the ordinary offer reader, without
+    # passing a catalog profile. Never replace a contradictory title fact.
+    technical = selected_technical_specs(mains[0], title, carts[0])
+    if technical is not None:
+        if (ambiguous or ram is not None and ram != technical['ram_gb']
+                or storage is not None and storage != technical['storage_gb']
+                or radios and radios != {technical['network_generation']}):
+            return None
+        ram, storage = technical['ram_gb'], technical['storage_gb']
+        radios = {technical['network_generation']}
     if (ambiguous or ram is None or storage is None or len(radios) != 1
             or not 1 <= ram <= 64 or not 32 <= storage <= 4096):
         return None

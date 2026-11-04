@@ -21,6 +21,71 @@ def alternate_document(changes=None):
 
 
 class ObservedMemoryVariantTests(unittest.TestCase):
+    def test_teknosa_omitted_heading_ram_uses_selected_table_for_separate_memory_discovery(self):
+        from pathlib import Path
+        from automatic_memory_variants import observed_variant_candidates, variant_selected_evidence
+        html = Path(__file__).with_name('fixtures').joinpath('teknosa-selected-s25-ultra-512-physical-table.html').read_text()
+        url = 'https://www.teknosa.com/samsung-galaxy-s25-ultra-5g-512gb-titanyum-gumus-akilli-telefon-p-125079845'
+        parent = {'id': 99, 'slug': 'samsung-galaxy-s25-ultra', 'name': 'Samsung Galaxy S25 Ultra',
+                  'attributes': {'ram_gb': 12, 'storage_gb': 256, 'network_generation': '5g'}}
+        before = deepcopy(parent)
+        class Transport:
+            def read_document(self, target):
+                assert target == url
+                return html, 'document_read', 200
+        row = inspect_target(Transport(), url, parent)
+        self.assertIsNone(row['prepared_offer'])
+        self.assertEqual(row['reader_reason'], 'catalog_variant_mismatch')
+        preview = row['other_memory_variant']
+        self.assertFalse(preview['writes'])
+        self.assertEqual(preview['observed_specs'], {'ram_gb': 12, 'storage_gb': 512, 'network_generation': '5g'})
+        self.assertEqual(preview['offer']['source_title'],
+                         'Samsung Galaxy S25 Ultra 5G 512GB Titanyum Gümüş Akıllı Telefon')
+        proof = variant_selected_evidence(preview['offer'], parent['name'], preview['observed_specs'])
+        self.assertEqual((proof['sku'], proof['merchant_name'], proof['storage_gb']),
+                         ('125079845', 'hepsi10line', 512))
+        for fields in ({'selected_teknosa_physical_specs_verified': False},
+                       {'selected_teknosa_variant_verified': False}, {'product_id': None},
+                       {'ram_gb': 8}, {'storage_gb': 256}, {'network_generation': '4g'},
+                       {'merchant_id': '1001'}, {'gtin13': '8806097015155'}):
+            self.assertIsNone(variant_selected_evidence({**preview['offer'], **fields},
+                parent['name'], preview['observed_specs']), fields)
+        candidates = observed_variant_candidates({'rows': [row]}, [parent])
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0]['targets'], [url])
+        self.assertEqual(parent, before)
+        for name, specs in [('Samsung Galaxy S25', parent['attributes']),
+                            (parent['name'], {**parent['attributes'], 'network_generation': '4g'}),
+                            (parent['name'], {**parent['attributes'], 'storage_gb': 512}),
+                            (parent['name'], {'ram_gb': 12, 'storage_gb': 256})]:
+            self.assertIsNone(inspect_teknosa_memory_variant(html, url, name, specs))
+
+    def test_teknosa_table_memory_discovery_requires_complete_selected_and_commercial_proof(self):
+        from pathlib import Path
+        from bs4 import BeautifulSoup
+        html = Path(__file__).with_name('fixtures').joinpath('teknosa-selected-s25-ultra-512-physical-table.html').read_text()
+        url = 'https://www.teknosa.com/samsung-galaxy-s25-ultra-5g-512gb-titanyum-gumus-akilli-telefon-p-125079845'
+        specs = {'ram_gb': 12, 'storage_gb': 256, 'network_generation': '5g'}
+        for label, mutate in [
+            ('missing table', lambda s: s.select_one('#pdp-technical').decompose()),
+            ('duplicate table', lambda s: s.select_one('#pdp-technical').insert_after(deepcopy(s.select_one('#pdp-technical')))),
+            ('unrelated table', lambda s: s.body.append(s.select_one('#pdp-technical').extract())),
+            ('wrong selected seller', lambda s: s.select_one('#addToCartButton').__setitem__('data-shop-name', 'Other')),
+            ('invalid barcode', lambda s: s.select_one('#addToCartButton').__setitem__('data-product-ean', '8806097015155')),
+            ('unavailable', lambda s: s.select_one('#addToCartButton').__setitem__('aria-disabled', 'true')),
+            ('cash disagreement', lambda s: setattr(s.select_one('.prc-third'), 'string', '1 TL')),
+        ]:
+            with self.subTest(label=label):
+                soup = BeautifulSoup(html, 'html.parser'); mutate(soup)
+                self.assertIsNone(inspect_teknosa_memory_variant(str(soup), url, 'Samsung Galaxy S25 Ultra', specs))
+        for title in ('Samsung Galaxy S25 Ultra 5G 8 GB RAM 512 GB',
+                      'Samsung Galaxy S25 Ultra 4G 512GB',
+                      'Samsung Galaxy S25 Ultra 5G 12+12 GB RAM 512 GB',
+                      'Samsung Galaxy S25 Ultra 5G 256GB'):
+            soup = BeautifulSoup(html, 'html.parser')
+            soup.select_one('#addToCartButton')['data-product-name'] = title
+            self.assertIsNone(inspect_teknosa_memory_variant(str(soup), url, 'Samsung Galaxy S25 Ultra', specs), title)
+
     def test_teknosa_selected_first_party_unitless_pair_never_prices_the_original_memory(self):
         from pathlib import Path
         from bs4 import BeautifulSoup

@@ -579,6 +579,15 @@ retailer SKU/seller/stock/price is independently mandatory. Missing evidence
 rejects that candidate without changing its parent. Original catalog identity
 and coverage are reported separately from the enlarged catalog readback.
 
+Teknosa memory discovery also accepts the ordinary reader's complete selected
+physical specification table when its heading omits RAM. This table is parsed
+without catalog input and must independently bind the full model, physical
+RAM, storage and explicit 5G. Contradictory heading facts, missing/duplicate or
+unrelated tables and incomplete selected seller/SKU/GTIN/stock/cash proof are
+rejected. The preview only queues a separate variant: independent technical
+verification, a fresh selected offer, atomic publication and exact readback
+remain mandatory; the original capacity is never repriced from that preview.
+
 If that atomic publication loses its reply or returns HTTP 502/503/504, the
 client can replay the identical transaction once. It reuses the already uploaded
 images and fresh observations; it performs no extra retailer reads and never
