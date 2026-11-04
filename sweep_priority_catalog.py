@@ -57,7 +57,7 @@ def catalog_queue(products, prices):
 
 def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None,
           discover_n11=False, discover_teknosa=False, discover_trendyol=False,
-          discover_hepsiburada=False, current_listing_inventory=None):
+          discover_hepsiburada=False, current_listing_inventory=None, coverage_first=False):
     products, prices = client.get_published_products(), client.get_public_price_priority()
     if (not products or len(products) > 200 or len({p['id'] for p in products}) != len(products)
             or len({p['slug'] for p in products}) != len(products)):
@@ -80,6 +80,7 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
     # small discovery allowance again. This inventory is only an exclusion set:
     # it never supplies a price, evidence, or permission to write an offer.
     inventory_urls = set()
+    covered_models = set()
     if current_listing_inventory is not None:
         try:
             inventory = _matched_rows(current_listing_inventory)
@@ -88,8 +89,29 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
             inventory_urls = {observed_url(row['source_url']) for rows in inventory.values()
                               for row in rows if isinstance(row, dict) and product_host(row.get('source_url'))}
             result['discovery_inventory'] = {'status': 'current', 'priority_listing_destinations': len(inventory_urls)}
+            if coverage_first:
+                by_slug = {p['slug']: p for p in products}
+                for row in current_listing_inventory['productCoverage']:
+                    product = by_slug[row['slug']]
+                    count = row.get('matchedMerchants')
+                    if (type(count) is int and 2 <= count <= len(inventory[row['slug']])
+                            and prices.get(product['id']) == (product['slug'], True)):
+                        covered_models.add(product['slug'])
         except ValueError:
             result['discovery_inventory'] = {'status': 'unavailable', 'priority_listing_destinations': 0}
+    # Recovery iterations need new prices and second independent sellers.
+    # A fresh authenticated whole-catalog audit can retain already-covered
+    # models without renewing any retailer observation or changing the 80%
+    # catalog-wide quality gate. Ordinary full refresh remains the default.
+    refresh_targets = [(url, product) for url, product in targets if product['slug'] not in covered_models]
+    result['queued'] = len(refresh_targets)
+    if coverage_first:
+        result['coverage_priority'] = {
+            'status': 'current_server_audit' if result.get('discovery_inventory', {}).get('status') == 'current' else 'full_refresh_fallback',
+            'retained_current_multi_merchant_models': sorted(covered_models),
+            'models_needing_recovery': sorted(p['slug'] for p in products if p['slug'] not in covered_models),
+            'retailer_observation_timestamps_renewed': False,
+        }
     publication_failed = False
     processed = set()
     def process_target(url, product, audited_row=None):
@@ -185,6 +207,8 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
         discovery['destinations_seen'] = len(cards)
         matched = match_catalog_destinations([c for c in cards if c['source_url'] not in known], products)
         for product in sorted(products, key=lambda p: (prices.get(p['id'], ('', True))[1], p['id'])):
+            if product['slug'] in covered_models:
+                continue
             for candidate in matched.get(product['id'], []):
                 discovery['new_targets'].append({'slug': product['slug'], **candidate})
                 result['queued'] += 1
@@ -204,7 +228,7 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
             import trendyol_catalog_discovery
             discover_category('Trendyol', 'trendyol_category_discovery', trendyol_catalog_discovery,
                               transport.read_trendyol_category)
-        for url, product in targets:
+        for url, product in refresh_targets:
             process_target(url, product)
         if discover_n11:
             from n11_catalog_source import discover_catalog_targets
@@ -212,6 +236,8 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
             from tr_price_scraper import TRPriceScraper
             inspected = {row['observed_url'] for row in result['rows']} | inventory_urls
             for product in sorted(products, key=lambda p: (prices.get(p['id'], ('', True))[1], p['id'])):
+                if product['slug'] in covered_models:
+                    continue
                 specs = with_reviewed_radio(product, PriceUpdater.get_expected_specs(product.get('attributes')))
                 storage = specs.get('storage_gb')
                 model = TRPriceScraper._catalog_model_name(product['name'], specs)
@@ -267,6 +293,13 @@ def save_report(result):
               'No-hint models: ' + ', '.join(result['models_without_priority_hints'])]
     if result.get('discovery_inventory'):
         lines += ['', 'Discovery inventory: ' + json.dumps(result['discovery_inventory'], ensure_ascii=False)]
+    if result.get('coverage_priority'):
+        priority = result['coverage_priority']
+        lines += ['', 'Coverage priority: ' + json.dumps({
+            'status': priority['status'],
+            'retained_current_multi_merchant_models': len(priority['retained_current_multi_merchant_models']),
+            'models_needing_recovery': len(priority['models_needing_recovery']),
+            'retailer_observation_timestamps_renewed': False}, ensure_ascii=False)]
     if result.get('discovery'):
         lines += ['', 'Automatic n11 discovery: ' + json.dumps({
             'catalog_queries': len(result['discovery']),
@@ -303,9 +336,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--publish', action='store_true')
     parser.add_argument('--n11-preflight', action='store_true')
+    parser.add_argument('--coverage-first', action='store_true')
     args = parser.parse_args()
     if args.n11_preflight:
-        if args.publish:
+        if args.publish or args.coverage_first:
             raise ValueError('The collector preflight is read-only')
         client = OfferIngestionClient.from_env()
         products = client.get_published_products()
@@ -347,7 +381,8 @@ def main():
         listing_inventory = {}
     result = sweep(client=client, publish=args.publish, checkpoint=checkpoint,
                    discover_n11=True, discover_teknosa=True, discover_trendyol=True,
-                   discover_hepsiburada=True, current_listing_inventory=listing_inventory)
+                   discover_hepsiburada=True, current_listing_inventory=listing_inventory,
+                   coverage_first=args.coverage_first)
     result['public_coverage'] = coverage_readback(result, client.get_public_price_priority())
     save_report(result)
     print(Path('priority-catalog-sweep.md').read_text())

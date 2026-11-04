@@ -26,6 +26,53 @@ def sweep_reader():
 
 
 class SweepTests(unittest.TestCase):
+    def test_coverage_priority_retains_only_current_confirmed_multi_seller_models_and_keeps_full_gate(self):
+        from datetime import datetime, timezone
+        catalog = products(5)
+        for i, product in enumerate(catalog, 25):
+            product.update(name=f'Samsung Galaxy S{i}', attributes={'ram_gb': 8, 'storage_gb': 128})
+        prices = {p['id']: (p['slug'], p['id'] != 2) for p in catalog}
+        client = Client()
+        client.get_published_products = lambda: deepcopy(catalog)
+        client.get_public_price_priority = lambda: deepcopy(prices)
+        inventory = {'evidenceVersion': 'product-offer-match-v1', 'mode': 'shadow_audit_only',
+            'auditedAt': datetime.now(timezone.utc).isoformat(), 'productCoverage': [
+                {'slug': p['slug'], 'matchedMerchants': count, 'matchedOffers': [
+                    {'source_url': p['offer_targets'][0]['source_url'], 'merchant_name': seller, 'price': 10000}
+                    for seller in ['First shop', 'Second shop']]} for p, count in zip(catalog, [2, 2, 1, True, 3])]}
+        class SearchTransport(Transport):
+            def __init__(self):
+                self.queries = []
+            def read_n11_search(self, query):
+                self.queries.append(query)
+                return None, 'no_candidates', 200
+        def inspect(transport, url, product):
+            return {'slug': product['slug'], 'retailer': 'Trendyol', 'url': url, 'observed_url': url,
+                    'http_status': 200, 'reason': 'document_read', 'prepared_offer': None}
+        for mode in ['current', 'stale', 'missing']:
+            current = deepcopy(inventory)
+            if mode == 'stale':
+                current['auditedAt'] = '1990-01-01T00:00:00Z'
+            elif mode == 'missing':
+                current = None
+            before = deepcopy(current)
+            transport = SearchTransport()
+            with patch('sweep_priority_catalog.inspect_target', side_effect=inspect), \
+                    patch('sweep_priority_catalog.refresh_candidates') as writer:
+                result = sweep(client=client, transport=transport, discover_n11=True,
+                               current_listing_inventory=current, coverage_first=True)
+            retained = ['1'] if mode == 'current' else []
+            self.assertEqual(result['coverage_priority']['retained_current_multi_merchant_models'], retained)
+            self.assertEqual(result['catalog_count'], 5)
+            self.assertEqual(len(result['rows']), 8 if retained else 10)
+            self.assertEqual(result['queued'], len(result['rows']))
+            self.assertEqual(len(transport.queries), 4 if retained else 5)
+            self.assertEqual(current, before)
+            self.assertFalse(result['coverage_priority']['retailer_observation_timestamps_renewed'])
+            self.assertFalse(result['writes'])
+            self.assertEqual(coverage_readback(result, prices)['minimum_ratio'], 0.8)
+            writer.assert_not_called()
+
     def test_current_full_listing_inventory_frees_discovery_slots_but_never_skips_normal_refresh(self):
         urls = [f'https://www.n11.com/urun/samsung-galaxy-a36-5g-8gb-128gb-{12345671+i}' for i in range(4)]
         for mode in ['current', 'stale', 'changed_catalog', 'wrong_version']:

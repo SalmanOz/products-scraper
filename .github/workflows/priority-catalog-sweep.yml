@@ -3,10 +3,11 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'Full catalog recovery or read-only dedicated n11 collector preflight'
+        description: 'Full refresh, recover missing prices/second sellers, or read-only n11 preflight'
         type: choice
         options:
           - full
+          - coverage-first
           - n11-preflight
         default: full
         required: true
@@ -52,6 +53,12 @@ jobs:
         run: |
           if test "$MODE" = n11-preflight; then
             python -u sweep_priority_catalog.py --n11-preflight
+          elif test "$MODE" = coverage-first; then
+            if test "$PUBLISH" = true; then
+              python -u sweep_priority_catalog.py --coverage-first --publish
+            else
+              python -u sweep_priority_catalog.py --coverage-first
+            fi
           elif test "$PUBLISH" = true; then
             python -u sweep_priority_catalog.py --publish
           else
