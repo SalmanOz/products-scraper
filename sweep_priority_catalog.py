@@ -590,7 +590,9 @@ def main():
         for diagnostic in report.get('technical_diagnostics', []):
             print('Technical memory discovery: ' + json.dumps(diagnostic, ensure_ascii=False), flush=True)
         print('Automatic memory variant summary: ' + json.dumps({key: report[key] for key in
-            ('observed_candidates', 'technical_documents', 'created', 'existing', 'writes')}, ensure_ascii=False), flush=True)
+            ('observed_candidates', 'verified_candidates', 'technical_documents', 'created', 'existing', 'writes')}, ensure_ascii=False), flush=True)
+        if report['observed_candidates'] and not report['verified_candidates']:
+            raise SystemExit('No selected technical and live retailer variant passed; no writes')
         return
     if args.target_preflight is not None:
         if args.publish or args.n11_preflight or args.coverage_first or args.hepsiburada_category_audit or args.memory_variants:
@@ -691,13 +693,15 @@ def main():
         variant_checkpoint(variant_report)
         readback = verify_variant_catalog_readback(products, client.get_published_products(), variant_report)
         result['automatic_memory_variants'] = {key: variant_report[key] for key in
-            ('observed_candidates', 'technical_documents', 'created', 'existing', 'writes')}
+            ('observed_candidates', 'technical_documents', 'created', 'existing', 'writes', 'score_refresh_pending')}
         result['automatic_memory_variants']['catalog_readback'] = readback
         current_prices = client.get_public_price_priority()
         result['original_catalog_coverage'] = coverage_readback(result,
             {p['id']: current_prices[p['id']] for p in products if p['id'] in current_prices})
         result['public_coverage'] = coverage_readback({**result, 'catalog_count': readback['catalog_after']}, current_prices)
         result['writes'] |= variant_report['writes']
+        if variant_report['score_refresh_pending']:
+            result['status'] = 'variant_scores_pending'
         save_report(result)
         print('Automatic memory variant summary: ' + json.dumps(result['automatic_memory_variants']), flush=True)
     else:

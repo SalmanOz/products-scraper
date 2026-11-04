@@ -171,6 +171,29 @@ class AutomaticMemoryVariantTests(unittest.TestCase):
         self.assertEqual(images, ['https://cdn-files.kimovil.com/phone-a54_big.jpg'])
         self.assertTrue(all(row['product_slug'] == identity['slug'] for row in records))
 
+    def test_observed_capacity_path_or_price_panel_fragment_is_only_a_hint_for_fresh_selected_proof(self):
+        target = TECH_URL + '-512gb'
+        base = tech_document(TECH_URL, storage=128).replace('</body>',
+            f'<ul class="versions-list"><li class="item"><a href="{target}#open-prices">No prices</a></li></ul></body>')
+        calls = []
+        class Reader:
+            def read(self, url):
+                calls.append(url)
+                if '_json/autocomplete' in url:
+                    return json.dumps({'results': [{'full_name': NAME, 'url': TECH_URL.rsplit('where-to-buy-', 1)[1]}]})
+                return {TECH_URL: base, target: tech_document(target, ram=12, storage=512)}[url]
+        specs = dict(SPECS, ram_gb=12, storage_gb=512)
+        _, proof = TechnicalVariantReader(Reader()).locate(PARENT, specs)
+        self.assertEqual(proof['source_url'], target)
+        self.assertEqual((proof['ram_gb'], proof['storage_gb']), (12, 512))
+        self.assertEqual(calls[-1], target)
+        self.assertNotIn('#', calls[-1])
+        class WrongReader(Reader):
+            def read(self, url):
+                return tech_document(target, ram=8, storage=512) if url == target else super().read(url)
+        with self.assertRaisesRegex(ValueError, 'not_observed'):
+            TechnicalVariantReader(WrongReader()).locate(PARENT, specs)
+
     def test_discovery_deduplicates_existing_variants_and_never_uses_other_memory_as_parent_price(self):
         result = self.candidate_result()
         result['rows'] *= 2
@@ -235,6 +258,26 @@ class AutomaticMemoryVariantTests(unittest.TestCase):
         self.assertEqual(payload['offers'][0]['source_title'], fresh['source_title'])
         self.assertEqual(payload['offers'][0]['observed_at'], canonical_observation_time(fresh['observed_at']))
         self.assertNotIn('product_id', payload['offers'][0])
+
+    def test_one_failed_source_image_can_recover_but_no_image_cannot_create_a_variant(self):
+        result = self.candidate_result()
+        fresh = deepcopy(result['rows'][0]['other_memory_variant']['offer'])
+        client = unittest.mock.Mock(base_url='https://teknoskor.com', secret='test-only-secret')
+        client._json_body.return_value = {'committed': True, 'contract': CONTRACT, 'parent_unchanged': True,
+            'outcome': 'created', 'slug': variant_identity(PARENT, 8, 256)['slug'], 'product_id': 987,
+            'parent_product_id': PARENT['id'], 'scores_recalculated': True}
+        for success in (True, False):
+            store = unittest.mock.Mock()
+            store.upload.side_effect = [ValueError('source_image_not_available'), 'https://cdn.teknoskor.com/products/fixture/ok.webp' if success else ValueError('not_available')]
+            client.session.request.reset_mock()
+            with patch('automatic_memory_variants.technical_records', return_value=([{'attribute_key': 'ram_gb'}], {}, ['source-one', 'source-two'])), \
+                 patch('audit_priority_retailers.inspect_target', return_value={'prepared_offer': fresh}):
+                report = prepare_memory_variants(result, [PARENT], transport=SimpleNamespace(report=lambda: {}),
+                    technical_reader=SimpleNamespace(documents=3), publish=True, source_client=client, image_store=store)
+            self.assertEqual(report['created'], int(success))
+            self.assertEqual(report['rows'][0]['source_image_failures'], 1 if success else 2)
+            self.assertEqual(client.session.request.call_count, int(success))
+            self.assertTrue(report['writes'])  # Image attempts are never reported as a dry run.
 
     def test_catalog_readback_preserves_all_original_identities_and_requires_each_created_capacity(self):
         variant = {**variant_identity(PARENT, 8, 256), 'ram_gb': 8, 'storage_gb': 256, 'network_generation': '5g'}

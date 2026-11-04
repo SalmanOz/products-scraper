@@ -75,6 +75,19 @@ def technical_url(raw):
             and bool(re.fullmatch(r'/en/where-to-buy-[a-z0-9-]+', parsed.path)))
 
 
+def observed_technical_link(raw, base):
+    try:
+        url = urljoin(base, raw)
+        parsed = urlparse(url)
+        # This observed price-panel anchor is browser-only navigation; it is
+        # never sent in an HTTP document request or treated as price evidence.
+        if parsed.fragment == 'open-prices':
+            url = parsed._replace(fragment='').geturl()
+        return url if technical_url(url) else None
+    except (TypeError, ValueError):
+        return None
+
+
 def variant_selected_evidence(offer, name, specs):
     ordinary = selected_sku_evidence(offer)
     if ordinary is not None:
@@ -146,7 +159,7 @@ def selected_technical_document(html, url, model, specs, *, canonical_model_url=
         selected = soup.select('.versions-list > li.item.active > a[href]')
         if (actual_canonical != canonical_model_url or not technical_url(actual_canonical)
                 or selected_slug != url.rsplit('/where-to-buy-', 1)[-1]
-                or len(selected) != 1 or urljoin(url, selected[0]['href']) != url):
+                or len(selected) != 1 or observed_technical_link(selected[0]['href'], url) != url):
             return None
     sections = extract_spec_sections(soup)
     actual = {'ram_gb': exact_capacity(find_section_spec(sections, 'Hardware', 'Memory RAM', 'RAM')),
@@ -229,21 +242,29 @@ class TechnicalVariantReader:
                 or selected_technical_document(html, base, model, default_specs) is None):
             raise ValueError('technical_model_family_not_verified')
         observed = []
-        for anchor in soup.select('a[href]'):
-            url = urljoin(base, anchor['href'])
+        version_hints = []
+        anchors = soup.select('.versions-list a[href]') or soup.select('a[href]')
+        for anchor in anchors:
+            url = observed_technical_link(anchor['href'], base)
             # Link text and the actually observed path are routing hints only;
             # the selected page must independently prove all specifications.
-            if url != base and technical_url(url) and url not in observed:
-                label = anchor.get_text(' ', strip=True)
+            label_node = anchor.find_parent('li', class_='item') or anchor
+            label = label_node.get_text(' ', strip=True)
+            if len(version_hints) < 8:
+                version_hints.append({'source_url': url,
+                    'capacity_tokens': re.findall(r'(?<!\d)\d{1,4}\s*(?:GB|TB)\b', label, re.I),
+                    'fragment': urlparse(urljoin(base, anchor['href'])).fragment[:60]})
+            if url and url != base and url not in observed:
                 ram, storage = specs['ram_gb'], specs['storage_gb']
                 path = urlparse(url).path
                 if (re.search(rf'(?<!\d){ram}\s*GB\b', label, re.I) and re.search(rf'(?<!\d){storage}\s*GB\b', label, re.I)
-                        or re.search(rf'(?:-|global|china){ram}gb-{storage}gb$', path)):
+                        or re.search(rf'(?:-|global|china){ram}gb(?:-|$)', path)
+                        or re.search(rf'(?:-|global|china){storage}gb(?:-|$)', path)):
                     observed.append(url)
         self.diagnostics.append({'scope': 'observed_technical_capacity_links', 'model': model,
             'source_url': base, 'selected_default_specs': default_specs,
             'requested_specs': specs, 'version_lists': len(soup.select('.versions-list')),
-            'observed_capacity_urls': observed[:6]})
+            'observed_capacity_urls': observed[:6], 'version_hints': version_hints})
         for url in observed[:3]:
             html = self.read(url)
             proof = selected_technical_document(html, url, model, specs, canonical_model_url=base)
@@ -338,6 +359,15 @@ def technical_records(parent, specs, identity, reader):
             expected_name=evidence['model_name'], expected_memory=specs, existing_attributes={},
             existing_images=[], seed_physical_attributes=True, record_sink=records):
         raise ValueError('selected_technical_parser_failed')
+    values = {record['attribute_key']: record.get('value') for record in records}
+    required = {'ram_gb', 'storage_gb', 'battery_mah', 'screen_size_inch', 'Technical sheet',
+        'Design & Materials', 'Performance & Hardware', 'Camera', 'Connectivity', 'Batarya', 'Software',
+        'performance_score', 'camera_score', 'battery_score', 'screen_score'}
+    if not required.issubset(values):
+        raise ValueError('selected_technical_required_fields_missing')
+    for key in ('performance_score', 'camera_score', 'battery_score', 'screen_score'):
+        if type(values[key]) not in (int, float) or not 0 < values[key] <= 10:
+            raise ValueError('selected_technical_components_missing')
     for record in records:
         record['observed_at'] = evidence['observed_at']
     soup = BeautifulSoup(html, 'html.parser')
@@ -497,7 +527,14 @@ def prepare_memory_variants(result, products, *, transport, technical_reader=Non
                 image_store = image_store or DiscoveryImageStore(required=True)
                 row['image_upload_attempted'] = True
                 row['writes'] = report['writes'] = True
-                images = [image_store.upload(url, identity['slug'], index) for index, url in enumerate(image_urls[:3])]
+                images = []
+                for index, source_image in enumerate(image_urls[:3]):
+                    try:
+                        images.append(image_store.upload(source_image, identity['slug'], index))
+                    except Exception:
+                        row['source_image_failures'] = row.get('source_image_failures', 0) + 1
+                if not images:
+                    raise ValueError('verified_variant_image_upload_missing')
                 payload = {'contract': CONTRACT, 'mode': 'publish',
                     'parent': {key: parent[key] for key in ('id', 'slug', 'name')},
                     'variant': {**identity, **specs}, 'technical_evidence': evidence,
@@ -517,6 +554,7 @@ def prepare_memory_variants(result, products, *, transport, technical_reader=Non
                     raise ValueError('atomic_variant_publication_rejected')
                 row.update(status=body['outcome'], publication={key: body.get(key) for key in
                     ('product_id', 'slug', 'parent_product_id', 'parent_unchanged', 'scores_recalculated')})
+                row['score_refresh_pending'] = body.get('scores_recalculated') is not True
                 report[body['outcome']] += 1
         except Exception as error:
             reason = str(error) if isinstance(error, ValueError) and re.fullmatch(r'[a-z0-9_]{1,100}', str(error)) else type(error).__name__
@@ -526,6 +564,9 @@ def prepare_memory_variants(result, products, *, transport, technical_reader=Non
     report.update(technical_documents=technical_reader.documents,
                   technical_request_attempts=getattr(technical_reader, 'attempts', technical_reader.documents),
                   technical_diagnostics=getattr(technical_reader, 'diagnostics', []), sources=transport.report())
+    report['score_refresh_pending'] = sum(row.get('score_refresh_pending') is True for row in report['rows'])
+    report['verified_candidates'] = sum(row['status'] in {'technical_and_live_offer_verified', 'created', 'existing'}
+                                        for row in report['rows'])
     return report
 
 
