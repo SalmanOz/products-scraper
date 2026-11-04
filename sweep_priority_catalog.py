@@ -426,6 +426,14 @@ def save_report(result):
     for event in category_page_diagnostics(result):
         if event['reason'] != 'document_read' or event['parser_status'] != 'parsed':
             lines += ['', 'Incomplete category page: ' + json.dumps(event, ensure_ascii=False)]
+    for row in result['rows']:
+        other = row.get('other_memory_variant')
+        if isinstance(other, dict) and other.get('scope') == 'other_memory_variant_preview_only':
+            offer = other['offer']
+            lines += ['', 'Other memory variant (preview only; not an offer on the original SKU): ' + json.dumps({
+                'catalog_slug': row['slug'], 'catalog_memory': other['catalog_memory'],
+                'observed_specs': other['observed_specs'], 'seller': offer['merchant'],
+                'source_url': offer['url'], 'price': offer['price'], 'writes': False}, ensure_ascii=False)]
     Path('priority-catalog-sweep.md').write_text('\n'.join(lines))
 
 

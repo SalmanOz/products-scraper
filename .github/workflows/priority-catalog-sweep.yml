@@ -38,7 +38,7 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt
       - name: Test full queue and live publication boundaries
-        run: python -m unittest -q test_offer_ingestion_client test_hepsiburada_catalog_discovery test_trendyol_catalog_discovery test_teknosa_catalog_discovery test_teknosa_seller_cards test_automatic_marketplace_refresh test_selected_sku_evidence test_priority_catalog_budget test_priority_catalog_sweep test_priority_candidates test_priority_retailers test_hepsiburada_catalog_source test_trendyol_catalog_source test_trendyol_basket_price test_teknosa_catalog_source test_teknosa_marketplace_source test_n11_catalog_source test_raw_seller_collision_proof
+        run: python -m unittest -q test_offer_ingestion_client test_hepsiburada_catalog_discovery test_trendyol_catalog_discovery test_teknosa_catalog_discovery test_teknosa_seller_cards test_automatic_marketplace_refresh test_selected_sku_evidence test_priority_catalog_budget test_priority_catalog_sweep test_priority_candidates test_priority_retailers test_hepsiburada_catalog_source test_trendyol_catalog_source test_trendyol_basket_price test_teknosa_catalog_source test_teknosa_marketplace_source test_n11_catalog_source test_raw_seller_collision_proof test_observed_memory_variants
       - name: Start existing public document GET service
         run: |
           docker run -d --name=priority-sweep-browser -p 8191:8191 -e LOG_LEVEL=info ghcr.io/flaresolverr/flaresolverr:latest
