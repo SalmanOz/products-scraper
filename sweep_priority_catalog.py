@@ -145,6 +145,11 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
             discovery['pages'][-1]['parser'] = parser
             cards.extend(found)
             if parser.get('status') != 'parsed':
+                if callable(getattr(module, 'discovery_links', None)):
+                    discovery.setdefault('incomplete_pages', []).append(category_url)
+                    if pending_branches:
+                        category_url = pending_branches.pop(0)
+                        continue
                 break
             if callable(getattr(module, 'discovery_links', None)):
                 pending_branches.extend(link for link in module.discovery_links(html, category_url, products)
@@ -157,7 +162,8 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                 checkpoint(result)
         discovery['pagination_complete'] = category_url is None
         if getattr(module, 'DISCOVERY_SCOPE', None):
-            discovery.update(scope=module.DISCOVERY_SCOPE, branch_queue_complete=category_url is None,
+            discovery.update(scope=module.DISCOVERY_SCOPE,
+                             branch_queue_complete=category_url is None and not discovery.get('incomplete_pages'),
                              pagination_complete=False)
         known = {observed_url(url) for url, _ in targets} | {observed_url(url) for _, url in processed}
         discovery['destinations_seen'] = len(cards)

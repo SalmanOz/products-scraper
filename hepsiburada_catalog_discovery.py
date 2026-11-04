@@ -62,7 +62,8 @@ def _category_soup(html, url):
     soup = BeautifulSoup(html, 'html.parser')
     headings = soup.select('h1')
     title = TRPriceScraper._normalize_words(headings[0].get_text(' ', strip=True)) if len(headings) == 1 else ''
-    expected = ({'cep telefonu fiyatlari ve modelleri'} if brand == '' else {brand + ' telefonlar'})
+    expected = ({'cep telefonu fiyatlari ve modelleri'} if brand == '' else {
+        brand + ' telefonlar', brand + ' cep telefonu fiyatlari ve modelleri'})
     if urlparse(url).query:
         expected.add('cep telefonu' if brand == '' else brand + ' cep telefonu')
     return soup if title in expected else None

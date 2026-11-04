@@ -47,6 +47,11 @@ class HepsiburadaDiscoveryTests(unittest.TestCase):
         self.assertEqual(discovery_links(document(), CATEGORY_URL, [{'name': 'Samsung Galaxy S26'}]), [SAMSUNG])
         self.assertEqual(discovery_links(document(), CATEGORY_URL, [PRODUCT]), [])
         self.assertEqual(len(parse_category_document(document(True), SAMSUNG)[0]), 1)
+        # Live Apple/Honor brand pages use this longer first-page heading.
+        for brand, url in [('Apple', 'https://www.hepsiburada.com/apple-cep-telefonlari-xc-371965-b8849'),
+                           ('HONOR', 'https://www.hepsiburada.com/honor-cep-telefonlari-xc-371965-b8852')]:
+            html = document().replace('Cep Telefonu Fiyatları ve Modelleri', brand + ' Cep Telefonu Fiyatları ve Modelleri')
+            self.assertEqual(len(parse_category_document(html, url)[0]), 1)
 
     def test_ads_selectors_changed_titles_and_nonphone_branches_are_rejected(self):
         for changed in [document().replace(PDP, 'https://adservice.hepsiburada.com/event/api/v1/track'),
@@ -84,6 +89,33 @@ class HepsiburadaDiscoveryTests(unittest.TestCase):
         denied = PriorityRetailerTransport(get=lambda url, **_: Response(url,
             'User-agent: *\nDisallow: /cep-telefonlari\n'), sleep=lambda _: None)
         self.assertEqual(denied.read_hepsiburada_category(CATEGORY_URL)[1], 'robots_disallowed')
+
+    def test_one_changed_brand_heading_does_not_hide_other_observed_category_pages(self):
+        from sweep_priority_catalog import sweep
+        from test_priority_candidates import Client
+        client = Client()
+        client.product.update(name='Samsung Galaxy S26', attributes={'ram_gb': 12, 'storage_gb': 256},
+                              offer_targets=[])
+        client.get_public_price_priority = lambda: {}
+        visited = []
+        class Transport:
+            def read_hepsiburada_category(self, url):
+                visited.append(url)
+                if url == SAMSUNG:
+                    html = '<h1>Changed category heading</h1>'
+                elif url == CATEGORY_URL:
+                    html = document() + '<link rel="next" href="//www.hepsiburada.com/cep-telefonlari-c-371965?sayfa=2">'
+                else:
+                    html = document().replace('Cep Telefonu Fiyatları ve Modelleri', 'Cep Telefonu')
+                return html, 'document_read', 200
+            def report(self):
+                return {}
+        result = sweep(client=client, transport=Transport(), discover_hepsiburada=True)
+        self.assertEqual(visited, [CATEGORY_URL, SAMSUNG, CATEGORY_URL + '?sayfa=2'])
+        discovery = result['hepsiburada_category_discovery']
+        self.assertEqual(discovery['incomplete_pages'], [SAMSUNG])
+        self.assertFalse(discovery['branch_queue_complete'])
+        self.assertFalse(result['writes'])
 
     def test_sweep_follows_observed_branch_and_reverifies_only_fresh_product_pages(self):
         from sweep_priority_catalog import sweep
