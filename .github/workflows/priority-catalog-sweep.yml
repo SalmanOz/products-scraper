@@ -8,6 +8,8 @@ on:
         options:
           - full
           - coverage-first
+          - memory-variants
+          - memory-variant-preflight
           - n11-preflight
           - hepsiburada-category-audit
           - target-preflight
@@ -49,9 +51,9 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt
       - name: Test full queue and live publication boundaries
-        run: python -m unittest -q test_offer_ingestion_client test_hepsiburada_catalog_discovery test_hepsiburada_category_frontier test_trendyol_catalog_discovery test_teknosa_catalog_discovery test_teknosa_seller_cards test_automatic_marketplace_refresh test_selected_sku_evidence test_priority_catalog_budget test_priority_catalog_sweep test_priority_candidates test_priority_retailers test_hepsiburada_catalog_source test_trendyol_catalog_source test_trendyol_basket_price test_teknosa_catalog_source test_teknosa_marketplace_source test_n11_catalog_source test_raw_seller_collision_proof test_observed_memory_variants
+        run: python -m unittest -q test_offer_ingestion_client test_hepsiburada_catalog_discovery test_hepsiburada_category_frontier test_trendyol_catalog_discovery test_teknosa_catalog_discovery test_teknosa_seller_cards test_automatic_marketplace_refresh test_selected_sku_evidence test_priority_catalog_budget test_priority_catalog_sweep test_priority_candidates test_priority_retailers test_hepsiburada_catalog_source test_trendyol_catalog_source test_trendyol_basket_price test_teknosa_catalog_source test_teknosa_marketplace_source test_n11_catalog_source test_raw_seller_collision_proof test_observed_memory_variants test_automatic_memory_variants
       - name: Restore observed category URL frontier
-        if: inputs.mode == 'full' || inputs.mode == 'coverage-first'
+        if: inputs.mode == 'full' || inputs.mode == 'coverage-first' || inputs.mode == 'memory-variants'
         id: category-frontier
         continue-on-error: true
         uses: actions/cache/restore@v4
@@ -76,13 +78,26 @@ jobs:
           MODE: ${{ inputs.mode }}
           TARGET_SLUG: ${{ inputs.target_slug }}
           TARGET_URL: ${{ inputs.target_url }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+          R2_PUBLIC_DOMAIN: ${{ secrets.R2_PUBLIC_DOMAIN }}
         run: |
-          if test "$MODE" = target-preflight; then
+          if test "$MODE" = memory-variant-preflight; then
+            python -u sweep_priority_catalog.py --memory-variant-preflight
+          elif test "$MODE" = target-preflight; then
             python -u sweep_priority_catalog.py --target-preflight "$TARGET_URL" --target-slug "$TARGET_SLUG"
           elif test "$MODE" = n11-preflight; then
             python -u sweep_priority_catalog.py --n11-preflight
           elif test "$MODE" = hepsiburada-category-audit; then
             python -u sweep_priority_catalog.py --hepsiburada-category-audit
+          elif test "$MODE" = memory-variants; then
+            if test "$PUBLISH" = true; then
+              python -u sweep_priority_catalog.py --memory-variants --publish
+            else
+              python -u sweep_priority_catalog.py --memory-variants
+            fi
           elif test "$MODE" = coverage-first; then
             if test "$PUBLISH" = true; then
               python -u sweep_priority_catalog.py --coverage-first --publish
@@ -95,7 +110,7 @@ jobs:
             python -u sweep_priority_catalog.py
           fi
       - name: Preserve observed category URLs after the coverage gate
-        if: always() && (inputs.mode == 'full' || inputs.mode == 'coverage-first') && steps.inspect.outcome != 'skipped' && hashFiles('.discovery-state/priority-hb-category.json') != ''
+        if: always() && (inputs.mode == 'full' || inputs.mode == 'coverage-first' || inputs.mode == 'memory-variants') && steps.inspect.outcome != 'skipped' && hashFiles('.discovery-state/priority-hb-category.json') != ''
         continue-on-error: true
         uses: actions/cache/save@v4
         with:
@@ -113,5 +128,6 @@ jobs:
           name: priority-catalog-sweep-${{ github.run_id }}
           path: |
             priority-catalog-sweep.*
+            automatic-memory-variants.json
             priority-source-service.log
           retention-days: 30

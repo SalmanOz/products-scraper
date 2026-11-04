@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import patch
 
 from audit_priority_retailers import inspect_target
-from observed_memory_variants import inspect_trendyol_memory_variant
+from observed_memory_variants import inspect_trendyol_memory_variant, inspect_hepsiburada_memory_variant
 from sweep_priority_catalog import sweep, coverage_readback
 from test_trendyol_catalog_source import document, URL, NAME, SPECS
 
@@ -20,6 +20,25 @@ def alternate_document(changes=None):
 
 
 class ObservedMemoryVariantTests(unittest.TestCase):
+    def test_hb_other_ram_requires_the_full_ordinary_selected_buy_box_proof(self):
+        from test_hepsiburada_catalog_source import document as hb_document, NAME as hb_name, TARGET
+        parent = {'ram_gb': 6, 'storage_gb': 128, 'network_generation': '5g'}
+        before = deepcopy(parent)
+        preview = inspect_hepsiburada_memory_variant(hb_document(), TARGET, hb_name, parent)
+        self.assertIsNotNone(preview)
+        self.assertEqual(preview['observed_specs'], dict(parent, ram_gb=8))
+        self.assertFalse(preview['writes'])
+        self.assertEqual(parent, before)
+        for old, new in [('RAM Kapasitesi <span>8 GB RAM', 'RAM Kapasitesi <span>8+8 GB RAM'),
+                         ('Dahili Hafıza <span>128 GB', 'Dahili Hafıza <span>Var'),
+                         ('Mobil Bağlantı Hızı <span>5G', 'Mobil Bağlantı Hızı <span>4G'),
+                         ('RAM Kapasitesi <span>8 GB RAM', 'RAM Kapasitesi <span>8 GB RAM Kapasitesi 8 GB RAM')]:
+            html = hb_document()
+            self.assertIn(old, html)
+            self.assertIsNone(inspect_hepsiburada_memory_variant(html.replace(old, new), TARGET, hb_name, parent))
+        self.assertIsNone(inspect_hepsiburada_memory_variant(hb_document(), TARGET, hb_name.replace('A36', 'A35'), parent))
+        self.assertIsNone(inspect_hepsiburada_memory_variant(hb_document(), TARGET, hb_name, dict(parent, ram_gb=8)))
+
     def test_other_capacity_requires_complete_selected_proof_and_never_changes_parent_specs(self):
         before = deepcopy(SPECS)
         result = inspect_trendyol_memory_variant(alternate_document(), ALT_URL, NAME, SPECS)

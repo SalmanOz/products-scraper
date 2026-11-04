@@ -63,7 +63,7 @@ def catalog_queue(products, prices):
 def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None,
           discover_n11=False, discover_teknosa=False, discover_trendyol=False,
           discover_hepsiburada=False, current_listing_inventory=None, coverage_first=False,
-          category_audit_only=False, category_frontier_path=None):
+          category_audit_only=False, category_frontier_path=None, memory_discovery=False):
     if category_audit_only and (publish or discover_n11):
         raise ValueError('Category routing audits cannot publish or fetch product search results')
     products, prices = client.get_published_products(), client.get_public_price_priority()
@@ -136,6 +136,8 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
     refresh_urls = {url for url, _ in refresh_targets}
     sibling_counts = Counter()
     seller_counts = Counter()
+    memory_counts = Counter()
+    memory_retailer_counts = Counter()
     def process_target(url, product, audited_row=None):
         nonlocal publication_failed
         if (product['slug'], url) in processed:
@@ -333,6 +335,18 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                 process_target(candidate['source_url'], product)
                 result['models_without_priority_hints'] = [slug for slug in
                     result['models_without_priority_hints'] if slug != product['slug']]
+        if memory_discovery:
+            from automatic_memory_variants import memory_variant_destinations
+            for parent, card in memory_variant_destinations(cards, products):
+                url = card['source_url']
+                if (memory_counts[parent['slug']] >= 2 or memory_retailer_counts[retailer] >= 24
+                        or (parent['slug'], url) in processed):
+                    continue
+                memory_counts[parent['slug']] += 1
+                memory_retailer_counts[retailer] += 1
+                discovery.setdefault('memory_variant_hints', []).append({'parent_slug': parent['slug'], **card})
+                result['queued'] += 1
+                process_target(url, parent)
     try:
         if discover_hepsiburada:
             import hepsiburada_catalog_discovery
@@ -547,9 +561,37 @@ def main():
     parser.add_argument('--hepsiburada-category-audit', action='store_true')
     parser.add_argument('--target-preflight', metavar='PUBLIC_PDP_URL')
     parser.add_argument('--target-slug', metavar='EXISTING_PUBLISHED_SLUG')
+    parser.add_argument('--memory-variants', action='store_true',
+                        help='Discover other capacities and independently prepare/publish existing-model variants')
+    parser.add_argument('--memory-variant-preflight', action='store_true',
+                        help='Read-only automatic capacity hints and selected technical-source diagnostic')
     args = parser.parse_args()
+    if args.memory_variant_preflight:
+        if any((args.publish, args.memory_variants, args.target_preflight, args.target_slug, args.n11_preflight,
+                args.coverage_first, args.hepsiburada_category_audit)):
+            raise ValueError('memory_variant_preflight_is_read_only_and_separate')
+        from automatic_memory_variants import memory_target_preflight, prepare_memory_variants
+        from daily_discovery import write_json_checkpoint
+        client = OfferIngestionClient.from_env()
+        products = client.get_published_products()
+        if not products or len(products) > 200:
+            raise ValueError('invalid_or_oversized_catalog')
+        transport = PriorityRetailerTransport(maximum_per_host=48, n11_collector=client.n11_document_get)
+        result = memory_target_preflight(products, transport)
+        save_report(result)
+        print(Path('priority-catalog-sweep.md').read_text(), flush=True)
+        def checkpoint_variant(report):
+            write_json_checkpoint(Path('automatic-memory-variants.json'), report)
+        report = prepare_memory_variants(result, products, transport=PriorityRetailerTransport(
+            maximum_per_host=24, n11_collector=client.n11_document_get), checkpoint=checkpoint_variant)
+        checkpoint_variant(report)
+        for row in report['rows']:
+            print('Automatic memory variant: ' + json.dumps(row, ensure_ascii=False), flush=True)
+        print('Automatic memory variant summary: ' + json.dumps({key: report[key] for key in
+            ('observed_candidates', 'technical_documents', 'created', 'existing', 'writes')}, ensure_ascii=False), flush=True)
+        return
     if args.target_preflight is not None:
-        if args.publish or args.n11_preflight or args.coverage_first or args.hepsiburada_category_audit:
+        if args.publish or args.n11_preflight or args.coverage_first or args.hepsiburada_category_audit or args.memory_variants:
             raise ValueError('The selected target preflight is read-only and cannot run a sweep')
         result = target_preflight(client=OfferIngestionClient.from_env(),
                                   url=args.target_preflight, slug=args.target_slug)
@@ -561,10 +603,10 @@ def main():
         return
     if args.target_slug is not None:
         raise ValueError('A target slug is only valid with --target-preflight')
-    if args.hepsiburada_category_audit and (args.publish or args.n11_preflight):
+    if args.hepsiburada_category_audit and (args.publish or args.n11_preflight or args.memory_variants):
         raise ValueError('The category routing audit is read-only')
     if args.n11_preflight:
-        if args.publish or args.coverage_first:
+        if args.publish or args.coverage_first or args.memory_variants:
             raise ValueError('The collector preflight is read-only')
         client = OfferIngestionClient.from_env()
         products = client.get_published_products()
@@ -618,6 +660,7 @@ def main():
                    discover_hepsiburada=True, current_listing_inventory=listing_inventory,
                    coverage_first=args.coverage_first or args.hepsiburada_category_audit,
                    category_audit_only=args.hepsiburada_category_audit,
+                   memory_discovery=args.memory_variants,
                    category_frontier_path=None if args.hepsiburada_category_audit else STATE_PATH)
     if args.hepsiburada_category_audit:
         save_report(result)
@@ -625,7 +668,38 @@ def main():
         return
     result['hepsiburada_category_frontier_saved'] = save_frontier(STATE_PATH, result)
     save_report(result)  # Keep category progress if public price readback is temporarily unavailable.
-    result['public_coverage'] = coverage_readback(result, client.get_public_price_priority())
+    if args.memory_variants:
+        from automatic_memory_variants import prepare_memory_variants, verify_variant_catalog_readback
+        from source_ingestion import SourceIngestionClient
+        from daily_discovery import write_json_checkpoint
+        products = client.get_published_products()
+        if len(products) != result['catalog_count']:
+            raise ValueError('catalog_changed_before_memory_variant_preparation')
+        variant_rows_reported = 0
+        def variant_checkpoint(report):
+            nonlocal variant_rows_reported
+            write_json_checkpoint(Path('automatic-memory-variants.json'), report)
+            for row in report['rows'][variant_rows_reported:]:
+                print('Automatic memory variant: ' + json.dumps(row, ensure_ascii=False), flush=True)
+            variant_rows_reported = len(report['rows'])
+        variant_report = prepare_memory_variants(result, products,
+            transport=PriorityRetailerTransport(maximum_per_host=24, n11_collector=getattr(client, 'n11_document_get', None)),
+            publish=args.publish, source_client=SourceIngestionClient.from_env() if args.publish else None,
+            checkpoint=variant_checkpoint)
+        variant_checkpoint(variant_report)
+        readback = verify_variant_catalog_readback(products, client.get_published_products(), variant_report)
+        result['automatic_memory_variants'] = {key: variant_report[key] for key in
+            ('observed_candidates', 'technical_documents', 'created', 'existing', 'writes')}
+        result['automatic_memory_variants']['catalog_readback'] = readback
+        current_prices = client.get_public_price_priority()
+        result['original_catalog_coverage'] = coverage_readback(result,
+            {p['id']: current_prices[p['id']] for p in products if p['id'] in current_prices})
+        result['public_coverage'] = coverage_readback({**result, 'catalog_count': readback['catalog_after']}, current_prices)
+        result['writes'] |= variant_report['writes']
+        save_report(result)
+        print('Automatic memory variant summary: ' + json.dumps(result['automatic_memory_variants']), flush=True)
+    else:
+        result['public_coverage'] = coverage_readback(result, client.get_public_price_priority())
     save_report(result)
     print(Path('priority-catalog-sweep.md').read_text())
     if result['status'] != 'completed':

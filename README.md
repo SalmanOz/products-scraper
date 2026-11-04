@@ -519,3 +519,25 @@ ve kanıt incelemesi sonrasında ayrı bir onayla günlük yazma akışına alı
 
 ---
 *Bu depo sadece Teknoskor altyapısında veri senkronizasyonu sağlamak amacıyla tasarlanmış yardımcı betikleri barındırır. Genel kullanıma veya kuruluma yönelik destek sunulmamaktadır.*
+# Automatic memory variants
+
+`sweep_priority_catalog.py --memory-variant-preflight` is a separate read-only
+diagnostic. It derives other-capacity hints from the current authenticated
+catalog, fetches the selected retailer listings, follows only observed Kimovil
+model/variant links, and stages newly read technical facts for the actual
+RAM/storage. It never uploads images or publishes a catalog row or price.
+
+`--memory-variants` extends the full sweep with up to two other-capacity PDP
+hints per existing model (24 per retailer) and prepares at most 12 separately
+verified capacities. `--publish` enables the atomic `/api/ingestion/memory-variants`
+writer and first-party image uploads. There are no hand-authored model/price
+batches. Source denial circuits survive the variant stage. A technical page
+must have the exact selected canonical, model, unambiguous physical RAM/storage,
+radio, release and complete freshly sourced sections; a fresh live selected
+retailer SKU/seller/stock/price is independently mandatory. Missing evidence
+rejects that candidate without changing its parent. Original catalog identity
+and coverage are reported separately from the enlarged catalog readback.
+
+These modes are manual invocations in the existing serialized recovery
+workflow. They add no schedule and do not relax the overall 80% price gate.
+

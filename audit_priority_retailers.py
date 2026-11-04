@@ -142,6 +142,11 @@ def inspect_target(transport, url, product):
             row.update(reader_reason=why, prepared_offer=offer)
             row['discovered_siblings'] = discover_product_siblings(html, observed_url, product)
             row['discovered_sellers'] = discover_product_sellers(html, observed_url) if offer is not None else []
+            if offer is None:
+                from observed_memory_variants import inspect_hepsiburada_memory_variant
+                other = inspect_hepsiburada_memory_variant(html, observed_url, product['name'], specs)
+                if other is not None:
+                    row['other_memory_variant'] = other
         if host == 'www.trendyol.com':
             from trendyol_catalog_source import parse_catalog_listing
             specs = with_reviewed_radio(product, PriceUpdater.get_expected_specs(product.get('attributes')))
