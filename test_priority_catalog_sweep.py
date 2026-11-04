@@ -416,6 +416,38 @@ def sweep_reader():
 
 
 class SweepTests(unittest.TestCase):
+    def test_phone_category_family_query_reads_observed_capacities_without_copying_radio_or_prices(self):
+        from pathlib import Path
+        client = Client()
+        client.product.update(name='Samsung Galaxy A37 5G', slug='samsung-galaxy-a37-5g', offer_targets=[],
+            attributes={'ram_gb': 6, 'storage_gb': 128, 'Connectivity': {'5G': True}})
+        original = deepcopy(client.product)
+        client.get_public_price_priority = lambda: {client.product['id']: (client.product['slug'], False)}
+        queries, documents = [], []
+        class SearchTransport(Transport):
+            def read_n11_phone_search(self, query):
+                queries.append(query)
+                return Path('fixtures/n11-phone-category-family-cards.html').read_text(), 'document_read', 200
+            def read_n11_search(self, query):
+                raise AssertionError('A phone category query must not fall back to accessory search')
+        def inspect(transport, url, product):
+            documents.append(url)
+            return {'slug': product['slug'], 'retailer': 'n11', 'url': url, 'observed_url': url,
+                    'reason': 'document_read', 'http_status': 200, 'prepared_offer': None}
+        with patch('sweep_priority_catalog.inspect_target', side_effect=inspect), \
+                patch('sweep_priority_catalog.refresh_candidates') as writer:
+            result = sweep(client=client, transport=SearchTransport(), discover_n11=True, memory_discovery=True)
+        self.assertEqual(queries, ['Samsung Galaxy A37'])
+        self.assertEqual(len(documents), 3)
+        self.assertTrue(any(url.endswith('-123891572') for url in documents))
+        self.assertTrue(any(url.endswith('-123382261') for url in documents))
+        self.assertTrue(any(url.endswith('-127133909') for url in documents))
+        self.assertEqual(len(result['discovery'][0]['memory_variant_hints']), 2)
+        self.assertEqual(result['discovery'][0]['discovery_scope'], 'public_phone_category_family_query')
+        self.assertEqual(client.product, original)
+        self.assertFalse(result['writes'])
+        writer.assert_not_called()
+
     def test_storage_only_search_hint_must_read_actual_selected_ram_and_never_fill_it_from_parent(self):
         from test_n11_catalog_source import document, URL, NAME
         for missing_ram in (False, True):

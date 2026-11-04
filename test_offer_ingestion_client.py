@@ -1015,6 +1015,25 @@ class TechnicalSourceHintContractTests(TestCase):
 
 
 class N11CollectorBoundaryTests(TestCase):
+    def test_phone_family_search_stays_on_the_public_collector_and_rejects_other_query_routes(self):
+        target = 'https://www.n11.com/telefon-ve-aksesuarlari/cep-telefonu?iw=Samsung+Galaxy+A37'
+        body = {'purpose': 'public_n11_document', 'writes': False, 'url': target,
+                'source_status': 200, 'observed_at': datetime.now(timezone.utc).isoformat(),
+                'document': '<h1>Cep Telefonu</h1>', 'content_type': 'text/html'}
+        session = FakeSession([FakeResponse(200, body)])
+        client = OfferIngestionClient('https://teknoskor.com', TEST_SECRET, session=session)
+        self.assertEqual(client.n11_document_get(target).status_code, 200)
+        self.assertEqual(session.calls[0][1], 'https://teknoskor.com/api/ingestion/n11-document')
+        self.assertEqual(session.calls[0][2]['json'], {'url': target})
+        self.assertEqual(session.calls[0][2]['headers']['Authorization'], 'Bearer ' + TEST_SECRET)
+        for invalid in [target + '&token=x', target + '&iw=other', target.replace('?iw=', '?q='),
+                        target.replace('/cep-telefonu?', '/cep-telefonu-aksesuarlari?'),
+                        target.replace('www.n11.com', 'evil.example'),
+                        target.split('?')[0] + '?iw=%0a', target.split('?')[0] + '?iw=%7f']:
+            with self.assertRaises(requests.RequestException):
+                client.n11_document_get(invalid)
+        self.assertEqual(len(session.calls), 1)
+
     def test_same_product_redirect_metadata(self):
         test_n11_collector_redirect_metadata_stays_bound_to_the_same_product_group()
 

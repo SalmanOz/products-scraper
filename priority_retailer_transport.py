@@ -21,6 +21,7 @@ from hepsiburada_s25_fe_source import HepsiburadaS25FeSource
 HOSTS = {'www.hepsiburada.com': 'Hepsiburada', 'www.trendyol.com': 'Trendyol',
          'www.n11.com': 'n11', 'www.teknosa.com': 'Teknosa'}
 BOT = 'TeknoskorPriceBot'
+N11_PHONE_SEARCH_PATH = '/telefon-ve-aksesuarlari/cep-telefonu'
 MAX_HTML_BYTES = 5 * 1024 * 1024
 
 
@@ -173,6 +174,15 @@ class PriorityRetailerTransport:
         url = 'https://www.n11.com/arama?' + urlencode({'q': query})
         return self._read_document(url, 'www.n11.com')
 
+    def read_n11_phone_search(self, query):
+        # The public category's own "Sonuçlarda Ara" emits this exact route.
+        # It excludes accessory categories; its cards remain URL hints only.
+        if (not isinstance(query, str) or not 1 <= len(query) <= 180
+                or re.search(r'[\x00-\x1f\x7f]', query)):
+            return None, 'invalid_catalog_query', None
+        url = 'https://www.n11.com' + N11_PHONE_SEARCH_PATH + '?' + urlencode({'iw': query})
+        return self._read_document(url, 'www.n11.com')
+
     def read_teknosa_category(self, url):
         from teknosa_catalog_discovery import category_page_number
         page = category_page_number(url)
@@ -235,7 +245,7 @@ class PriorityRetailerTransport:
                 state['pdp_requests'] += 1
                 if category:
                     state['category_requests'] = category_count + 1
-                if urlparse(url).path == '/arama':
+                if urlparse(url).path in ('/arama', N11_PHONE_SEARCH_PATH):
                     state['search_requests'] += 1
                 raw, reason, status = self._read(url, MAX_HTML_BYTES, 'text/html', state)
                 if reason != 'ready':

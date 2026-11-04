@@ -478,10 +478,22 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                 model = TRPriceScraper._catalog_model_name(product['name'], specs)
                 if not model or not storage:
                     continue
-                query = model if memory_discovery else f'{model} {storage} GB'
-                html, reason, status = transport.read_n11_search(query)
+                phone_search = getattr(transport, 'read_n11_phone_search', None)
+                if callable(phone_search):
+                    import re
+                    # Radio suffixes are often absent from public n11 titles.
+                    # Broaden only this phone-category URL query, preserving
+                    # Pro/Plus/Max and every selected-PDP verification below.
+                    query_model = re.sub(r'\s+', ' ', re.sub(r'\b(?:4g|5g|lte)\b', '', model, flags=re.I)).strip()
+                    query = query_model if memory_discovery else f'{query_model} {storage} GB'
+                    html, reason, status = phone_search(query)
+                else:
+                    query = model if memory_discovery else f'{model} {storage} GB'
+                    html, reason, status = transport.read_n11_search(query)
                 diagnostic = {'slug': product['slug'], 'retailer': 'n11', 'query': query,
                               'reason': reason, 'http_status': status, 'new_targets': []}
+                if callable(phone_search):
+                    diagnostic['discovery_scope'] = 'public_phone_category_family_query'
                 result['discovery'].append(diagnostic)
                 if html is not None:
                     candidates = discover_catalog_targets(html, product['name'], specs,

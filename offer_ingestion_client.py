@@ -673,14 +673,15 @@ class OfferIngestionClient:
         The ingestion credential goes only to our existing application host;
         the collector never forwards it or visitor cookies to the retailer.
         """
-        from priority_retailer_transport import product_host, n11_canonical_redirect
+        from priority_retailer_transport import product_host, n11_canonical_redirect, N11_PHONE_SEARCH_PATH
         parsed = urlparse(url)
         query = parse_qsl(parsed.query, keep_blank_values=True)
+        search_key = {'/arama': 'q', N11_PHONE_SEARCH_PATH: 'iw'}.get(parsed.path)
         if (parsed.scheme != 'https' or parsed.netloc != 'www.n11.com' or parsed.fragment
                 or not (product_host(url) == 'www.n11.com' and not parsed.query
                         or parsed.path == '/robots.txt' and not parsed.query
-                        or parsed.path == '/arama' and len(query) == 1 and query[0][0] == 'q'
-                        and 1 <= len(query[0][1]) <= 180 and not re.search(r'[\x00-\x1f]', query[0][1]))):
+                        or search_key is not None and len(query) == 1 and query[0][0] == search_key
+                        and 1 <= len(query[0][1]) <= 180 and not re.search(r'[\x00-\x1f\x7f]', query[0][1]))):
             raise requests.RequestException('Invalid public n11 collector destination')
         try:
             body = self._request_json('POST', '/api/ingestion/n11-document',

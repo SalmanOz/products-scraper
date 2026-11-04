@@ -16,6 +16,26 @@ URLS = (
 
 
 class PriorityRetailerTests(unittest.TestCase):
+    def test_phone_category_search_reuses_robots_denial_and_the_shared_document_cap(self):
+        from priority_retailer_transport import N11_PHONE_SEARCH_PATH
+        calls = []
+        def get(url, **_):
+            calls.append(url)
+            return Response(url, 'User-agent: *\nAllow: /\n' if url.endswith('robots.txt') else '<h1>Cep Telefonu</h1>')
+        source = PriorityRetailerTransport(get=get, sleep=lambda _: None, maximum_per_host=1)
+        self.assertEqual(source.read_n11_phone_search('Samsung Galaxy A37')[1], 'document_read')
+        self.assertEqual(calls, ['https://www.n11.com/robots.txt',
+            'https://www.n11.com' + N11_PHONE_SEARCH_PATH + '?iw=Samsung+Galaxy+A37'])
+        self.assertEqual(source.read_n11_search('another model')[1], 'pdp_budget_exhausted')
+        self.assertEqual(source.read_document(URLS[2])[1], 'pdp_budget_exhausted')
+        self.assertEqual(source.report()['n11']['search_requests'], 1)
+        self.assertEqual(source.report()['n11']['pdp_requests'], 0)
+        for query in ['bad\nquery', '\x7f', '', 'a' * 181]:
+            self.assertEqual(source.read_n11_phone_search(query)[1], 'invalid_catalog_query')
+        denied = PriorityRetailerTransport(get=lambda url, **_: Response(url,
+            'User-agent: *\nDisallow: ' + N11_PHONE_SEARCH_PATH + '\n'), sleep=lambda _: None)
+        self.assertEqual(denied.read_n11_phone_search('Samsung Galaxy A37')[1], 'robots_disallowed')
+
     def test_hb_category_redirects_only_record_safe_observed_hints_and_never_accept_changed_bodies(self):
         old = 'https://www.hepsiburada.com/samsung-galaxy-s25-fe-android-telefonlar-xc-60005201-b8848-t6765'
         new = old.replace('t6765', 't6774')
