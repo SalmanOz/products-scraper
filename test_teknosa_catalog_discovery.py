@@ -31,6 +31,17 @@ PRODUCT = {'id': 1, 'slug': 'apple-iphone-15', 'name': 'Apple iPhone 15',
 
 
 class DiscoveryTests(unittest.TestCase):
+    def test_observed_magic_generation_spacing_keeps_exact_generation_and_qualifiers(self):
+        product = {'id': 1, 'name': 'Honor Magic8 Pro',
+                   'attributes': {'ram_gb': 12, 'storage_gb': 512}}
+        def row(title, i):
+            return {'source_url': f'https://www.teknosa.com/honor-phone-p-{125000000+i}',
+                    'discovery_title': title, 'stock_priority': True}
+        rows = [row('HONOR Magic 8 Pro 5G 512 GB 12 GB Ram (Honor Türkiye Garantili)', 1),
+                row('Honor Magic 7 Pro 12GB RAM 512GB', 2), row('Honor Magic 8 12GB RAM 512GB', 3),
+                row('Honor Magic 8 Pro 16GB RAM 512GB', 4)]
+        self.assertEqual(match_catalog_destinations(rows, [product])[1], rows[:1])
+
     def test_accessory_brand_destinations_do_not_take_a_phone_discovery_slot(self):
         rows = [{'source_url': f'https://www.trendyol.com/{brand}/iphone-15-128gb-p-{10000+i}',
                  'discovery_title': title, 'stock_priority': True}

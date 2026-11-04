@@ -398,6 +398,7 @@ class TRPriceScraper:
     @classmethod
     def _identity_words(cls, value):
         value = str(value or '').replace('+', ' plus ')
+        value = re.sub(r'\bmagic[\s_-]+([1-9]\d?)\b', r'magic\1', value, flags=re.I)
         value = re.sub(r'\b(iphone)(?=\d)', r'\1 ', value, flags=re.I)
         value = re.sub(r'\b([45])\s*g\b', r'\1g', value, flags=re.I)
         value = re.sub(r'\b([a-z]*\d+)(fe|se|pro|plus|ultra|mini|max|lite|edge|e)\b', r'\1 \2', value, flags=re.I)

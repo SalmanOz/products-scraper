@@ -2,7 +2,7 @@ from copy import deepcopy
 import unittest
 from unittest.mock import patch
 
-from hepsiburada_catalog_discovery import CATEGORY_URL, category_identity, parse_category_document, discovery_links
+from hepsiburada_catalog_discovery import CATEGORY_URL, card_destination, category_identity, parse_category_document, discovery_links
 from priority_retailer_transport import PriorityRetailerTransport
 from test_pasaj_source import Response
 from test_teknosa_catalog_discovery import PRODUCT
@@ -21,6 +21,21 @@ def document(brand=False):
 
 
 class HepsiburadaDiscoveryTests(unittest.TestCase):
+    def test_public_ad_link_discovers_only_its_explicit_canonical_product_without_tracking(self):
+        from urllib.parse import urlencode
+        tracker = 'https://adservice.hepsiburada.com/event/api/v1/track?' + urlencode({
+            'event': 'not-retained', 'anonymousId': 'not-retained',
+            'redirect': PDP + '?adsUniqueId=not-retained&magaza=OldSeller'})
+        self.assertEqual(card_destination(tracker), PDP)
+        rows, _ = parse_category_document(document().replace(PDP, tracker.replace('&', '&amp;')), CATEGORY_URL)
+        self.assertEqual([r['source_url'] for r in rows], [PDP])
+        self.assertNotIn('not-retained', str(rows))
+        for bad in [tracker.replace('adservice.hepsiburada.com', 'evil.test'),
+                    tracker.replace('event/api/v1/track', 'private/track'),
+                    tracker + '&redirect=https%3A%2F%2Fevil.test',
+                    'https://adservice.hepsiburada.com/event/api/v1/track?' + urlencode({'redirect':'https://evil.test/phone'})]:
+            self.assertIsNone(card_destination(bad))
+
     def test_public_card_and_observed_brand_links_never_supply_prices(self):
         diagnostic = {}
         cards, next_page = parse_category_document(document() + '<b>1 TL</b>', CATEGORY_URL, diagnostic)

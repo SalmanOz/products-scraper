@@ -4,7 +4,7 @@ Follow only observed phone-brand links and the document's public rel=next links.
 Report the bounded discovery scope honestly, without guessing pages.
 """
 import re
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
@@ -14,6 +14,27 @@ from tr_price_scraper import TRPriceScraper
 CATEGORY_URL = 'https://www.hepsiburada.com/cep-telefonlari-c-371965'
 MAX_CATEGORY_PAGES = 40
 DISCOVERY_SCOPE = 'bounded_observed_category_and_brand_pages'
+
+
+def card_destination(raw_url):
+    """Extract only a public canonical PDP, never request or retain ad tracking."""
+    if not isinstance(raw_url, str) or len(raw_url) > 16000:
+        return None
+    try:
+        target = urljoin(CATEGORY_URL, raw_url)
+        parsed = urlparse(target)
+        if (parsed.scheme == 'https' and parsed.netloc == 'adservice.hepsiburada.com'
+                and parsed.path == '/event/api/v1/track' and not parsed.fragment):
+            redirects = parse_qs(parsed.query, max_num_fields=32).get('redirect', [])
+            if len(redirects) != 1:
+                return None
+            parsed = urlparse(redirects[0])
+            target = parsed._replace(query='').geturl()
+        if product_host(target) != 'www.hepsiburada.com' or urlparse(target).query:
+            return None
+        return target
+    except ValueError:
+        return None
 
 
 def category_identity(url):
@@ -60,12 +81,11 @@ def parse_category_document(html, url, diagnostic=None):
             continue
         link = links[0]
         title = link.get_text(' ', strip=True)
-        target = urljoin(CATEGORY_URL, link['href'])
-        # Sponsored tracking/redirect URLs, merchant selectors and unrelated
-        # links are deliberately not persisted or requested.
+        target = card_destination(link['href'])
+        # Only the actual linked canonical PDP can enter discovery. Tracker
+        # events and identifiers are neither requested nor persisted.
         if (not title or len(title) > 500 or link.get('title') != title
-                or product_host(target) != 'www.hepsiburada.com'
-                or urlparse(target).query or target in seen):
+                or target is None or target in seen):
             continue
         seen.add(target)
         cards.append({'source_url': target, 'discovery_title': title,
