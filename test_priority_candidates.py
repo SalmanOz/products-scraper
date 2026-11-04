@@ -55,6 +55,47 @@ def reader():
 
 
 class PriorityCandidateTests(unittest.TestCase):
+    def test_teknosa_omitted_ram_offer_requires_fresh_physical_table_before_exact_publication(self):
+        from pathlib import Path
+        from teknosa_marketplace_source import parse_selected_marketplace
+        from teknosa_reviewed_source import TeknosaCatalogSource
+        html = Path(__file__).with_name('fixtures').joinpath('teknosa-selected-s25-ultra-512-physical-table.html').read_text()
+        url = 'https://www.teknosa.com/samsung-galaxy-s25-ultra-5g-512gb-titanyum-gumus-akilli-telefon-p-125079845'
+        name, specs = 'Samsung Galaxy S25 Ultra', {'ram_gb': 12, 'storage_gb': 512, 'network_generation': '5g'}
+        observed, reason = parse_selected_marketplace(html, url, {'name': name, 'specs': specs})
+        self.assertIsNotNone(observed, reason)
+        class ScopedClient(Client):
+            def ingest_listing_offers(self, rows, *, require_all_accepted):
+                return {**super().ingest_offers(rows, require_all_accepted=require_all_accepted),
+                        'offer_identity_contract': 'seller-source-url-v1', 'server_scores_recalculated': True}
+        class SourceTransport:
+            def __init__(self, body):
+                self.body, self.calls = body, []
+            def read_document(self, target):
+                self.calls.append(target)
+                return self.body, 'document_read', 200
+        for changed in (False, True):
+            client = ScopedClient()
+            client.product.update(name=name, slug='samsung-galaxy-s25-ultra-12gb-512gb',
+                attributes={**specs, 'Connectivity': {'5G': True}},
+                offer_targets=[{'merchant_name': observed['merchant'], 'source_url': url}])
+            report = {'purpose': 'automatic_priority_retailer_diagnosis', 'writes': False, 'catalog_count': 1,
+                'rows': [{'slug': client.product['slug'], 'retailer': 'Teknosa', 'reason': 'document_read',
+                          'http_status': 200, 'prepared_offer': observed}]}
+            source = SourceTransport(html.replace('>12 GB</td>', '>16 GB</td>') if changed else html)
+            refresher = RetailerOfferRefresher(teknosa_catalog_source=TeknosaCatalogSource(transport=source))
+            result = refresh_candidates(report, client=client, reader=refresher)
+            self.assertEqual(source.calls, [url])
+            if changed:
+                self.assertEqual(client.writes, [])
+                self.assertFalse(result['writes'])
+            else:
+                self.assertEqual(len(client.writes), 1)
+                self.assertTrue(result['commercial_readback_verified'])
+                self.assertEqual(result['ingestion']['accepted'], 1)
+                proof = client.writes[0][0]['source_variant_evidence']
+                self.assertEqual((proof['platform'], proof['ram_gb'], proof['storage_gb']), ('Teknosa', 12, 512))
+
     def test_identical_technical_copies_are_rechecked_before_atomic_write_and_commercial_readback(self):
         from bs4 import BeautifulSoup
         from unittest.mock import patch

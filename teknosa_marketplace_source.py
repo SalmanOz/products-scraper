@@ -13,6 +13,56 @@ from teknosa_reviewed_source import MAX_HTML_BYTES, _amount, _cash_price
 from tr_price_scraper import TRPriceScraper
 
 
+def selected_technical_specs(main, title, cart):
+    """Read only the selected PDP's own explicit physical specification table.
+
+    No catalog profile enters this function. A title omission can be filled
+    only by independent, complete source facts; recommendations and other
+    product tables cannot establish them.
+    """
+    root = main.find_parent(class_='pdp')
+    if root is None or len(root.select('#pdp-main')) != 1:
+        return None
+    sections = root.select('#pdp-technical[data-title="Teknik Özellikler"]')
+    if len(sections) != 1:
+        return None
+    section = sections[0]
+    headings = section.select(':scope > button.pdp-acc-trg > h2')
+    tables = section.select('#tableContainer > table.tableFeature')
+    if (len(headings) != 1 or headings[0].get_text(' ', strip=True) != 'Teknik Özellikler'
+            or len(tables) != 1):
+        return None
+    rows = tables[0].find_all('tr', recursive=False)
+    if not rows or len(rows) % 2 or len(rows) > 100:
+        return None
+    facts = {}
+    for headers, values in zip(rows[::2], rows[1::2]):
+        labels, cells = headers.find_all('th', recursive=False), values.find_all('td', recursive=False)
+        if not labels or len(labels) != len(cells):
+            return None
+        for label, cell in zip(labels, cells):
+            key = label.get_text(' ', strip=True)
+            if key not in {'Bellek Kapasitesi (RAM)', 'Dahili Hafıza', '5G Desteği', 'Model Kodu'}:
+                continue
+            if key in facts or ' '.join(cell.get('class', [])) != 'featureVal ' + key:
+                return None
+            facts[key] = cell.get_text(' ', strip=True)
+    if set(facts) != {'Bellek Kapasitesi (RAM)', 'Dahili Hafıza', '5G Desteği', 'Model Kodu'}:
+        return None
+    ram = re.fullmatch(r'([1-9]\d?) GB', facts['Bellek Kapasitesi (RAM)'])
+    storage = re.fullmatch(r'([1-9]\d{1,3}) GB', facts['Dahili Hafıza'])
+    # This observed table explicitly confirms 5G. A missing/negative 5G field
+    # never establishes 4G, and no catalog radio can replace source evidence.
+    brand = cart.get('data-product-brand')
+    if (ram is None or storage is None or facts['5G Desteği'] != 'Evet'
+            or not isinstance(brand, str) or not brand.strip()
+            or not 1 <= int(ram[1]) <= 64 or not 32 <= int(storage[1]) <= 4096
+            or not TRPriceScraper().is_strict_match(brand + ' ' + facts['Model Kodu'], title, {})):
+        return None
+    return {'ram_gb': int(ram[1]), 'storage_gb': int(storage[1]), 'network_generation': '5g',
+            'selected_teknosa_physical_specs_verified': True}
+
+
 def parse_selected_marketplace(html, url, profile):
     if (product_host(url) != 'www.teknosa.com' or urlparse(url).query
             or not isinstance(html, str) or len(html.encode()) > MAX_HTML_BYTES
@@ -145,6 +195,9 @@ def parse_selected_marketplace(html, url, profile):
               'source_title': title, 'url': url,
               'currency': 'TRY', 'condition': 'new', 'availability': 'in_stock',
               'price': float(price), 'observed_at': datetime.now(timezone.utc).isoformat()}
+    technical = selected_technical_specs(main, title, cart)
+    if technical is not None:
+        result.update(product_id=sku, **technical)
     if not catalog_offer_matches(result, profile.get('name'), profile['specs']):
         return None, 'catalog_variant_mismatch'
     return result, 'selected_teknosa_marketplace_cash_offer'

@@ -22,6 +22,26 @@ def a16_offer():
 
 
 class SelectedSkuEvidenceTests(unittest.TestCase):
+    def test_teknosa_facts_require_full_selected_seller_sku_and_independent_table_proof(self):
+        from pathlib import Path
+        from teknosa_marketplace_source import parse_selected_marketplace
+        html = Path(__file__).with_name('fixtures').joinpath('teknosa-selected-s25-ultra-512-physical-table.html').read_text()
+        url = 'https://www.teknosa.com/samsung-galaxy-s25-ultra-5g-512gb-titanyum-gumus-akilli-telefon-p-125079845'
+        profile = {'name': 'Samsung Galaxy S25 Ultra', 'specs': {'ram_gb': 12, 'storage_gb': 512, 'network_generation': '5g'}}
+        offer, reason = parse_selected_marketplace(html, url, profile)
+        self.assertIsNotNone(offer, reason)
+        self.assertIsNotNone(selected_sku_evidence(offer))
+        for field in ['selected_teknosa_physical_specs_verified', 'selected_teknosa_variant_verified',
+                      'selected_teknosa_seller', 'selected_teknosa_shop_id', 'product_id', 'sku',
+                      'listing_id', 'gtin13', 'ram_gb', 'storage_gb', 'network_generation']:
+            changed = dict(offer); changed.pop(field)
+            self.assertIsNone(selected_sku_evidence(changed), field)
+        for field, value in [('ram_gb', True), ('network_generation', '4g'), ('merchant_id', '1001'),
+                             ('product_id', '125079846'), ('sku', '125079846'), ('gtin13', '8806097015155'),
+                             ('merchant', 'Other seller'), ('url', url + '?shopId=3973'),
+                             ('url', url.replace('https:', 'http:'))]:
+            self.assertIsNone(selected_sku_evidence({**offer, field: value}), (field, value))
+
     def test_selected_retailer_radio_never_fills_an_unresolved_dual_radio_catalog_identity(self):
         from mediamarkt_marketplace_audit import catalog_variant_matches
         matcher = TRPriceScraper()

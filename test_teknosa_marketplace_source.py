@@ -19,6 +19,52 @@ def document():
 
 
 class TeknosaMarketplaceTests(unittest.TestCase):
+    def test_public_selected_physical_table_proves_omitted_ram_without_changing_raw_heading(self):
+        from selected_sku_evidence import selected_sku_evidence
+        html = Path(__file__).with_name('fixtures').joinpath('teknosa-selected-s25-ultra-512-physical-table.html').read_text()
+        url = 'https://www.teknosa.com/samsung-galaxy-s25-ultra-5g-512gb-titanyum-gumus-akilli-telefon-p-125079845'
+        profile = {'name': 'Samsung Galaxy S25 Ultra', 'specs': {'ram_gb': 12, 'storage_gb': 512, 'network_generation': '5g'}}
+        offer, reason = parse_selected_marketplace(html, url, profile)
+        self.assertEqual(reason, 'selected_teknosa_marketplace_cash_offer')
+        self.assertEqual((offer['ram_gb'], offer['storage_gb'], offer['network_generation']), (12, 512, '5g'))
+        self.assertEqual((offer['merchant'], offer['gtin13'], offer['price']), ('hepsi10line', '8806097015154', 75898))
+        self.assertEqual(offer['source_title'], 'Samsung Galaxy S25 Ultra 5G 512GB Titanyum Gümüş Akıllı Telefon')
+        proof = selected_sku_evidence(offer)
+        self.assertEqual((proof['product_id'], proof['sku'], proof['merchant_id'], proof['listing_id']),
+                         ('125079845', '125079845', '3973', '1793573'))
+        for fields in ({'ram_gb': 8}, {'storage_gb': 256}, {'network_generation': '4g'}):
+            changed = {**profile, 'specs': {**profile['specs'], **fields}}
+            self.assertIsNone(parse_selected_marketplace(html, url, changed)[0], fields)
+
+    def test_missing_or_conflicting_selected_table_facts_and_other_products_cannot_fill_heading_ram(self):
+        from bs4 import BeautifulSoup
+        html = Path(__file__).with_name('fixtures').joinpath('teknosa-selected-s25-ultra-512-physical-table.html').read_text()
+        url = 'https://www.teknosa.com/samsung-galaxy-s25-ultra-5g-512gb-titanyum-gumus-akilli-telefon-p-125079845'
+        profile = {'name': 'Samsung Galaxy S25 Ultra', 'specs': {'ram_gb': 12, 'storage_gb': 512, 'network_generation': '5g'}}
+        mutations = []
+        for key, value in [('Bellek Kapasitesi (RAM)', '8 GB'), ('Bellek Kapasitesi (RAM)', '12+12 GB'),
+                           ('Dahili Hafıza', '256 GB'), ('5G Desteği', 'Hayır'), ('5G Desteği', ''),
+                           ('Model Kodu', 'Galaxy S25'), ('Model Kodu', 'Galaxy S25 Ultra Plus')]:
+            soup = BeautifulSoup(html, 'html.parser')
+            cell = next(x for x in soup.select('#pdp-technical td') if ' '.join(x.get('class', [])) == 'featureVal ' + key)
+            cell.string = value
+            mutations.append((key + ':' + value, str(soup)))
+        for selector in ['#pdp-technical', '#pdp-technical table', '#pdp-technical h2']:
+            soup = BeautifulSoup(html, 'html.parser'); soup.select_one(selector).decompose()
+            mutations.append((selector, str(soup)))
+        soup = BeautifulSoup(html, 'html.parser')
+        table = soup.select_one('#pdp-technical table'); table.insert_after(deepcopy(table))
+        mutations.append(('duplicate technical tables', str(soup)))
+        soup = BeautifulSoup(html, 'html.parser')
+        section = soup.select_one('#pdp-technical'); section.extract(); soup.body.append(section)
+        mutations.append(('table outside selected PDP', str(soup)))
+        soup = BeautifulSoup(html, 'html.parser')
+        soup.select_one('#pdp-main').insert_after(deepcopy(soup.select_one('#pdp-main')))
+        mutations.append(('ambiguous selected PDP', str(soup)))
+        for label, changed in mutations:
+            with self.subTest(label=label):
+                self.assertIsNone(parse_selected_marketplace(changed, url, profile)[0])
+
     def test_observed_samsung_short_brand_route_keeps_selected_title_shop_and_memory_bound(self):
         from bs4 import BeautifulSoup
         html = Path(__file__).with_name('fixtures').joinpath('teknosa-selected-samsung-brand-route.html').read_text()

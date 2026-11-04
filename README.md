@@ -444,6 +444,12 @@ SKU veya kondisyon dahil herhangi bir alan çelişirse ya da ikiden fazla kopya
 varsa teklif reddedilir. Satıcı, seçili kontrol, barkod, stok ve fiyat
 doğrulamaları ile yazım öncesi canlı okuma ayrıca zorunludur.
 
+Teknosa'nın seçili pazaryeri ilanında RAM başlıkta yazmıyorsa, aynı ürün
+kapsayıcısındaki tek teknik tablonun model, fiziksel RAM, depolama ve açık
+5G desteği birlikte okunabilir. Beklenen katalog değerleri bu kanıta eklenmez.
+Başlığın kendisi korunur; mevcut satıcı/SKU/GTIN/stok/fiyat kanıtı ve yeniden
+canlı okuma geçmeden yazım yapılmaz. Eksik veya olumsuz 5G alanından 4G türetilmez.
+
 Trendyol'da mevcut yenileme hedeflerinden en fazla sekiz farklı markanın ürünü
 kategori keşfinden önce okunur; diğer katalog hedefleri normal turunda kalır.
 Bu sayfaların gözlenen telefon/Android telefon marka kategorileri, zorunlu
