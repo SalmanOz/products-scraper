@@ -19,6 +19,26 @@ class Transport:
         return {}
 
 
+class CategoryDiagnosticTests(unittest.TestCase):
+    def test_parser_and_transport_failures_remain_visible_without_exporting_document_or_offer_payloads(self):
+        from sweep_priority_catalog import category_page_diagnostics
+        data = {'hepsiburada_category_discovery': {'retailer': 'Hepsiburada', 'pages': [
+            {'url': 'https://www.hepsiburada.com/cep-telefonlari-c-371965',
+             'reason': 'document_read', 'http_status': 200, 'html': 'must-not-export',
+             'parser': {'status': 'category_identity_missing', 'observed_headings': ['Observed category'],
+                        'private_state': 'must-not-export'}},
+            {'url': 'https://www.hepsiburada.com/cep-telefonlari-c-371965?sayfa=2',
+             'reason': 'source_cooldown', 'http_status': None}],
+             'prepared_offers': [{'price': 1, 'seller': 'must-not-export'}]}}
+        before = deepcopy(data)
+        events = category_page_diagnostics(data)
+        self.assertEqual([(r['category_page'], r['reason'], r['parser_status']) for r in events],
+            [(1, 'document_read', 'category_identity_missing'), (2, 'source_cooldown', None)])
+        self.assertEqual(events[0]['observed_headings'], ['Observed category'])
+        self.assertNotIn('must-not-export', str(events))
+        self.assertEqual(data, before)
+
+
 def sweep_reader():
     source = reader()
     source.hepsiburada_catalog_source.transport.configure_catalog_budget = lambda count: None

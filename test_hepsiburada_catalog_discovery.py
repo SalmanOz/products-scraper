@@ -117,6 +117,11 @@ class HepsiburadaDiscoveryTests(unittest.TestCase):
             self.assertEqual(len(parse_category_document(html, url)[0]), 1)
 
     def test_ads_selectors_changed_titles_and_nonphone_branches_are_rejected(self):
+        diagnostic = {}
+        unknown = document().replace('Cep Telefonu Fiyatları ve Modelleri', 'Cep Telefonları ve Akıllı Telefonlar')
+        self.assertEqual(parse_category_document(unknown, CATEGORY_URL, diagnostic)[0], [])
+        self.assertEqual(diagnostic['observed_headings'], ['Cep Telefonları ve Akıllı Telefonlar'])
+        self.assertEqual(diagnostic['status'], 'category_identity_missing')
         for changed in [document().replace(PDP, 'https://adservice.hepsiburada.com/event/api/v1/track'),
                         document().replace(PDP, PDP + '?magaza=SomeShop'),
                         document().replace('title="Apple', 'title="Samsung'),

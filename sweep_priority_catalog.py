@@ -351,6 +351,19 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
     return result
 
 
+def category_page_diagnostics(result):
+    """Public category routing/parser facts only; no source bodies or row prices."""
+    events = []
+    for key in ('category_discovery', 'trendyol_category_discovery', 'hepsiburada_category_discovery'):
+        discovery = result.get(key) or {}
+        for index, page in enumerate(discovery.get('pages', []), 1):
+            parser = page.get('parser') or {}
+            events.append({'category_page': index, 'retailer': discovery.get('retailer'),
+                'url': page.get('url'), 'reason': page.get('reason'), 'http_status': page.get('http_status'),
+                'parser_status': parser.get('status'), 'observed_headings': parser.get('observed_headings', [])})
+    return events
+
+
 def save_report(result):
     Path('priority-catalog-sweep.json').write_text(json.dumps(result, ensure_ascii=False, indent=2))
     counts = Counter(row.get('reader_reason', row.get('reason')) for row in result['rows'])
@@ -392,6 +405,9 @@ def save_report(result):
             'new_targets': len(discovery['new_targets'])}, ensure_ascii=False)]
     if result.get('public_coverage'):
         lines += ['', 'Public coverage: ' + json.dumps(result['public_coverage'], ensure_ascii=False)]
+    for event in category_page_diagnostics(result):
+        if event['reason'] != 'document_read' or event['parser_status'] != 'parsed':
+            lines += ['', 'Incomplete category page: ' + json.dumps(event, ensure_ascii=False)]
     Path('priority-catalog-sweep.md').write_text('\n'.join(lines))
 
 
@@ -436,9 +452,15 @@ def main():
             raise SystemExit('Dedicated source collector preflight failed; no writes')
         return
     visited = 0
+    category_events_seen = set()
     def checkpoint(result):
         nonlocal visited
         save_report(result)
+        for event in category_page_diagnostics(result):
+            identity = (event['retailer'], event['category_page'])
+            if identity not in category_events_seen:
+                category_events_seen.add(identity)
+                print(json.dumps(event, ensure_ascii=False), flush=True)
         if len(result['rows']) > visited:
             visited = len(result['rows'])
             row = result['rows'][-1]

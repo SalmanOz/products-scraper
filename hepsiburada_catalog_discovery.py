@@ -97,6 +97,9 @@ def parse_category_document(html, url, diagnostic=None):
     soup = _category_soup(html, url)
     if isinstance(diagnostic, dict):
         diagnostic.update(status='parsed' if soup else 'category_identity_missing', scope=DISCOVERY_SCOPE)
+        if soup is None and isinstance(html, str) and len(html.encode()) <= MAX_HTML_BYTES:
+            diagnostic['observed_headings'] = [node.get_text(' ', strip=True)[:300]
+                for node in BeautifulSoup(html, 'html.parser').select('h1')[:2]]
     if soup is None:
         return [], None
     cards, seen = [], set()
