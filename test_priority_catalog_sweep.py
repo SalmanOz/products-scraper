@@ -252,6 +252,30 @@ def sweep_reader():
 
 
 class SweepTests(unittest.TestCase):
+    def test_definitely_wrong_brand_hint_does_not_block_the_urls_actual_owner_or_other_capacities(self):
+        apple = 'https://www.n11.com/urun/apple-iphone-17-pro-max-2-tb-apple-turkiye-garantili-100819983'
+        xiaomi = 'https://www.n11.com/urun/xiaomi-17-pro-max-16-gb-1-tb-100819984'
+        brandless = 'https://www.n11.com/urun/17-pro-max-12-gb-512-gb-100819985'
+        redmi = 'https://www.n11.com/urun/xiaomi-redmi-note-13-8-gb-256-gb-100819986'
+        catalog = [
+            {'id': 1, 'slug': 'xiaomi-17-pro-max', 'name': 'Xiaomi 17 Pro Max',
+             'attributes': {'ram_gb': 12, 'storage_gb': 512},
+             'offer_targets': [{'source_url': url} for url in [apple, xiaomi, brandless]]},
+            {'id': 2, 'slug': 'apple-iphone-17-pro-max', 'name': 'Apple iPhone 17 Pro Max',
+             'attributes': {'ram_gb': 12, 'storage_gb': 2048}, 'offer_targets': [{'source_url': apple}]},
+            {'id': 3, 'slug': 'redmi-note-13', 'name': 'Redmi Note 13',
+             'attributes': {'ram_gb': 6, 'storage_gb': 128}, 'offer_targets': [{'source_url': redmi}]},
+        ]
+        before, excluded = deepcopy(catalog), []
+        rows = catalog_queue(catalog, {}, diagnostic=excluded)
+        self.assertEqual({(url, product['id']) for url, product in rows},
+                         {(apple, 2), (xiaomi, 1), (brandless, 1), (redmi, 3)})
+        self.assertEqual(excluded, [{'slug': 'xiaomi-17-pro-max', 'url': apple, 'reason': 'url_brand_conflict'}])
+        self.assertEqual(catalog, before)
+        self.assertFalse(coverage_readback({'catalog_count': 3, 'rows': []},
+                                          {1: (catalog[0]['slug'], False), 2: (catalog[1]['slug'], True),
+                                           3: (catalog[2]['slug'], False)})['passed'])
+
     def test_hb_seller_seeds_keep_exact_selection_and_also_queue_the_default_sku_once(self):
         client = Client()
         base = client.product['offer_targets'][0]['source_url']

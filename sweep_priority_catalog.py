@@ -7,7 +7,7 @@ import argparse
 from collections import Counter, defaultdict
 import json
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from audit_priority_retailers import inspect_target
 from offer_ingestion_client import IngestionClientError, OfferIngestionClient
@@ -34,13 +34,30 @@ def observed_url(url):
     return url
 
 
-def catalog_queue(products, prices):
+def catalog_queue(products, prices, *, diagnostic=None):
     """Visit every model before additional colors, excluding ambiguous owners."""
+    from tr_price_scraper import TRPriceScraper
+    matcher = TRPriceScraper()
     owners, groups = defaultdict(dict), defaultdict(list)
     for product in products:
+        name_words = set(matcher._identity_words(product.get('name') or ''))
+        expected_brands = {brand for brand, aliases in matcher.PHONE_BRAND_ALIASES.items()
+                           if name_words & set(aliases)}
+        allowed_brands = expected_brands | ({'xiaomi'} if expected_brands & {'poco', 'redmi'} else set())
         for target in product.get('offer_targets', []):
             url = target.get('source_url') if isinstance(target, dict) else None
             if product_host(url):
+                path_words = set(matcher._identity_words(unquote(urlparse(url).path)))
+                observed_brands = {brand for brand, aliases in matcher.PHONE_BRAND_ALIASES.items()
+                                   if path_words & set(aliases)}
+                # Negative routing evidence only. Unknown/brandless slugs and
+                # other capacities still receive a fresh selected PDP read.
+                # Removing a definitely wrong owner also frees that same URL
+                # for its actual model instead of making ownership ambiguous.
+                if expected_brands and observed_brands - allowed_brands:
+                    if isinstance(diagnostic, list):
+                        diagnostic.append({'slug': product['slug'], 'url': url, 'reason': 'url_brand_conflict'})
+                    continue
                 canonical = observed_url(url)
                 owners[canonical][product['id']] = product
                 if product_host(canonical) == 'www.hepsiburada.com':
@@ -78,9 +95,11 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
         for source in (reader.hepsiburada_catalog_source, reader.trendyol_catalog_source,
                        reader.teknosa_catalog_source, reader.n11_catalog_source):
             source.configure_catalog_budget(350)
-    targets = catalog_queue(products, prices)
+    hint_exclusions = []
+    targets = catalog_queue(products, prices, diagnostic=hint_exclusions)
     result = {'purpose': 'systematic_priority_catalog_recovery', 'catalog_count': len(products),
               'publish': publish, 'writes': False, 'status': 'running', 'queued': len(targets),
+              'conflicting_hint_exclusions': hint_exclusions,
               'rows': [], 'accepted': 0, 'discovery': [], 'models_without_priority_hints': sorted(
                   {p['slug'] for p in products} - {p['slug'] for _, p in targets})}
     from hepsiburada_category_frontier import load_frontier
@@ -453,6 +472,8 @@ def save_report(result):
              f"Status: {result['status']}; catalog: {result['catalog_count']}; "
              f"visited: {len(result['rows'])}/{result['queued']}; accepted: {result['accepted']}.",
              '', '| Model | Retailer | HTTP | Parser | Publication |', '|---|---|---:|---|---|']
+    if result.get('conflicting_hint_exclusions'):
+        lines.insert(2, f"Excluded {len(result['conflicting_hint_exclusions'])} historical URL hints with explicit conflicting brands; catalog coverage denominator is unchanged.")
     if result.get('purpose') == 'readonly_category_routing_audit':
         lines.insert(2, 'Read-only category routing audit: retailer product pages were not fetched; no prices were written. This does not pass the catalog price coverage gate.')
     if result.get('purpose') == 'readonly_existing_catalog_target_preflight':
