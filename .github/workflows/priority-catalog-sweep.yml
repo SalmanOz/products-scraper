@@ -93,10 +93,14 @@ jobs:
           elif test "$MODE" = hepsiburada-category-audit; then
             python -u sweep_priority_catalog.py --hepsiburada-category-audit
           elif test "$MODE" = memory-variants; then
+            # Retain only models already covered by a fresh whole-catalog
+            # server audit. Spend this recovery run on price/seller gaps and
+            # independently observed other capacities, not another refresh of
+            # every currently verified color/seller resource.
             if test "$PUBLISH" = true; then
-              python -u sweep_priority_catalog.py --memory-variants --publish
+              python -u sweep_priority_catalog.py --memory-variants --coverage-first --publish
             else
-              python -u sweep_priority_catalog.py --memory-variants
+              python -u sweep_priority_catalog.py --memory-variants --coverage-first
             fi
           elif test "$MODE" = coverage-first; then
             if test "$PUBLISH" = true; then
