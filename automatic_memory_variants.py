@@ -208,6 +208,28 @@ def exact_capacity(raw):
     return int(amounts[0][0]) * (1024 if amounts[0][1].casefold() == 'tb' else 1)
 
 
+def selected_technical_radio(connectivity, source_names, soup):
+    radio = PriceUpdater.get_expected_specs({'Connectivity': connectivity}).get('network_generation')
+    if radio is not None:
+        return radio
+    # Observed 4G source pages omit the 5G row entirely. Require BOTH
+    # independently selected metadata names to explicitly identify 4G and a
+    # positive LTE band table. Absence of 5G or the requested catalog radio
+    # alone proves nothing. Operator coverage widgets are not device bands.
+    labels = []
+    for section in soup.find_all('section', class_=re.compile(r'container-sheet-')):
+        heading = section.find(['h2', 'h3', 'h4'])
+        if heading and heading.get_text(' ', strip=True).casefold().startswith('connectivity'):
+            labels.extend(node.get_text(' ', strip=True) for node in section.select('th.label, td.label, dt'))
+    if (len(source_names) == 2
+            and all(TRPriceScraper._radio_generation(name) == '4g' for name in source_names)
+            and not any(re.fullmatch(r'5G(?:\s*NR)?', str(key), re.I) for key in [*connectivity, *labels])
+            and isinstance(connectivity.get('4G LTE'), str)
+            and re.search(r'\bB\d{1,3}\s*\(', connectivity['4G LTE'], re.I)):
+        return '4g'
+    return None
+
+
 def selected_technical_document(html, url, model, specs, *, canonical_model_url=None):
     if not technical_url(url) or not isinstance(html, str) or len(html.encode()) > 5 * 1024 * 1024:
         return None
@@ -258,7 +280,7 @@ def selected_technical_document(html, url, model, specs, *, canonical_model_url=
     if any(actual[key] != specs[key] for key in actual):
         return None
     connectivity = next((value for key, value in sections.items() if 'connect' in key.casefold()), {})
-    radio = PriceUpdater.get_expected_specs({'Connectivity': connectivity}).get('network_generation')
+    radio = selected_technical_radio(connectivity, names, soup)
     if radio != specs['network_generation']:
         return None
     return {'model_name': names[0], 'source_url': url, **actual,
@@ -276,6 +298,7 @@ def rejected_technical_observation(document, url, model, specs, phase):
     sections = extract_spec_sections(soup)
     connectivity = next((v for k, v in sections.items() if 'connect' in k.casefold()), {})
     metadata = []
+    names = []
     for key in ('deviceki', 'devicecompare'):
         nodes = soup.select(f'meta[name="{key}"]')
         item = {'key': key, 'count': len(nodes), 'valid_json': False}
@@ -287,6 +310,7 @@ def rejected_technical_observation(document, url, model, specs, phase):
                     name = value.get('name')
                     if isinstance(name, str) and len(name) <= 120 and not re.search(r'[\x00-\x1f]', name):
                         item['model_name'] = name
+                        names.append(name)
                     slug = value.get('slug')
                     if isinstance(slug, str) and re.fullmatch(r'[a-z0-9-]{1,160}', slug):
                         item['selected_slug'] = slug
@@ -301,7 +325,7 @@ def rejected_technical_observation(document, url, model, specs, phase):
         'observed_specs': {
             'ram_gb': exact_capacity(find_section_spec(sections, 'Hardware', 'Memory RAM', 'RAM')),
             'storage_gb': exact_capacity(find_section_spec(sections, 'Hardware', 'Capacity', 'Storage')),
-            'network_generation': PriceUpdater.get_expected_specs({'Connectivity': connectivity}).get('network_generation')},
+            'network_generation': selected_technical_radio(connectivity, names, soup)},
         'metadata': metadata, 'canonical_count': len(canonicals),
         'canonical_urls': [target for node in canonicals[:3]
                            if (target := observed_technical_link(node['href'], url))],

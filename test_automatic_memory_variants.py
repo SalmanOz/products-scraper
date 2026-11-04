@@ -296,6 +296,32 @@ class AutomaticMemoryVariantTests(unittest.TestCase):
         self.assertEqual([item['count'] for item in diagnostic['metadata']], [0, 0])
         self.assertEqual(diagnostic['observed_specs']['storage_gb'], 128)
 
+    def test_observed_4g_metadata_and_positive_lte_table_prove_radio_without_inventing_a_5g_cell(self):
+        from bs4 import BeautifulSoup
+        name = 'Samsung Galaxy A15 4G'
+        url = 'https://www.kimovil.com/en/where-to-buy-samsung-galaxy-a15-4g'
+        document = tech_document(url, ram=4, storage=128, name=name)
+        # Actual A15 source shape: a dedicated LTE band row, no 5G cell, and
+        # operator coverage widgets that mention unsupported 5G frequencies.
+        document = document.replace('<th class="label">5G</th><td class="value">n78</td>',
+            '<th class="label">4G LTE</th><td class="value">B1 (2100), B3 (1800), B20 (800)</td>')
+        specs = {'ram_gb': 4, 'storage_gb': 128, 'network_generation': '4g'}
+        proof = selected_technical_document(document, url, name, specs)
+        self.assertIsNotNone(proof)
+        self.assertNotIn('"5G":', document)
+        for bad in [document.replace('B1 (2100), B3 (1800), B20 (800)', 'Unknown'),
+                    document.replace('4G LTE', 'Coverage'),
+                    document.replace(name, name.removesuffix(' 4G')),
+                    document.replace('4G LTE', '5G NR'),
+                    document.replace('</table>', '<tr><th class="label">5G</th><td class="value">Unknown</td></tr></table>')]:
+            self.assertIsNone(selected_technical_document(bad, url, name, specs))
+        self.assertIsNone(selected_technical_document(document, url, name, dict(specs, network_generation='5g')))
+        conflicting = document.replace('</table>', '<tr><th class="label">5G</th><td class="value">n78</td></tr></table>')
+        self.assertIsNone(selected_technical_document(conflicting, url, name, specs))
+        missing_meta = BeautifulSoup(document, 'html.parser')
+        missing_meta.select_one('meta[name="devicecompare"]').decompose()
+        self.assertIsNone(selected_technical_document(str(missing_meta), url, name, specs))
+
     def test_non_anchor_version_card_uses_only_its_declared_public_target(self):
         base = tech_document(TECH_URL, storage=128).replace('</body>',
             f'<ul class="versions-list"><li class="item" data-url="{ALT_TECH_URL}">8GB · 256GB</li></ul></body>')
