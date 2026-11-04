@@ -538,6 +538,14 @@ retailer SKU/seller/stock/price is independently mandatory. Missing evidence
 rejects that candidate without changing its parent. Original catalog identity
 and coverage are reported separately from the enlarged catalog readback.
 
+Technical documents use normal rendered GETs in the job's existing anonymous
+browser service. Accepted URLs are limited to public Kimovil model pages and
+its existing model autocomplete. Changed URLs, non-200 responses, challenge
+documents and conflicting canonical/model/memory facts are rejected. No user
+browser profile, authentication, proxy or cookie override is attached. Fetch
+times survive in-memory reuse; offer timestamps are serialized as UTC without
+renewing their observed time.
+
 These modes are manual invocations in the existing serialized recovery
 workflow. They add no schedule and do not relax the overall 80% price gate.
 

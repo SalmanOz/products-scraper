@@ -5,15 +5,18 @@ technical page and retailer listing is fetched again in this invocation.
 Only the atomic server endpoint can create a variant; the parent is read-only.
 """
 from copy import deepcopy
+from datetime import datetime, timezone
 import html as html_lib
 import json
 import re
 import unicodedata
-from urllib.parse import quote, urljoin, urlparse
+from urllib.parse import parse_qsl, quote, urljoin, urlparse
+
+import requests
 
 from bs4 import BeautifulSoup
 
-from daily_discovery import PublicReader, PublicSpecificationScraper, DiscoveryImageStore
+from daily_discovery import PublicSpecificationScraper, DiscoveryImageStore
 from main import KimovilScraper
 from source_ingestion import utc_observation_time
 from spec_sections import extract_spec_sections, find_section_spec
@@ -27,6 +30,13 @@ CONTRACT = 'automatic-memory-variant-v1'
 MAX_VARIANTS = 12
 
 
+def canonical_observation_time(raw):
+    instant = datetime.fromisoformat(raw.replace('Z', '+00:00'))
+    if instant.tzinfo is None:
+        raise ValueError('variant_observation_timezone_missing')
+    return instant.astimezone(timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')
+
+
 def parent_specs(product):
     specs = with_reviewed_radio(product, PriceUpdater.get_expected_specs(product['attributes']))
     named_radio = TRPriceScraper._radio_generation(product['name'])
@@ -35,6 +45,10 @@ def parent_specs(product):
     if named_radio:
         specs['network_generation'] = named_radio
     return specs
+
+
+def family_key(model):
+    return re.sub(r'\s+', ' ', re.sub(r'\b[45]g\b', '', model, flags=re.I)).strip().casefold()
 
 
 def variant_identity(parent, ram, storage):
@@ -135,16 +149,21 @@ def selected_technical_document(html, url, model, specs):
 class TechnicalVariantReader:
     """Anonymous public GETs with a per-invocation bound and denial stop."""
     def __init__(self, reader=None, maximum_documents=48):
-        self.reader = reader or PublicReader()
+        self.reader = reader or PublicBrowserTechnicalReader()
         self.maximum_documents = maximum_documents
         self.documents = 0
+        self.attempts = 0
         self.base_documents = {}
+        self.observed_at = {}
 
     def read(self, url):
-        if self.documents >= self.maximum_documents:
+        if self.attempts >= self.maximum_documents:
             raise ValueError('technical_document_budget_exhausted')
+        self.attempts += 1
+        document = self.reader.read(url)
         self.documents += 1
-        return self.reader.read(url)
+        self.observed_at[url] = utc_observation_time()
+        return document
 
     def locate(self, parent, specs):
         model = TRPriceScraper._catalog_model_name(parent['name'], parent['attributes'])
@@ -165,7 +184,8 @@ class TechnicalVariantReader:
                 name = row.get('full_name') or row.get('alias')
                 target = row.get('url')
                 if (not isinstance(name, str) or not isinstance(target, str)
-                        or not KimovilScraper.is_product_name_match(core(model), core(name))):
+                        or not KimovilScraper.is_product_name_match(core(model), core(name))
+                        or TRPriceScraper._radio_generation(name) not in (None, specs['network_generation'])):
                     continue
                 target = 'https://www.kimovil.com/en/where-to-buy-' + target
                 if technical_url(target):
@@ -177,6 +197,7 @@ class TechnicalVariantReader:
         base, html = self.base_documents[model]
         proof = selected_technical_document(html, base, model, specs)
         if proof:
+            proof['observed_at'] = self.observed_at[base]
             return html, proof
         soup = BeautifulSoup(html, 'html.parser')
         observed = []
@@ -195,8 +216,74 @@ class TechnicalVariantReader:
             html = self.read(url)
             proof = selected_technical_document(html, url, model, specs)
             if proof:
+                proof['observed_at'] = self.observed_at[url]
                 return html, proof
         raise ValueError('exact_selected_technical_memory_not_observed')
+
+
+class PublicBrowserTechnicalReader:
+    """Normal rendered GETs in the job's existing anonymous browser service.
+
+    This never attaches to a user profile, logs in, supplies proxy/cookie
+    overrides, or accepts a changed URL/challenge/denied document as evidence.
+    The first source denial closes the source for the rest of this invocation.
+    """
+    def __init__(self, post=None):
+        self.post = post or requests.post
+        self.ready = False
+        self.blocked = False
+        self.session = 'teknoskor-public-memory-specifications'
+
+    @staticmethod
+    def allowed_url(raw):
+        if technical_url(raw):
+            return True
+        try:
+            u = urlparse(raw)
+            query = parse_qsl(u.query, keep_blank_values=True)
+            values = dict(query)
+            return (u.scheme == 'https' and u.netloc == 'www.kimovil.com' and not u.fragment
+                and u.path == '/_json/autocomplete_devicemodels_joined.json' and len(query) == 2
+                and set(values) == {'device_type', 'name'} and values['device_type'] == '0'
+                and bool(re.fullmatch(r'[A-Za-z0-9 +().-]{3,120}', values['name'])))
+        except (ValueError, TypeError):
+            return False
+
+    def read(self, url):
+        if self.blocked:
+            raise ValueError('technical_source_blocked_for_run')
+        if not self.allowed_url(url):
+            raise ValueError('unapproved_technical_document_url')
+        if not self.ready:
+            response = self.post('http://localhost:8191/v1',
+                json={'cmd': 'sessions.create', 'session': self.session}, timeout=30)
+            response.raise_for_status()
+            if response.json().get('status') != 'ok':
+                raise ValueError('technical_browser_session_unavailable')
+            self.ready = True
+        response = self.post('http://localhost:8191/v1',
+            json={'cmd': 'request.get', 'url': url, 'session': self.session, 'maxTimeout': 45000}, timeout=60)
+        response.raise_for_status()
+        body = response.json()
+        solution = body.get('solution') if isinstance(body, dict) else None
+        if not isinstance(body, dict) or body.get('status') != 'ok' or not isinstance(solution, dict):
+            self.blocked = True
+            raise ValueError('technical_browser_document_unavailable')
+        status = solution.get('status')
+        if status in (403, 429):
+            self.blocked = True
+        if status != 200:
+            raise ValueError('technical_source_http_' + str(status))
+        document = solution.get('response')
+        if (solution.get('url') != url or not isinstance(document, str)
+                or len(document.encode()) > 5 * 1024 * 1024):
+            raise ValueError('technical_document_changed_or_oversized')
+        soup = BeautifulSoup(document, 'html.parser')
+        title = soup.title.get_text(' ', strip=True) if soup.title else ''
+        if re.search(r'just a moment|captcha|access denied|verify you are human|security check', title, re.I):
+            self.blocked = True
+            raise ValueError('technical_source_challenge')
+        return document
 
 
 class CachedSpecificationScraper(PublicSpecificationScraper):
@@ -218,7 +305,8 @@ def technical_records(parent, specs, identity, reader):
             expected_name=evidence['model_name'], expected_memory=specs, existing_attributes={},
             existing_images=[], seed_physical_attributes=True, record_sink=records):
         raise ValueError('selected_technical_parser_failed')
-    evidence['observed_at'] = utc_observation_time()
+    for record in records:
+        record['observed_at'] = evidence['observed_at']
     soup = BeautifulSoup(html, 'html.parser')
     meta = soup.select_one('meta[name="devicecompare"]')
     device = json.loads(html_lib.unescape(meta['content'])) if meta else {}
@@ -235,8 +323,10 @@ def observed_variant_candidates(result, products):
     known = set()
     for product in products:
         model = matcher._catalog_model_name(product['name'], product['attributes'])
+        if not model:
+            continue
         specs = parent_specs(product)
-        known.add((model, specs.get('ram_gb'), specs.get('storage_gb'), specs.get('network_generation')))
+        known.add((family_key(model), specs.get('ram_gb'), specs.get('storage_gb'), specs.get('network_generation')))
     candidates = {}
     for row in result['rows']:
         preview, parent = row.get('other_memory_variant'), by_slug.get(row.get('slug'))
@@ -247,7 +337,9 @@ def observed_variant_candidates(result, products):
                 or variant_selected_evidence(offer, matcher._catalog_model_name(parent['name'], parent['attributes']), specs) is None):
             continue
         model = matcher._catalog_model_name(parent['name'], parent['attributes'])
-        key = (model, specs.get('ram_gb'), specs.get('storage_gb'), specs.get('network_generation'))
+        if not model:
+            continue
+        key = (family_key(model), specs.get('ram_gb'), specs.get('storage_gb'), specs.get('network_generation'))
         if key in known:
             continue
         bucket = candidates.setdefault(key, {'parent': deepcopy(parent), 'specs': deepcopy(specs), 'targets': []})
@@ -265,7 +357,7 @@ def memory_variant_destinations(cards, products):
         model = matcher._catalog_model_name(p['name'], p['attributes'])
         if not model or specs.get('network_generation') not in ('4g', '5g'):
             continue
-        family = (model, specs['network_generation'])
+        family = (family_key(model), specs['network_generation'])
         previous = families.get(family)
         if previous is None or p['id'] < previous['id']:
             families[family] = p
@@ -357,9 +449,10 @@ def prepare_memory_variants(result, products, *, transport, technical_reader=Non
                 selected = variant_selected_evidence(offer, identity['name'], specs)
                 if not selected or not TRPriceScraper().has_observed_offer_evidence(identity['name'], offer, specs):
                     continue
+                observed_at = canonical_observation_time(offer['observed_at'])
                 offers.append({'merchant_name': offer['merchant'], 'price': offer['price'], 'currency': 'TRY',
                     'availability': 'in_stock', 'source_url': offer['url'], 'source_title': offer['source_title'],
-                    'source_variant_evidence': selected, 'observed_at': offer['observed_at'], 'checked_at': offer['observed_at']})
+                    'source_variant_evidence': selected, 'observed_at': observed_at, 'checked_at': observed_at})
             if not offers:
                 raise ValueError('fresh_selected_variant_offer_missing')
             row.update(status='technical_and_live_offer_verified', technical_evidence=evidence,
@@ -384,18 +477,21 @@ def prepare_memory_variants(result, products, *, transport, technical_reader=Non
                     json=payload, timeout=(10, 180))
                 body = source_client._json_body(response)
                 if (body.get('committed') is not True or body.get('contract') != CONTRACT
-                        or body.get('parent_unchanged') is not True or body.get('outcome') not in ('created', 'existing')):
+                        or body.get('parent_unchanged') is not True or body.get('outcome') not in ('created', 'existing')
+                        or body.get('parent_product_id') != parent['id'] or type(body.get('product_id')) is not int
+                        or body['product_id'] <= 0 or body.get('outcome') == 'created' and body.get('slug') != identity['slug']):
                     row['server_issues'] = body.get('issues', [])[:15]
                     raise ValueError('atomic_variant_publication_rejected')
                 row.update(status=body['outcome'], publication={key: body.get(key) for key in
                     ('product_id', 'slug', 'parent_product_id', 'parent_unchanged', 'scores_recalculated')})
                 report[body['outcome']] += 1
         except Exception as error:
-            reason = str(error) if isinstance(error, ValueError) and re.fullmatch(r'[a-z_]{1,100}', str(error)) else type(error).__name__
+            reason = str(error) if isinstance(error, ValueError) and re.fullmatch(r'[a-z0-9_]{1,100}', str(error)) else type(error).__name__
             row.update(status='rejected', reason=reason)
         if checkpoint:
             checkpoint(report)
-    report.update(technical_documents=technical_reader.documents, sources=transport.report())
+    report.update(technical_documents=technical_reader.documents,
+                  technical_request_attempts=getattr(technical_reader, 'attempts', technical_reader.documents), sources=transport.report())
     return report
 
 

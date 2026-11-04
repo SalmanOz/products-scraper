@@ -5,9 +5,9 @@ from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from automatic_memory_variants import (TechnicalVariantReader, exact_capacity, selected_technical_document,
+from automatic_memory_variants import (TechnicalVariantReader, PublicBrowserTechnicalReader, exact_capacity, selected_technical_document,
     technical_records, variant_identity, observed_variant_candidates, memory_variant_destinations,
-    prepare_memory_variants, verify_variant_catalog_readback, memory_target_preflight, CONTRACT)
+    prepare_memory_variants, verify_variant_catalog_readback, memory_target_preflight, canonical_observation_time, CONTRACT)
 from observed_memory_variants import inspect_trendyol_memory_variant
 from test_observed_memory_variants import alternate_document, ALT_URL
 from test_trendyol_catalog_source import NAME, SPECS
@@ -36,6 +36,59 @@ def tech_document(url=ALT_TECH_URL, ram=8, storage=256, name=NAME):
 
 
 class AutomaticMemoryVariantTests(unittest.TestCase):
+    def test_rendered_public_reader_is_scoped_anonymous_and_stops_after_denial(self):
+        calls = []
+        def response(body):
+            return SimpleNamespace(raise_for_status=lambda: None, json=lambda: body)
+        def post(url, **kwargs):
+            calls.append((url, kwargs))
+            payload = kwargs['json']
+            if payload['cmd'] == 'sessions.create':
+                return response({'status': 'ok'})
+            return response({'status': 'ok', 'solution': {'status': 403, 'url': payload['url'], 'response': 'Denied'}})
+        reader = PublicBrowserTechnicalReader(post)
+        for invalid in ['https://evil.test/specs', TECH_URL + '?token=x', TECH_URL.replace('https:', 'http:'),
+                        'https://www.kimovil.com/_json/autocomplete_devicemodels_joined.json?device_type=0&name=A54&name=Other']:
+            with self.assertRaisesRegex(ValueError, 'unapproved'):
+                reader.read(invalid)
+        self.assertEqual(calls, [])
+        with self.assertRaisesRegex(ValueError, 'http_403'):
+            reader.read(TECH_URL)
+        with self.assertRaisesRegex(ValueError, 'blocked_for_run'):
+            reader.read(ALT_TECH_URL)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[1][0], 'http://localhost:8191/v1')
+        self.assertEqual(set(calls[1][1]['json']), {'cmd', 'url', 'session', 'maxTimeout'})
+        self.assertLessEqual(calls[1][1]['timeout'], 60)
+
+    def test_rendered_public_reader_rejects_changed_url_and_challenge_documents(self):
+        for solution in [{'status': 200, 'url': ALT_TECH_URL, 'response': tech_document()},
+                         {'status': 200, 'url': TECH_URL, 'response': '<title>Just a moment</title>'}]:
+            def post(_url, **kwargs):
+                body = {'status': 'ok'} if kwargs['json']['cmd'] == 'sessions.create' else {'status': 'ok', 'solution': solution}
+                return SimpleNamespace(raise_for_status=lambda: None, json=lambda: body)
+            with self.assertRaises(ValueError):
+                PublicBrowserTechnicalReader(post).read(TECH_URL)
+
+    def test_cached_technical_document_retains_its_real_fetch_time(self):
+        class Reader:
+            def read(self, url):
+                if '_json/autocomplete' in url:
+                    return json.dumps({'results': [{'full_name': NAME, 'url': TECH_URL.rsplit('where-to-buy-', 1)[1]}]})
+                return tech_document(TECH_URL, storage=128)
+        reader = TechnicalVariantReader(Reader())
+        with patch('automatic_memory_variants.utc_observation_time', return_value='2026-11-04T06:00:00Z'):
+            _, first = reader.locate(PARENT, SPECS)
+        with patch('automatic_memory_variants.utc_observation_time', return_value='2026-11-04T06:05:00Z'):
+            _, second = reader.locate(PARENT, SPECS)
+        self.assertEqual(first['observed_at'], second['observed_at'])
+        self.assertEqual(reader.documents, 2)
+
+    def test_observation_serialization_preserves_the_fetched_instant_without_renewing_it(self):
+        self.assertEqual(canonical_observation_time('2026-11-04T06:50:56.370424Z'), '2026-11-04T06:50:56.370Z')
+        self.assertEqual(canonical_observation_time('2026-11-04T09:50:56.370424+03:00'), '2026-11-04T06:50:56.370Z')
+        with self.assertRaisesRegex(ValueError, 'timezone_missing'):
+            canonical_observation_time('2026-11-04T06:50:56')
     def test_preflight_derives_hints_from_current_catalog_and_cannot_write(self):
         parent = {**PARENT, 'offer_targets': [{'source_url': ALT_URL}, {'source_url': 'https://evil.test/8gb-256gb'}]}
         calls = []
@@ -110,6 +163,9 @@ class AutomaticMemoryVariantTests(unittest.TestCase):
         self.assertEqual(PARENT, before)
         existing = {**PARENT, 'id': 124, **variant_identity(PARENT, 8, 256), 'attributes': dict(SPECS, storage_gb=256)}
         self.assertEqual(observed_variant_candidates(result, [PARENT, existing]), [])
+        alias = {**existing, 'name': NAME.replace(' 5G', '') + ' 8GB 256GB',
+                 'attributes': {'ram_gb': 8, 'storage_gb': 256, 'Connectivity': {'5G': True}}}
+        self.assertEqual(observed_variant_candidates(result, [PARENT, alias]), [])
         result['rows'][0]['other_memory_variant']['offer']['merchant'] = 'Different seller'
         self.assertEqual(observed_variant_candidates(result, [PARENT]), [])
 
@@ -146,7 +202,7 @@ class AutomaticMemoryVariantTests(unittest.TestCase):
         fresh = deepcopy(result['rows'][0]['other_memory_variant']['offer'])
         source_client = unittest.mock.Mock(base_url='https://teknoskor.com', secret='test-only-secret')
         source_client._json_body.return_value = {'committed': True, 'contract': CONTRACT, 'parent_unchanged': True,
-            'outcome': 'created', 'slug': 'new-variant', 'product_id': 987, 'parent_product_id': PARENT['id']}
+            'outcome': 'created', 'slug': variant_identity(PARENT, 8, 256)['slug'], 'product_id': 987, 'parent_product_id': PARENT['id']}
         image_store = unittest.mock.Mock()
         image_store.upload.return_value = 'https://cdn.teknoskor.com/products/new-variant/image.webp'
         with patch('automatic_memory_variants.technical_records', return_value=([{'attribute_key': 'ram_gb'}], {}, ['source-image'])), \
@@ -159,6 +215,7 @@ class AutomaticMemoryVariantTests(unittest.TestCase):
         self.assertEqual(payload['variant']['storage_gb'], 256)
         self.assertEqual(payload['offers'][0]['source_variant_evidence']['storage_gb'], 256)
         self.assertEqual(payload['offers'][0]['source_title'], fresh['source_title'])
+        self.assertEqual(payload['offers'][0]['observed_at'], canonical_observation_time(fresh['observed_at']))
         self.assertNotIn('product_id', payload['offers'][0])
 
     def test_catalog_readback_preserves_all_original_identities_and_requires_each_created_capacity(self):
