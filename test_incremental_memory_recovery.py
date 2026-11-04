@@ -184,6 +184,10 @@ class IncrementalMemoryRecoveryTests(unittest.TestCase):
         self.assertEqual(variants['created'], 1)
         self.assertTrue(variants['rows'][0]['commercial_readback_verified'])
         self.assertEqual(variants['fresh_recheck_attempts']['Hepsiburada'], 1)
+        self.assertEqual(result['priority_store_coverage_before']['catalog'], 1)
+        self.assertEqual(result['priority_store_coverage_before']['retailers']['Hepsiburada']['models_with_current_listing'], 0)
+        self.assertEqual(result['priority_store_coverage_after']['catalog'], 2)
+        self.assertEqual(result['priority_store_coverage_after']['retailers']['Hepsiburada']['models_with_current_listing'], 1)
 
     def test_readonly_early_and_final_pass_share_attempt_and_technical_reader_without_writes(self):
         client = GrowingClient()

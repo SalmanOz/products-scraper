@@ -2,7 +2,8 @@ from copy import deepcopy
 import unittest
 from unittest.mock import patch
 
-from sweep_priority_catalog import catalog_queue, coverage_readback, sweep, target_preflight, recovery_hepsiburada_seeds
+from sweep_priority_catalog import (catalog_queue, coverage_readback, sweep, target_preflight,
+                                    recovery_hepsiburada_seeds, priority_store_coverage_readback)
 from publish_priority_candidates import CandidatePublicationError
 from test_priority_candidates import Client, audit, reader
 
@@ -1036,6 +1037,47 @@ class N11PlatformCoverageTests(unittest.TestCase):
         self.assertEqual(sum(d['reason'] == 'pdp_budget_exhausted' for d in result['discovery']), 24)
         self.assertEqual(result['catalog_count'], 26)
         self.assertFalse(result['writes'])
+
+
+class PriorityStoreCoverageReadbackTests(unittest.TestCase):
+    def test_each_current_platform_counts_a_sku_once_and_lists_remain_distinct_from_sellers(self):
+        from datetime import datetime, timezone
+        catalog = [{'slug': slug} for slug in ('alpha', 'beta', 'unpriced')]
+        n11 = 'https://www.n11.com/urun/phone-123456'
+        hb = 'https://www.hepsiburada.com/phone-p-HBCV0000TEST01'
+        ty = 'https://www.trendyol.com/brand/phone-p-123456'
+        def row(url): return {'merchant_name': 'Same seller', 'price': 10000, 'source_url': url}
+        identity = {'evidenceVersion': 'product-offer-match-v1', 'mode': 'shadow_audit_only',
+            'auditedAt': datetime.now(timezone.utc).isoformat(), 'productCoverage': [
+                {'slug': 'alpha', 'matchedOffers': [row(n11 + '?magaza=shop&renk=gri'),
+                    row(n11 + '?magaza=shop&renk=siyah'), row(n11 + '?magaza=other'), row(hb)]},
+                {'slug': 'beta', 'matchedOffers': [row(n11.replace('123456', '123457')), row(ty)]},
+                {'slug': 'unpriced', 'matchedOffers': []}]}
+        before = deepcopy((identity, catalog))
+        report = priority_store_coverage_readback(identity, catalog)
+        self.assertEqual(report['catalog'], 3)
+        self.assertEqual(report['retailers']['n11'], {'models_with_current_listing': 2, 'current_listing_rows': 4})
+        self.assertEqual(report['retailers']['Hepsiburada']['models_with_current_listing'], 1)
+        self.assertEqual(report['retailers']['Trendyol']['models_with_current_listing'], 1)
+        self.assertEqual(report['retailers']['Teknosa']['models_with_current_listing'], 0)
+        self.assertFalse(report['listing_rows_are_independent_seller_counts'])
+        self.assertNotIn('Same seller', str(report))
+        self.assertNotIn('source_url', str(report))
+        self.assertEqual((identity, catalog), before)
+
+    def test_missing_stale_or_partial_audit_never_becomes_zero_platform_coverage(self):
+        from datetime import datetime, timezone
+        catalog = [{'slug': 'alpha'}, {'slug': 'beta'}]
+        valid = {'evidenceVersion': 'product-offer-match-v1', 'mode': 'shadow_audit_only',
+            'auditedAt': datetime.now(timezone.utc).isoformat(),
+            'productCoverage': [{'slug': p['slug'], 'matchedOffers': []} for p in catalog]}
+        for bad in ({}, {**valid, 'auditedAt': '1990-01-01T00:00:00Z'},
+                    {**valid, 'productCoverage': valid['productCoverage'][:1]},
+                    {**valid, 'productCoverage': valid['productCoverage'] + valid['productCoverage'][:1]}):
+            with self.assertRaises(ValueError):
+                priority_store_coverage_readback(bad, catalog)
+        with self.assertRaises(ValueError):
+            priority_store_coverage_readback(valid, [catalog[0], catalog[0]])
 
 
 if __name__ == '__main__':

@@ -568,6 +568,13 @@ names and URLs for other capacities, never prices, account state or retailer
 SKU/stock evidence. Every resulting offer still requires its own selected PDP,
 fresh publication read, exact listing writer and commercial readback.
 
+Reports separately measure full-catalog Hepsiburada, Trendyol, n11 and Teknosa
+coverage before and after the run using the fresh authenticated commercial
+audit. Each platform counts a physical SKU once; valid listing rows remain
+separate from independent seller counts. Missing, stale or partial audits are
+reported as unavailable and never as zero coverage. These diagnostics do not
+replace individual publication verification or the full public 80% gate.
+
 Current commercial readback uses the authenticated
 `/api/ingestion/offer-identity-readiness` endpoint and the same full commercial
 matching audit. Historical price-index queries are not required to confirm a

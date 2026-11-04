@@ -155,6 +155,7 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
     inventory_urls = set()
     covered_models = set()
     n11_present_models = set()
+    result['priority_store_coverage_before'] = {'status': 'unavailable'}
     if current_listing_inventory is not None:
         try:
             inventory = _matched_rows(current_listing_inventory)
@@ -163,6 +164,7 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
             inventory_urls = {observed_url(row['source_url']) for rows in inventory.values()
                               for row in rows if isinstance(row, dict) and product_host(row.get('source_url'))}
             result['discovery_inventory'] = {'status': 'current', 'priority_listing_destinations': len(inventory_urls)}
+            result['priority_store_coverage_before'] = priority_store_coverage_readback(current_listing_inventory, products)
             n11_present_models = {slug for slug, rows in inventory.items() if any(
                 product_host(row.get('source_url')) == 'www.n11.com' for row in rows if isinstance(row, dict))}
             if coverage_first:
@@ -653,6 +655,10 @@ def save_report(result):
         lines += ['', 'n11 platform-gap routing: ' + json.dumps({
             'eligible_models': len(gaps['eligible_models']), 'scheduled_models': len(gaps['admitted_models']),
             'same_run_query_reuses': gaps['same_run_query_reuses'], 'prices_or_offer_evidence_reused': False})]
+    for stage in ('before', 'after'):
+        if result.get('priority_store_coverage_' + stage):
+            lines += ['', 'Priority store coverage ' + stage + ': ' +
+                      json.dumps(result['priority_store_coverage_' + stage], ensure_ascii=False)]
     if result.get('hepsiburada_category_continuation'):
         lines += ['', 'Hepsiburada category continuation: ' + json.dumps(
             result['hepsiburada_category_continuation'], ensure_ascii=False)]
@@ -756,6 +762,33 @@ def coverage_readback(result, current):
                                   for row in result['rows']),
             'source_cooldown_skips': sum(row.get('reason') == 'source_cooldown' for row in result['rows']),
             'source_circuit_skips': sum(row.get('reason') == 'source_circuit_open' for row in result['rows'])}
+
+
+def priority_store_coverage_readback(identity, products):
+    """Count fully matched current listing resources, not unverified hints.
+
+    The audit retains every valid platform/color listing even when one seller
+    has a cheaper offer elsewhere. Listing totals never become seller counts.
+    """
+    rows = _matched_rows(identity)
+    slugs = {p['slug'] for p in products}
+    if not products or len(slugs) != len(products) or set(rows) != slugs:
+        raise ValueError('priority_store_coverage_catalog_changed')
+    counts = {retailer: {'models_with_current_listing': 0, 'current_listing_rows': 0}
+              for retailer in HOSTS.values()}
+    for offers in rows.values():
+        present = set()
+        for offer in offers:
+            host = product_host(offer.get('source_url')) if isinstance(offer, dict) else None
+            if host is not None:
+                retailer = HOSTS[host]
+                counts[retailer]['current_listing_rows'] += 1
+                present.add(retailer)
+        for retailer in present:
+            counts[retailer]['models_with_current_listing'] += 1
+    return {'status': 'verified_current_commercial_readback', 'audited_at': identity['auditedAt'],
+            'catalog': len(products), 'retailers': counts,
+            'listing_rows_are_independent_seller_counts': False}
 
 
 def main():
@@ -924,6 +957,14 @@ def main():
         print('Automatic memory variant summary: ' + json.dumps(result['automatic_memory_variants']), flush=True)
     else:
         result['public_coverage'] = coverage_readback(result, client.get_public_price_priority())
+    try:
+        current_products = client.get_published_products()
+        result['priority_store_coverage_after'] = priority_store_coverage_readback(
+            client.get_offer_identity_readiness(), current_products)
+    except (IngestionClientError, ValueError) as error:
+        # Missing diagnostics are unknown, never fake zero coverage or a
+        # substitute for individual publication readback / the public 80% gate.
+        result['priority_store_coverage_after'] = {'status': 'unavailable', 'error_type': type(error).__name__}
     save_report(result)
     print(Path('priority-catalog-sweep.md').read_text())
     if result['status'] != 'completed':
