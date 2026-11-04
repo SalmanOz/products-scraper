@@ -37,6 +37,15 @@ class TargetPreflightTests(unittest.TestCase):
         self.assertEqual((result['publish'], result['writes'], result['accepted']), (False, False, 0))
         self.assertEqual(visited, [TARGET])
         self.assertNotIn('public_coverage', result)
+        self.assertEqual(result['public_parser_proof']['url'], TARGET)
+        self.assertEqual(result['public_parser_proof']['storage_gb'], 128)
+        self.assertEqual(result['public_parser_proof']['availability'], 'in_stock')
+        extra = dict(result['rows'][0])
+        extra['prepared_offer'] = dict(extra['prepared_offer'], private_state='must-not-be-logged')
+        with patch('sweep_priority_catalog.inspect_target', return_value=extra):
+            projected = target_preflight(client=client, url=TARGET, slug='a36-test', transport=TargetTransport())
+        self.assertNotIn('must-not-be-logged', str(projected['public_parser_proof']))
+        self.assertNotIn('private_state', projected['public_parser_proof'])
         writer.assert_not_called(); coverage.assert_not_called()
         with self.assertRaises(ValueError):
             target_preflight(client=client, url=TARGET, slug='not-published', transport=TargetTransport())
@@ -57,6 +66,7 @@ class TargetPreflightTests(unittest.TestCase):
         result = target_preflight(client=client, url=TARGET, slug='a36-test', transport=TargetTransport())
         self.assertEqual(result['status'], 'rejected')
         self.assertIsNone(result['rows'][0]['prepared_offer'])
+        self.assertIsNone(result['public_parser_proof'])
         self.assertFalse(result['writes'])
         for flag in ['--publish', '--coverage-first', '--n11-preflight', '--hepsiburada-category-audit']:
             with patch('sys.argv', ['sweep', '--target-preflight', TARGET, '--target-slug', 'a36-test', flag]), \

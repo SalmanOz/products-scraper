@@ -486,9 +486,16 @@ def target_preflight(*, client, url, slug, transport=None):
         n11_collector=getattr(client, 'n11_document_get', None))
     row = inspect_target(transport, url, product)
     row['expected_specs'] = {k: specs.get(k) for k in ('ram_gb', 'storage_gb', 'network_generation')}
+    offer = row.get('prepared_offer')
+    public_proof = ({key: offer.get(key) for key in (
+        'platform', 'url', 'source_title', 'merchant', 'merchant_id', 'product_id', 'sku',
+        'listing_id', 'item_number', 'gtin13', 'ram_gb', 'storage_gb', 'network_generation',
+        'price', 'currency', 'condition', 'availability', 'observed_at', 'storage_evidence_source')}
+        if isinstance(offer, dict) else None)
     return {'purpose': 'readonly_existing_catalog_target_preflight', 'catalog_count': len(products),
             'status': 'completed' if row.get('prepared_offer') is not None else 'rejected',
             'publish': False, 'writes': False, 'accepted': 0, 'queued': 1, 'rows': [row],
+            'public_parser_proof': public_proof,
             'models_without_priority_hints': [], 'sources': transport.report()}
 
 
@@ -521,6 +528,7 @@ def main():
                                   url=args.target_preflight, slug=args.target_slug)
         save_report(result)
         print(Path('priority-catalog-sweep.md').read_text())
+        print('Selected parser evidence: ' + json.dumps(result['public_parser_proof'], ensure_ascii=False))
         if result['status'] != 'completed':
             raise SystemExit('Selected target did not pass the full parser proof; no writes')
         return
