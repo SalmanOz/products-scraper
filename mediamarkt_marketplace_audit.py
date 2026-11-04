@@ -147,6 +147,8 @@ def catalog_variant_matches(evidence, expected_name, expected_specs):
     if (ram != evidence.get('ram_gb') or storage != evidence.get('storage_gb')):
         return False
     expected_radio = expected_specs.get('network_generation') or matcher._radio_generation(expected_name)
+    if matcher._dual_radio_family(matcher._catalog_model_name(expected_name, expected_specs)) and expected_radio is None:
+        return False
     observed_radio = evidence.get('network_generation')
     return not expected_radio or observed_radio == expected_radio
 

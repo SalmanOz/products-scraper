@@ -427,6 +427,13 @@ class TRPriceScraper:
         tokens = cls._identity_words(value)
         return '5g' if '5g' in tokens else '4g' if '4g' in tokens or 'lte' in tokens else None
 
+    @classmethod
+    def _dual_radio_family(cls, value):
+        text = ' '.join(cls._identity_words(value))
+        return bool(re.search(r'\bredmi note (?:11|12|13|14|15)\b|'
+                              r'\bgalaxy a(?:07|14|15|16|17)\b|'
+                              r'\btecno spark 20 pro(?: [45]g)?$|\binfinix note 40(?: [45]g)?$', text))
+
     @staticmethod
     def _has_numeric_model_conflict(product_words, observed_words):
         for index, token in enumerate(product_words):
@@ -794,6 +801,8 @@ class TRPriceScraper:
                           (ram is None and (re.search(r'\bram(?:\b|\d)', title, re.I) or small_unlabelled))):
             return False
         radio = expected_specs.get('network_generation') or self._radio_generation(product_name)
+        if self._dual_radio_family(model_name) and radio is None:
+            return False  # A selected retailer radio cannot establish the catalog's radio.
         observed_radio = self._radio_generation(title)
         if selected:
             if observed_radio and observed_radio != selected['network_generation']:

@@ -22,6 +22,27 @@ def a16_offer():
 
 
 class SelectedSkuEvidenceTests(unittest.TestCase):
+    def test_selected_retailer_radio_never_fills_an_unresolved_dual_radio_catalog_identity(self):
+        from mediamarkt_marketplace_audit import catalog_variant_matches
+        matcher = TRPriceScraper()
+        for name, ram, storage in [('Samsung Galaxy A07', 4, 64),
+                                   ('Tecno Spark 20 Pro', 8, 256), ('Infinix Note 40', 8, 256)]:
+            unknown = {'ram_gb': ram, 'storage_gb': storage}
+            for radio in ['4g', '5g']:
+                offer = {'source_title': f'{name} {radio} RAM {ram} GB; ROM {storage} GB',
+                         'url': 'https://www.teknosa.com/' + name.lower().replace(' ', '-') +
+                                f'-{radio}-{ram}gb-ram-{storage}gb-p-100000060715',
+                         'ram_gb': ram, 'storage_gb': storage, 'network_generation': radio}
+                self.assertFalse(matcher.has_observed_offer_evidence(name, offer, unknown), name)
+                self.assertFalse(catalog_variant_matches(offer, name, unknown), name)
+                resolved = {**unknown, 'network_generation': radio}
+                self.assertTrue(matcher.has_observed_offer_evidence(name, offer, resolved), name)
+                self.assertTrue(catalog_variant_matches(offer, name, resolved), name)
+                other = {**unknown, 'network_generation': '4g' if radio == '5g' else '5g'}
+                self.assertFalse(matcher.has_observed_offer_evidence(name, offer, other), name)
+                self.assertFalse(catalog_variant_matches(offer, name, other), name)
+            self.assertNotIn('network_generation', unknown)
+
     def test_plus_capacity_requires_actual_selected_sku_and_preserves_raw_title(self):
         offer, specs = a16_offer()
         matcher = TRPriceScraper()
