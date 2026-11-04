@@ -339,10 +339,11 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
             from automatic_memory_variants import memory_variant_destinations
             for parent, card in memory_variant_destinations(cards, products):
                 url = card['source_url']
-                if (memory_counts[parent['slug']] >= 2 or memory_retailer_counts[retailer] >= 24
+                memory_key = (retailer, parent['slug'])
+                if (memory_counts[memory_key] >= 2 or memory_retailer_counts[retailer] >= 24
                         or (parent['slug'], url) in processed):
                     continue
-                memory_counts[parent['slug']] += 1
+                memory_counts[memory_key] += 1
                 memory_retailer_counts[retailer] += 1
                 discovery.setdefault('memory_variant_hints', []).append({'parent_slug': parent['slug'], **card})
                 result['queued'] += 1
@@ -363,7 +364,7 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
         for url, product in ([] if category_audit_only else refresh_targets):
             process_target(url, product)
         if discover_n11:
-            from n11_catalog_source import discover_catalog_targets
+            from n11_catalog_source import discover_catalog_targets, discover_catalog_memory_targets
             from reviewed_offer_targets import with_reviewed_radio
             from tr_price_scraper import TRPriceScraper
             inspected = {row['observed_url'] for row in result['rows']} | inventory_urls
@@ -375,7 +376,7 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                 model = TRPriceScraper._catalog_model_name(product['name'], specs)
                 if not model or not storage:
                     continue
-                query = f'{model} {storage} GB'
+                query = model if memory_discovery else f'{model} {storage} GB'
                 html, reason, status = transport.read_n11_search(query)
                 diagnostic = {'slug': product['slug'], 'retailer': 'n11', 'query': query,
                               'reason': reason, 'http_status': status, 'new_targets': []}
@@ -391,6 +392,18 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                         diagnostic['new_targets'].append(candidate)
                         result['queued'] += 1
                         process_target(url, product)
+                    if memory_discovery:
+                        for candidate in discover_catalog_memory_targets(html, product, excluded_urls=inspected):
+                            memory_key = ('n11', product['slug'])
+                            if memory_counts[memory_key] >= 2 or memory_retailer_counts['n11'] >= 24:
+                                break
+                            url = candidate['source_url']
+                            inspected.add(url)
+                            memory_counts[memory_key] += 1
+                            memory_retailer_counts['n11'] += 1
+                            diagnostic.setdefault('memory_variant_hints', []).append(candidate)
+                            result['queued'] += 1
+                            process_target(url, product)
                     if diagnostic['new_targets']:
                         result['models_without_priority_hints'] = [slug for slug in
                             result['models_without_priority_hints'] if slug != product['slug']]

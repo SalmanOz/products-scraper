@@ -20,6 +20,63 @@ class Transport:
 
 
 class TargetPreflightTests(unittest.TestCase):
+    def test_n11_other_memory_pdp_allowance_is_shared_and_bounded_across_the_catalog(self):
+        catalog = [{'id': n, 'slug': f'samsung-galaxy-a{n}', 'name': f'Samsung Galaxy A{n}',
+                    'offer_targets': [], 'attributes': {'ram_gb': 6, 'storage_gb': 128,
+                                                       'Connectivity': {'5G': True}}} for n in range(30, 43)]
+        client = Client()
+        client.get_published_products = lambda: deepcopy(catalog)
+        client.get_public_price_priority = lambda: {}
+        class SearchTransport(Transport):
+            def read_n11_search(self, query):
+                number = int(query.rsplit('A', 1)[1])
+                return (''.join(f'<a href="https://www.n11.com/urun/samsung-galaxy-a{number}-{ram}-gb-{storage}-gb-{number}1234{ram}">'
+                               f'<h2 class="product-item-title">{query} {ram} GB RAM {storage} GB</h2></a>'
+                               for ram, storage in [(8, 256), (12, 512)]), 'document_read', 200)
+        def inspect(transport, url, product):
+            return {'slug': product['slug'], 'retailer': 'n11', 'url': url, 'observed_url': url,
+                    'http_status': 200, 'reason': 'document_read', 'prepared_offer': None}
+        with patch('sweep_priority_catalog.inspect_target', side_effect=inspect) as inspector, \
+                patch('sweep_priority_catalog.refresh_candidates') as writer:
+            result = sweep(client=client, transport=SearchTransport(), discover_n11=True, memory_discovery=True)
+        self.assertEqual(inspector.call_count, 24)
+        self.assertEqual(len(result['rows']), 24)
+        self.assertEqual(len(result['discovery']), 13)
+        self.assertTrue(all(len(d.get('memory_variant_hints', [])) <= 2 for d in result['discovery']))
+        self.assertFalse(result['writes'])
+        writer.assert_not_called()
+
+    def test_n11_memory_search_is_capacity_independent_but_the_original_sku_stays_unpriced(self):
+        from test_n11_catalog_source import document, URL, NAME
+        from automatic_memory_variants import observed_variant_candidates
+        client = Client()
+        client.product.update(name=NAME, slug='samsung-galaxy-a57', offer_targets=[],
+                              attributes={'ram_gb': 6, 'storage_gb': 128, 'Connectivity': {'5G': True}})
+        client.get_public_price_priority = lambda: {}
+        queries, documents = [], []
+        class SearchTransport(Transport):
+            def read_n11_search(self, query):
+                queries.append(query)
+                return (f'<a href="{URL}"><h2 class="product-item-title">'
+                        f'{NAME} 8 GB RAM 256 GB</h2><b>1 TL</b></a>', 'document_read', 200)
+            def read_document(self, url):
+                documents.append(url)
+                return document(), 'document_read', 200
+            def resolved_url(self, url):
+                return url
+        with patch('sweep_priority_catalog.refresh_candidates') as writer:
+            result = sweep(client=client, transport=SearchTransport(), discover_n11=True,
+                           memory_discovery=True, publish=True)
+        self.assertEqual(queries, [NAME])
+        self.assertEqual(documents, [URL])
+        self.assertIsNone(result['rows'][0]['prepared_offer'])
+        self.assertEqual(result['rows'][0]['other_memory_variant']['observed_specs'],
+                         {'ram_gb': 8, 'storage_gb': 256, 'network_generation': '5g'})
+        self.assertEqual(observed_variant_candidates(result, [client.product])[0]['targets'], [URL])
+        self.assertEqual((result['accepted'], result['writes']), (0, False))
+        self.assertFalse(coverage_readback(result, {client.product['id']: (client.product['slug'], False)})['passed'])
+        writer.assert_not_called()
+
     def test_full_selected_offer_is_only_readonly_parser_proof_for_the_current_published_sku(self):
         from test_hepsiburada_catalog_source import document, NAME, SPECS, TARGET
         client = Client()
@@ -77,6 +134,40 @@ class TargetPreflightTests(unittest.TestCase):
 
 
 class CategoryDiagnosticTests(unittest.TestCase):
+    def test_one_retailers_capacity_hints_do_not_spend_the_other_retailers_allowance(self):
+        client = Client()
+        client.product.update(offer_targets=[], attributes={'ram_gb': 6, 'storage_gb': 128,
+                                                           'Connectivity': {'5G': True}})
+        client.get_public_price_priority = lambda: {}
+        urls = ['https://www.hepsiburada.com/samsung-galaxy-a36-5g-8gb-128gb-p-HBCV0000001234',
+                'https://www.hepsiburada.com/samsung-galaxy-a36-5g-8gb-256gb-p-HBCV0000001235',
+                'https://www.teknosa.com/samsung-galaxy-a36-5g-8gb-128gb-p-100000123456',
+                'https://www.teknosa.com/samsung-galaxy-a36-5g-8gb-256gb-p-100000123457']
+        def parse(html, url, diagnostic=None):
+            diagnostic.update(status='parsed')
+            chosen = urls[:2] if 'hepsiburada' in url else urls[2:]
+            return [{'source_url': u, 'discovery_title': f'{client.product["name"]} 8 GB RAM {storage} GB',
+                     'stock_priority': True} for u, storage in zip(chosen, [128, 256])], None
+        class CategoryTransport(Transport):
+            def read_hepsiburada_category(self, url):
+                return '', 'document_read', 200
+            def read_teknosa_category(self, url):
+                return '', 'document_read', 200
+        def inspect(transport, url, product):
+            return {'slug': product['slug'], 'retailer': 'Teknosa' if 'teknosa' in url else 'Hepsiburada',
+                    'url': url, 'observed_url': url, 'http_status': 200,
+                    'reason': 'document_read', 'prepared_offer': None}
+        with patch('hepsiburada_catalog_discovery.parse_category_document', side_effect=parse), \
+                patch('teknosa_catalog_discovery.parse_category_document', side_effect=parse), \
+                patch('hepsiburada_catalog_discovery.discovery_links', return_value=[]), \
+                patch('sweep_priority_catalog.inspect_target', side_effect=inspect) as inspector:
+            result = sweep(client=client, transport=CategoryTransport(), discover_hepsiburada=True,
+                           discover_teknosa=True, memory_discovery=True)
+        self.assertEqual([c.args[1] for c in inspector.call_args_list], urls)
+        self.assertEqual(len(result['category_discovery']['memory_variant_hints']), 2)
+        self.assertEqual(len(result['hepsiburada_category_discovery']['memory_variant_hints']), 2)
+        self.assertFalse(result['writes'])
+
     def test_one_changed_category_url_does_not_starve_other_observed_branches_or_override_a_source_block(self):
         root = 'https://www.hepsiburada.com/cep-telefonlari-c-371965'
         changed = 'https://www.hepsiburada.com/samsung-galaxy-s25-fe-android-telefonlar-xc-60005201-b8848-t6765'

@@ -52,6 +52,29 @@ def discover_catalog_targets(html, name, specs, maximum=2, *, excluded_urls=()):
     return result
 
 
+def discover_catalog_memory_targets(html, product, *, excluded_urls=()):
+    """Observed other-capacity search links, never selected facts or prices."""
+    if not isinstance(html, str) or len(html.encode()) > 5 * 1024 * 1024:
+        return []
+    from automatic_memory_variants import memory_variant_destinations
+    seen = {canonical for url in excluded_urls
+            if (canonical := catalog_request_url(url)) is not None}
+    cards = []
+    for anchor in BeautifulSoup(html, 'html.parser').select('a[href]'):
+        headings = anchor.select('h2.product-item-title')
+        if len(headings) != 1:
+            continue
+        url = urljoin('https://www.n11.com/', anchor['href'])
+        canonical = catalog_request_url(url)
+        if canonical is None or canonical in seen:
+            continue
+        seen.add(canonical)
+        cards.append({'source_url': canonical, 'discovery_title': headings[0].get_text(' ', strip=True)})
+        if len(cards) >= 200:
+            break
+    return [card for _, card in memory_variant_destinations(cards, [product])][:2]
+
+
 def parse_catalog_listing(html, url, name, specs):
     canonical = catalog_request_url(url)
     if canonical is None or not isinstance(html, str) or len(html.encode()) > 5 * 1024 * 1024:

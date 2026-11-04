@@ -5,7 +5,8 @@ import unittest
 
 from bs4 import BeautifulSoup
 
-from n11_catalog_source import N11CatalogSource, catalog_offer_matches, discover_catalog_targets, parse_catalog_listing
+from n11_catalog_source import (N11CatalogSource, catalog_offer_matches, discover_catalog_targets,
+                                discover_catalog_memory_targets, parse_catalog_listing)
 from retailer_offer_refresh import RetailerOfferRefresher
 from update_prices import PriceUpdater
 
@@ -25,6 +26,25 @@ def document(change=None):
 
 
 class N11CatalogTests(unittest.TestCase):
+    def test_other_memory_search_cards_are_only_bounded_same_model_destinations(self):
+        parent = {'id': 999, 'slug': 'samsung-galaxy-a57', 'name': NAME,
+                  'attributes': {'ram_gb': 6, 'storage_gb': 128, 'Connectivity': {'5G': True}}}
+        def card(url=URL, title=NAME + ' 8 GB RAM 256 GB'):
+            return f'<a href="{url}"><h2 class="product-item-title">{title}</h2><b>1 TL</b></a>'
+        html = (card() + card(URL + '?magaza=mediamarkt') + card(URL + '?token=private')
+                + card(URL.replace('www.n11.com', 'www.n11.com.evil.test'))
+                + card(URL.replace('123382026', '123382027'), NAME.replace('A57', 'A56') + ' 8 GB RAM 256 GB')
+                + card(URL.replace('123382026', '123382028'), NAME + ' 8+8 GB RAM 256 GB')
+                + card(URL.replace('123382026', '123382029'), NAME + ' 4G 8 GB RAM 256 GB')
+                + card(URL.replace('123382026', '123382030'), NAME + ' 6 GB RAM 128 GB'))
+        before = deepcopy(parent)
+        result = discover_catalog_memory_targets(html, parent)
+        self.assertEqual(result, [{'source_url': URL, 'discovery_title': NAME + ' 8 GB RAM 256 GB'}])
+        self.assertEqual(parent, before)
+        self.assertNotIn('price', result[0])
+        self.assertNotIn('observed_specs', result[0])
+        self.assertEqual(discover_catalog_memory_targets(html, parent, excluded_urls=[URL + '?magaza=old']), [])
+
     def test_already_inspected_top_search_hits_do_not_hide_new_lower_destinations(self):
         title = NAME + ' 8 GB 256 GB (Samsung Türkiye Garantili)'
         urls = [URL.replace('123382026', str(123382026 + n)) for n in range(5)]
