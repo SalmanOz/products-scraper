@@ -288,6 +288,67 @@ def sweep_reader():
 
 
 class SweepTests(unittest.TestCase):
+    def test_a_fresh_n11_other_capacity_routes_to_its_existing_sku_before_duplicate_query_is_skipped(self):
+        from test_n11_catalog_source import document, URL, NAME
+        client = Client()
+        original = {'id': 999, 'name': NAME, 'slug': 'samsung-galaxy-a57', 'offer_targets': [],
+                    'attributes': {'ram_gb': 6, 'storage_gb': 128, 'Connectivity': {'5G': True}}}
+        sibling = {'id': 1000, 'name': NAME + ' 8GB 256GB', 'slug': 'samsung-galaxy-a57-8gb-256gb',
+                   'offer_targets': [], 'attributes': {'ram_gb': 8, 'storage_gb': 256, 'Connectivity': {'5G': True}}}
+        catalog = [original, sibling]
+        before = deepcopy(catalog)
+        client.get_published_products = lambda: deepcopy(catalog)
+        client.get_public_price_priority = lambda: {}
+        queries, documents = [], []
+        class SearchTransport(Transport):
+            def read_n11_search(self, query):
+                if query in queries:
+                    return None, 'already_read', None
+                queries.append(query)
+                return f'<a href="{URL}"><h2 class="product-item-title">{NAME} 8 GB RAM 256 GB</h2></a>', 'document_read', 200
+            def read_document(self, url):
+                documents.append(url)
+                return document(), 'document_read', 200
+            def resolved_url(self, url): return url
+        def publish(audit, **kwargs):
+            row = audit['rows'][0]
+            self.assertEqual(row['slug'], sibling['slug'])
+            self.assertEqual((row['prepared_offer']['ram_gb'], row['prepared_offer']['storage_gb']), (8, 256))
+            self.assertTrue(row['document_reused'])
+            return {'status': 'completed', 'writes': True, 'ingestion': {'accepted': 1},
+                    'commercial_readback_verified': True}
+        with patch('sweep_priority_catalog.refresh_candidates', side_effect=publish) as writer:
+            result = sweep(client=client, transport=SearchTransport(), reader=sweep_reader(),
+                           discover_n11=True, memory_discovery=True, publish=True)
+        self.assertEqual(queries, [NAME])
+        self.assertEqual(documents, [URL])
+        self.assertEqual(writer.call_count, 1)
+        self.assertIsNone(result['rows'][0]['prepared_offer'])
+        self.assertEqual(result['rows'][0]['routed_to_existing_variant']['slug'], sibling['slug'])
+        self.assertEqual(result['rows'][1]['slug'], sibling['slug'])
+        self.assertEqual(result['rows'][1]['publication']['commercial_readback_verified'], True)
+        self.assertEqual(result['accepted'], 1)
+        self.assertEqual(result['catalog_count'], 2)
+        self.assertEqual(catalog, before)
+
+    def test_n11_memory_quota_reaches_missing_families_before_an_unpriced_old_capacity_with_priced_sibling(self):
+        client = Client()
+        old = {'id': 1, 'name': 'Samsung Galaxy A35 5G', 'slug': 'a35-old', 'offer_targets': [],
+               'attributes': {'ram_gb': 6, 'storage_gb': 128, 'Connectivity': {'5G': True}}}
+        priced = {**old, 'id': 3, 'name': 'Samsung Galaxy A35 5G 8GB 128GB', 'slug': 'a35-8-128',
+                  'attributes': {'ram_gb': 8, 'storage_gb': 128, 'Connectivity': {'5G': True}}}
+        missing = {**old, 'id': 2, 'name': 'Samsung Galaxy A57 5G', 'slug': 'a57-missing'}
+        client.get_published_products = lambda: [old, missing, priced]
+        client.get_public_price_priority = lambda: {p['id']: (p['slug'], p['id'] == 3) for p in [old, missing, priced]}
+        queries = []
+        class SearchTransport(Transport):
+            def read_n11_search(self, query):
+                queries.append(query)
+                return None, 'no_results', 200
+        result = sweep(client=client, transport=SearchTransport(), discover_n11=True, memory_discovery=True)
+        self.assertEqual(queries[0], missing['name'])
+        self.assertFalse(result['writes'])
+
     def test_definitely_wrong_brand_hint_does_not_block_the_urls_actual_owner_or_other_capacities(self):
         apple = 'https://www.n11.com/urun/apple-iphone-17-pro-max-2-tb-apple-turkiye-garantili-100819983'
         xiaomi = 'https://www.n11.com/urun/xiaomi-17-pro-max-16-gb-1-tb-100819984'

@@ -9,7 +9,7 @@ from unittest.mock import patch
 from automatic_memory_variants import (TechnicalVariantReader, PublicBrowserTechnicalReader, exact_capacity, selected_technical_document,
     technical_records, variant_identity, observed_variant_candidates, memory_variant_destinations,
     prepare_memory_variants, verify_variant_catalog_readback, memory_target_preflight, canonical_observation_time,
-    declared_technical_targets, memory_parent_priority, CONTRACT)
+    declared_technical_targets, memory_parent_priority, existing_selected_memory_sibling, CONTRACT)
 from observed_memory_variants import inspect_trendyol_memory_variant
 from test_observed_memory_variants import alternate_document, ALT_URL
 from test_trendyol_catalog_source import NAME, SPECS
@@ -38,6 +38,21 @@ def tech_document(url=ALT_TECH_URL, ram=8, storage=256, name=NAME):
 
 
 class AutomaticMemoryVariantTests(unittest.TestCase):
+    def test_an_existing_sibling_needs_unique_same_family_memory_radio_and_complete_selected_seller_proof(self):
+        preview = self.candidate_result()['rows'][0]['other_memory_variant']
+        sibling = {**PARENT, 'id': 124, **variant_identity(PARENT, 8, 256),
+                   'attributes': {'ram_gb': 8, 'storage_gb': 256, 'Connectivity': {'5G': True}}}
+        self.assertEqual(existing_selected_memory_sibling(PARENT, preview, [PARENT, sibling]), sibling)
+        for wrong in [{**sibling, 'attributes': {'ram_gb': 12, 'storage_gb': 256, 'Connectivity': {'5G': True}}},
+                      {**sibling, 'name': sibling['name'].replace('A54', 'A55')},
+                      {**sibling, 'attributes': {'ram_gb': 8, 'storage_gb': 256, 'Connectivity': {'5G': False}}}]:
+            self.assertIsNone(existing_selected_memory_sibling(PARENT, preview, [PARENT, wrong]))
+        self.assertIsNone(existing_selected_memory_sibling(PARENT, preview, [PARENT, sibling, {**sibling, 'id': 125}]))
+        for mutate in [lambda p: p.update(writes=True), lambda p: p['offer'].update(merchant='Other'),
+                       lambda p: p['observed_specs'].update(network_generation='4g')]:
+            bad = deepcopy(preview); mutate(bad)
+            self.assertIsNone(existing_selected_memory_sibling(PARENT, bad, [PARENT, sibling]))
+
     def test_memory_priority_counts_a_priced_sibling_but_never_merges_radio_or_unknown_public_rows(self):
         def phone(product_id, name, ram, storage, five_g):
             return {'id': product_id, 'slug': f'phone-{product_id}', 'name': name,

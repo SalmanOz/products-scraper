@@ -567,6 +567,42 @@ def technical_records(parent, specs, identity, reader):
     return records, evidence, images
 
 
+def existing_selected_memory_sibling(parent, preview, products):
+    """Route a freshly proved other capacity to exactly one existing SKU.
+
+    This never creates a variant or changes the original SKU. Publication
+    still re-fetches the listing against the sibling's current full profile.
+    """
+    if (not isinstance(preview, dict) or preview.get('scope') != 'other_memory_variant_preview_only'
+            or preview.get('writes') is not False):
+        return None
+    specs, offer = preview.get('observed_specs'), preview.get('offer')
+    if not isinstance(specs, dict) or not isinstance(offer, dict):
+        return None
+    model = TRPriceScraper._catalog_model_name(parent['name'], parent['attributes'])
+    try:
+        radio = parent_specs(parent).get('network_generation')
+    except ValueError:
+        return None
+    if (not model or radio not in ('4g', '5g') or specs.get('network_generation') != radio
+            or variant_selected_evidence(offer, model, specs) is None):
+        return None
+    matches = []
+    for product in products:
+        if product['id'] == parent['id']:
+            continue
+        other_model = TRPriceScraper._catalog_model_name(product['name'], product['attributes'])
+        if not other_model or family_key(other_model) != family_key(model):
+            continue
+        try:
+            actual = parent_specs(product)
+        except ValueError:
+            continue
+        if all(actual.get(k) == specs.get(k) for k in ('ram_gb', 'storage_gb', 'network_generation')):
+            matches.append(product)
+    return matches[0] if len(matches) == 1 else None
+
+
 def observed_variant_candidates(result, products):
     by_slug = {p['slug']: p for p in products}
     matcher = TRPriceScraper()

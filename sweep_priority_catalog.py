@@ -201,6 +201,23 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
         result['sources'] = transport.report()
         if checkpoint:
             checkpoint(result)
+        if memory_discovery and row.get('prepared_offer') is None and row.get('other_memory_variant'):
+            from automatic_memory_variants import existing_selected_memory_sibling
+            sibling = existing_selected_memory_sibling(product, row['other_memory_variant'], products)
+            if sibling is not None and sibling['slug'] not in covered_models:
+                offer = row['other_memory_variant']['offer']
+                destination = offer['url']
+                if (sibling['slug'], destination) not in processed:
+                    row['routed_to_existing_variant'] = {'id': sibling['id'], 'slug': sibling['slug']}
+                    result['queued'] += 1
+                    process_target(destination, sibling, audited_row={
+                        'slug': sibling['slug'], 'retailer': row['retailer'], 'url': destination,
+                        'observed_url': row['observed_url'], 'reason': row['reason'],
+                        'http_status': row['http_status'], 'document_reused': True,
+                        'reader_reason': 'fresh_selected_existing_memory_sibling',
+                        'prepared_offer': offer})
+                    result['models_without_priority_hints'] = [slug for slug in
+                        result['models_without_priority_hints'] if slug != sibling['slug']]
         seller_candidates = (row.get('discovered_sellers', [])
             if product_host(row.get('observed_url')) == 'www.hepsiburada.com'
             and not urlparse(row['observed_url']).query and row.get('prepared_offer') is not None else [])
@@ -399,7 +416,10 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
             from reviewed_offer_targets import with_reviewed_radio
             from tr_price_scraper import TRPriceScraper
             inspected = {row['observed_url'] for row in result['rows']} | inventory_urls
-            for product in sorted(products, key=lambda p: (prices.get(p['id'], ('', True))[1], p['id'])):
+            priorities = (result.get('memory_variant_priority') or {}).get('parent_priorities', {})
+            for product in sorted(products, key=lambda p: (
+                    priorities.get(p['slug'], 2) if memory_discovery else 0,
+                    prices.get(p['id'], ('', True))[1], p['id'])):
                 if product['slug'] in covered_models:
                     continue
                 specs = with_reviewed_radio(product, PriceUpdater.get_expected_specs(product.get('attributes')))
