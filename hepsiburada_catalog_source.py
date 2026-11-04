@@ -78,8 +78,8 @@ def parse_catalog_buy_box(html, url, name, specs):
     except (TypeError, ValueError, KeyError):
         return None, 'selected_redux_identity_missing'
     uuid = r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}'
-    if (not isinstance(product_id, str) or not re.fullmatch(r'HBC[A-Z0-9]{5,30}', product_id)
-            or not isinstance(sku, str) or not re.fullmatch(r'HBCV[A-Z0-9]{5,30}', sku)
+    if (not isinstance(product_id, str) or not re.fullmatch(r'(?:HBC[A-Z0-9]{5,30}|HB[0-9][A-Z0-9]{4,29})', product_id)
+            or not isinstance(sku, str) or not re.fullmatch(r'(?:HBCV[A-Z0-9]{5,30}|HBV[0-9][A-Z0-9]{4,29})', sku)
             or not _identity(url, product_id, sku)
             or not isinstance(seller, str) or not 1 <= len(seller.strip()) <= 100
             or re.search(r'[\x00-\x1f]', seller)

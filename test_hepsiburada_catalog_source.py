@@ -26,6 +26,32 @@ def document(changes=None):
 
 
 class HepsiburadaCatalogTests(unittest.TestCase):
+    def test_legacy_hb_product_and_hbv_sku_keep_the_same_full_selected_offer_contract(self):
+        # Public iPhone 11 category/PDP observed Nov 4, including its separately
+        # selected accessory-free box. No legacy identifier is rewritten.
+        old_product, old_sku = 'HBC0000TEST00', 'HBCV0000TEST01'
+        product, sku = 'HB00000NSBZ4', 'HBV0000120X65'
+        target = TARGET.replace(old_product, product)
+        html = document().replace(old_product, product).replace(old_sku, sku)
+        offer, why = parse_catalog_buy_box(html, target, NAME, SPECS)
+        self.assertIsNotNone(offer, why)
+        self.assertEqual((offer['product_id'], offer['sku']), (product, sku))
+        soup = BeautifulSoup(html, 'html.parser')
+        import json
+        script = soup.select_one('script#reduxStore')
+        data = json.loads(script.text)
+        data['productState']['product']['variants'][0]['properties'].append(
+            {'name': 'Seçenek', 'valueObject': {'actualValue': 'Aksesuarsız Kutu'}})
+        script.string = json.dumps(data)
+        control = '<button data-test-id="variant-box-Seçenek-Aksesuarsız Kutu" aria-label="Seçili Seçenek Aksesuarsız Kutu">Aksesuarsız Kutu</button>'
+        selected_html = str(soup) + control
+        self.assertIsNotNone(parse_catalog_buy_box(selected_html, target, NAME, SPECS)[0])
+        for changed in [str(soup), selected_html.replace('Aksesuarsız Kutu', 'Aksesuarlı Paket'),
+                        selected_html.replace('Seçili Seçenek', 'Seçenek'),
+                        selected_html.replace(product, 'INVALID00000'),
+                        selected_html.replace(sku, 'INVALID00000')]:
+            self.assertIsNone(parse_catalog_buy_box(changed, target, NAME, SPECS)[0])
+
     def test_closed_catalog_flag_cannot_hide_an_independently_live_selected_merchant(self):
         # Observed on HB's public Galaxy S23 8/128 AKSOYLU PDP on 2026-11-03:
         # closed=true, live=true, product+warehouse+selected-SKU stock=true,

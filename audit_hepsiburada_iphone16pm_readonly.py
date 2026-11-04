@@ -110,7 +110,13 @@ def _selected_variant(product, scope=None):
     barcode_matches = (sorted(set(gtins)) == scope['GTIN13S'] and
                        all(_valid_gtin13(g) for g in gtins)) if scope.get('generic_catalog') is True else (
                            gtins == [scope['GTIN13']] and _valid_gtin13(scope['GTIN13']))
-    if (values != {'Renk': scope['COLOR'], 'Kapasite': str(scope['SPECS']['storage_gb']) + ' GB'}
+    expected_properties = {'Renk': scope['COLOR'], 'Kapasite': str(scope['SPECS']['storage_gb']) + ' GB'}
+    # The public legacy iPhone template independently selects a box option.
+    # Only the observed neutral, accessory-free box can accompany this SKU;
+    # bundles, used-condition choices and unknown option values stay rejected.
+    if scope.get('generic_catalog') is True and values.get('Seçenek') == 'Aksesuarsız Kutu':
+        expected_properties['Seçenek'] = 'Aksesuarsız Kutu'
+    if (values != expected_properties
             or not barcode_matches
             or variant.get('isInStock') is not True
             or variant.get('isPreOrder') is not False
@@ -224,6 +230,8 @@ def parse_exact_buy_box(html: str, final_url: str = URL, *, scope=None):
     if len(sellers) != 1:
         return None, 'selected_visible_seller_mismatch'
     controls = (('Kapasite', str(scope['SPECS']['storage_gb']) + ' GB'), ('Renk', scope['COLOR']))
+    if generic and any(p.get('name') == 'Seçenek' for p in variant['properties']):
+        controls += (('Seçenek', 'Aksesuarsız Kutu'),)
     for kind, value in controls:
         buttons = soup.select(f'button[data-test-id="variant-box-{kind}-{value}"]')
         if len(buttons) != 1 or buttons[0].get('aria-label') != f'Seçili {kind} {value}':
