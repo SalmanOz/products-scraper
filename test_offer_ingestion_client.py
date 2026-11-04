@@ -1003,6 +1003,31 @@ def test_our_collector_gateway_failure_keeps_bounded_cooldown_instead_of_permane
 from unittest import TestCase
 
 
+class ServerScoringAcknowledgementTests(TestCase):
+    def test_only_explicit_success_for_every_committed_batch_is_preserved(self):
+        for last in (True, None, 'true', 'missing'):
+            def response(count, ack):
+                body = {'committed': True, 'accepted': count, 'stale_ignored': 0,
+                        'variant_rejected': 0, 'variant_rejections': []}
+                if ack != 'missing':
+                    body['scores_recalculated'] = ack
+                return FakeResponse(200, body)
+            session = FakeSession([response(500, True), response(1, last)])
+            client = OfferIngestionClient('https://teknoskor.com', TEST_SECRET, session=session)
+            result = client.ingest_offers([{}] * 501)
+            self.assertEqual(result.get('server_scores_recalculated') is True, last is True)
+            self.assertEqual(result['accepted'], 501)
+            self.assertEqual(len(session.calls), 2)
+
+    def test_failed_server_scoring_acknowledgement_cannot_become_success(self):
+        body = {'committed': True, 'accepted': 1, 'stale_ignored': 0,
+                'variant_rejected': 0, 'scores_recalculated': False}
+        session = FakeSession([FakeResponse(200, body)])
+        client = OfferIngestionClient('https://teknoskor.com', TEST_SECRET, session=session)
+        with self.assertRaises(IngestionClientError):
+            client.ingest_offers([{}])
+
+
 class TechnicalSourceHintContractTests(TestCase):
     def test_catalog_keeps_only_bounded_public_provenance_urls_and_no_stored_offer_values(self):
         test_catalog_is_read_without_mysql()

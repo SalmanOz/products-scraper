@@ -750,6 +750,7 @@ class OfferIngestionClient:
             "Authorization": f"Bearer {self.secret}",
             "Content-Type": "application/json",
         }
+        server_scoring_confirmed = True
 
         for start in range(0, len(offers), MAX_INGESTION_BATCH_SIZE):
             batch = offers[start : start + MAX_INGESTION_BATCH_SIZE]
@@ -825,6 +826,7 @@ class OfferIngestionClient:
             totals["accepted"] += accepted
             totals["stale_ignored"] += stale_ignored
             totals["variant_rejected"] += variant_rejected
+            server_scoring_confirmed &= body.get('scores_recalculated') is True
             changed_paths = body.get("changed_paths")
             if isinstance(changed_paths, list):
                 totals["changed_paths"].extend(
@@ -838,6 +840,10 @@ class OfferIngestionClient:
         )
         if _listing_contract:
             totals['offer_identity_contract'] = 'seller-source-url-v1'
+        if server_scoring_confirmed:
+            # Only an explicit success for EVERY committed HTTP batch can
+            # replace a redundant reconciliation. Null/missing is unknown.
+            totals['server_scores_recalculated'] = True
         return totals
 
     def reconcile_scores(self):

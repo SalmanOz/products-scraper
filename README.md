@@ -575,6 +575,12 @@ separate from independent seller counts. Missing, stale or partial audits are
 reported as unavailable and never as zero coverage. These diagnostics do not
 replace individual publication verification or the full public 80% gate.
 
+The priority publisher avoids a second whole-catalog score recalculation only
+when every committed ingestion batch explicitly confirms successful server
+scoring. Missing, null, string or partial acknowledgements retain the separate
+reconciliation. Exact current seller/URL/price readback remains mandatory even
+when scoring is already confirmed.
+
 Current commercial readback uses the authenticated
 `/api/ingestion/offer-identity-readiness` endpoint and the same full commercial
 matching audit. Historical price-index queries are not required to confirm a

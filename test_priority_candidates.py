@@ -55,6 +55,40 @@ def reader():
 
 
 class PriorityCandidateTests(unittest.TestCase):
+    def test_confirmed_server_scoring_avoids_duplicate_recalculation_but_keeps_exact_readback(self):
+        class ServerScoredClient(Client):
+            def ingest_offers(self, records, *, require_all_accepted=False):
+                return {**super().ingest_offers(records, require_all_accepted=require_all_accepted),
+                        'server_scores_recalculated': True}
+            def reconcile_scores(self):
+                raise AssertionError('An explicitly successful server calculation must not repeat')
+        client = ServerScoredClient()
+        result = refresh_candidates(audit(), client=client, reader=reader())
+        self.assertEqual(len(client.writes), 1)
+        self.assertEqual(result['scoring']['source'], 'committed_ingestion_acknowledgement')
+        self.assertTrue(result['commercial_readback_verified'])
+
+        class MissingReadback(ServerScoredClient):
+            def get_offer_identity_readiness(self):
+                result = super().get_offer_identity_readiness()
+                result['productCoverage'][0]['matchedOffers'] = []
+                return result
+        missing = MissingReadback()
+        with self.assertRaisesRegex(ValueError, 'not_visible'):
+            refresh_candidates(audit(), client=missing, reader=reader())
+        self.assertEqual(len(missing.writes), 1)
+
+    def test_missing_or_nonboolean_server_acknowledgement_still_requires_successful_reconciliation(self):
+        for ack in (None, False, 'true', 1):
+            class UnconfirmedClient(Client):
+                def ingest_offers(self, records, *, require_all_accepted=False):
+                    return {**super().ingest_offers(records, require_all_accepted=require_all_accepted),
+                            'server_scores_recalculated': ack}
+            client = UnconfirmedClient()
+            result = refresh_candidates(audit(), client=client, reader=reader())
+            self.assertEqual(client.scores, 1)
+            self.assertTrue(result['commercial_readback_verified'])
+
     def test_selected_hb_seller_is_read_again_and_retained_in_the_published_source(self):
         from urllib.parse import urlencode
         client = Client()

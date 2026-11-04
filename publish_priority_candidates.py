@@ -152,7 +152,8 @@ def refresh_candidates(audit, *, client, reader=None):
             if (ingestion.get('committed') is not True or ingestion.get('accepted') != len(prepared)
                     or ingestion.get('stale_ignored') != 0 or ingestion.get('variant_rejected') != 0):
                 raise ValueError('atomic_acceptance_not_confirmed')
-            result['scoring'] = client.reconcile_scores()
+            result['scoring'] = ({'source': 'committed_ingestion_acknowledgement', 'scores_recalculated': True}
+                if ingestion.get('server_scores_recalculated') is True else client.reconcile_scores())
             current = _matched_rows(client.get_offer_identity_readiness())
             if any(not _exact_current(record, current.get(record['product_slug'], [])) for record in prepared):
                 raise ValueError('accepted_offer_not_visible_in_commercial_readback')
