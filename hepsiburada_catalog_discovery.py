@@ -106,10 +106,20 @@ def category_redirect_target(original, observed):
     """Only an observed equivalent taxonomy, keeping the immediate page.
 
     This is a new discovery hint, not permission to reuse the changed body.
-    PDPs, sellers, queries, different generations and radio paths cannot pass.
+    PDPs, sellers, queries and different generations cannot pass. An explicit
+    radio suffix may disappear into a broader same-model category; that never
+    supplies radio evidence for an individual product/offer.
     """
     scope = category_scope(original)
-    if (scope is None or category_scope(observed) != scope or original == observed
+    destination = category_scope(observed)
+    same_scope = scope is not None and destination == scope
+    if (not same_scope and scope and destination
+            and scope[0] == destination[0] == 'model' and scope[2] == destination[2]):
+        # The observed Note 12 Pro route omits its old terminal 5g in the
+        # canonical category. A 4g -> 5g category change is still a conflict.
+        base = re.sub(r'-(?:4g|5g|lte)$', '', scope[1])
+        same_scope = base != scope[1] and base == destination[1]
+    if (not same_scope or original == observed
             or (urlparse(original).query or 'sayfa=1') !=
                (urlparse(observed).query or 'sayfa=1')):
         return None

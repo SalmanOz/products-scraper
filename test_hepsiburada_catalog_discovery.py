@@ -32,6 +32,20 @@ class HepsiburadaDiscoveryTests(unittest.TestCase):
             self.assertIsNone(category_redirect_target(old, changed), changed)
         self.assertIsNone(category_redirect_target(PDP, PDP[:-1] + 'L'))
 
+    def test_observed_radio_suffix_omission_only_opens_a_broader_category_not_another_radio_sku(self):
+        from hepsiburada_catalog_discovery import category_redirect_target
+        old = 'https://www.hepsiburada.com/xiaomi-redmi-note-12-pro-5g-android-telefonlar-xc-60005201-b1123-t236'
+        canonical = 'https://www.hepsiburada.com/xiaomi-redmi-note-12-pro-android-telefonlar-xc-60005201-b1123-t230'
+        self.assertEqual(category_redirect_target(old, canonical), canonical)
+        d = {}
+        parse_category_document('<h1>Xiaomi Redmi Note 12 Pro Fiyatları</h1>', canonical, d)
+        self.assertEqual(d['status'], 'parsed')
+        for target in [canonical.replace('12-pro', '13-pro'), canonical.replace('12-pro', '12-pro-plus'),
+                       canonical.replace('12-pro-', '12-pro-4g-'), canonical + '?sayfa=2',
+                       'https://www.hepsiburada.com/android-telefonlar-c-60005201', PDP]:
+            self.assertIsNone(category_redirect_target(old, target), target)
+        self.assertIsNone(category_redirect_target(canonical, old))
+
     def test_router_discards_redirected_body_reads_one_observed_target_and_bounds_second_hop(self):
         from sweep_priority_catalog import sweep
         from test_priority_candidates import Client
