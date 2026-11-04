@@ -12,3 +12,8 @@ def retailer_gtin13(raw):
     if not isinstance(raw, str) or not re.fullmatch(r'\d{12,13}', raw):
         return None
     return _gtin13(('0' + raw) if len(raw) == 12 else raw)
+
+
+def trendyol_product_code(raw):
+    """Observed public PMP product codes are retailer IDs, never GS1 GTINs."""
+    return raw if isinstance(raw, str) and re.fullmatch(r'PMP[A-Z0-9]{15}', raw) else None

@@ -44,14 +44,19 @@ def selected_sku_evidence(offer):
         return None
     product, sku = str(offer.get('product_id') or ''), str(offer.get('item_number' if prefix == 'trendyol' else 'sku') or '')
     listing, gtin = offer.get('listing_id'), offer.get('gtin13')
+    from retailer_barcode import trendyol_product_code
+    retailer_code = (trendyol_product_code(offer.get('observed_barcode'))
+                     if prefix == 'trendyol' and gtin is None
+                     and offer.get('barcode_kind') == 'retailer_product_code' else None)
     if (not re.fullmatch(r'[1-9]\d{0,19}', product) or (prefix == 'trendyol' and type(offer.get('item_number')) is not int)
             or not re.fullmatch(r'[1-9]\d{0,19}', sku)
             or (prefix == 'trendyol' and (not isinstance(listing, str) or not re.fullmatch(r'[a-f0-9]{32}', listing)))
-            or not isinstance(gtin, str) or not re.fullmatch(r'\d{13}', gtin)):
+            or (retailer_code is None and (not isinstance(gtin, str) or not re.fullmatch(r'\d{13}', gtin)))):
         return None
-    checksum = sum(int(digit) * (3 if index % 2 else 1) for index, digit in enumerate(gtin[:12]))
-    if (10 - checksum % 10) % 10 != int(gtin[-1]):
-        return None
+    if retailer_code is None:
+        checksum = sum(int(digit) * (3 if index % 2 else 1) for index, digit in enumerate(gtin[:12]))
+        if (10 - checksum % 10) % 10 != int(gtin[-1]):
+            return None
     ram, storage, radio = (offer.get(k) for k in ('ram_gb', 'storage_gb', 'network_generation'))
     if (type(ram) is not int or not 1 <= ram <= 64 or type(storage) is not int
             or not 32 <= storage <= 4096 or radio not in ('4g', '5g')):
@@ -85,6 +90,9 @@ def selected_sku_evidence(offer):
             'product_id': product, 'sku': sku, 'merchant_id': str(merchant_id),
             'merchant_name': name, 'gtin13': gtin, 'ram_gb': ram, 'storage_gb': storage,
             'network_generation': radio}
+    if retailer_code is not None:
+        proof.pop('gtin13')
+        proof.update(version='selected-retailer-sku-v2', retailer_barcode=retailer_code)
     if prefix == 'trendyol':
         proof['listing_id'] = listing
     else:

@@ -52,6 +52,34 @@ def document(changes=None):
 
 
 class TrendyolCatalogTests(unittest.TestCase):
+    def test_public_retailer_product_code_is_distinct_from_gtin_and_still_binds_selected_sku(self):
+        from selected_sku_evidence import selected_sku_evidence
+        from tr_price_scraper import TRPriceScraper
+        p = ('state', 'product')
+        paths = [p + ('variants', 0, 'barcode'), p + ('merchantListing', 'variants', 0, 'barcode'),
+                 p + ('merchantListing', 'winnerVariant', 'barcode')]
+        code = 'PMPG24MZTJKBTGVP82'  # Public selected A17 listing, Nov 4 2026.
+        changes = {path: code for path in paths}
+        offer, reason = parse_catalog_listing(document(changes), URL, NAME, SPECS)
+        self.assertIsNotNone(offer, reason)
+        self.assertIsNone(offer['gtin13'])
+        self.assertEqual(offer['observed_barcode'], code)
+        proof = selected_sku_evidence(offer)
+        self.assertEqual(proof['version'], 'selected-retailer-sku-v2')
+        self.assertEqual(proof['retailer_barcode'], code)
+        self.assertNotIn('gtin13', proof)
+        self.assertTrue(TRPriceScraper().has_observed_offer_evidence(NAME, offer, SPECS))
+        for bad in ['8806094821438', 'PMP', code.lower(), code + 'X', ' ' + code, 'UNKNOWNPRODUCTCODE']:
+            self.assertIsNone(parse_catalog_listing(document({path: bad for path in paths}), URL, NAME, SPECS)[0])
+        for path in paths:
+            self.assertIsNone(parse_catalog_listing(document({**changes, path: 'PMPG24MZTJKBTGVP83'}), URL, NAME, SPECS)[0])
+        for patch in [{'barcode_kind': None}, {'observed_barcode': '8806094821438'},
+                      {'gtin13': '8806094821438'}, {'listing_id': 'wrong'}, {'merchant': 'Other'}]:
+            self.assertIsNone(selected_sku_evidence(dict(offer, **patch)))
+        for changed_specs in [dict(SPECS, ram_gb=4), dict(SPECS, storage_gb=256),
+                              dict(SPECS, network_generation='4g')]:
+            self.assertFalse(TRPriceScraper().has_observed_offer_evidence(NAME, offer, changed_specs))
+
     def test_checksum_valid_upc_preserves_raw_selected_barcode_and_equivalent_gtin(self):
         from tr_price_scraper import TRPriceScraper
         p = ('state', 'product')

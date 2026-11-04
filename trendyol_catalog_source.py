@@ -10,7 +10,7 @@ from bs4 import BeautifulSoup
 from hepsiburada_s25_fe_source import _nodes, _normalized
 from mediamarkt_marketplace_audit import _gtin13, catalog_variant_matches
 from priority_retailer_transport import PriorityRetailerTransport, product_host
-from retailer_barcode import retailer_gtin13
+from retailer_barcode import retailer_gtin13, trendyol_product_code
 from tr_price_scraper import TRPriceScraper
 
 
@@ -138,7 +138,8 @@ def parse_catalog_listing(html, url, name, specs):
             or not isinstance(winner.get('listingId'), str)
             or not re.fullmatch(r'[a-f0-9]{32}', winner['listingId'])
             or type(winner.get('itemNumber')) is not int or winner['itemNumber'] <= 0
-            or retailer_gtin13(winner.get('barcode')) is None
+            or (retailer_gtin13(winner.get('barcode')) is None
+                and trendyol_product_code(winner.get('barcode')) is None)
             or winner.get('sellable') is not True or winner.get('inStock') is not True
             or type(winner.get('stockStatus')) is not int or winner['stockStatus'] != 1):
         return None, 'selected_merchant_or_stock_mismatch'
@@ -146,7 +147,8 @@ def parse_catalog_listing(html, url, name, specs):
     if (variant is None or merchant_variant is None
             or any(v.get('itemNumber') != winner['itemNumber'] or v.get('inStock') is not True
                    for v in (variant, merchant_variant))
-            or variant.get('barcode') != winner['barcode']):
+            or variant.get('barcode') != winner['barcode']
+            or merchant_variant.get('barcode') not in (None, winner['barcode'])):
         return None, 'selected_variant_mismatch'
     price_data = winner.get('price')
     if not isinstance(price_data, dict) or price_data.get('currency') != 'TRY':
@@ -206,6 +208,11 @@ def parse_catalog_listing(html, url, name, specs):
             'price': float(price), 'currency': 'TRY', 'condition': 'new', 'availability': 'in_stock',
             'url': url, 'source_title': title, **physical,
             'observed_at': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')}
+    if result['gtin13'] is None:
+        # Keep a retailer product code distinct from GTIN. All selected product,
+        # physical variant, listing, merchant, schema, stock and cash checks above
+        # remain mandatory, including the independently selected barcode match.
+        result['barcode_kind'] = 'retailer_product_code'
     if basket is not None:
         result.update(price_kind='basket', listed_price=basket['listed_price'],
                       basket_promotion=basket['basket_promotion'])
@@ -220,7 +227,10 @@ def catalog_offer_matches(offer, name, specs):
             and type(offer.get('merchant_id')) is int and offer['merchant_id'] > 0
             and offer.get('availability') == 'in_stock' and offer.get('condition') == 'new'
             and offer.get('currency') == 'TRY' and _product_id(offer.get('url')) == offer.get('product_id')
-            and _gtin13(offer.get('gtin13')) is not None and catalog_variant_matches(offer, name, specs))
+            and (_gtin13(offer.get('gtin13')) is not None
+                 or offer.get('gtin13') is None and offer.get('barcode_kind') == 'retailer_product_code'
+                 and trendyol_product_code(offer.get('observed_barcode')) is not None)
+            and catalog_variant_matches(offer, name, specs))
 
 
 class TrendyolCatalogSource:
