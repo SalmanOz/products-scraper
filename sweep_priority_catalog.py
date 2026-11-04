@@ -59,6 +59,11 @@ def catalog_queue(products, prices, *, diagnostic=None):
                         diagnostic.append({'slug': product['slug'], 'url': url, 'reason': 'url_brand_conflict'})
                     continue
                 canonical = observed_url(url)
+                if product_host(canonical) is None:
+                    if isinstance(diagnostic, list):
+                        diagnostic.append({'slug': product['slug'], 'retailer': HOSTS[product_host(url)],
+                                           'reason': 'unroutable_public_pdp_selector'})
+                    continue
                 owners[canonical][product['id']] = product
                 if product_host(canonical) == 'www.hepsiburada.com':
                     default = urlparse(canonical)._replace(query='').geturl()
@@ -125,7 +130,8 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
     targets = catalog_queue(products, prices, diagnostic=hint_exclusions)
     result = {'purpose': 'systematic_priority_catalog_recovery', 'catalog_count': len(products),
               'publish': publish, 'writes': False, 'status': 'running', 'queued': len(targets),
-              'conflicting_hint_exclusions': hint_exclusions,
+              'conflicting_hint_exclusions': [r for r in hint_exclusions if r['reason'] == 'url_brand_conflict'],
+              'unroutable_hint_exclusions': [r for r in hint_exclusions if r['reason'] == 'unroutable_public_pdp_selector'],
               'rows': [], 'accepted': 0, 'discovery': [], 'models_without_priority_hints': sorted(
                   {p['slug'] for p in products} - {p['slug'] for _, p in targets})}
     if memory_recovery is not None:
@@ -594,6 +600,8 @@ def save_report(result):
              '', '| Model | Retailer | HTTP | Parser | Publication |', '|---|---|---:|---|---|']
     if result.get('conflicting_hint_exclusions'):
         lines.insert(2, f"Excluded {len(result['conflicting_hint_exclusions'])} historical URL hints with explicit conflicting brands; catalog coverage denominator is unchanged.")
+    if result.get('unroutable_hint_exclusions'):
+        lines.insert(2, f"Skipped {len(result['unroutable_hint_exclusions'])} unsupported historical PDP selectors; their catalog models remain eligible for automatic category discovery.")
     if result.get('purpose') == 'readonly_category_routing_audit':
         lines.insert(2, 'Read-only category routing audit: retailer product pages were not fetched; no prices were written. This does not pass the catalog price coverage gate.')
     if result.get('purpose') == 'readonly_existing_catalog_target_preflight':

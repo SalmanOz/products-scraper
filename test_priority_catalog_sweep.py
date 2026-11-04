@@ -20,6 +20,30 @@ class Transport:
 
 
 class TargetPreflightTests(unittest.TestCase):
+    def test_old_n11_selector_hint_cannot_create_a_none_queue_or_hide_the_catalog_model(self):
+        base = 'https://www.n11.com/urun/samsung-galaxy-a37-8-gb-256-gb-123382261'
+        catalog = [{'id': 1, 'slug': 'samsung-galaxy-a37-5g', 'name': 'Samsung Galaxy A37 5G',
+            'attributes': {'ram_gb': 8, 'storage_gb': 256, 'Connectivity': {'5G': True}},
+            'offer_targets': [{'source_url': base + suffix} for suffix in (
+                '?renk=lavanta-moru', '?magaza=Old%20Store', '?magaza=n11&renk=lavanta-moru')]}]
+        before = deepcopy(catalog)
+        diagnostics = []
+        queue = catalog_queue(catalog, {1: (catalog[0]['slug'], False)}, diagnostic=diagnostics)
+        self.assertEqual([url for url, _ in queue], [base + '?magaza=n11&renk=lavanta-moru'])
+        self.assertEqual(len(diagnostics), 2)
+        self.assertTrue(all(row['reason'] == 'unroutable_public_pdp_selector' for row in diagnostics))
+        self.assertTrue(all('url' not in row for row in diagnostics))
+        client = Client()
+        client.get_published_products = lambda: deepcopy([{**catalog[0], 'offer_targets': catalog[0]['offer_targets'][:2]}])
+        client.get_public_price_priority = lambda: {1: (catalog[0]['slug'], False)}
+        result = sweep(client=client, transport=Transport())
+        self.assertEqual((result['catalog_count'], result['queued'], result['status']), (1, 0, 'completed'))
+        self.assertEqual(result['models_without_priority_hints'], [catalog[0]['slug']])
+        self.assertEqual(len(result['unroutable_hint_exclusions']), 2)
+        self.assertEqual(result['conflicting_hint_exclusions'], [])
+        self.assertFalse(result['writes'])
+        self.assertEqual(catalog, before)
+
     def test_n11_observed_other_shops_are_separately_reread_published_and_commercially_verified(self):
         import json
         from pathlib import Path
