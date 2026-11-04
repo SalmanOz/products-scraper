@@ -48,11 +48,16 @@ def parse_selected_marketplace(html, url, profile):
         brand_links = heading.select('a.link')
         original, brand = cart.get('data-product-name') or '', cart.get('data-product-brand') or ''
         clean = lambda text: ' '.join(str(text or '').split())
+        brand_path = (brand_links[0].get('href') or '') if len(brand_links) == 1 else ''
+        # Observed Samsung PDPs use this exact short brand route. It still
+        # must bind the visible brand, both original inputs and selected cart.
+        observed_brand_route = bool(re.fullmatch(r'/[a-z0-9-]+-b-[1-9]\d*', brand_path)
+                                    or brand == 'Samsung' and brand_path == '/samsung')
         if (len(originals) == len(brands) == len(brand_links) == 1
                 and originals[0].get('value') == original and brands[0].get('value') == brand
                 and brand and original.startswith(brand + ' ') and original.count(brand) >= 2
                 and brand_links[0].get_text(' ', strip=True) == brand
-                and re.fullmatch(r'/[a-z0-9-]+-b-[1-9]\d*', brand_links[0].get('href') or '')
+                and observed_brand_route
                 and clean(original.replace(brand, '')) == clean(headings[0].get_text(' ', strip=True))
                 and clean(brand + ' ' + headings[0].get_text(' ', strip=True)) == clean(heading.get_text(' ', strip=True))):
             title = original

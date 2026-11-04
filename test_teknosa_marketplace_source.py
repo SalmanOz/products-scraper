@@ -19,6 +19,38 @@ def document():
 
 
 class TeknosaMarketplaceTests(unittest.TestCase):
+    def test_observed_samsung_short_brand_route_keeps_selected_title_shop_and_memory_bound(self):
+        from bs4 import BeautifulSoup
+        html = Path(__file__).with_name('fixtures').joinpath('teknosa-selected-samsung-brand-route.html').read_text()
+        url = 'https://www.teknosa.com/samsung-galaxy-a35-5g-8-gb-ram-128-gb-buz-mavisi-cep-telefonu-samsung-turkiye-garantili-p-780010519'
+        profile = {'name': 'Samsung Galaxy A35 5G', 'specs': {'ram_gb': 8, 'storage_gb': 128, 'network_generation': '5g'}}
+        offer, reason = parse_selected_marketplace(html, url, profile)
+        self.assertEqual(reason, 'selected_teknosa_marketplace_cash_offer')
+        self.assertEqual((offer['merchant'], offer['merchant_id'], offer['gtin13'], offer['price']),
+                         ('BAŞARAN İLETİŞİM', '3736', '8806095511771', 34999))
+        self.assertEqual(offer['source_title'], 'Samsung Galaxy A35 5G 8 GB RAM 128 GB Buz Mavisi Cep Telefonu (Samsung Türkiye Garantili)')
+        for path in ['/apple', '/magaza/samsung', '/samsung/', 'https://www.teknosa.com/samsung']:
+            soup = BeautifulSoup(html, 'html.parser')
+            soup.select_one('h1.pdp-title a.link')['href'] = path
+            self.assertIsNone(parse_selected_marketplace(str(soup), url, profile)[0], path)
+        for selector, attribute, value in [
+            ('input.brandNameReplace', 'value', 'Apple'),
+            ('input.productNameReplace', 'value', 'Samsung Galaxy A35 5G 6 GB RAM 128 GB'),
+            ('button#addToCartButton', 'data-product-brand', 'Apple'),
+            ('button#addToCartButton', 'data-shop-name', 'Other'),
+            ('button#addToCartButton', 'data-product-ean', '8806095511772'),
+            ('button#addToCartButton', 'data-product-shop-id', '1001'),
+        ]:
+            soup = BeautifulSoup(html, 'html.parser'); soup.select_one(selector)[attribute] = value
+            self.assertIsNone(parse_selected_marketplace(str(soup), url, profile)[0], (selector, attribute))
+        for selector in ['input.brandNameReplace', 'input.productNameReplace', 'h1.pdp-title a.link']:
+            soup = BeautifulSoup(html, 'html.parser'); soup.select_one(selector).decompose()
+            self.assertIsNone(parse_selected_marketplace(str(soup), url, profile)[0], selector)
+        soup = BeautifulSoup(html, 'html.parser')
+        title = soup.select_one('h1.pdp-title .replaceName')
+        title.string = title.get_text().replace('8 GB RAM', '12 GB RAM')
+        self.assertIsNone(parse_selected_marketplace(str(soup), url, profile)[0])
+
     def test_observed_ordinary_sale_binds_list_and_payable_amounts_to_their_own_fields(self):
         from bs4 import BeautifulSoup
         html = Path(__file__).with_name('fixtures').joinpath('teknosa-selected-ordinary-sale.html').read_text()
