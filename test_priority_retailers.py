@@ -24,7 +24,9 @@ class PriorityRetailerTests(unittest.TestCase):
                 (new.replace('.com/', '.com.evil.test/'), False, None), (URLS[0], False, None)]:
             posts = []
             def get(url, **_):
-                rules = 'User-agent: *\nAllow: /\n' + ('Disallow: ' + new.split('.com')[1] + '\n' if forbidden else '')
+                # Avoid overlapping allow/disallow entries: Python 3.11 and
+                # 3.14 RobotFileParser resolve their order differently.
+                rules = 'User-agent: *\n' + ('Disallow: ' + new.split('.com')[1] + '\n' if forbidden else 'Allow: /\n')
                 return Response(url, rules if url.endswith('robots.txt') else 'denied', status=200 if url.endswith('robots.txt') else 403)
             def post(url, **kwargs):
                 posts.append(kwargs['json']['url'])
