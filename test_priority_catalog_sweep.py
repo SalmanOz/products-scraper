@@ -179,6 +179,89 @@ class TargetPreflightTests(unittest.TestCase):
 
 
 class CategoryDiagnosticTests(unittest.TestCase):
+    def test_newly_discovered_hb_gap_is_freshly_published_before_the_next_category_denial(self):
+        from test_hepsiburada_catalog_source import document, TARGET, NAME
+        from hepsiburada_catalog_discovery import CATEGORY_URL
+        from hepsiburada_catalog_source import HepsiburadaCatalogSource
+        from retailer_offer_refresh import RetailerOfferRefresher
+        client = Client()
+        client.product['offer_targets'] = []
+        client.get_public_price_priority = lambda: {client.product['id']: (client.product['slug'], False)}
+        original = deepcopy(client.product)
+        calls = []
+        next_page = CATEGORY_URL + '?sayfa=2'
+        class Source(Transport):
+            blocked = False
+            def configure_catalog_budget(self, count):
+                pass
+            def read_hepsiburada_category(self, url):
+                calls.append(('category', url))
+                if url == next_page:
+                    self.blocked = True
+                    return None, 'http_403', 403
+                return ('<h1>Cep Telefonu Fiyatları ve Modelleri</h1>'
+                        f'<h2 data-test-id="title-1"><a href="{TARGET}" title="{NAME} 8 GB RAM 128 GB">'
+                        f'{NAME} 8 GB RAM 128 GB</a></h2><link rel="next" href="{next_page}">'), 'document_read', 200
+            def read_document(self, url):
+                if self.blocked:
+                    raise AssertionError('No PDP may be requested after the denial')
+                calls.append(('pdp', url))
+                return document(), 'document_read', 200
+            def report(self):
+                return {'Hepsiburada': {'blocked': self.blocked}}
+        transport = Source()
+        reader = RetailerOfferRefresher(hepsiburada_catalog_source=HepsiburadaCatalogSource(transport=transport))
+        result = sweep(client=client, transport=transport, reader=reader,
+                       discover_hepsiburada=True, coverage_first=True, publish=True)
+        self.assertEqual(calls, [('category', CATEGORY_URL), ('pdp', TARGET),
+                                 ('pdp', TARGET), ('category', next_page)])
+        self.assertEqual(result['accepted'], 1)
+        self.assertEqual(len(client.writes), 1)
+        self.assertTrue(result['rows'][0]['publication']['commercial_readback_verified'])
+        self.assertTrue(result['hepsiburada_category_discovery']['early_gap_reads'])
+        self.assertEqual(client.product, original)
+
+    def test_streamed_capacity_reads_share_final_pass_model_and_retailer_caps(self):
+        from collections import Counter
+        from hepsiburada_catalog_discovery import CATEGORY_URL
+        catalog = [{'id': n, 'slug': f'samsung-galaxy-a{n:02}', 'name': f'Samsung Galaxy A{n:02} 5G',
+                    'offer_targets': [], 'attributes': {'ram_gb': 6, 'storage_gb': 128,
+                                                       'Connectivity': {'5G': True}}}
+                   for n in range(1, 14)]
+        client = Client()
+        client.get_published_products = lambda: deepcopy(catalog)
+        client.get_public_price_priority = lambda: {p['id']: (p['slug'], False) for p in catalog}
+        calls = []
+        class Source(Transport):
+            def read_hepsiburada_category(self, url):
+                calls.append(('category', url))
+                return 'public-category', 'document_read', 200
+        def parse(html, url, diagnostic=None):
+            diagnostic.update(status='parsed')
+            page = 2 if '?' in url else 1
+            cards = [{'source_url': f'https://www.hepsiburada.com/{p["slug"]}-8gb-{storage}gb-p-HBCV0000{p["id"]:04}{storage}',
+                      'discovery_title': f'{p["name"]} 8 GB RAM {storage} GB', 'stock_priority': False}
+                     for p in catalog for storage in (128, 256)]
+            return cards, CATEGORY_URL + '?sayfa=2' if page == 1 else None
+        def inspect(transport, url, product):
+            calls.append(('pdp', product['slug']))
+            return {'slug': product['slug'], 'retailer': 'Hepsiburada', 'url': url,
+                    'observed_url': url, 'reason': 'document_read', 'http_status': 200,
+                    'prepared_offer': None}
+        with patch('hepsiburada_catalog_discovery.parse_category_document', side_effect=parse), \
+                patch('hepsiburada_catalog_discovery.discovery_links', return_value=[]), \
+                patch('sweep_priority_catalog.inspect_target', side_effect=inspect), \
+                patch('sweep_priority_catalog.refresh_candidates') as writer:
+            result = sweep(client=client, transport=Source(), discover_hepsiburada=True, memory_discovery=True)
+        hints = result['hepsiburada_category_discovery']['memory_variant_hints']
+        self.assertEqual(len(hints), 24)
+        self.assertEqual(len(result['rows']), 24)
+        self.assertEqual(max(Counter(r['slug'] for r in result['rows']).values()), 2)
+        next_at = calls.index(('category', CATEGORY_URL + '?sayfa=2'))
+        self.assertEqual([slug for kind, slug in calls[1:next_at]], [p['slug'] for p in catalog])
+        self.assertFalse(result['writes'])
+        writer.assert_not_called()
+
     def test_missing_model_gets_category_capacity_budget_before_extra_options_of_a_priced_family(self):
         base = {'id': 33, 'slug': 'samsung-galaxy-a34-5g', 'name': 'Samsung Galaxy A34 5G',
                 'attributes': {'ram_gb': 6, 'storage_gb': 128, 'Connectivity': {'5G': True}}, 'offer_targets': []}

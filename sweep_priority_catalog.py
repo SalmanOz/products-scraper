@@ -283,9 +283,45 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                 'slug': product['slug'], 'retailer': 'Teknosa', 'url': destination,
                 'observed_url': offer['source_document_url'], 'reason': 'document_read', 'http_status': 200,
                 'document_reused': True, 'reader_reason': 'observed_public_seller_card', 'prepared_offer': offer})
+    def process_category_cards(retailer, discovery, cards, *, early=False):
+        from teknosa_catalog_discovery import match_catalog_destinations
+        known = ({observed_url(url) for url, _ in targets}
+                 | {observed_url(url) for _, url in processed} | inventory_urls)
+        matched = match_catalog_destinations([c for c in cards if c['source_url'] not in known], products)
+        already_discovered = Counter(row['slug'] for row in discovery['new_targets'])
+        for product in sorted(products, key=lambda p: (prices.get(p['id'], ('', True))[1], p['id'])):
+            if (product['slug'] in covered_models or early and
+                    prices.get(product['id']) != (product['slug'], False)):
+                continue
+            for candidate in matched.get(product['id'], [])[:max(0, 2 - already_discovered[product['slug']])]:
+                discovery['new_targets'].append({'slug': product['slug'], **candidate})
+                result['queued'] += 1
+                process_target(candidate['source_url'], product)
+                result['models_without_priority_hints'] = [slug for slug in
+                    result['models_without_priority_hints'] if slug != product['slug']]
+        if memory_discovery:
+            from automatic_memory_variants import memory_variant_destinations
+            memory_hints = memory_variant_destinations(cards, products)
+            priorities = result['memory_variant_priority']['parent_priorities']
+            memory_hints.sort(key=lambda hint: priorities.get(hint[0]['slug'], 2))
+            for parent, card in memory_hints:
+                url = card['source_url']
+                memory_key = (retailer, parent['slug'])
+                # Before the next category, spend at most one capacity slot
+                # on a family with no current price. The ordinary final pass
+                # shares these counters and retains the existing 2/24 caps.
+                if (early and (priorities.get(parent['slug'], 2) != 0 or memory_counts[memory_key] >= 1)
+                        or memory_counts[memory_key] >= 2 or memory_retailer_counts[retailer] >= 24
+                        or (parent['slug'], url) in processed):
+                    continue
+                memory_counts[memory_key] += 1
+                memory_retailer_counts[retailer] += 1
+                discovery.setdefault('memory_variant_hints', []).append({'parent_slug': parent['slug'], **card})
+                result['queued'] += 1
+                process_target(url, parent)
+
     deferred_categories = []
     def discover_category(retailer, report_key, module, read_category, resume=None):
-        from teknosa_catalog_discovery import match_catalog_destinations
         if resume is None:
             is_hb = report_key == 'hepsiburada_category_discovery'
             history = frontier['visited'] if is_hb else []
@@ -368,6 +404,13 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                 if next_category_url and next_category_url not in category_seen and next_category_url not in pending_branches:
                     pending_branches.append(next_category_url)
                 next_category_url = pending_branches.pop(0) if pending_branches else None
+            if (report_key == 'hepsiburada_category_discovery' and not category_audit_only
+                    and (coverage_first or memory_discovery)):
+                # A later category denial must not starve newly observed PDP
+                # gaps. These are routing hints only: process_target applies
+                # the ordinary selected-offer proof and fresh publication read.
+                discovery['early_gap_reads'] = True
+                process_category_cards(retailer, discovery, found, early=True)
             category_url = next_category_url
             if checkpoint:
                 checkpoint(result)
@@ -391,36 +434,8 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
             discovery.update(scope=module.DISCOVERY_SCOPE,
                              branch_queue_complete=category_url is None and not discovery.get('incomplete_pages'),
                              pagination_complete=False)
-        known = ({observed_url(url) for url, _ in targets}
-                 | {observed_url(url) for _, url in processed} | inventory_urls)
         discovery['destinations_seen'] = len(cards)
-        matched = match_catalog_destinations([c for c in cards if c['source_url'] not in known], products)
-        already_discovered = Counter(row['slug'] for row in discovery['new_targets'])
-        for product in sorted(products, key=lambda p: (prices.get(p['id'], ('', True))[1], p['id'])):
-            if product['slug'] in covered_models:
-                continue
-            for candidate in matched.get(product['id'], [])[:max(0, 2 - already_discovered[product['slug']])]:
-                discovery['new_targets'].append({'slug': product['slug'], **candidate})
-                result['queued'] += 1
-                process_target(candidate['source_url'], product)
-                result['models_without_priority_hints'] = [slug for slug in
-                    result['models_without_priority_hints'] if slug != product['slug']]
-        if memory_discovery:
-            from automatic_memory_variants import memory_variant_destinations
-            memory_hints = memory_variant_destinations(cards, products)
-            priorities = result['memory_variant_priority']['parent_priorities']
-            memory_hints.sort(key=lambda hint: priorities.get(hint[0]['slug'], 2))
-            for parent, card in memory_hints:
-                url = card['source_url']
-                memory_key = (retailer, parent['slug'])
-                if (memory_counts[memory_key] >= 2 or memory_retailer_counts[retailer] >= 24
-                        or (parent['slug'], url) in processed):
-                    continue
-                memory_counts[memory_key] += 1
-                memory_retailer_counts[retailer] += 1
-                discovery.setdefault('memory_variant_hints', []).append({'parent_slug': parent['slug'], **card})
-                result['queued'] += 1
-                process_target(url, parent)
+        process_category_cards(retailer, discovery, cards)
     try:
         if discover_hepsiburada and not category_audit_only and (coverage_first or memory_discovery):
             early_targets = recovery_hepsiburada_seeds(refresh_targets, prices)
