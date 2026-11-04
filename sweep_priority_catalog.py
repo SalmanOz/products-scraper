@@ -189,7 +189,10 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                         continue
                 break
             if callable(getattr(module, 'discovery_links', None)):
-                pending_branches.extend(link for link in module.discovery_links(html, category_url, products)
+                discovery_products = sorted(
+                    (p for p in products if p['slug'] not in covered_models),
+                    key=lambda p: (prices.get(p['id'], ('', True))[1], p['id']))
+                pending_branches.extend(link for link in module.discovery_links(html, category_url, discovery_products)
                                         if link not in category_seen and link not in pending_branches)
                 if next_category_url and next_category_url not in category_seen and next_category_url not in pending_branches:
                     pending_branches.append(next_category_url)

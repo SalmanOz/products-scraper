@@ -1,6 +1,6 @@
-"""Public category/brand destinations; never category-card prices.
+"""Public category/brand/model destinations; never category-card prices.
 
-Follow only observed phone-brand links and the document's public rel=next links.
+Follow only observed catalog phone links and the document's public rel=next links.
 Report the bounded discovery scope honestly, without guessing pages.
 """
 import re
@@ -13,7 +13,22 @@ from tr_price_scraper import TRPriceScraper
 
 CATEGORY_URL = 'https://www.hepsiburada.com/cep-telefonlari-c-371965'
 MAX_CATEGORY_PAGES = 40
-DISCOVERY_SCOPE = 'bounded_observed_category_and_brand_pages'
+DISCOVERY_SCOPE = 'bounded_observed_category_brand_and_model_pages'
+
+
+def _model_taxonomy(path):
+    """Recognize public phone taxonomy paths, without inventing taxonomy IDs."""
+    found = re.fullmatch(
+        r'/([a-z0-9]+(?:-[a-z0-9]+)*)-(android|iphone-ios)-telefonlar-xc-'
+        r'(60005201|60005202)(?:-b[1-9]\d{0,7})?-t[1-9]\d{0,7}', path)
+    if not found:
+        return None
+    model, family, category = found.groups()
+    aliases = {a for names in TRPriceScraper.PHONE_BRAND_ALIASES.values() for a in names}
+    if ((family == 'android' and category == '60005201' and model.split('-')[0] in aliases)
+            or (family == 'iphone-ios' and category == '60005202' and model.startswith('iphone-'))):
+        return model, family
+    return None
 
 
 def card_destination(raw_url):
@@ -50,6 +65,9 @@ def category_identity(url):
         return None
     if parsed.path == '/cep-telefonlari-c-371965':
         return ''
+    model = _model_taxonomy(parsed.path)
+    if model:
+        return model[0]
     found = re.fullmatch(r'/([a-z]+)-cep-telefonlari-xc-371965-b([1-9]\d{0,7})', parsed.path)
     aliases = {a for names in TRPriceScraper.PHONE_BRAND_ALIASES.values() for a in names}
     return found[1] if found and found[1] in aliases else None
@@ -64,6 +82,11 @@ def _category_soup(html, url):
     title = TRPriceScraper._normalize_words(headings[0].get_text(' ', strip=True)) if len(headings) == 1 else ''
     expected = ({'cep telefonu fiyatlari ve modelleri'} if brand == '' else {
         brand + ' telefonlar', brand + ' cep telefonu fiyatlari ve modelleri'})
+    model = _model_taxonomy(urlparse(url).path)
+    if model:
+        name = TRPriceScraper._normalize_words(model[0].replace('-', ' '))
+        expected = {name + ' indirimleri', name + ' fiyatlari ve modelleri',
+                    name + ' android telefon modelleri ve ozellikleri'}
     if urlparse(url).query:
         expected.add('cep telefonu' if brand == '' else brand + ' cep telefonu')
     return soup if title in expected else None
@@ -113,9 +136,22 @@ def discovery_links(html, url, products):
     words = set(TRPriceScraper._normalize_words(' '.join(p['name'] for p in products)).split())
     brands = {key for key, aliases in TRPriceScraper.PHONE_BRAND_ALIASES.items() if words & aliases}
     allowed = {alias for key in brands for alias in TRPriceScraper.PHONE_BRAND_ALIASES[key]}
-    found = set()
+    found, model_links = set(), {}
+    matcher = TRPriceScraper()
     for link in soup.select('a[href]'):
         target = urljoin(CATEGORY_URL, link['href'])
-        if category_identity(target) in allowed and not urlparse(target).query:
+        identity = category_identity(target)
+        if identity is None or urlparse(target).query:
+            continue
+        model = _model_taxonomy(urlparse(target).path)
+        if model:
+            # Taxonomy text is only a discovery hint. The existing strict PDP
+            # parser must prove memory, radio, selected seller and price again.
+            name = model[0].replace('-', ' ')
+            for rank, product in enumerate(products):
+                if matcher.is_strict_match(product['name'], name, {}):
+                    model_links[target] = rank
+                    break
+        elif identity in allowed:
             found.add(target)
-    return sorted(found)
+    return sorted(model_links, key=lambda u: (model_links[u], u)) + sorted(found)

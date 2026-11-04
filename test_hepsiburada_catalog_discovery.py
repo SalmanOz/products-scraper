@@ -43,7 +43,7 @@ class HepsiburadaDiscoveryTests(unittest.TestCase):
         self.assertNotIn('price', cards[0])
         self.assertNotIn('seller', cards[0])
         self.assertIsNone(next_page)
-        self.assertEqual(diagnostic['scope'], 'bounded_observed_category_and_brand_pages')
+        self.assertEqual(diagnostic['scope'], 'bounded_observed_category_brand_and_model_pages')
         self.assertEqual(discovery_links(document(), CATEGORY_URL, [{'name': 'Samsung Galaxy S26'}]), [SAMSUNG])
         self.assertEqual(discovery_links(document(), CATEGORY_URL, [PRODUCT]), [])
         self.assertEqual(len(parse_category_document(document(True), SAMSUNG)[0]), 1)
@@ -63,6 +63,26 @@ class HepsiburadaDiscoveryTests(unittest.TestCase):
                     SAMSUNG.replace('www.hepsiburada.com', 'evil.test'), SAMSUNG.replace('371965', '123456'),
                     SAMSUNG.replace('samsung-', 'colezium-')]:
             self.assertIsNone(category_identity(url))
+
+    def test_observed_model_taxonomies_prioritize_catalog_needs_and_preserve_model_boundaries(self):
+        iphone = 'https://www.hepsiburada.com/iphone-11-iphone-ios-telefonlar-xc-60005202-t12'
+        pro = 'https://www.hepsiburada.com/iphone-16-pro-iphone-ios-telefonlar-xc-60005202-t29'
+        pro_max = 'https://www.hepsiburada.com/iphone-16-pro-max-iphone-ios-telefonlar-xc-60005202-t27'
+        a35 = 'https://www.hepsiburada.com/samsung-galaxy-a35-android-telefonlar-xc-60005201-b8848-t317'
+        links = ''.join(f'<a href="{u}">Phone</a>' for u in [a35, pro_max, pro, iphone])
+        products = [{'name': 'Apple iPhone 11'}, {'name': 'Apple iPhone 16 Pro'},
+                    {'name': 'Samsung Galaxy A35 5G'}]
+        self.assertEqual(discovery_links(document() + links, CATEGORY_URL, products),
+                         [iphone, pro, a35, SAMSUNG])
+        for url, heading in [(iphone, 'iPhone 11 İndirimleri'),
+                             (a35, 'Samsung Galaxy A35 Android Telefon Modelleri ve Özellikleri')]:
+            html = document().replace('Cep Telefonu Fiyatları ve Modelleri', heading)
+            self.assertEqual([c['source_url'] for c in parse_category_document(html, url)[0]], [PDP])
+            self.assertEqual(parse_category_document(html.replace(heading, 'Other Phone'), url)[0], [])
+        for bad in [iphone.replace('60005202', '60005201'),
+                    a35.replace('60005201', '60005202'), a35.replace('samsung-', 'colezium-'),
+                    iphone + '?q=iphone', iphone.replace('-t12', '-t012')]:
+            self.assertIsNone(category_identity(bad))
 
     def test_real_protocol_relative_rel_next_follows_only_the_same_immediate_category_page(self):
         html = document() + '<link rel="next" href="//www.hepsiburada.com/cep-telefonlari-c-371965?sayfa=2">'
