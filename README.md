@@ -412,6 +412,44 @@ Aynı mevcut `SCRAPER_INGESTION_SECRET` kullanılır; anahtar veya DB erişimi
 rapora yazılmaz. Elle onarım için Actions → Reconcile Current Offer Scores → Run
 workflow kullanılabilir. Offline test: `python -m unittest -q test_score_reconciliation`.
 
+## Öncelikli dört mağazada tüm katalog kurtarma
+
+Actions → **Priority Retailer Full Catalog Recovery** mevcut yayımlanmış
+kataloğu Hepsiburada, Trendyol, n11 ve Teknosa üzerinde tarar. `full` tüm mevcut
+hedefleri yeniler. `coverage-first`, çalışmanın başında sunucudan alınan güncel
+denetimde zaten en az iki bağımsız satıcısı ve güncel fiyatı olan modelleri
+koruyup eksik fiyatlara ve ikinci satıcıya odaklanır; korunan modellerin mağaza
+gözlem tarihleri yenilenmez. `publish=false` yalnız denetler; `publish=true`
+aynı çalışmada tekrar okunan ve sunucu doğrulamasından geçen teklifleri yazar.
+Bu akış yeni ürün veya teknik özellik oluşturmaz. Tüm modlar günlük fiyat
+yazarıyla aynı concurrency kuyruğunu kullanır; yeni bir zamanlama oluşturmaz.
+
+Kategori kartları yalnız ürün adresi ipucudur. Hepsiburada'da mağazanın kendi
+bağlantılarıyla görülen marka/model kategorileri ve `rel=next` sayfaları en fazla
+80 kategori okumasıyla izlenir. Aynı marka/model ve aynı sayfa numarasına taşınan
+gözlenmiş kategori adresi bir kez ayrıca okunabilir; yönlenen belge fiyat kanıtı
+olarak kullanılmaz. Trendyol kategori bütçesi 100, Teknosa bütçesi 40 sayfadır.
+Kategori bütçeleri ürün sayfası bütçesinden ayrıdır; gecikme, robots ve kaynak
+kesicisi her iki yolda da uygulanır. Ürün sayfasında kapasite, 4G/5G, seçili
+ilan/satıcı, GTIN, stok ve normal veya açıkça ayrılmış sepette fiyat kanıtlanır.
+
+`hepsiburada-category-audit` yalnız kategori yönlerini sınar: ürün sayfası
+okumaz ve fiyat yazmaz. `n11-preflight` salt okunur kaynak tanısı içindir.
+Çıktılar `priority-catalog-sweep.json` ve `.md` dosyalarıdır. Kategori
+olaylarında `parser_status`, gözlenen H1, güvenli yönlendirme ipucu ve HTTP
+sonucu bulunur. `remaining_observed_pages` ve `category_budget_exhausted`,
+bütçenin geride bıraktığı bağlantıları görünür kılar; bulunan adres sayısı fiyat
+kapsamı sayılmaz. `other_memory_variant` tam doğrulanmış başka kapasitenin
+önizlemesidir; özgün SKU'ya fiyat yazmaz ve kapsam yüzdesini artırmaz.
+
+Son kapsam eşiği geçilmezse Actions sonucu başarısız olabilir; daha önce
+sunucuda doğrulanıp kabul edilen teklifler geri alınmış sayılmaz. `accepted`,
+`public_coverage` ve kaynak ret nedenleri ayrı okunmalıdır. Birkaç teklifin
+başarılı yayımlanması tüm katalog kalite eşiğinin geçtiği anlamına gelmez.
+
+Offline kontroller iş akışındaki **Test full queue and live publication
+boundaries** adımında listelenir.
+
 ## Scrapling Android salt-okunur pilotu
 
 Actions → **Scrapling Android Read-only Pilot** → Run workflow. Yalnız manuel
