@@ -21,6 +21,51 @@ def alternate_document(changes=None):
 
 
 class ObservedMemoryVariantTests(unittest.TestCase):
+    def test_teknosa_selected_first_party_unitless_pair_never_prices_the_original_memory(self):
+        from pathlib import Path
+        from bs4 import BeautifulSoup
+        from teknosa_reviewed_source import parse_exact_first_party_offer
+        from automatic_memory_variants import variant_selected_evidence
+        html = Path(__file__).with_name('fixtures').joinpath('teknosa-selected-unitless-memory-first-party.html').read_text()
+        url = 'https://www.teknosa.com/oppo-reno15-pro-5g-12512-alacakaranlik-kahvesi-akilli-telefon-p-100000060715'
+        model = 'OPPO Reno15 Pro 5G'
+        original = {'ram_gb': 12, 'storage_gb': 256, 'network_generation': '5g'}
+        before = deepcopy(original)
+        self.assertIsNone(parse_exact_first_party_offer(html, url, {'name': model, 'specs': original})[0])
+        preview = inspect_teknosa_memory_variant(html, url, model, original)
+        self.assertIsNotNone(preview)
+        self.assertEqual(preview['observed_specs'], {**original, 'storage_gb': 512})
+        self.assertFalse(preview['writes'])
+        self.assertEqual(original, before)
+        self.assertEqual((preview['offer']['merchant'], preview['offer']['merchant_id'],
+                          preview['offer']['gtin13']), ('Teknosa', '1001', '6932169396011'))
+        proof = variant_selected_evidence(preview['offer'], model, preview['observed_specs'])
+        self.assertEqual((proof['ram_gb'], proof['storage_gb']), (12, 512))
+        for key, value in [('data-product-ean', '6932169396012'), ('data-shop-name', 'Other Seller'),
+                           ('data-product-stock', 'N'), ('data-product-price', '1')]:
+            bad = BeautifulSoup(html, 'html.parser')
+            bad.select_one('button#addToCartButton')[key] = value
+            self.assertIsNone(inspect_teknosa_memory_variant(str(bad), url, model, original), key)
+        for changed in [url.replace('12512', '12256'), url + '?shopId=1001',
+                        url.replace('www.teknosa.com', 'evil.example')]:
+            self.assertIsNone(inspect_teknosa_memory_variant(html, changed, model, original), changed)
+        self.assertIsNone(variant_selected_evidence({**preview['offer'],
+            'selected_teknosa_first_party_verified': False}, model, preview['observed_specs']))
+
+    def test_unitless_teknosa_pair_requires_the_complete_model_before_it_and_no_capacity_choices(self):
+        from tr_price_scraper import TRPriceScraper
+        matcher = TRPriceScraper()
+        url = 'https://www.teknosa.com/oppo-reno15-pro-5g-12512-akilli-telefon-p-100000060715'
+        title = 'Oppo Reno15 Pro 5G 12/512 Akıllı Telefon'
+        self.assertEqual(matcher.teknosa_shorthand_capacities('OPPO Reno15 Pro 5G', title, url), (12, 512))
+        for model, raw in [('OPPO Reno15 Pro 5G', title.replace('12/512', value)) for value in (
+            '12/512/1024', '8/256 12/512', '8+12/512', '12/512+8', '12/512 64GB',
+            '12/512 sanal RAM', '12/512 256', '12/512 veya', '512', '12/512GB')]:
+            self.assertIsNone(matcher.teknosa_shorthand_capacities(model, raw, url), raw)
+        self.assertIsNone(matcher.teknosa_shorthand_capacities('Honor 12', 'Honor 12/512 Akıllı Telefon',
+            'https://www.teknosa.com/honor-12512-akilli-telefon-p-100000060715'))
+        self.assertIsNone(matcher.teknosa_shorthand_capacities('OPPO Reno15 Pro 5G', title.replace('Pro', ''), url))
+
     def test_teknosa_real_selected_cart_recovers_memory_without_copying_parent_facts(self):
         from pathlib import Path
         from bs4 import BeautifulSoup

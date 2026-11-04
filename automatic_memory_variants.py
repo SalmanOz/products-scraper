@@ -181,6 +181,12 @@ def variant_selected_evidence(offer, name, specs):
         if not isinstance(title, str):
             return None
         ram, storage, ambiguous = matcher._unambiguous_listing_capacities(title)
+        if (not ambiguous and ram is None and storage is None
+                and offer.get('selected_teknosa_first_party_verified') is True):
+            pair = matcher.teknosa_shorthand_capacities(
+                matcher._catalog_model_name(name, specs), title, offer.get('url'))
+            if pair is not None:
+                ram, storage = pair
         radios = set(matcher._identity_words(title)) & {'4g', '5g', 'lte'}
         if 'lte' in radios:
             radios.discard('lte')

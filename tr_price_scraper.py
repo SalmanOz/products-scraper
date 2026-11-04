@@ -700,6 +700,34 @@ class TRPriceScraper:
 
         return True
 
+    def teknosa_shorthand_capacities(self, model, title, url):
+        """Selected Android title pair corroborated by its exact PDP slug.
+
+        The complete model must precede the pair: a model number cannot become
+        RAM. This helper is a discovery hint until the ordinary selected cart,
+        seller, GTIN, schema, stock and price reader verifies that entire PDP.
+        """
+        from urllib.parse import urlparse
+        if not all(isinstance(value, str) for value in (model, title, url)):
+            return None
+        parsed = urlparse(url)
+        if (parsed.scheme != 'https' or parsed.netloc != 'www.teknosa.com' or parsed.query or parsed.fragment
+                or 'iphone' in self._identity_words(model)
+                or '+' in title or re.search(r'\b\d+\s*(?:gb|tb)\b', title, re.I)
+                or not re.search(r'\b(?:akıllı|akilli|cep)\s+telefon', title, re.I)):
+            return None
+        ram, storage, ambiguous = self._unambiguous_listing_capacities(title)
+        if ambiguous or ram is not None or storage is not None:
+            return None
+        pairs = list(re.finditer(r'(?<![\w.,+])([1-9]|1\d|2[0-4])\s*/\s*'
+                                 r'(64|128|256|512|1024)(?![\w.,/+])', title))
+        if (len(pairs) != 1 or not self.is_strict_match(model, title[:pairs[0].start()], {})
+                or re.search(r'\d|\b(?:or|veya|sanal|virtual|extended)\b', title[pairs[0].end():], re.I)
+                or not re.search(r'-(?:' + pairs[0][1] + '-?' + pairs[0][2] + r')-', parsed.path)
+                or not re.search(r'-p-[1-9]\d{4,14}$', parsed.path)):
+            return None
+        return int(pairs[0][1]), int(pairs[0][2])
+
     def has_observed_offer_evidence(self, product_name, offer, expected_specs=None):
         """Do not let an unobserved/other-SKU bargain win the merchant collapse.
 
@@ -733,6 +761,11 @@ class TRPriceScraper:
                 return False
             ram = ram if ram is not None else selected['ram_gb']
             storage = storage if storage is not None else selected['storage_gb']
+        if (offer.get('selected_teknosa_first_party_verified') is True
+                and offer.get('merchant') == 'Teknosa' and offer.get('merchant_id') == '1001'):
+            pair = self.teknosa_shorthand_capacities(model_name, title, offer.get('url'))
+            if pair is not None:
+                ram, storage = pair
         # Vatan sometimes omits both GB suffixes on a concrete Android PDP
         # ("OPPO Find X9 Pro 16/512 Akıllı Telefon"). Require the same pair in
         # its exact PDP slug and reject other capacity declarations, so a

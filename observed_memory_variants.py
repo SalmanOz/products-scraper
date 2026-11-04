@@ -36,6 +36,11 @@ def inspect_teknosa_memory_variant(html, url, name, catalog_specs):
         return None
     matcher = TRPriceScraper()
     ram, storage, ambiguous = matcher._unambiguous_listing_capacities(title)
+    if not ambiguous and ram is None and storage is None:
+        model = matcher._catalog_model_name(name, catalog_specs)
+        pair = matcher.teknosa_shorthand_capacities(model, title, url)
+        if pair is not None:
+            ram, storage = pair
     radios = set(matcher._identity_words(title)) & {'4g', '5g', 'lte'}
     if 'lte' in radios:
         radios.discard('lte')
