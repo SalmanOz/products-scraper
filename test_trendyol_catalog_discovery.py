@@ -255,6 +255,75 @@ class TrendyolDiscoveryTests(unittest.TestCase):
         self.assertFalse(result['writes'])
         writer.assert_not_called()
 
+    def test_exact_category_reaches_missing_trendyol_offer_after_primary_price_gap(self):
+        from datetime import datetime, timezone
+        from unittest.mock import patch
+        from sweep_priority_catalog import sweep
+
+        case = self
+        def product(number):
+            return {'id': number, 'slug': f'samsung-galaxy-a{number}',
+                    'name': f'Samsung Galaxy A{number}', 'offer_targets': [],
+                    'attributes': {'ram_gb': 8, 'storage_gb': 128, 'Connectivity': {'5G': True}}}
+
+        products = [product(number) for number in (34, 35, 36)]
+        gap, primary, present = products
+        model_base = 'https://www.trendyol.com/samsung-galaxy-a{}-cep-telefonu-x-c103498-a292-v12150{}'
+        categories = {p['id']: model_base.format(p['id'], p['id']) for p in products}
+        target = 'https://www.trendyol.com/samsung/galaxy-a34-5g-128-gb-8-gb-ram-yesil-p-679425556'
+        other_sources = [
+            'https://www.n11.com/urun/samsung-galaxy-a34-5g-128-gb-12345678',
+            'https://www.hepsiburada.com/samsung-galaxy-a34-5g-128-gb-p-HBCV0000AB1234',
+        ]
+        inventory = {'evidenceVersion': 'product-offer-match-v1', 'mode': 'shadow_audit_only',
+                     'auditedAt': datetime.now(timezone.utc).isoformat(), 'productCoverage': []}
+        present_sources = [other_sources[0].replace('a34', 'a36').replace('12345678', '12345679'),
+                           target.replace('a34', 'a36').replace('679425556', '679425557')]
+        for p, sources in ((gap, other_sources), (primary, []), (present, present_sources)):
+            inventory['productCoverage'].append({'slug': p['slug'], 'matchedMerchants': len(sources),
+                'matchedOffers': [{'source_url': url, 'merchant_name': f'Shop {index}', 'price': 30000}
+                                  for index, url in enumerate(sources)]})
+
+        class Client:
+            def get_published_products(self): return deepcopy(products)
+            def get_public_price_priority(self):
+                return {p['id']: (p['slug'], p != primary) for p in products}
+
+        calls = []
+
+        class Transport:
+            def read_trendyol_category(self, url):
+                calls.append(('category', url))
+                if url == CATEGORY_URL:
+                    links = ''.join(f'<a href="{categories[p["id"]]}">{p["name"]}</a>' for p in products)
+                    return document(links, page=2), 'document_read', 200
+                if url == categories[primary['id']]:
+                    return None, 'http_404', 404
+                case.assertEqual(url, categories[gap['id']])
+                model_id = url.rsplit('-v', 1)[1]
+                selected = (f'<input type="checkbox" id="checkbox-web-aggregations-checkbox-292-{model_id}-{model_id}" '
+                            f'aria-label="{gap["name"]}" checked value="{model_id}">')
+                return (f'<h1 class="title">{gap["name"]} Cep Telefonu</h1>{selected}'
+                        + card(gap['name'] + ' 5G 8 GB RAM 128 GB', target)
+                        + f'<a href="{url}">1</a>'), 'document_read', 200
+
+            def read_document(self, url):
+                calls.append(('pdp', url))
+                return '<h1>Incomplete selected offer</h1>', 'document_read', 200
+
+            def resolved_url(self, url): return url
+
+            def report(self): return {}
+
+        with patch('sweep_priority_catalog.refresh_candidates') as writer:
+            result = sweep(client=Client(), transport=Transport(), discover_trendyol=True,
+                           publish=True, coverage_first=True, current_listing_inventory=inventory)
+        self.assertEqual(calls, [('category', CATEGORY_URL), ('category', categories[primary['id']]),
+                                 ('category', categories[gap['id']]), ('pdp', target)])
+        self.assertEqual(result['trendyol_store_gap_discovery']['admitted_models'], [gap['slug']])
+        self.assertFalse(result['writes'])
+        writer.assert_not_called()
+
     def test_failed_memory_pdp_can_try_another_observed_listing_within_the_same_budget(self):
         from unittest.mock import patch
         from sweep_priority_catalog import sweep

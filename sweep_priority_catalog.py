@@ -569,6 +569,7 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
             discovery = result[report_key]
             discovery['resume_passes'] = 1
         redirected_categories = set(discovery.get('redirected_categories', {}).values())
+        category_store_gaps = platform_gap_models['Trendyol'] if is_ty else set()
         model_branches = set()
         if is_ty:
             for url in pending_branches + [page['url'] for page in discovery['pages']]:
@@ -653,9 +654,11 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                         continue
                 break
             if callable(getattr(module, 'discovery_links', None)):
+                # A current price from other sellers can still leave an exact
+                # Trendyol model filter useful. Keep price recovery first.
                 discovery_products = sorted(
-                    (p for p in products if p['slug'] not in covered_models),
-                    key=lambda p: (prices.get(p['id'], ('', True))[1], p['id']))
+                    (p for p in products if p['slug'] not in covered_models or p['slug'] in category_store_gaps),
+                    key=lambda p: (p['slug'] in covered_models, prices.get(p['id'], ('', True))[1], p['id']))
                 model_links = []
                 for link in module.discovery_links(html, category_url, discovery_products):
                     if link in category_seen or link in pending_branches:
