@@ -707,6 +707,13 @@ class TRPriceScraper:
 
         return True
 
+    @staticmethod
+    def split_joined_retailer_url_capacity(path):
+        return re.sub(
+            r'(?<![a-z0-9])([1-9]|1\d|2[0-4])(64|128|256|512|1024)[-_]?gb(?=$|[-_/.])',
+            lambda match: f'{match[1]}gb-ram-{match[2]}gb', path, flags=re.I,
+        )
+
     def teknosa_shorthand_capacities(self, model, title, url):
         """Selected Android title pair corroborated by its exact PDP slug.
 
@@ -823,10 +830,7 @@ class TRPriceScraper:
                     or (parsed_url.hostname == 'www.teknosa.com' and re.search(r'-p-[1-9]\d{8,13}$', path))):
                 # Exact retailer PDPs join 8/256 GB as 8256gb in some URLs.
                 # The title must independently establish the same capacities.
-                path = re.sub(
-                    r'(?<![a-z0-9])([1-9]|1\d|2[0-4])(64|128|256|512|1024)[-_]?gb(?=$|[-_/.])',
-                    lambda match: f'{match[1]}gb-ram-{match[2]}gb', path, flags=re.I,
-                )
+                path = self.split_joined_retailer_url_capacity(path)
             url_text = re.sub(r'[-_/]+', ' ', path)
         except (TypeError, ValueError):
             return False

@@ -21,6 +21,27 @@ class Transport:
 
 
 class TargetPreflightTests(unittest.TestCase):
+    def test_teknosa_identity_preflight_only_normalizes_exact_joined_url_memory(self):
+        from types import SimpleNamespace
+
+        product = {'id': 310, 'slug': 'oppo-a6-pro-4g-8gb-256gb', 'name': 'Oppo A6 Pro 4g 8GB 256GB',
+                   'attributes': {'ram_gb': 8, 'storage_gb': 256, 'network_generation': '4g'}}
+        client = SimpleNamespace(get_published_products=lambda: [product])
+        url = 'https://www.teknosa.com/oppo-a6-pro-8256-gb-gul-agaci-kirmizisi-akilli-telefon-p-100000059453'
+        transport = Transport()
+        row = {'prepared_offer': None, 'independent_radio_preflight': {'status': 'selected_commerce_unverified'}}
+        with patch('sweep_priority_catalog.inspect_target', return_value=row) as inspect:
+            report = target_preflight(client=client, url=url, slug=product['slug'], transport=transport,
+                                      probe_teknosa_identity=True)
+            inspect.assert_called_once_with(transport, url, product, probe_teknosa_identity=True)
+            self.assertEqual((report['status'], report['writes']), ('rejected', False))
+            for bad in (url.replace('8256-gb', '8128-gb'), url.replace('8256-gb', '12256-gb'),
+                        url.replace('oppo-a6-pro', 'oppo-a6')):
+                with self.assertRaisesRegex(ValueError, 'preflight_url_catalog_identity_conflict'):
+                    target_preflight(client=client, url=bad, slug=product['slug'], transport=transport,
+                                     probe_teknosa_identity=True)
+            self.assertEqual(inspect.call_count, 1)
+
     def test_hepsiburada_model_search_routes_only_exact_family_to_a_fresh_selected_pdp(self):
         from test_hepsiburada_catalog_source import document, NAME, SPECS, TARGET
 

@@ -1023,7 +1023,10 @@ def target_preflight(*, client, url, slug, transport=None, probe_teknosa_identit
     if product is None:
         raise ValueError('preflight_product_not_published')
     specs = with_reviewed_radio(product, PriceUpdater.get_expected_specs(product.get('attributes')))
-    if not TRPriceScraper().is_strict_match(product['name'], urlparse(url).path.replace('-', ' '), specs):
+    path = urlparse(url).path
+    if probe_teknosa_identity:
+        path = TRPriceScraper.split_joined_retailer_url_capacity(path)
+    if not TRPriceScraper().is_strict_match(product['name'], path.replace('-', ' '), specs):
         raise ValueError('preflight_url_catalog_identity_conflict')
     transport = transport or PriorityRetailerTransport(maximum_per_host=2,
         n11_collector=getattr(client, 'n11_document_get', None))
