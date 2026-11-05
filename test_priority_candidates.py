@@ -55,6 +55,53 @@ def reader():
 
 
 class PriorityCandidateTests(unittest.TestCase):
+    def test_n11_default_redirect_rechecks_only_the_new_selected_source_before_atomic_publication(self):
+        from audit_priority_retailers import inspect_target
+        from n11_catalog_source import N11CatalogSource
+        from priority_retailer_transport import PriorityRetailerTransport
+        from test_n11_catalog_source import URL, NAME, SPECS, document
+        from test_pasaj_source import Response
+        old = URL + '?magaza=retired&renk=siyah&dahili-hafiza=128-gb'
+        class ScopedClient(Client):
+            def ingest_listing_offers(self, rows, *, require_all_accepted):
+                return {**super().ingest_offers(rows, require_all_accepted=require_all_accepted),
+                        'offer_identity_contract': 'seller-source-url-v1', 'server_scores_recalculated': True}
+        class FreshTransport:
+            def __init__(self, changed): self.calls, self.changed = [], changed
+            def read_document(self, target):
+                self.calls.append(target)
+                return document((lambda state, soup: state['product'].__setitem__('defaultGtin', 'bad'))
+                                if self.changed else None), 'document_read', 200
+            def resolved_url(self, target): return target
+        for changed in (False, True):
+            client = ScopedClient()
+            client.product.update(name=NAME, slug='samsung-galaxy-a57',
+                attributes={**SPECS, 'Connectivity': {'5G': True}},
+                offer_targets=[{'merchant_name': 'Retired Store', 'source_url': old}])
+            calls = []
+            def get(url, **kwargs):
+                calls.append(url)
+                response = Response(url, 'User-agent: *\nAllow: /\n' if url.endswith('robots.txt') else document())
+                if url == old:
+                    response.status_code = 301
+                    response.headers['Location'] = URL
+                return response
+            row = inspect_target(PriorityRetailerTransport(get=get, sleep=lambda _: None), old, client.product)
+            self.assertEqual(calls, ['https://www.n11.com/robots.txt', old, URL])
+            fresh = FreshTransport(changed)
+            result = refresh_candidates({'purpose': 'automatic_priority_retailer_diagnosis', 'writes': False,
+                'catalog_count': 1, 'rows': [row]}, client=client,
+                reader=RetailerOfferRefresher(n11_catalog_source=N11CatalogSource(transport=fresh)))
+            self.assertEqual(fresh.calls, [URL])
+            self.assertEqual(len(client.writes), 0 if changed else 1)
+            if not changed:
+                record = client.writes[0][0]
+                self.assertEqual(record['source_url'], URL)
+                self.assertEqual(record['source_variant_evidence']['storage_gb'], 256)
+                self.assertNotEqual(record['seller'], 'Retired Store')
+                self.assertTrue(result['commercial_readback_verified'])
+                self.assertTrue(result['scoring']['scores_recalculated'])
+
     def test_product_group_missing_first_g_requires_fresh_selected_quote_before_atomic_write_and_readback(self):
         from pathlib import Path
         from trendyol_catalog_source import TrendyolCatalogSource,parse_catalog_listing
