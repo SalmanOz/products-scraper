@@ -15,6 +15,7 @@ from mediamarkt_marketplace_audit import _gtin13
 from priority_retailer_transport import PriorityRetailerTransport, product_host, n11_product_selectors
 from teknosa_reviewed_source import _amount
 from tr_price_scraper import TRPriceScraper
+from n11_capacity import storage_gb
 
 
 def _cash(value):
@@ -231,7 +232,8 @@ def parse_catalog_listing(html, url, name, specs):
                    for d in definitions if isinstance(d, dict)):
             return None, 'selected_sku_definition_mismatch'
         values[definition.get('name')] = attribute.get('name')
-    if (values.get('Dahili Hafıza') != str(matcher._spec_int(specs.get('storage_gb'))) + ' GB'
+    selected_storage = storage_gb(values.get('Dahili Hafıza'))
+    if (selected_storage is None or selected_storage != matcher._spec_int(specs.get('storage_gb'))
             or not isinstance(values.get('Renk'), str) or len(values['Renk']) > 60):
         return None, 'selected_sku_memory_missing'
     physical = {}
@@ -247,7 +249,7 @@ def parse_catalog_listing(html, url, name, specs):
         technical[key] = attribute.get('value')
     memory = re.fullmatch(r'([1-9]\d?) GB', str(technical.get('Bellek Kapasitesi') or ''))
     if memory:
-        physical.update(ram_gb=int(memory[1]), storage_gb=int(values['Dahili Hafıza'].split()[0]))
+        physical.update(ram_gb=int(memory[1]), storage_gb=selected_storage)
     if technical.get('5G Desteği') == 'Var':
         physical['network_generation'] = '5g'
     elif technical.get('5G Desteği') == 'Yok' and technical.get('4.5G Desteği') == 'Var':

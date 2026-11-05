@@ -131,8 +131,10 @@ def selected_sku_evidence(offer):
                     or not re.fullmatch(r'/urun/[a-z0-9-]+-' + group, url.path)):
                 return None
             expected_selectors = {'magaza': offer.get('selected_n11_seller_slug'),
-                'renk': offer.get('selected_n11_color_slug'), 'dahili-hafiza': f'{storage}-gb'}
-            if any(expected_selectors.get(key) != value for key, value in selectors.items()):
+                'renk': offer.get('selected_n11_color_slug')}
+            from n11_capacity import storage_selector_gb
+            if any((storage_selector_gb(value) != storage if key == 'dahili-hafiza'
+                    else expected_selectors.get(key) != value) for key, value in selectors.items()):
                 return None
         elif (url.netloc != 'www.trendyol.com' or not re.fullmatch(
                 r'/[a-z0-9-]+/[a-z0-9-]+-p-' + product, url.path)):

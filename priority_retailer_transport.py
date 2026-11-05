@@ -101,8 +101,10 @@ def n11_product_selectors(url):
     for key, value in pairs:
         if not re.fullmatch(r'[a-z0-9]+(?:-[a-z0-9]+)*', value) or len(value) > 100:
             return None
-        if key == 'dahili-hafiza' and not re.fullmatch(r'(?:32|64|128|256|512|1024|2048|4096)-gb', value):
-            return None
+        if key == 'dahili-hafiza':
+            from n11_capacity import storage_selector_gb
+            if storage_selector_gb(value) is None:
+                return None
     return selectors
 
 

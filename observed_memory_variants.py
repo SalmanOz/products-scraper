@@ -80,6 +80,7 @@ def inspect_teknosa_memory_variant(html, url, name, catalog_specs, technical_obs
 
 def inspect_n11_memory_variant(html, url, name, catalog_specs, diagnostic=None):
     from n11_catalog_source import parse_catalog_listing as parse, catalog_offer_matches as matches
+    from n11_capacity import storage_gb
     if isinstance(diagnostic, dict):
         diagnostic.update(status='selected_memory_source_incomplete', writes=False,
                           scope='diagnostic_only_not_offer_evidence')
@@ -124,12 +125,13 @@ def inspect_n11_memory_variant(html, url, name, catalog_specs, diagnostic=None):
         if row['key'] in fields:
             return None
         fields[row['key']] = row.get('value')
-    actual = {}
-    for key, value in (('ram_gb', fields.get('Bellek Kapasitesi')), ('storage_gb', storage[0])):
-        found = re.fullmatch(r'([1-9]\d{0,3}) GB', value) if isinstance(value, str) else None
-        if found is None:
-            return None
-        actual[key] = int(found[1])
+    value = fields.get('Bellek Kapasitesi')
+    found = re.fullmatch(r'([1-9]\d{0,3}) GB', value) if isinstance(value, str) else None
+    if found is None:
+        return None
+    actual = {'ram_gb': int(found[1]), 'storage_gb': storage_gb(storage[0])}
+    if actual['storage_gb'] is None:
+        return None
     if not 1 <= actual['ram_gb'] <= 64 or not 32 <= actual['storage_gb'] <= 4096:
         return None
     if fields.get('5G Desteği') == 'Var':

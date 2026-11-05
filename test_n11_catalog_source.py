@@ -27,6 +27,62 @@ def document(change=None):
 
 
 class N11CatalogTests(unittest.TestCase):
+    def test_actual_selected_two_tb_source_keeps_seller_sku_cash_and_parent_memory_boundaries(self):
+        from observed_memory_variants import inspect_n11_memory_variant
+        from selected_sku_evidence import selected_sku_evidence
+        html = Path('fixtures/n11-selected-iphone17promax-2tb-public.html').read_text()
+        url = ('https://www.n11.com/urun/apple-iphone-17-pro-max-2-tb-apple-turkiye-garantili-100819983'
+               '?magaza=erateknoloji&renk=gumus')
+        name = 'Apple iPhone 17 Pro Max'
+        specs = {'ram_gb': 12, 'storage_gb': 2048, 'network_generation': '5g'}
+        offer, reason = parse_catalog_listing(html, url, name, specs)
+        self.assertEqual(reason, 'selected_n11_basket_offer')
+        self.assertEqual((offer['merchant'], offer['sku'], offer['gtin13'], offer['price']),
+                         ('ERATEKNOLOJİ', '127413951690', '0195950640656', 162240))
+        self.assertEqual(offer['source_title'], 'Apple iPhone 17 Pro Max 2 TB (Apple Türkiye Garantili)')
+        proof = selected_sku_evidence(offer)
+        self.assertEqual((proof['ram_gb'], proof['storage_gb'], proof['network_generation']), (12, 2048, '5g'))
+        parent = {**specs, 'storage_gb': 256}
+        before = deepcopy(parent)
+        self.assertIsNone(parse_catalog_listing(html, url, name, parent)[0])
+        preview = inspect_n11_memory_variant(html, url, name, parent)
+        self.assertEqual(preview['observed_specs'], specs)
+        self.assertFalse(preview['writes'])
+        self.assertEqual(parent, before)
+        for changes in ({'ram_gb': 8}, {'storage_gb': 2}, {'storage_gb': 1000},
+                        {'storage_gb': 1024}, {'storage_gb': 2000}, {'network_generation': '4g'}):
+            self.assertIsNone(parse_catalog_listing(html, url, name, {**specs, **changes})[0], changes)
+        for query in ('&dahili-hafiza=2-tb',):
+            selected, _ = parse_catalog_listing(html, url + query, name, specs)
+            self.assertIsNotNone(selected)
+            self.assertIsNotNone(selected_sku_evidence(selected))
+        for query in ('&dahili-hafiza=1-tb', '&dahili-hafiza=2048-gb', '&dahili-hafiza=2000-gb', '&dahili-hafiza=2-gb',
+                      '&dahili-hafiza=2.0-tb', '&dahili-hafiza=2-tb&dahili-hafiza=2-tb'):
+            self.assertIsNone(parse_catalog_listing(html, url + query, name, specs)[0], query)
+        for old, new in [('2 TB', '1 TB'), ('2 TB', '2 TB / 1 TB'), ('2 TB', '2 TB + 256 GB'),
+                         ('2 TB', 'Var 2 TB'), ('12 GB', '12 TB'), ('0195950640656', '0195950640657')]:
+            # Native capacity ambiguity, wrong physical units and invalid
+            # GTIN never become proof through unit conversion.
+            changed = html.replace(old, new)
+            self.assertIsNone(parse_catalog_listing(changed, url, name, specs)[0], (old, new))
+        self.assertIsNone(parse_catalog_listing(html, url.replace('magaza=erateknoloji', 'magaza=other'), name, specs)[0])
+        soup = BeautifulSoup(html, 'html.parser')
+        soup.select_one('.sidebarSellerArea-top-name').string = 'Other seller'
+        self.assertIsNone(parse_catalog_listing(str(soup), url, name, specs)[0])
+
+    def test_real_two_tb_cash_contradictions_remain_rejected_after_unit_parsing(self):
+        name = 'Apple iPhone 17 Pro Max'
+        specs = {'ram_gb': 12, 'storage_gb': 2048, 'network_generation': '5g'}
+        base = 'https://www.n11.com/urun/apple-iphone-17-pro-max-2-tb-apple-turkiye-garantili-100819983'
+        for fixture, query, reason in [
+            ('rounding-conflict', '?magaza=arpiletisim&renk=kozmik-turuncu', 'conditional_or_inconsistent_cash_price'),
+            ('schema-conflict', '?magaza=hepsiofis&renk=kozmik-turuncu', 'schema_selected_cash_offer_mismatch'),
+        ]:
+            html = Path('fixtures/n11-selected-iphone17promax-2tb-' + fixture + '.html').read_text()
+            offer, actual = parse_catalog_listing(html, base + query, name, specs)
+            self.assertIsNone(offer)
+            self.assertEqual(actual, reason)
+
     def test_observed_selected_sku_routes_exact_reread_when_slug_omits_plus(self):
         html = Path(__file__).with_name('fixtures').joinpath('n11-selected-s26plus-omitted-url-qualifier.html').read_text()
         url = 'https://www.n11.com/urun/samsung-galaxy-s26-256-gb-samsung-turkiye-garantili-120594803?magaza=mediamarkt&renk=kobalt-mor'
