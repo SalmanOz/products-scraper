@@ -763,7 +763,12 @@ def observed_variant_candidates(result, products):
 
 
 def memory_variant_destinations(cards, products):
-    """Observed card capacities route to a fresh PDP, never establish a SKU."""
+    """Return the first observed destination per candidate capacity."""
+    return [(parent, destinations[0]) for parent, destinations in memory_variant_destination_groups(cards, products)]
+
+
+def memory_variant_destination_groups(cards, products):
+    """Keep one fallback URL per capacity for a separate, fresh PDP read."""
     matcher = TRPriceScraper()
     families, known = {}, set()
     for p in products:
@@ -803,7 +808,9 @@ def memory_variant_destinations(cards, products):
             continue
         model, radio, parent = owners[0]
         key = (model, radio, ram, storage)
-        found.setdefault(key, (parent, card))
+        _, destinations = found.setdefault(key, (parent, []))
+        if len(destinations) < 2 and all(row['source_url'] != card['source_url'] for row in destinations):
+            destinations.append(card)
     return list(found.values())
 
 

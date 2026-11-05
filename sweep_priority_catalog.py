@@ -419,15 +419,19 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                 'slug': product['slug'], 'retailer': 'Teknosa', 'url': destination,
                 'observed_url': offer['source_document_url'], 'reason': 'document_read', 'http_status': 200,
                 'document_reused': True, 'reader_reason': 'observed_public_seller_card', 'prepared_offer': offer})
+        return row
+
     def process_memory_cards(retailer, discovery, cards, *, early, source_parent=None):
         if not cards:
             return
-        from automatic_memory_variants import memory_variant_destinations, parent_specs
+        from automatic_memory_variants import memory_variant_destination_groups, parent_specs
         source_radio = parent_specs(source_parent).get('network_generation') if source_parent else None
-        memory_hints = memory_variant_destinations(cards, products)
+        memory_hints = memory_variant_destination_groups(cards, products)
         priorities = result['memory_variant_priority']['parent_priorities']
         memory_hints.sort(key=lambda hint: priorities.get(hint[0]['slug'], 2))
-        for parent, card in memory_hints:
+        inspected = {(row['slug'], row['url']): row for row in result['rows']} if not early else {}
+
+        def route(parent, card, *, fallback=False):
             url = card['source_url']
             memory_key = (retailer, parent['slug'])
             # Public links only route fresh PDP reads. Share the early admission
@@ -435,19 +439,37 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
             if (source_parent is not None and parent_specs(parent).get('network_generation') != source_radio
                     or memory_counts[memory_key] >= 2 or memory_retailer_counts[retailer] >= 24
                     or (parent['slug'], url) in processed):
-                continue
+                return None
             if early:
                 if memory_counts[memory_key] >= 1:
-                    continue
+                    return None
                 admit = getattr(memory_recovery, 'admit_early_memory_hint', None)
                 if not (admit(parent, products, prices) if callable(admit)
                         else priorities.get(parent['slug'], 2) == 0):
-                    continue
+                    return None
             memory_counts[memory_key] += 1
             memory_retailer_counts[retailer] += 1
-            discovery.setdefault('memory_variant_hints', []).append({'parent_slug': parent['slug'], **card})
+            hint = {'parent_slug': parent['slug'], **card}
+            if fallback:
+                hint['fallback_after_rejected_destination'] = True
+            discovery.setdefault('memory_variant_hints', []).append(hint)
             result['queued'] += 1
-            process_target(url, parent)
+            return process_target(url, parent)
+
+        fallbacks = []
+        for parent, destinations in memory_hints:
+            first = destinations[0]
+            row = inspected.get((parent['slug'], first['source_url'])) or route(parent, first)
+            if (not early and len(destinations) == 2 and row
+                    and (row.get('reason') == 'document_read' and row.get('http_status') == 200
+                         or row.get('reason') in {'http_404', 'http_410'})
+                    and not row.get('prepared_offer') and not row.get('other_memory_variant')
+                    and observed_url(destinations[1]['source_url']) not in inventory_urls):
+                fallbacks.append((parent, destinations[1]))
+        # A second color/listing spends only leftover source/family slots
+        # after every newly observed capacity had its first chance.
+        for parent, card in fallbacks:
+            route(parent, card, fallback=True)
 
     def process_category_cards(retailer, discovery, cards, *, early=False):
         from teknosa_catalog_discovery import match_catalog_destinations

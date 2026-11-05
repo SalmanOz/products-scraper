@@ -213,6 +213,60 @@ class TrendyolDiscoveryTests(unittest.TestCase):
         self.assertFalse(result['writes'])
         writer.assert_not_called()
 
+    def test_failed_memory_pdp_can_try_another_observed_listing_within_the_same_budget(self):
+        from unittest.mock import patch
+        from sweep_priority_catalog import sweep
+
+        title = 'Xiaomi Redmi Note 13 Pro 5G 8 GB RAM 256 GB'
+        target = ('https://www.trendyol.com/xiaomi/redmi-note-13-pro-5g-8gb-ram-256-gb-'
+                  'akilli-cep-telefonu-turkiye-garantili-p-930528176')
+        alternative = target.replace('930528176', '930528202')
+        other_capacity = ('https://www.trendyol.com/xiaomi/redmi-note-13-pro-5g-12-gb-ram-'
+                          '512-gb-beyaz-cep-telefonu-turkiye-garantili-p-1066280208')
+        product = {'id': 275, 'slug': 'xiaomi-redmi-note-13-pro', 'name': 'Xiaomi Redmi Note 13 Pro',
+                   'attributes': {'ram_gb': 8, 'storage_gb': 128, 'Connectivity': {'5G': True}},
+                   'offer_targets': []}
+
+        class Client:
+            def get_published_products(self): return [deepcopy(product)]
+            def get_public_price_priority(self): return {275: (product['slug'], False)}
+
+        for reason, status, distinct_capacity, expected in (
+            ('http_404', 404, False, [target, alternative]),
+            ('document_read', 200, False, [target, alternative]),
+            ('http_403', 403, False, [target]),
+            ('http_404', 404, True, [other_capacity, target]),
+        ):
+            with self.subTest(reason=reason, distinct_capacity=distinct_capacity):
+                body = card(title, target) + card(title, alternative)
+                if distinct_capacity:
+                    body += card('Xiaomi Redmi Note 13 Pro 5G 12 GB RAM 512 GB', other_capacity)
+                page = document(body, page=2)
+                calls = []
+
+                class Transport:
+                    def read_trendyol_category(self, url): return page, 'document_read', 200
+
+                    def read_document(self, url):
+                        calls.append(url)
+                        if url == target:
+                            return ('<h1>Incomplete</h1>' if status == 200 else None), reason, status
+                        return None, 'http_404', 404
+
+                    def resolved_url(self, url): return url
+
+                    def report(self): return {}
+
+                with patch('sweep_priority_catalog.refresh_candidates') as writer:
+                    result = sweep(client=Client(), transport=Transport(), publish=True, discover_trendyol=True,
+                                   memory_discovery=True)
+                self.assertEqual(calls, expected)
+                hints = result['trendyol_category_discovery']['memory_variant_hints']
+                self.assertEqual(sum(h.get('fallback_after_rejected_destination', False) for h in hints),
+                                 int(alternative in expected))
+                self.assertFalse(result['writes'])
+                writer.assert_not_called()
+
     def test_pdp_breadcrumbs_discover_only_observed_catalog_brand_phone_routes_even_when_sold_out(self):
         from audit_priority_retailers import inspect_target
         from test_trendyol_catalog_source import document as pdp, URL as target, NAME, SPECS
