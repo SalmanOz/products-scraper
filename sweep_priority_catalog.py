@@ -610,7 +610,8 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                     # Remove it only when continuing or scheduling that read.
                     next_category_url = pending_branches[0] if pending_branches else None
                 if (not source_blocked and next_category_url and reason in {
-                        'browser_changed_url', 'unexpected_final_url', 'http_404', 'http_410', 'already_read'}):
+                        'browser_changed_url', 'unexpected_final_url', 'http_301', 'http_302',
+                        'http_307', 'http_308', 'http_404', 'http_410', 'already_read'}):
                     # An obsolete/duplicate observed branch does not make the
                     # other queued categories unavailable. Do not retry it or
                     # accept its changed URL; visit the next observed branch.
@@ -680,7 +681,7 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
             category_url = next_category_url
             if checkpoint:
                 checkpoint(result)
-        discovery['pagination_complete'] = category_url is None
+        discovery['pagination_complete'] = category_url is None and not discovery.get('incomplete_pages')
         pending_urls = list(dict.fromkeys(pending for pending in
             ([category_url] if category_url else []) + pending_branches if pending not in category_seen))
         discovery['remaining_observed_pages'] = len(pending_urls)

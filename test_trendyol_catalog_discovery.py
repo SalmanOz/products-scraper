@@ -144,6 +144,48 @@ class TrendyolDiscoveryTests(unittest.TestCase):
         product = {'id': 219, 'name': 'Infinix Note 40', 'attributes': {'ram_gb': 8, 'storage_gb': 256}}
         self.assertEqual(match_catalog_destinations(rows, [product]), {})
 
+    def test_retired_model_category_does_not_starve_the_next_observed_branch(self):
+        from unittest.mock import patch
+        from sweep_priority_catalog import sweep
+        from test_priority_candidates import Client
+
+        retired = 'https://www.trendyol.com/poco-f5-cep-telefonu-x-c103498-a292-v10630902'
+        brand = 'https://www.trendyol.com/poco-cep-telefonu-x-b142700-c103498'
+        target = 'https://www.trendyol.com/poco/f5-12gb-256gb-akilli-telefon-p-752676001'
+        client = Client()
+        client.product.update(name='POCO F5', slug='poco-f5', offer_targets=[],
+                              attributes={'ram_gb': 12, 'storage_gb': 256})
+        client.get_public_price_priority = lambda: {}
+        calls = []
+
+        def get(url, **kwargs):
+            calls.append(url)
+            self.assertFalse(kwargs['allow_redirects'])
+            if url.endswith('/robots.txt'):
+                return Response(url, 'User-agent: *\nAllow: /\n')
+            if url == CATEGORY_URL:
+                return Response(url, document(f'<a href="{retired}">POCO F5</a>'
+                                              f'<a href="{brand}">POCO</a>', page=2))
+            if url == retired:
+                response = Response(url, '', 301)
+                response.headers['Location'] = 'https://untrusted.example/redirect'
+                return response
+            if url == brand:
+                return Response(url, '<h1 class="title">POCO Cep Telefonu</h1>'
+                                + card('POCO F5 12 GB RAM 256 GB', target) + f'<a href="{brand}">1</a>')
+            self.assertEqual(url, target)
+            return Response(url, '<h1>Incomplete selected offer</h1>')
+
+        transport = PriorityRetailerTransport(get=get, sleep=lambda _: None)
+        with patch('sweep_priority_catalog.refresh_candidates') as writer:
+            result = sweep(client=client, transport=transport, discover_trendyol=True, publish=True)
+        self.assertEqual(calls, ['https://www.trendyol.com/robots.txt', CATEGORY_URL, retired, brand, target])
+        discovery = result['trendyol_category_discovery']
+        self.assertEqual(discovery['incomplete_pages'], [retired])
+        self.assertFalse(discovery['pagination_complete'])
+        self.assertEqual((result['accepted'], result['writes']), (0, False))
+        writer.assert_not_called()
+
     def test_brand_scope_and_pagination_never_mix_other_categories_or_private_query_parameters(self):
         brand = 'https://www.trendyol.com/infinix-android-cep-telefonu-x-b158303-c164461'
         body = '<h1 class="title">INFINIX Android Cep Telefonu</h1>' + card() + ''.join(
