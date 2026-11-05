@@ -1040,6 +1040,33 @@ class TechnicalSourceHintContractTests(TestCase):
 
 
 class N11CollectorBoundaryTests(TestCase):
+    def test_native_default_redirect_metadata_never_carries_old_selectors_or_another_group(self):
+        from priority_retailer_transport import PriorityRetailerTransport
+        target = 'https://www.n11.com/urun/samsung-galaxy-a57-256-gb-12345678'
+        original = target + '?magaza=retired&renk=siyah&dahili-hafiza=128-gb'
+        def body(url, status=200, destination=None):
+            return {'purpose': 'public_n11_document', 'writes': False, 'url': url,
+                    'source_status': status, 'observed_at': datetime.now(timezone.utc).isoformat(),
+                    'document': 'User-agent: *\nAllow: /\n' if url.endswith('robots.txt') else '<h1>Phone</h1>',
+                    'content_type': 'text/html', **({'unscoped_redirect_url': destination} if destination is not None else {})}
+        session = FakeSession([FakeResponse(200, body('https://www.n11.com/robots.txt')),
+                               FakeResponse(200, body(original, 301, target)),
+                               FakeResponse(200, body(target))])
+        client = OfferIngestionClient('https://teknoskor.com', TEST_SECRET, session=session)
+        source = PriorityRetailerTransport(n11_collector=client.n11_document_get, sleep=lambda _: None)
+        self.assertEqual(source.read_document(original)[1:], ('document_read', 200))
+        self.assertEqual(source.resolved_url(original), target)
+        self.assertEqual([call[2]['json']['url'] for call in session.calls],
+                         ['https://www.n11.com/robots.txt', original, target])
+        self.assertEqual(source.report()['n11']['unscoped_redirect_requests'], 1)
+        for destination, status in [(target + '?magaza=other', 301),
+                (target.replace('12345678', '12345679'), 301), ('https://evil.example', 301),
+                (123, 301), (target, 200), (target, 403), (target, 429)]:
+            client = OfferIngestionClient('https://teknoskor.com', TEST_SECRET,
+                session=FakeSession([FakeResponse(200, body(original, status, destination))]))
+            with self.assertRaises(requests.RequestException):
+                client.n11_document_get(original)
+
     def test_current_commercial_readback_uses_its_authenticated_history_independent_endpoint(self):
         identity = {'evidenceVersion': 'product-offer-match-v1', 'mode': 'shadow_audit_only',
                     'productCoverage': [], 'auditedAt': datetime.now(timezone.utc).isoformat()}

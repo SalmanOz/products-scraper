@@ -121,6 +121,10 @@ def inspect_target(transport, url, product):
             from n11_catalog_source import parse_catalog_listing, discover_product_sellers
             specs = with_reviewed_radio(product, PriceUpdater.get_expected_specs(product.get('attributes')))
             final_url = transport.resolved_url(observed_url)
+            from priority_retailer_transport import n11_unscoped_redirect
+            if n11_unscoped_redirect(observed_url, final_url):
+                row['source_selector_reset'] = {'scope': 'fresh_default_pdp',
+                                                'historical_selectors_reused': False}
             offer, why = parse_catalog_listing(html, final_url, product['name'], specs)
             row['resolved_url'] = final_url
             row.update(reader_reason=why, prepared_offer=offer)

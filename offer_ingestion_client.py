@@ -694,7 +694,8 @@ class OfferIngestionClient:
         The ingestion credential goes only to our existing application host;
         the collector never forwards it or visitor cookies to the retailer.
         """
-        from priority_retailer_transport import n11_product_selectors, n11_canonical_redirect, N11_PHONE_SEARCH_PATH
+        from priority_retailer_transport import (n11_product_selectors, n11_canonical_redirect,
+                                                n11_unscoped_redirect, N11_PHONE_SEARCH_PATH)
         parsed = urlparse(url)
         query = parse_qsl(parsed.query, keep_blank_values=True)
         search_key = {'/arama': 'q', N11_PHONE_SEARCH_PATH: 'iw'}.get(parsed.path)
@@ -720,10 +721,15 @@ class OfferIngestionClient:
                     or not -60 <= (datetime.now(timezone.utc) - stamp).total_seconds() <= 60):
                 raise ValueError('Unbound or stale public document response')
             redirect = body.get('redirect_url')
+            unscoped = body.get('unscoped_redirect_url')
             if (redirect is not None and (body['source_status'] not in (301, 302, 307, 308)
                     or not n11_canonical_redirect(url, redirect))):
                 raise ValueError('Unbound public canonical redirect')
-            return PublicDocumentResponse(url, body['source_status'], body['document'], body['content_type'], redirect)
+            if (unscoped is not None and (redirect is not None
+                    or body['source_status'] not in (301, 302, 307, 308)
+                    or not n11_unscoped_redirect(url, unscoped))):
+                raise ValueError('Unbound public default PDP redirect')
+            return PublicDocumentResponse(url, body['source_status'], body['document'], body['content_type'], redirect or unscoped)
         except IngestionClientError:
             # Our collector's temporary gateway/restart failure is not a
             # retailer access denial. The source transport applies its bounded

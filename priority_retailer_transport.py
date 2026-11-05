@@ -114,6 +114,17 @@ def n11_canonical_redirect(original, target):
             and urlparse(original).path.rsplit('-', 1)[-1] == urlparse(target).path.rsplit('-', 1)[-1])
 
 
+def n11_unscoped_redirect(original, target):
+    """The native Location drops all old selectors on the same product group.
+
+    The destination must receive a separate GET and full selected-offer proof.
+    No old seller, color, memory selector or price survives the move.
+    """
+    return (bool(n11_product_selectors(original))
+            and product_host(target) == 'www.n11.com' and not urlparse(target).query
+            and urlparse(original).path.rsplit('-', 1)[-1] == urlparse(target).path.rsplit('-', 1)[-1])
+
+
 class PriorityRetailerTransport:
     def __init__(self, *, get=None, post=None, sleep=time.sleep, clock=time.monotonic,
                  maximum_per_host=2, n11_collector=None):
@@ -161,10 +172,12 @@ class PriorityRetailerTransport:
                 target = urljoin(url, location)
                 original, redirected = urlparse(url), urlparse(target)
                 before, after = dict(parse_qsl(original.query)), dict(parse_qsl(redirected.query))
-                # A slug/one-size canonicalization may not change product or seller.
-                # No cross-host redirect, changed memory selector, second hop or
-                # request beyond the same source's original budget is followed.
-                same_identity = (n11_canonical_redirect(url, target) if product_host(url) == 'www.n11.com'
+                # n11 may explicitly retire all selectors in its Location.
+                # That default PDP receives its own GET and proof, without
+                # attributing its current seller/SKU to the original selectors.
+                # Same group, one hop, robots and original quota still apply.
+                unscoped = product_host(url) == 'www.n11.com' and n11_unscoped_redirect(url, target)
+                same_identity = ((n11_canonical_redirect(url, target) or unscoped) if product_host(url) == 'www.n11.com'
                                  else product_host(target) == 'www.trendyol.com'
                                  and original.path.rsplit('-p-', 1)[-1] == redirected.path.rsplit('-p-', 1)[-1]
                                  and before.get('merchantId') == after.get('merchantId'))
@@ -176,6 +189,8 @@ class PriorityRetailerTransport:
                     return None, 'redirect_budget_or_duplicate', result[2]
                 state['seen'].add(target)
                 state['pdp_requests'] += 1
+                if unscoped:
+                    state['unscoped_redirect_requests'] = state.get('unscoped_redirect_requests', 0) + 1
                 followed = self._read(target, limit, accept, state, allow_redirect=False)
                 if followed[1] == 'ready':
                     self._resolved[url] = target
@@ -355,7 +370,8 @@ class PriorityRetailerTransport:
     def report(self):
         return {HOSTS[host]: {**{key: value for key, value in state.items()
                               if key in {'robots', 'browser_requests', 'blocked', 'search_requests', 'category_requests',
-                                         'transport_error_type', 'classification_requests', 'browser_timeout_recoveries'}},
+                                         'transport_error_type', 'classification_requests', 'browser_timeout_recoveries',
+                                         'unscoped_redirect_requests'}},
                               **({'browser_timeout_sku_count': len(state['browser_timeout_skus']),
                                   'browser_timeout_sku_skips': state['browser_timeout_sku_skips']}
                                  if state['browser_timeout_skus'] else {}),

@@ -27,6 +27,38 @@ def document(change=None):
 
 
 class N11CatalogTests(unittest.TestCase):
+    def test_native_default_redirect_requires_a_new_get_and_full_actual_selected_variant_proof(self):
+        from priority_retailer_transport import PriorityRetailerTransport
+        from test_pasaj_source import Response
+        from audit_priority_retailers import inspect_target
+        old = URL + '?magaza=retired&renk=siyah&dahili-hafiza=128-gb'
+        self.assertIsNone(parse_catalog_listing(document(), old, NAME, SPECS)[0])
+        for changes in ({}, {'storage_gb': 128}, {'ram_gb': 12}, {'network_generation': '4g'}):
+            calls = []
+            def get(url, **kwargs):
+                calls.append(url)
+                self.assertFalse(kwargs['allow_redirects'])
+                response = Response(url, 'User-agent: *\nAllow: /\n' if url.endswith('robots.txt') else document())
+                if url == old:
+                    response.status_code = 301
+                    response.headers['Location'] = URL
+                return response
+            transport = PriorityRetailerTransport(get=get, sleep=lambda _: None, maximum_per_host=2)
+            product = {'id': 1, 'slug': 'samsung-galaxy-a57', 'name': NAME, 'attributes': {**SPECS, **changes}}
+            row = inspect_target(transport, old, product)
+            self.assertEqual(calls, ['https://www.n11.com/robots.txt', old, URL])
+            self.assertEqual(row['source_selector_reset'], {'scope': 'fresh_default_pdp', 'historical_selectors_reused': False})
+            self.assertEqual(row['resolved_url'], URL)
+            if changes:
+                self.assertIsNone(row['prepared_offer'])
+            else:
+                offer = row['prepared_offer']
+                self.assertTrue(catalog_offer_matches(offer, NAME, SPECS))
+                self.assertEqual(offer['url'], URL)
+                self.assertNotEqual(offer['merchant'], 'retired')
+                self.assertEqual(offer['storage_gb'], 256)
+            self.assertEqual(transport.read_document(URL + '1')[1], 'pdp_budget_exhausted')
+
     def test_native_selected_sku_url_recovers_stale_shop_only_through_a_separate_fresh_read(self):
         from sweep_priority_catalog import sweep
         stale = Path('fixtures/n11-stale-shop-native-selected-sku-public.html').read_text()
