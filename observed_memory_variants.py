@@ -222,7 +222,8 @@ def inspect_trendyol_memory_variant(html, url, name, catalog_specs):
     if not all(expected) or radio not in {'4g', '5g'} or not model:
         return None
     states = []
-    for script in BeautifulSoup(html, 'html.parser').select('script'):
+    soup = BeautifulSoup(html, 'html.parser')
+    for script in soup.select('script'):
         body = script.get_text()
         for match in re.finditer(r'window\["__envoy__SHARED_PROPS"\]\s*=\s*', body):
             try:
@@ -248,8 +249,19 @@ def inspect_trendyol_memory_variant(html, url, name, catalog_specs):
                 return None
             fields[key] = row['value'].get('name')
     actual = {}
+    headings = soup.select('h1[data-testid="product-title"]')
+    heading_ram, heading_ambiguous = None, True
+    if len(headings) == 1:
+        heading_ram, _, heading_ambiguous = matcher._unambiguous_listing_capacities(
+            headings[0].get_text(' ', strip=True))
     for key, label in (('ram_gb', 'RAM Kapasitesi'), ('storage_gb', 'Dahili Hafıza')):
         amount = selected_attribute_capacity_gb(fields.get(label), key)
+        # The normal selected-offer reader already proves this native A16
+        # template's literal "Yok" RAM through its explicit selected heading.
+        # Discover that same physical amount here, without a parent default;
+        # the complete ordinary proof below must independently accept it too.
+        if amount is None and key == 'ram_gb' and fields.get(label) == 'Yok' and not heading_ambiguous:
+            amount = heading_ram
         if amount is None:
             return None
         actual[key] = amount

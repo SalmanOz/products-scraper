@@ -104,6 +104,14 @@ def _selected_group_schema(schema, identity, url, physical, brand):
         fields[key] = prop['unitText']
     for key, label in (('ram_gb', 'RAM Kapasitesi'), ('storage_gb', 'Dahili Hafıza')):
         actual = selected_attribute_capacity_gb(fields.get(label), key)
+        if actual is None and key == 'ram_gb' and fields.get(label) == 'Yok':
+            # Native A16 groups omit RAM in their property table but spell
+            # BOTH capacities in their own root name. Never inspect a child
+            # variant caption or fill the amount from a catalog expectation.
+            own_ram, own_storage, ambiguous = TRPriceScraper()._unambiguous_listing_capacities(
+                schema.get('name') if isinstance(schema.get('name'), str) else '')
+            if not ambiguous and own_storage == physical.get('storage_gb'):
+                actual = own_ram
         if actual is None or actual != physical.get(key):
             return False
     radio = fields.get('Mobil Bağlantı Hızı', '').casefold()

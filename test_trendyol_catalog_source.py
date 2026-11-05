@@ -52,6 +52,52 @@ def document(changes=None):
 
 
 class TrendyolCatalogTests(unittest.TestCase):
+    def test_actual_unknown_ram_property_uses_only_selected_heading_state_and_own_group_caption(self):
+        from pathlib import Path
+        from selected_sku_evidence import selected_sku_evidence
+        html = Path('fixtures/trendyol-a16-6gb-selected-unknown-ram-property.html').read_text()
+        url = 'https://www.trendyol.com/samsung/galaxy-a16-128-gb-6-gb-ram-gri-p-879171111'
+        specs = {'ram_gb': 6, 'storage_gb': 128, 'network_generation': '4g'}
+        offer, reason = parse_catalog_listing(html, url, 'Samsung Galaxy A16 4G', specs)
+        self.assertEqual(reason, 'selected_new_cash_offer_observed')
+        self.assertEqual((offer['merchant'], offer['price'], offer['gtin13']),
+                         ('CİMCİK SANAL MARKET', 19999, '8806095832838'))
+        self.assertEqual((selected_sku_evidence(offer)['ram_gb'], offer['storage_gb']), (6, 128))
+        for changes in ({'ram_gb': 4}, {'ram_gb': 8}, {'storage_gb': 256}, {'network_generation': '5g'}):
+            self.assertIsNone(parse_catalog_listing(html, url, 'Samsung Galaxy A16 4G', {**specs, **changes})[0])
+
+    def test_unknown_group_ram_never_borrows_child_caption_catalog_amount_or_conflicting_physical_field(self):
+        from pathlib import Path
+        from bs4 import BeautifulSoup
+        html = Path('fixtures/trendyol-a16-6gb-selected-unknown-ram-property.html').read_text()
+        url = 'https://www.trendyol.com/samsung/galaxy-a16-128-gb-6-gb-ram-gri-p-879171111'
+        specs = {'ram_gb': 6, 'storage_gb': 128, 'network_generation': '4g'}
+        source = BeautifulSoup(html, 'html.parser')
+        original = json.loads(source.select_one('script[type="application/ld+json"]').get_text())
+        changes = []
+        for value in ['', None, 'Belirtilmemiş', '8 GB', '6+6 GB']:
+            changed = copy.deepcopy(original)
+            next(p for p in changed['additionalProperty'] if p['name'] == 'RAM Kapasitesi')['unitText'] = value
+            changes.append(changed)
+        for title in ['Samsung Galaxy A16 128 GB Gri', 'Samsung Galaxy A16 128 GB 8 GB Ram Gri',
+                      'Samsung Galaxy A16 128 GB 6+6 GB Sanal RAM Gri']:
+            changed = copy.deepcopy(original); changed['name'] = title; changes.append(changed)
+        changed = copy.deepcopy(original)
+        changed['additionalProperty'].append(copy.deepcopy(next(p for p in changed['additionalProperty'] if p['name'] == 'RAM Kapasitesi')))
+        changes.append(changed)
+        for changed in changes:
+            soup = BeautifulSoup(html, 'html.parser')
+            soup.select_one('script[type="application/ld+json"]').string = json.dumps(changed)
+            self.assertIsNone(parse_catalog_listing(str(soup), url, 'Samsung Galaxy A16 4G', specs)[0])
+        for old, new in [('"name": "Yok"', '"name": "8 GB"'),
+                         ('8806095832838', '8806095832839'),
+                         ('data-testid="buy-now-button"', 'disabled data-testid="buy-now-button"')]:
+            self.assertIn(old, html)
+            self.assertIsNone(parse_catalog_listing(html.replace(old, new), url, 'Samsung Galaxy A16 4G', specs)[0])
+        soup = BeautifulSoup(html, 'html.parser')
+        soup.select_one('h1').insert_after(copy.deepcopy(soup.select_one('h1')))
+        self.assertIsNone(parse_catalog_listing(str(soup), url, 'Samsung Galaxy A16 4G', specs)[0])
+
     def test_actual_native_tb_storage_reaches_selected_proof_and_ingestion_without_parent_capacity(self):
         from pathlib import Path
         from selected_sku_evidence import selected_sku_evidence

@@ -21,6 +21,22 @@ def alternate_document(changes=None):
 
 
 class ObservedMemoryVariantTests(unittest.TestCase):
+    def test_native_unknown_ram_field_discovers_explicit_other_physical_ram_without_changing_parent(self):
+        from pathlib import Path
+        html = Path('fixtures/trendyol-a16-6gb-selected-unknown-ram-property.html').read_text()
+        url = 'https://www.trendyol.com/samsung/galaxy-a16-128-gb-6-gb-ram-gri-p-879171111'
+        parent = {'ram_gb': 4, 'storage_gb': 128, 'network_generation': '4g'}
+        before = deepcopy(parent)
+        result = inspect_trendyol_memory_variant(html, url, 'Samsung Galaxy A16 4G', parent)
+        self.assertEqual(result['observed_specs'], {**parent, 'ram_gb': 6})
+        self.assertEqual(result['catalog_memory'], {'ram_gb': 4, 'storage_gb': 128})
+        self.assertFalse(result['writes'])
+        self.assertEqual(parent, before)
+        self.assertIsNone(inspect_trendyol_memory_variant(html, url, 'Samsung Galaxy A16 4G', {**parent, 'ram_gb': 6}))
+        for changed in [html.replace('6 GB Ram', '6+6 GB Sanal RAM'), html.replace('6 GB Ram', ''),
+                        html.replace('"name": "Yok"', '"name": "Belirtilmemiş"')]:
+            self.assertIsNone(inspect_trendyol_memory_variant(changed, url, 'Samsung Galaxy A16 4G', parent))
+
     def test_native_tb_variant_preview_proves_its_own_capacity_and_keeps_parent_unchanged(self):
         from pathlib import Path
         html = Path('fixtures/trendyol-iphone17pro-native-tb-selected.html').read_text()
@@ -319,7 +335,9 @@ class ObservedMemoryVariantTests(unittest.TestCase):
         p = ('state', 'product')
         winner = p + ('merchantListing', 'winnerVariant')
         for changes in [
-            {p + ('attributes', 0, 'value', 'name'): 'Yok'},
+            {p + ('attributes', 0, 'value', 'name'): 'Yok',
+             ('title',): NAME + ' 256GB Grafit', ('schema', 'name'): NAME + ' 256GB Grafit',
+             p + ('name',): (NAME + ' 256GB Grafit').removeprefix('Samsung ')},
             {p + ('attributes', 0, 'value', 'name'): '8+8 GB'},
             {p + ('attributes', 1, 'value', 'name'): '128/256 GB'},
             {p + ('attributes', 2, 'value', 'name'): '4.5G'},
