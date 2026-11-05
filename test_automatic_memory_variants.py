@@ -795,6 +795,27 @@ class AutomaticMemoryVariantTests(unittest.TestCase):
         self.assertEqual(payload['offers'][0]['observed_at'], canonical_observation_time(fresh['observed_at']))
         self.assertNotIn('product_id', payload['offers'][0])
 
+    def test_variant_rejection_retains_only_http_status_and_known_public_error_without_changing_retries(self):
+        from automatic_memory_variants import _publish_variant_with_retry
+        for status, body, reason in [
+                (409, {'error': 'Existing variant identity conflict', 'committed': False}, 'existing_variant_identity_conflict'),
+                (400, {'error': 'Invalid memory variant submission'}, 'invalid_submission'),
+                (500, {'error': 'Memory variant publication failed'}, 'publication_failed'),
+                (409, {'error': 'arbitrary private request or credential detail'}, None),
+                (409, {'error': ['unexpected response type']}, None)]:
+            row, calls = {}, []
+            def request(*args, **kwargs):
+                calls.append(kwargs)
+                return SimpleNamespace(status_code=status, body=body)
+            client = SimpleNamespace(base_url='https://teknoskor.com', secret='fixture-only',
+                session=SimpleNamespace(request=request), _json_body=lambda response: response.body)
+            self.assertEqual(_publish_variant_with_retry(client, {}, row), body)
+            self.assertEqual(row['publication_http_statuses'], [status])
+            self.assertEqual(row.get('server_rejection_reason'), reason)
+            self.assertEqual(len(calls), 1)
+            self.assertNotIn('fixture-only', str(row))
+            self.assertNotIn('arbitrary private', str(row))
+
     def test_lost_commit_reply_or_failed_score_can_replay_without_duplicate_variant_or_source_reads(self):
         for lost_reply in (True, False):
             result = self.candidate_result()

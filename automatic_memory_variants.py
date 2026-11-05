@@ -861,8 +861,27 @@ def _publish_variant_with_retry(client, payload, row):
             if attempt == 2:
                 raise
         else:
+            status = getattr(response, 'status_code', None)
+            if type(status) is int and 100 <= status <= 599:
+                row.setdefault('publication_http_statuses', []).append(status)
             if attempt == 2 or getattr(response, 'status_code', None) not in (502, 503, 504):
                 body = client._json_body(response)
+                # The route uses these fixed public errors outside its issue
+                # array. Retain a bounded reason, never arbitrary response
+                # text, headers, request payloads or credentials.
+                public_errors = {
+                    'Unauthorized': 'unauthorized',
+                    'Variant payload too large': 'payload_too_large',
+                    'Invalid JSON': 'invalid_json',
+                    'Invalid memory variant submission': 'invalid_submission',
+                    'Published smartphone parent missing': 'parent_unavailable',
+                    'Variant schema unavailable': 'schema_unavailable',
+                    'Existing variant identity conflict': 'existing_variant_identity_conflict',
+                    'Memory variant publication failed': 'publication_failed',
+                }
+                error = body.get('error')
+                if isinstance(error, str) and error in public_errors:
+                    row['server_rejection_reason'] = public_errors[error]
                 if attempt == 2:
                     row['publication_reply_recovered'] = True
                 return body
