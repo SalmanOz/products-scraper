@@ -255,6 +255,19 @@ def technical_model_matches(expected, observed):
             and TRPriceScraper().is_strict_match(core(expected), core(observed), {}))
 
 
+def technical_url_memory_matches(url, actual):
+    """Explicit capacity tokens must agree with the selected source's cells."""
+    remaining = [actual.get('ram_gb'), actual.get('storage_gb')]
+    for token in urlparse(url).path.split('-'):
+        if not re.fullmatch(r'[1-9]\d{0,3}(?:gb|tb)', token, re.I):
+            continue
+        amount = exact_capacity(token)
+        if amount not in remaining:
+            return False
+        remaining.remove(amount)
+    return True
+
+
 def selected_technical_radio(connectivity, source_names, soup):
     radio = PriceUpdater.get_expected_specs({'Connectivity': connectivity}).get('network_generation')
     if radio is not None:
@@ -324,7 +337,7 @@ def selected_technical_document(html, url, model, specs, *, canonical_model_url=
     sections = extract_spec_sections(soup)
     actual = {'ram_gb': exact_capacity(find_section_spec(sections, 'Hardware', 'Memory RAM', 'RAM')),
               'storage_gb': exact_capacity(find_section_spec(sections, 'Hardware', 'Capacity', 'Storage'))}
-    if any(actual[key] != specs[key] for key in actual):
+    if any(actual[key] != specs[key] for key in actual) or not technical_url_memory_matches(url, actual):
         return None
     connectivity = next((value for key, value in sections.items() if 'connect' in key.casefold()), {})
     radio = selected_technical_radio(connectivity, names, soup)
@@ -366,13 +379,17 @@ def rejected_technical_observation(document, url, model, specs, phase):
         metadata.append(item)
     canonicals = soup.select('link[rel="canonical"][href]')
     active = soup.select('.versions-list > .item.active')
+    observed_memory = {
+        'ram_gb': exact_capacity(find_section_spec(sections, 'Hardware', 'Memory RAM', 'RAM')),
+        'storage_gb': exact_capacity(find_section_spec(sections, 'Hardware', 'Capacity', 'Storage')),
+    }
     return {'scope': 'rejected_selected_technical_document', 'phase': phase,
         'model': model, 'source_url': url,
         'requested_specs': {k: specs.get(k) for k in ('ram_gb', 'storage_gb', 'network_generation')},
-        'observed_specs': {
-            'ram_gb': exact_capacity(find_section_spec(sections, 'Hardware', 'Memory RAM', 'RAM')),
-            'storage_gb': exact_capacity(find_section_spec(sections, 'Hardware', 'Capacity', 'Storage')),
+        'observed_specs': {**observed_memory,
             'network_generation': selected_technical_radio(connectivity, names, soup)},
+        'explicit_url_memory_conflict': (all(observed_memory.values())
+                                         and not technical_url_memory_matches(url, observed_memory)),
         'metadata': metadata, 'canonical_count': len(canonicals),
         'canonical_urls': [target for node in canonicals[:3]
                            if (target := observed_technical_link(node['href'], url))],

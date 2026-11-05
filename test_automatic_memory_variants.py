@@ -498,6 +498,23 @@ class AutomaticMemoryVariantTests(unittest.TestCase):
                                                          canonical_model_url=TECH_URL))
         self.assertIsNone(selected_technical_document(document, ALT_TECH_URL, NAME, specs, canonical_model_url=TECH_URL+'-pro'))
 
+    def test_selected_technical_url_cannot_disagree_with_its_verified_memory_table(self):
+        from automatic_memory_variants import rejected_technical_observation
+
+        model = 'Apple iPhone Air'
+        url = 'https://www.kimovil.com/en/where-to-buy-apple-iphone-air-8gb-512gb'
+        specs = {'ram_gb': 12, 'storage_gb': 512, 'network_generation': '5g'}
+        document = tech_document(url, ram=12, storage=512, name=model)
+        self.assertIsNone(selected_technical_document(document, url, model, specs))
+        self.assertTrue(rejected_technical_observation(document, url, model, specs, 'selected_variant')
+                        ['explicit_url_memory_conflict'])
+        for matching in (url.replace('8gb', '12gb'), url.replace('-8gb', '')):
+            self.assertIsNotNone(selected_technical_document(
+                tech_document(matching, ram=12, storage=512, name=model), matching, model, specs))
+        tb = 'https://www.kimovil.com/en/where-to-buy-apple-iphone-air-12gb-1tb'
+        self.assertIsNotNone(selected_technical_document(tech_document(tb, ram=12, storage=1024, name=model),
+                                                        tb, model, {**specs, 'storage_gb': 1024}))
+
     def test_locates_only_observed_capacity_link_and_stages_fresh_technical_facts_not_parent_copy(self):
         base = tech_document(TECH_URL, storage=128).replace('</body>',
             '<ul class="versions-list"><li class="item"><a href="' + ALT_TECH_URL + '">Global 8 GB 256 GB</a></li>'
