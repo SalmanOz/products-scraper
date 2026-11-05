@@ -201,9 +201,13 @@ def inspect_target(transport, url, product, *, probe_teknosa_identity=False):
             row['discovered_sellers'] = discover_product_sellers(html, observed_url) if offer is not None else []
             if offer is None:
                 from observed_memory_variants import inspect_hepsiburada_memory_variant
-                other = inspect_hepsiburada_memory_variant(html, observed_url, product['name'], specs)
+                diagnostic = {}
+                other = inspect_hepsiburada_memory_variant(html, observed_url, product['name'], specs,
+                                                           diagnostic=diagnostic)
                 if other is not None:
                     row['other_memory_variant'] = other
+                elif diagnostic['status'] == 'selected_storage_source_conflict':
+                    row['other_memory_variant_diagnostic'] = diagnostic
         if host == 'www.trendyol.com':
             from trendyol_catalog_source import parse_catalog_listing
             from trendyol_catalog_discovery import discovery_links

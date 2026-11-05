@@ -363,6 +363,37 @@ class ObservedMemoryVariantTests(unittest.TestCase):
         self.assertIsNone(inspect_hepsiburada_memory_variant(hb_document(), TARGET, hb_name.replace('A36', 'A35'), parent))
         self.assertIsNone(inspect_hepsiburada_memory_variant(hb_document(), TARGET, hb_name, dict(parent, ram_gb=8)))
 
+    def test_hb_selected_sku_and_technical_storage_conflict_is_diagnostic_only(self):
+        from test_hepsiburada_catalog_source import document as hb_document, NAME as hb_name, TARGET
+
+        parent = {'ram_gb': 8, 'storage_gb': 256, 'network_generation': '5g'}
+        before = deepcopy(parent)
+        html = hb_document().replace('Dahili Hafıza <span>128 GB', 'Dahili Hafıza <span>8 GB')
+        diagnostic = {}
+        self.assertIsNone(inspect_hepsiburada_memory_variant(html, TARGET, hb_name, parent,
+                                                              diagnostic=diagnostic))
+        self.assertEqual(diagnostic, {
+            'status': 'selected_storage_source_conflict', 'writes': False,
+            'scope': 'diagnostic_only_not_offer_evidence',
+            'selected_sku_storage_gb': 128, 'technical_table_storage_gb': 8,
+        })
+
+        class Source:
+            def read_document(self, url): return html, 'document_read', 200
+            def resolved_url(self, url): return url
+
+        product = {'name': hb_name, 'slug': 'samsung-galaxy-a36', 'attributes': parent}
+        row = inspect_target(Source(), TARGET, product)
+        self.assertIsNone(row['prepared_offer'])
+        self.assertNotIn('other_memory_variant', row)
+        self.assertEqual(row['other_memory_variant_diagnostic'], diagnostic)
+        self.assertEqual(parent, before)
+        ambiguous = {}
+        self.assertIsNone(inspect_hepsiburada_memory_variant(
+            html.replace('Dahili Hafıza <span>8 GB', 'Dahili Hafıza <span>8 GB / 128 GB'),
+            TARGET, hb_name, parent, diagnostic=ambiguous))
+        self.assertNotEqual(ambiguous['status'], 'selected_storage_source_conflict')
+
     def test_other_capacity_requires_complete_selected_proof_and_never_changes_parent_specs(self):
         before = deepcopy(SPECS)
         result = inspect_trendyol_memory_variant(alternate_document(), ALT_URL, NAME, SPECS)

@@ -186,9 +186,13 @@ def inspect_n11_memory_variant(html, url, name, catalog_specs, diagnostic=None):
             'observed_specs': actual, 'verification': reason, 'offer': offer}
 
 
-def inspect_hepsiburada_memory_variant(html, url, name, catalog_specs):
-    from hepsiburada_catalog_source import selected_technical_text, parse_catalog_buy_box
+def inspect_hepsiburada_memory_variant(html, url, name, catalog_specs, *, diagnostic=None):
+    from hepsiburada_capacity import capacity_gb, selected_tb_storage
+    from hepsiburada_catalog_source import _identity, selected_technical_text, parse_catalog_buy_box
     from hepsiburada_catalog_source import catalog_offer_matches as matches
+    if diagnostic is not None:
+        diagnostic.update(status='selected_memory_source_incomplete', writes=False,
+                          scope='diagnostic_only_not_offer_evidence')
     if not isinstance(html, str) or len(html.encode()) > 5 * 1024 * 1024:
         return None
     soup = BeautifulSoup(html, 'html.parser')
@@ -205,7 +209,6 @@ def inspect_hepsiburada_memory_variant(html, url, name, catalog_specs):
     for key, label in (('ram_gb', 'RAM Kapasitesi'), ('storage_gb', 'Dahili Hafıza')):
         values = re.findall(r'\b' + label + r'\s+([1-9]\d{0,3})\s+GB\b', text)
         if key == 'storage_gb' and not values:
-            from hepsiburada_capacity import selected_tb_storage
             storage = selected_tb_storage(soup, text)
             if storage is not None:
                 actual[key] = storage
@@ -213,6 +216,26 @@ def inspect_hepsiburada_memory_variant(html, url, name, catalog_specs):
         if len(values) != 1 or len(re.findall(r'\b' + label + r'\b', text)) != 1:
             return None
         actual[key] = int(values[0])
+    if diagnostic is not None and _identity(url, product['productId'], product['sku']):
+        variants = product.get('variants')
+        selected = [variant for variant in variants if isinstance(variant, dict)
+                    and variant.get('isDefault') is True and variant.get('sku') == product['sku']
+                    ] if isinstance(variants, list) else []
+        properties = selected[0].get('properties') if len(selected) == 1 else None
+        capacities = [p.get('valueObject', {}).get('actualValue') for p in properties
+                      if isinstance(p, dict) and p.get('name') == 'Kapasite'
+                      and isinstance(p.get('valueObject'), dict)] if isinstance(properties, list) else []
+        selected_storage = capacity_gb(capacities[0]) if len(capacities) == 1 else None
+        if selected_storage is not None and selected_storage != actual['storage_gb']:
+            # Confirm an exact scalar row in the native table. Flattened text
+            # may begin with a number even when the source displays a range.
+            rows = soup.select('#techSpecs[data-test-id="KeyFeaturesTable"] div')
+            if any(re.fullmatch(r'Dahili Hafıza [1-9]\d{0,3} (?:GB|TB)',
+                                ' '.join(row.stripped_strings)) for row in rows):
+                diagnostic.update(status='selected_storage_source_conflict',
+                                  selected_sku_storage_gb=selected_storage,
+                                  technical_table_storage_gb=actual['storage_gb'])
+                return None
     radios = re.findall(r'\bMobil Bağlantı Hızı\s+(5G|4[.,]5G|4G)\b', text, re.I)
     if (len(radios) != 1 or not 1 <= actual['ram_gb'] <= 64 or not 32 <= actual['storage_gb'] <= 4096
             or not isinstance(catalog_specs, dict)):
