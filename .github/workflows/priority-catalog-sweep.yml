@@ -56,7 +56,7 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt
       - name: Test full queue and live publication boundaries
-        run: python -m unittest -q test_offer_ingestion_client test_hepsiburada_catalog_discovery test_hepsiburada_category_frontier test_trendyol_catalog_discovery test_teknosa_catalog_discovery test_teknosa_seller_cards test_automatic_marketplace_refresh test_selected_sku_evidence test_priority_catalog_budget test_priority_catalog_sweep test_priority_candidates test_priority_retailers test_hepsiburada_catalog_source test_trendyol_catalog_source test_trendyol_basket_price test_teknosa_catalog_source test_teknosa_public_technical test_teknosa_marketplace_source test_n11_catalog_source test_raw_seller_collision_proof test_observed_memory_variants test_automatic_memory_variants test_incremental_memory_recovery test_manufacturer_catalog_radio
+        run: python -m unittest -q test_offer_ingestion_client test_hepsiburada_catalog_discovery test_hepsiburada_category_frontier test_trendyol_catalog_discovery test_trendyol_category_frontier test_teknosa_catalog_discovery test_teknosa_seller_cards test_automatic_marketplace_refresh test_selected_sku_evidence test_priority_catalog_budget test_priority_catalog_sweep test_priority_candidates test_priority_retailers test_hepsiburada_catalog_source test_trendyol_catalog_source test_trendyol_basket_price test_teknosa_catalog_source test_teknosa_public_technical test_teknosa_marketplace_source test_n11_catalog_source test_raw_seller_collision_proof test_observed_memory_variants test_automatic_memory_variants test_incremental_memory_recovery test_manufacturer_catalog_radio
       - name: Restore observed category URL frontier
         if: inputs.mode == 'full' || inputs.mode == 'coverage-first' || inputs.mode == 'memory-variants'
         id: category-frontier
@@ -66,6 +66,14 @@ jobs:
           path: .discovery-state/priority-hb-category.json
           key: priority-hb-frontier-v1-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: priority-hb-frontier-v1-${{ github.ref_name }}-
+      - name: Restore observed Trendyol category URL frontier
+        if: inputs.mode == 'full' || inputs.mode == 'coverage-first' || inputs.mode == 'memory-variants'
+        continue-on-error: true
+        uses: actions/cache/restore@v4
+        with:
+          path: .discovery-state/priority-ty-category.json
+          key: priority-ty-frontier-v1-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: priority-ty-frontier-v1-${{ github.ref_name }}-
       - name: Start existing public document GET service
         run: |
           docker run -d --name=priority-sweep-browser -p 8191:8191 -e LOG_LEVEL=info ghcr.io/flaresolverr/flaresolverr:latest
@@ -134,6 +142,13 @@ jobs:
         with:
           path: .discovery-state/priority-hb-category.json
           key: priority-hb-frontier-v1-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Preserve observed Trendyol category URLs after the coverage gate
+        if: always() && (inputs.mode == 'full' || inputs.mode == 'coverage-first' || inputs.mode == 'memory-variants') && steps.inspect.outcome != 'skipped' && hashFiles('.discovery-state/priority-ty-category.json') != ''
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: .discovery-state/priority-ty-category.json
+          key: priority-ty-frontier-v1-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Summarize queue coverage and remaining reasons
         if: always()
         run: |

@@ -35,9 +35,9 @@ def category_url(value):
             and not re.search(r'[\x00-\x20\\]', value) and category_identity(value) is not None)
 
 
-def _urls(value, maximum):
+def _urls(value, maximum, validator=category_url):
     return (isinstance(value, list) and len(value) <= maximum
-            and all(category_url(url) for url in value) and len(value) == len(set(value)))
+            and all(validator(url) for url in value) and len(value) == len(set(value)))
 
 
 def _time(value):
@@ -56,7 +56,7 @@ def _unique_object(pairs):
     return result
 
 
-def load_frontier(path, products, *, now=None):
+def load_frontier(path, products, *, now=None, version=VERSION, url_validator=category_url):
     now = now or datetime.now(timezone.utc)
     if path is None:
         return {'catalog_fingerprint': None, 'cycle_started_at': now.isoformat(),
@@ -74,8 +74,9 @@ def load_frontier(path, products, *, now=None):
         if len(raw) > MAX_BYTES:
             return empty, 'oversized'
         data = json.loads(raw, object_pairs_hook=_unique_object)
-        if (not isinstance(data, dict) or set(data) != FIELDS or data['version'] != VERSION
-                or not _urls(data['pending'], MAX_PENDING) or not _urls(data['visited'], MAX_VISITED)
+        if (not isinstance(data, dict) or set(data) != FIELDS or data['version'] != version
+                or not _urls(data['pending'], MAX_PENDING, url_validator)
+                or not _urls(data['visited'], MAX_VISITED, url_validator)
                 or set(data['pending']) & set(data['visited'])):
             return empty, 'invalid'
         started, updated = _time(data['cycle_started_at']), _time(data['updated_at'])
@@ -99,18 +100,20 @@ def load_frontier(path, products, *, now=None):
         return empty, 'invalid'
 
 
-def save_frontier(path, result, *, now=None):
+def save_frontier(path, result, *, now=None, version=VERSION, url_validator=category_url,
+                  report_prefix='hepsiburada'):
     """Save a completed category pass's URL queue independently of later prices."""
-    continuation = result.get('hepsiburada_category_continuation')
-    discovery = result.get('hepsiburada_category_discovery')
+    continuation = result.get(report_prefix + '_category_continuation')
+    discovery = result.get(report_prefix + '_category_discovery')
     if not continuation or not discovery or continuation.get('status') == 'disabled':
         return {'status': 'not_enabled'}
     pending = discovery.get('pending_observed_urls', [])
     visited = discovery.get('visited_category_urls', [])
-    if not _urls(pending, MAX_PENDING) or not _urls(visited, MAX_VISITED) or set(pending) & set(visited):
+    if (not _urls(pending, MAX_PENDING, url_validator) or not _urls(visited, MAX_VISITED, url_validator)
+            or set(pending) & set(visited)):
         return {'status': 'invalid_or_oversized_queue'}
     now = now or datetime.now(timezone.utc)
-    data = {'version': VERSION, 'catalog_fingerprint': continuation['catalog_fingerprint'],
+    data = {'version': version, 'catalog_fingerprint': continuation['catalog_fingerprint'],
             'cycle_started_at': continuation['cycle_started_at'], 'updated_at': now.isoformat(),
             'pending': pending, 'visited': visited}
     raw = json.dumps(data, ensure_ascii=False, separators=(',', ':')).encode()

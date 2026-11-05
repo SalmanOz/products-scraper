@@ -121,7 +121,7 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
           discover_n11=False, discover_teknosa=False, discover_trendyol=False,
           discover_hepsiburada=False, current_listing_inventory=None, coverage_first=False,
           category_audit_only=False, category_frontier_path=None, memory_discovery=False,
-          memory_recovery=None):
+          memory_recovery=None, trendyol_frontier_path=None):
     if category_audit_only and (publish or discover_n11):
         raise ValueError('Category routing audits cannot publish or fetch product search results')
     products, prices = client.get_published_products(), client.get_public_price_priority()
@@ -158,6 +158,16 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
             'status': frontier_status, 'catalog_fingerprint': frontier['catalog_fingerprint'],
             'cycle_started_at': frontier['cycle_started_at'],
             'restored_pending': len(frontier['pending']), 'restored_visited': len(frontier['visited']),
+            'prices_or_offer_evidence_restored': False}
+    from trendyol_category_frontier import load_frontier as load_trendyol_frontier
+    from trendyol_category_frontier import save_frontier as save_trendyol_frontier
+    ty_frontier, ty_frontier_status = load_trendyol_frontier(
+        trendyol_frontier_path if discover_trendyol and not category_audit_only else None, products)
+    if ty_frontier_status != 'disabled':
+        result['trendyol_category_continuation'] = {
+            'status': ty_frontier_status, 'catalog_fingerprint': ty_frontier['catalog_fingerprint'],
+            'cycle_started_at': ty_frontier['cycle_started_at'],
+            'restored_pending': len(ty_frontier['pending']), 'restored_visited': len(ty_frontier['visited']),
             'prices_or_offer_evidence_restored': False}
     # The catalog's 12 refresh hints are not a complete list of current listing
     # resources. Do not let those omitted, already verified colors consume the
@@ -449,9 +459,14 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
     def discover_category(retailer, report_key, module, read_category, resume=None):
         if resume is None:
             is_hb = report_key == 'hepsiburada_category_discovery'
-            history = frontier['visited'] if is_hb else []
-            pending_branches = ([u for u in frontier['pending'] if u != module.CATEGORY_URL] if is_hb else
-                list(trendyol_category_hints) if report_key == 'trendyol_category_discovery' else [])
+            is_ty = report_key == 'trendyol_category_discovery'
+            current_frontier = frontier if is_hb else ty_frontier if is_ty else None
+            history = current_frontier['visited'] if current_frontier is not None else []
+            pending_branches = ([u for u in current_frontier['pending'] if u != module.CATEGORY_URL]
+                                if current_frontier is not None else [])
+            if is_ty:
+                pending_branches = list(dict.fromkeys(pending_branches + [
+                    u for u in trendyol_category_hints if u not in history]))
             # Always re-read the public root, then prioritize the actual unread
             # frontier. Previously parsed categories are not price evidence.
             cards, category_url = [], module.CATEGORY_URL
@@ -566,6 +581,13 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                 # The existing always-save cache step then retains these URL
                 # hints even when the remaining sweep is cancelled/times out.
                 result['hepsiburada_category_frontier_saved'] = save_frontier(category_frontier_path, result)
+        if report_key == 'trendyol_category_discovery':
+            discovery['pending_observed_urls'] = pending_urls
+            discovery['visited_category_urls'] = list(dict.fromkeys(ty_frontier['visited'] + [
+                page['url'] for page in discovery['pages']
+                if (page.get('parser') or {}).get('status') == 'parsed']))
+            if trendyol_frontier_path is not None and not category_audit_only:
+                result['trendyol_category_frontier_saved'] = save_trendyol_frontier(trendyol_frontier_path, result)
         discovery['category_budget_exhausted'] = bool(category_url and len(discovery['pages']) >= module.MAX_CATEGORY_PAGES)
         if getattr(module, 'DISCOVERY_SCOPE', None):
             discovery.update(scope=module.DISCOVERY_SCOPE,
@@ -816,6 +838,9 @@ def save_report(result):
     if result.get('hepsiburada_category_frontier_saved'):
         lines += ['', 'Hepsiburada category frontier saved: ' + json.dumps(
             result['hepsiburada_category_frontier_saved'], ensure_ascii=False)]
+    for key in ('trendyol_category_continuation', 'trendyol_category_frontier_saved'):
+        if result.get(key):
+            lines += ['', key + ': ' + json.dumps(result[key], ensure_ascii=False)]
     if result.get('discovery_inventory'):
         lines += ['', 'Discovery inventory: ' + json.dumps(result['discovery_inventory'], ensure_ascii=False)]
     if result.get('unread_cooldown_recovery'):
@@ -1087,6 +1112,7 @@ def main():
             publish=args.publish, source_client=SourceIngestionClient.from_env() if args.publish else None,
             checkpoint=variant_checkpoint)
     from hepsiburada_category_frontier import save_frontier, STATE_PATH
+    from trendyol_category_frontier import save_frontier as save_trendyol_frontier, STATE_PATH as TY_STATE_PATH
     result = sweep(client=client, publish=args.publish, checkpoint=checkpoint, transport=sweep_transport,
                    discover_n11=not args.hepsiburada_category_audit,
                    discover_teknosa=not args.hepsiburada_category_audit,
@@ -1096,7 +1122,8 @@ def main():
                    category_audit_only=args.hepsiburada_category_audit,
                    memory_discovery=args.memory_variants,
                    memory_recovery=memory_recovery,
-                   category_frontier_path=None if args.hepsiburada_category_audit else STATE_PATH)
+                   category_frontier_path=None if args.hepsiburada_category_audit else STATE_PATH,
+                   trendyol_frontier_path=None if args.hepsiburada_category_audit else TY_STATE_PATH)
     if radio_report is not None:
         result['manufacturer_radio_resolution'] = radio_report
         result['writes'] |= radio_report['writes']
@@ -1105,6 +1132,7 @@ def main():
         print(Path('priority-catalog-sweep.md').read_text())
         return
     result['hepsiburada_category_frontier_saved'] = save_frontier(STATE_PATH, result)
+    result['trendyol_category_frontier_saved'] = save_trendyol_frontier(TY_STATE_PATH, result)
     save_report(result)  # Keep category progress if public price readback is temporarily unavailable.
     if args.memory_variants:
         from automatic_memory_variants import verify_variant_catalog_readback

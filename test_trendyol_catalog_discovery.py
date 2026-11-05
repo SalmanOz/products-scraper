@@ -336,7 +336,7 @@ class TrendyolDiscoveryTests(unittest.TestCase):
         self.assertEqual(transport.read_document(URL + '1')[1], 'pdp_budget_exhausted')
         self.assertEqual(transport.report()['Trendyol']['category_requests'], 2)
         self.assertEqual(transport.report()['Trendyol']['pdp_requests'], 1)
-        self.assertEqual(transport.read_trendyol_category(CATEGORY_URL + '?pi=101')[1], 'invalid_catalog_category')
+        self.assertEqual(transport.read_trendyol_category(CATEGORY_URL + '?pi=1000')[1], 'invalid_catalog_category')
         denied = PriorityRetailerTransport(get=lambda url, **_: Response(url,
             'User-agent: *\nDisallow: /cep-telefonu-x-c103498\n'), sleep=lambda _: None)
         self.assertEqual(denied.read_trendyol_category(CATEGORY_URL)[1], 'robots_disallowed')

@@ -6,6 +6,20 @@ from test_pasaj_source import Response
 
 
 class BudgetTests(unittest.TestCase):
+    def test_trendyol_native_tail_page_indexes_do_not_expand_the_shared_100_request_quota(self):
+        calls = []
+        def get(url, **_):
+            calls.append(url)
+            return Response(url, 'User-agent: *\nAllow: /\n' if url.endswith('robots.txt') else '<h1>Phone category</h1>')
+        source = PriorityRetailerTransport(get=get, sleep=lambda _: None, maximum_per_host=1)
+        base = 'https://www.trendyol.com/cep-telefonu-x-c103498'
+        for page in range(101, 201):
+            self.assertEqual(source.read_trendyol_category(base + f'?pi={page}')[1], 'document_read')
+        self.assertEqual(source.read_trendyol_category(base + '?pi=201')[1], 'category_budget_exhausted')
+        self.assertEqual(source.read_trendyol_category(base + '?pi=1000')[1], 'invalid_catalog_category')
+        self.assertEqual(len(calls), 101)  # One robots GET, exactly 100 category GETs.
+        self.assertEqual(source.report()['Trendyol']['category_requests'], 100)
+
     def test_expanded_observed_hb_category_budget_stays_bounded_and_preserves_product_quota(self):
         from hepsiburada_catalog_discovery import CATEGORY_URL, MAX_CATEGORY_PAGES
         calls = []

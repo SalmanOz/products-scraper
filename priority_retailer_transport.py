@@ -276,7 +276,10 @@ class PriorityRetailerTransport:
     def read_trendyol_category(self, url):
         from trendyol_catalog_discovery import category_page_number
         page = category_page_number(url)
-        if page is None or page > 100:
+        # A restored source-declared page index is not a request allowance.
+        # The native parser still bounds it to 1..999; the shared reader
+        # retains its unchanged 100 category requests for this invocation.
+        if page is None:
             return None, 'invalid_catalog_category', None
         return self._read_document(url, 'www.trendyol.com', category=True)
 
