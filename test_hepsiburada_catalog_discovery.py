@@ -21,6 +21,30 @@ def document(brand=False):
 
 
 class HepsiburadaDiscoveryTests(unittest.TestCase):
+    def test_public_model_search_requires_its_echo_and_never_routes_promoted_cards(self):
+        from hepsiburada_catalog_discovery import public_model_search_cards
+        from urllib.parse import urlencode
+
+        model = 'Xiaomi Redmi Note 13 Pro Plus'
+        title = model + ' 5G 512 GB 12 GB RAM Siyah'
+        direct = '/xiaomi-redmi-note-13-pro-plus-5g-512-gb-12-gb-ram-siyah-p-HBCV00005ULE28'
+        promoted = 'https://adservice.hepsiburada.com/event/api/v1/track?' + urlencode({
+            'redirect': 'https://www.hepsiburada.com' + direct.replace('ULE28', 'ULE29')})
+        heading = f'<h1>"<!-- -->{model}<!-- -->" araması<span> (1 ürün)</span></h1>'
+        html = heading + ''.join(f'<h2 data-test-id="title-{i}"><a href="{url}" title="{title}">{title}</a></h2>'
+                                 for i, url in enumerate((direct, promoted)))
+        cards, reason = public_model_search_cards(html, model)
+        self.assertEqual(reason, 'parsed')
+        self.assertEqual(cards, [{'source_url': 'https://www.hepsiburada.com' + direct,
+                                  'discovery_title': title, 'stock_priority': False}])
+        folded_echo = heading.replace(model, 'xiaomi redmi note13 pro plus').replace('(1 ürün)', '(10.000+ ürün)')
+        self.assertEqual(public_model_search_cards(html.replace(heading, folded_echo), model),
+                         (cards, 'parsed'))
+        self.assertEqual(public_model_search_cards(html.replace(heading, '<h1>Other search</h1>'), model),
+                         ([], 'search_query_identity_missing'))
+        self.assertEqual(public_model_search_cards(html.replace(title, title.replace(' Plus', '')), model),
+                         ([], 'parsed'))
+
     def test_observed_continuation_fold_flip_and_iphone_color_headings_preserve_model_boundaries(self):
         cases = [
             ('https://www.hepsiburada.com/samsung-galaxy-z-fold8-android-telefonlar-xc-60005201-b8848-t6808', 'Samsung Galaxy Z Fold 8'),

@@ -302,6 +302,13 @@ class PriorityRetailerTransport:
             return None, 'invalid_catalog_category', None
         return self._read_document(url, 'www.hepsiburada.com', category=True)
 
+    def read_hepsiburada_search(self, query):
+        if (not isinstance(query, str) or not 1 <= len(query) <= 180
+                or re.search(r'[\x00-\x1f\x7f]', query)):
+            return None, 'invalid_catalog_query', None
+        url = 'https://www.hepsiburada.com/ara?' + urlencode({'q': query})
+        return self._read_document(url, 'www.hepsiburada.com')
+
     def read_trendyol_category(self, url):
         from trendyol_catalog_discovery import category_page_number
         page = category_page_number(url)
@@ -364,7 +371,7 @@ class PriorityRetailerTransport:
                     state['category_requests'] = category_count + 1
                 if classification:
                     state['classification_requests'] = state.get('classification_requests', 0) + 1
-                if urlparse(url).path in ('/arama', N11_PHONE_SEARCH_PATH):
+                if urlparse(url).path in ('/ara', '/arama', N11_PHONE_SEARCH_PATH):
                     state['search_requests'] += 1
                 raw, reason, status = self._read(url, 64 * 1024 if classification else MAX_HTML_BYTES,
                                                  'application/json' if classification else 'text/html', state)

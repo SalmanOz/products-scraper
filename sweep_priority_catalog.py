@@ -490,6 +490,47 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
         if memory_discovery:
             process_memory_cards(retailer, discovery, cards, early=early)
 
+    def discover_hepsiburada_model_gaps(read_search):
+        from automatic_memory_variants import parent_specs
+        from hepsiburada_catalog_discovery import public_model_search_cards
+        from tr_price_scraper import TRPriceScraper
+
+        priorities = result['memory_variant_priority']['parent_priorities']
+        observed = {row['slug'] for row in result['rows']
+                    if row.get('prepared_offer') or row.get('other_memory_variant')}
+        discovery = result['hepsiburada_model_search'] = {
+            'scope': 'public_model_search_for_unpriced_families', 'source_budget_shared': True,
+            'query_limit': 24, 'queries': [], 'new_targets': []}
+        seen = set()
+        matcher = TRPriceScraper()
+        for product in sorted(products, key=lambda p: p['id']):
+            if (len(seen) >= discovery['query_limit']
+                    or transport.report().get('Hepsiburada', {}).get('blocked') is True):
+                break
+            if priorities.get(product['slug']) != 0 or product['slug'] in observed:
+                continue
+            specs = parent_specs(product)
+            model = matcher._catalog_model_name(product['name'], specs)
+            if not model:
+                continue
+            query = model
+            if matcher._dual_radio_family(model) and matcher._radio_generation(model) is None:
+                query = f"{model} {specs['network_generation'].upper()}"
+            if query in seen:
+                continue
+            seen.add(query)
+            html, reason, status = read_search(query)
+            entry = {'slug': product['slug'], 'query': query, 'reason': reason, 'http_status': status}
+            discovery['queries'].append(entry)
+            if html is not None and status == 200:
+                cards, parser = public_model_search_cards(html, query)
+                entry.update(parser_status=parser, exact_family_destinations=len(cards))
+                process_category_cards('Hepsiburada', discovery, cards)
+            if reason in {'pdp_budget_exhausted', 'robots_disallowed', 'source_cooldown', 'source_circuit_open'}:
+                break
+            if checkpoint:
+                checkpoint(result)
+
     deferred_categories = []
     def discover_category(retailer, report_key, module, read_category, resume=None):
         is_ty = report_key == 'trendyol_category_discovery'
@@ -688,6 +729,9 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                               transport.read_trendyol_category)
         for url, product in ([] if category_audit_only else refresh_targets):
             process_target(url, product)
+        hb_search = getattr(transport, 'read_hepsiburada_search', None)
+        if discover_hepsiburada and memory_discovery and not category_audit_only and callable(hb_search):
+            discover_hepsiburada_model_gaps(hb_search)
         if discover_n11:
             from n11_catalog_source import discover_catalog_targets, discover_catalog_memory_targets, public_search_card_document
             from reviewed_offer_targets import with_reviewed_radio

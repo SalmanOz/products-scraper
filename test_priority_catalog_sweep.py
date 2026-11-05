@@ -21,6 +21,38 @@ class Transport:
 
 
 class TargetPreflightTests(unittest.TestCase):
+    def test_hepsiburada_model_search_routes_only_exact_family_to_a_fresh_selected_pdp(self):
+        from test_hepsiburada_catalog_source import document, NAME, SPECS, TARGET
+
+        client = Client()
+        client.product.update(name=NAME, attributes={**SPECS, 'ram_gb': 6}, offer_targets=[])
+        client.get_public_price_priority = lambda: {client.product['id']: (client.product['slug'], False)}
+        title = NAME + ' 128 GB 8 GB RAM Antrasit'
+        other = TARGET.replace('a36', 'a35').replace('HBC0000TEST00', 'HBC0000OTHER0')
+        calls = []
+
+        class Source(Transport):
+            def read_hepsiburada_category(self, url): return None, 'http_404', 404
+
+            def read_hepsiburada_search(self, query):
+                calls.append(('search', query))
+                return (f'<h1>"<!-- -->{query}<!-- -->" araması<span> (2 ürün)</span></h1>'
+                        f'<h2 data-test-id="title-1"><a href="{TARGET}" title="{title}">{title}</a></h2>'
+                        f'<h2 data-test-id="title-2"><a href="{other}" title="{title}">{title}</a></h2>'), 'document_read', 200
+
+            def read_document(self, url):
+                calls.append(('pdp', url))
+                return document(), 'document_read', 200
+
+        with patch('sweep_priority_catalog.refresh_candidates') as writer:
+            result = sweep(client=client, transport=Source(), discover_hepsiburada=True, memory_discovery=True)
+        writer.assert_not_called()
+        self.assertFalse(result['writes'])
+        self.assertEqual(calls, [('search', NAME), ('pdp', TARGET)])
+        self.assertEqual(result['hepsiburada_model_search']['queries'][0]['exact_family_destinations'], 1)
+        self.assertIsNone(result['rows'][0]['prepared_offer'])
+        self.assertEqual(result['rows'][0]['other_memory_variant']['observed_specs'], SPECS)
+
     def test_growing_catalog_is_never_sliced_at_the_old_200_product_limit(self):
         from catalog_recovery_limits import MAX_RECOVERY_CATALOG_PRODUCTS
         from types import SimpleNamespace

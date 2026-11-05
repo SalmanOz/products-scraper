@@ -6,6 +6,31 @@ from test_pasaj_source import Response
 
 
 class BudgetTests(unittest.TestCase):
+    def test_hepsiburada_model_search_shares_robots_and_product_document_budget(self):
+        calls = []
+
+        def transport(rules):
+            def get(url, **_):
+                calls.append(url)
+                return Response(url, rules if url.endswith('robots.txt') else '<h1>Public search</h1>')
+            return PriorityRetailerTransport(get=get, sleep=lambda _: None, maximum_per_host=1)
+
+        query = 'Xiaomi Redmi Note 13 Pro Plus'
+        robots = 'https://www.hepsiburada.com/robots.txt'
+        search = 'https://www.hepsiburada.com/ara?q=Xiaomi+Redmi+Note+13+Pro+Plus'
+        pdp = 'https://www.hepsiburada.com/xiaomi-redmi-note-13-pro-plus-512gb-p-HBCV00005ULE28'
+        allowed = transport('User-agent: *\nAllow: /\n')
+        self.assertEqual(allowed.read_hepsiburada_search(query)[1], 'document_read')
+        self.assertEqual(allowed.read_document(pdp)[1], 'pdp_budget_exhausted')
+        self.assertEqual(calls, [robots, search])
+        report = allowed.report()['Hepsiburada']
+        self.assertEqual((report['search_requests'], report['pdp_requests'], report['document_requests']), (1, 0, 1))
+
+        calls.clear()
+        denied = transport('User-agent: *\nDisallow: /ara\n')
+        self.assertEqual(denied.read_hepsiburada_search(query)[1], 'robots_disallowed')
+        self.assertEqual(calls, [robots])
+
     def test_trendyol_native_tail_page_indexes_do_not_expand_the_shared_100_request_quota(self):
         calls = []
         def get(url, **_):

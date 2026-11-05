@@ -181,15 +181,7 @@ def _category_soup(html, url):
     return soup if category_tail(remainder) else None
 
 
-def parse_category_document(html, url, diagnostic=None):
-    soup = _category_soup(html, url)
-    if isinstance(diagnostic, dict):
-        diagnostic.update(status='parsed' if soup else 'category_identity_missing', scope=DISCOVERY_SCOPE)
-        if soup is None and isinstance(html, str) and len(html.encode()) <= MAX_HTML_BYTES:
-            diagnostic['observed_headings'] = [node.get_text(' ', strip=True)[:300]
-                for node in BeautifulSoup(html, 'html.parser').select('h1')[:2]]
-    if soup is None:
-        return [], None
+def _product_cards(soup, *, include_promoted=True):
     cards, seen = [], set()
     for heading in soup.select('h2[data-test-id^="title-"]'):
         links = heading.select('a[href]')
@@ -201,11 +193,44 @@ def parse_category_document(html, url, diagnostic=None):
         # Only the actual linked canonical PDP can enter discovery. Tracker
         # events and identifiers are neither requested nor persisted.
         if (not title or len(title) > 500 or link.get('title') != title
-                or target is None or target in seen):
+                or target is None or target in seen
+                or not include_promoted and urljoin(CATEGORY_URL, link['href']) != target):
             continue
         seen.add(target)
         cards.append({'source_url': target, 'discovery_title': title,
                       'stock_priority': False})
+    return cards
+
+
+def public_model_search_cards(html, query):
+    """Route organic cards only when the visible search echoes the query."""
+    if not isinstance(html, str) or len(html.encode()) > MAX_HTML_BYTES:
+        return [], 'invalid_search_document'
+    soup = BeautifulSoup(html, 'html.parser')
+    headings = soup.select('h1')
+    title = ' '.join(headings[0].stripped_strings) if len(headings) == 1 else ''
+    echoed = re.fullmatch(r'"([^"]+)"\s+araması\s*\(\d+(?:\.\d{3})*\+? ürün\)', title, re.I)
+    # The public search can echo "note13" for "Note 13". Ignore spacing
+    # and case only, preserving every model qualifier and punctuation mark.
+    if not echoed or re.sub(r'\s+', '', echoed[1].casefold()) != re.sub(r'\s+', '', query.casefold()):
+        return [], 'search_query_identity_missing'
+    matcher = TRPriceScraper()
+    cards = [card for card in _product_cards(soup, include_promoted=False)
+             if matcher.is_strict_match(query, card['discovery_title'], {})
+             and matcher.is_strict_match(query, urlparse(card['source_url']).path.replace('-', ' '), {})]
+    return cards, 'parsed'
+
+
+def parse_category_document(html, url, diagnostic=None):
+    soup = _category_soup(html, url)
+    if isinstance(diagnostic, dict):
+        diagnostic.update(status='parsed' if soup else 'category_identity_missing', scope=DISCOVERY_SCOPE)
+        if soup is None and isinstance(html, str) and len(html.encode()) <= MAX_HTML_BYTES:
+            diagnostic['observed_headings'] = [node.get_text(' ', strip=True)[:300]
+                for node in BeautifulSoup(html, 'html.parser').select('h1')[:2]]
+    if soup is None:
+        return [], None
+    cards = _product_cards(soup)
     next_urls = set()
     current = urlparse(url)
     page = int(current.query.split('=')[1]) if current.query else 1
