@@ -13,6 +13,7 @@ on:
           - n11-preflight
           - hepsiburada-category-audit
           - target-preflight
+          - teknosa-identity-preflight
         default: full
         required: true
       publish:
@@ -26,12 +27,12 @@ on:
         required: true
         default: false
       target_slug:
-        description: 'Read-only target-preflight only: existing published product slug'
+        description: 'Read-only targeted diagnostics: existing published product slug'
         type: string
         required: false
         default: ''
       target_url:
-        description: 'Read-only target-preflight only: one public priority-retailer PDP URL'
+        description: 'Read-only targeted diagnostics: primary public retailer PDP URL'
         type: string
         required: false
         default: ''
@@ -110,6 +111,12 @@ jobs:
             python -u sweep_priority_catalog.py --memory-variant-preflight
           elif test "$MODE" = target-preflight; then
             python -u sweep_priority_catalog.py --target-preflight "$TARGET_URL" --target-slug "$TARGET_SLUG"
+          elif test "$MODE" = teknosa-identity-preflight; then
+            if test "$PUBLISH" = true; then
+              echo 'Teknosa identity preflight is read-only'
+              exit 1
+            fi
+            python -u sweep_priority_catalog.py --teknosa-identity-preflight --target-preflight "$TARGET_URL" --target-slug "$TARGET_SLUG"
           elif test "$MODE" = n11-preflight; then
             python -u sweep_priority_catalog.py --n11-preflight
           elif test "$MODE" = hepsiburada-category-audit; then

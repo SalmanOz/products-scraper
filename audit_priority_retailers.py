@@ -97,7 +97,7 @@ def document_evidence(html, url):
             'n11_price_nodes': len(soup.select('[itemprop="price"], #newPrice, .newPrice'))}
 
 
-def inspect_target(transport, url, product):
+def inspect_target(transport, url, product, *, probe_teknosa_identity=False):
     host = product_host(url)
     observed_url = url
     if host == 'www.hepsiburada.com':
@@ -162,6 +162,21 @@ def inspect_target(transport, url, product):
                 from teknosa_seller_cards import public_seller_offers
                 row['additional_prepared_offers'] = public_seller_offers(html, observed_url,
                     {'name': product['name'], 'specs': specs}, maximum=3)
+            if probe_teknosa_identity and offer is None and why == 'catalog_variant_mismatch':
+                from offer_target_selection import select_offer_targets
+                from teknosa_marketplace_source import independent_radio_preflight
+
+                def read_witnesses():
+                    registered = [target for target in product.get('offer_targets', [])
+                                  if isinstance(target, dict) and product_host(target.get('source_url')) in
+                                  {'www.hepsiburada.com', 'www.trendyol.com', 'www.n11.com'}]
+                    for target in select_offer_targets(registered, maximum=3):
+                        witness = inspect_target(transport, target['source_url'], product)
+                        if witness.get('http_status') == 200 and isinstance(witness.get('prepared_offer'), dict):
+                            yield witness['prepared_offer']
+
+                row['independent_radio_preflight'] = independent_radio_preflight(
+                    html, observed_url, {'name': product['name'], 'specs': specs}, technical, read_witnesses)
             if offer is None:
                 from observed_memory_variants import inspect_teknosa_memory_variant
                 diagnostic = {}

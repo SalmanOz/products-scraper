@@ -69,10 +69,10 @@ def selected_technical_specs(main, title, cart, technical_observation=None):
             'selected_teknosa_physical_specs_verified': True}
 
 
-def parse_selected_marketplace(html, url, profile, technical_observation=None):
+def _selected_marketplace_commerce(html, url, technical_observation=None):
+    """Verify the selected store's commercial facts independently of a catalog profile."""
     if (product_host(url) != 'www.teknosa.com' or urlparse(url).query
-            or not isinstance(html, str) or len(html.encode()) > MAX_HTML_BYTES
-            or not isinstance(profile, dict) or not isinstance(profile.get('specs'), dict)):
+            or not isinstance(html, str) or len(html.encode()) > MAX_HTML_BYTES):
         return None, 'invalid_catalog_pdp'
     soup = BeautifulSoup(html, 'html.parser')
     mains = soup.select('#pdp-main')
@@ -204,9 +204,70 @@ def parse_selected_marketplace(html, url, profile, technical_observation=None):
     technical = selected_technical_specs(main, title, cart, technical_observation)
     if technical is not None:
         result.update(product_id=sku, **technical)
+    return result, 'selected_teknosa_marketplace_cash_offer'
+
+
+def parse_selected_marketplace(html, url, profile, technical_observation=None):
+    if not isinstance(profile, dict) or not isinstance(profile.get('specs'), dict):
+        return None, 'invalid_catalog_pdp'
+    result, reason = _selected_marketplace_commerce(html, url, technical_observation)
+    if result is None:
+        return None, reason
     if not catalog_offer_matches(result, profile.get('name'), profile['specs']):
         return None, 'catalog_variant_mismatch'
-    return result, 'selected_teknosa_marketplace_cash_offer'
+    return result, reason
+
+
+def independent_radio_preflight(html, url, profile, technical_observation, read_witness):
+    """Check one 4G identity using fresh independent retail proof, without preparing an offer."""
+    from automatic_memory_variants import variant_selected_evidence
+    from teknosa_public_technical import classification_values
+
+    result, reason = _selected_marketplace_commerce(html, url, technical_observation)
+    if result is None:
+        return {'status': reason, 'writes': False}
+    specs = profile['specs']
+    title = result['source_title']
+    matcher = TRPriceScraper()
+    ram, storage, ambiguous = matcher._unambiguous_listing_capacities(title)
+    if (specs.get('network_generation') != '4g' or ambiguous or ram is None or storage is None
+            or set(matcher._identity_words(title)) & {'4g', '5g', 'lte'}
+            or ram != matcher._spec_int(specs.get('ram_gb'))
+            or storage != matcher._spec_int(specs.get('storage_gb'))
+            or not matcher.is_strict_match(profile['name'], title, specs)
+            or not matcher.is_strict_match(profile['name'], urlparse(url).path.replace('-', ' '), specs)):
+        return {'status': 'independent_radio_scope_mismatch', 'writes': False}
+    main = BeautifulSoup(html, 'html.parser').select_one('#pdp-main')
+    cart = main.select_one('button#addToCartButton')
+    fields = classification_values(technical_observation, main, cart)
+    if fields is None:
+        return {'status': 'selected_technical_classification_unavailable', 'writes': False}
+    if (fields.get('5G Desteği') not in (None, 'Hayır')
+            or any(key in fields and matcher._spec_int(fields[key]) != value
+                   for key, value in (('Bellek Kapasitesi (RAM)', ram), ('Dahili Hafıza', storage)))
+            or ('Model Kodu' in fields and
+                not matcher.is_strict_match(profile['name'], fields['Model Kodu'], specs)
+                and not matcher.is_strict_match(
+                    cart.get('data-product-brand', '') + ' ' + fields['Model Kodu'],
+                    title, {}))):
+        return {'status': 'selected_technical_classification_conflict', 'writes': False}
+
+    for witness in read_witness():
+        if product_host(witness.get('url')) not in {'www.hepsiburada.com', 'www.trendyol.com', 'www.n11.com'}:
+            continue
+        try:
+            observed_at = datetime.fromisoformat(witness['observed_at'])
+            if not 0 <= (datetime.now(timezone.utc) - observed_at).total_seconds() <= 60:
+                continue
+        except (KeyError, TypeError, ValueError):
+            continue
+        proof = variant_selected_evidence(witness, profile['name'], specs)
+        if not proof or proof.get('gtin13') != result['gtin13']:
+            continue
+        return {'status': 'independent_radio_and_selected_commerce_verified', 'writes': False,
+                'source_url': url, 'witness_url': witness['url'], 'gtin13': result['gtin13'],
+                'sku': result['sku'], 'ram_gb': ram, 'storage_gb': storage, 'network_generation': '4g'}
+    return {'status': 'independent_selected_gtin_unavailable', 'writes': False}
 
 
 def catalog_offer_matches(offer, name, specs):

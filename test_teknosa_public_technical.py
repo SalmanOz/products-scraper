@@ -40,6 +40,66 @@ def observation():
 
 
 class PublicTechnicalTests(unittest.TestCase):
+    def test_exact_readonly_identity_preflight_keeps_selected_commerce_and_independent_radio_separate(self):
+        from types import SimpleNamespace
+        from sweep_priority_catalog import target_preflight
+
+        url = 'https://www.teknosa.com/samsung-galaxy-a16-6gb-128gb-gri-akilli-telefon-p-125079845'
+        witness_url = 'https://www.trendyol.com/samsung/galaxy-a16-128-gb-6-gb-ram-gri-p-879171111'
+        witness_html = Path('fixtures/trendyol-a16-6gb-selected-unknown-ram-property.html').read_text()
+        old_title = 'Samsung Galaxy S25 Ultra 5G 512GB Titanyum Gümüş Akıllı Telefon'
+        new_title = 'Samsung Galaxy A16 6 GB RAM 128 GB Gri Akıllı Telefon'
+        html = (initial_document().replace(old_title, new_title)
+                .replace(old_title.removeprefix('Samsung '), new_title.removeprefix('Samsung '))
+                .replace('8806097015154', '8806095832838')
+                .replace(URL, url).replace(URL.removeprefix('https://www.teknosa.com'),
+                                            url.removeprefix('https://www.teknosa.com')))
+        fields = json.loads(observation()['body'])
+        storage = next(field for field in fields[0]['features'] if field['name'] == 'Dahili Hafıza')
+        radio = next(field for field in fields[0]['features'] if field['name'] == '5G Desteği')
+        storage['featureValues'][0]['value'] = '128 GB'
+        product = {'id': 16, 'name': 'Samsung Galaxy A16 4G 6GB 128GB', 'slug': 'a16-4g-6gb-128gb',
+                   'attributes': {'ram_gb': 6, 'storage_gb': 128, 'Connectivity': {'5G': False}},
+                   'offer_targets': [{'source_url': witness_url}]}
+        client = SimpleNamespace(get_published_products=lambda: [product])
+
+        for features, body, expected, witness_read in [
+            ([storage], html, 'independent_radio_and_selected_commerce_verified', True),
+            ([storage, radio], html, 'selected_technical_classification_conflict', False),
+            ([storage], html.replace('8806095832838', '8806097015154'),
+             'independent_selected_gtin_unavailable', True),
+        ]:
+            with self.subTest(status=expected):
+                calls = []
+                class Transport:
+                    def read_document(self, target):
+                        calls.append(target)
+                        return (body if target == url else witness_html), 'document_read', 200
+
+                    def read_teknosa_classification(self, document_url, target):
+                        self.assert_source(document_url, target)
+                        return json.dumps([{**fields[0], 'features': features}]), 'document_read', 200
+
+                    def assert_source(self, document_url, target):
+                        if document_url != url or target != FEATURE_URL:
+                            raise AssertionError('Wrong selected classification URL')
+
+                    def resolved_url(self, target): return target
+                    def report(self): return {}
+
+                result = target_preflight(client=client, url=url, slug=product['slug'],
+                                          transport=Transport(), probe_teknosa_identity=True)
+                row, = result['rows']
+                self.assertIn('independent_radio_preflight', row, row['reader_reason'])
+                linked = row['independent_radio_preflight']
+                self.assertEqual(linked['status'], expected)
+                self.assertEqual(result['status'], 'completed' if expected.endswith('_verified') else 'rejected')
+                self.assertEqual(calls, [url, witness_url] if witness_read else [url])
+                self.assertFalse(result['writes'])
+                self.assertIsNone(result['public_parser_proof'])
+                self.assertIsNone(row['prepared_offer'])
+                self.assertNotIn('price', linked)
+
     def test_real_public_feature_response_completes_same_selected_sku_not_a_catalog_default(self):
         html, proof = initial_document(), observation()
         self.assertEqual(classification_url(URL, html), FEATURE_URL)

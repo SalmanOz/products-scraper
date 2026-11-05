@@ -956,7 +956,7 @@ def save_report(result):
     Path('priority-catalog-sweep.md').write_text('\n'.join(lines))
 
 
-def target_preflight(*, client, url, slug, transport=None):
+def target_preflight(*, client, url, slug, transport=None, probe_teknosa_identity=False):
     """Fresh, read-only parser proof against one current published catalog SKU.
 
     This accepts no product/spec/price payload and never calls a publisher.
@@ -968,6 +968,8 @@ def target_preflight(*, client, url, slug, transport=None):
     if (product_host(url) is None or not isinstance(slug, str)
             or not slug or len(slug) > 150):
         raise ValueError('invalid_existing_catalog_preflight_target')
+    if probe_teknosa_identity and (product_host(url) != 'www.teknosa.com' or urlparse(url).query):
+        raise ValueError('independent_identity_requires_canonical_teknosa_pdp')
     products = client.get_published_products()
     if (not products or len(products) > MAX_RECOVERY_CATALOG_PRODUCTS
             or len({p['id'] for p in products}) != len(products)
@@ -981,7 +983,8 @@ def target_preflight(*, client, url, slug, transport=None):
         raise ValueError('preflight_url_catalog_identity_conflict')
     transport = transport or PriorityRetailerTransport(maximum_per_host=2,
         n11_collector=getattr(client, 'n11_document_get', None))
-    row = inspect_target(transport, url, product)
+    row = (inspect_target(transport, url, product, probe_teknosa_identity=True)
+           if probe_teknosa_identity else inspect_target(transport, url, product))
     row['expected_specs'] = {k: specs.get(k) for k in ('ram_gb', 'storage_gb', 'network_generation')}
     offer = row.get('prepared_offer')
     public_proof = ({key: offer.get(key) for key in (
@@ -989,8 +992,10 @@ def target_preflight(*, client, url, slug, transport=None):
         'listing_id', 'item_number', 'gtin13', 'ram_gb', 'storage_gb', 'network_generation',
         'price', 'currency', 'condition', 'availability', 'observed_at', 'storage_evidence_source')}
         if isinstance(offer, dict) else None)
+    linked = row.get('independent_radio_preflight', {})
+    passed = (offer is not None or linked.get('status') == 'independent_radio_and_selected_commerce_verified')
     return {'purpose': 'readonly_existing_catalog_target_preflight', 'catalog_count': len(products),
-            'status': 'completed' if row.get('prepared_offer') is not None else 'rejected',
+            'status': 'completed' if passed else 'rejected',
             'publish': False, 'writes': False, 'accepted': 0, 'queued': 1, 'rows': [row],
             'public_parser_proof': public_proof,
             'models_without_priority_hints': [], 'sources': transport.report()}
@@ -1044,6 +1049,7 @@ def main():
     parser.add_argument('--hepsiburada-category-audit', action='store_true')
     parser.add_argument('--target-preflight', metavar='PUBLIC_PDP_URL')
     parser.add_argument('--target-slug', metavar='EXISTING_PUBLISHED_SLUG')
+    parser.add_argument('--teknosa-identity-preflight', action='store_true')
     parser.add_argument('--memory-variants', action='store_true',
                         help='Discover other capacities and independently prepare/publish existing-model variants')
     parser.add_argument('--manufacturer-radio', action='store_true',
@@ -1051,6 +1057,8 @@ def main():
     parser.add_argument('--memory-variant-preflight', action='store_true',
                         help='Read-only automatic capacity hints and selected technical-source diagnostic')
     args = parser.parse_args()
+    if args.teknosa_identity_preflight and args.target_preflight is None:
+        raise ValueError('Teknosa identity preflight requires an exact target URL and slug')
     if args.manufacturer_radio and (not args.memory_variants or any((args.memory_variant_preflight,
             args.n11_preflight, args.target_preflight, args.target_slug, args.hepsiburada_category_audit))):
         raise ValueError('manufacturer_radio_requires_memory_sweep')
@@ -1086,10 +1094,14 @@ def main():
         if args.publish or args.n11_preflight or args.coverage_first or args.hepsiburada_category_audit or args.memory_variants:
             raise ValueError('The selected target preflight is read-only and cannot run a sweep')
         result = target_preflight(client=OfferIngestionClient.from_env(),
-                                  url=args.target_preflight, slug=args.target_slug)
+                                  url=args.target_preflight, slug=args.target_slug,
+                                  probe_teknosa_identity=args.teknosa_identity_preflight)
         save_report(result)
         print(Path('priority-catalog-sweep.md').read_text())
         print('Selected parser evidence: ' + json.dumps(result['public_parser_proof'], ensure_ascii=False))
+        if args.teknosa_identity_preflight:
+            print('Independent identity preflight: ' + json.dumps(
+                result['rows'][0].get('independent_radio_preflight'), ensure_ascii=False))
         if result['status'] != 'completed':
             raise SystemExit('Selected target did not pass the full parser proof; no writes')
         return

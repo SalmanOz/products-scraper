@@ -61,8 +61,8 @@ def _unique_object(pairs):
     return result
 
 
-def response_fields(observation, main, title, cart):
-    """Independent tab fields; no catalog expectations or inferred capacities."""
+def classification_values(observation, main, cart):
+    """Read raw physical fields from the selected SKU's bound classification response."""
     if not isinstance(observation, dict):
         return None
     document_url, source_url = observation.get('document_url'), observation.get('source_url')
@@ -113,7 +113,13 @@ def response_fields(observation, main, title, cart):
                 or not isinstance(values[0], dict) or not isinstance(values[0].get('value'), str)):
             return None
         fields[key] = values[0]['value']
-    if set(fields) != set(FIELDS):
+    return fields
+
+
+def response_fields(observation, main, title, cart):
+    """Independent tab fields; no catalog expectations or inferred capacities."""
+    fields = classification_values(observation, main, cart)
+    if fields is None or set(fields) != set(FIELDS):
         return None
     ram = re.fullmatch(r'([1-9]\d?) GB', fields['Bellek Kapasitesi (RAM)'])
     storage = re.fullmatch(r'([1-9]\d{1,3}) GB', fields['Dahili Hafıza'])
