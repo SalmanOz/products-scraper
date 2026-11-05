@@ -16,6 +16,7 @@ import requests
 
 from tr_price_scraper import TRPriceScraper
 from update_prices import PriceUpdater
+from catalog_recovery_limits import MAX_RECOVERY_CATALOG_PRODUCTS
 
 CONTRACT = 'manufacturer-catalog-radio-v1'
 HOST = 'https://my.infinixmobility.com'
@@ -205,7 +206,7 @@ class CatalogRadioPublicationError(RuntimeError):
 def resolve_catalog_radios(client, *, publish=False, reader=None, checkpoint=None):
     reader = reader or PublicInfinixRadioReader()
     before = client.get_published_products()
-    if not before or len(before) > 200:
+    if not before or len(before) > MAX_RECOVERY_CATALOG_PRODUCTS:
         raise ValueError('invalid_or_oversized_catalog')
     before = deepcopy(before)
     report = {'contract': CONTRACT, 'purpose': 'automatic_missing_catalog_radio',

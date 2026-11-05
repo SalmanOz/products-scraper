@@ -21,6 +21,57 @@ class Transport:
 
 
 class TargetPreflightTests(unittest.TestCase):
+    def test_growing_catalog_is_never_sliced_at_the_old_200_product_limit(self):
+        from catalog_recovery_limits import MAX_RECOVERY_CATALOG_PRODUCTS
+        from types import SimpleNamespace
+        for count in (201, MAX_RECOVERY_CATALOG_PRODUCTS):
+            with self.subTest(catalog_count=count):
+                catalog = [{'id': i, 'slug': f'model-{i}', 'name': f'Catalog model {i}',
+                            'attributes': {}, 'offer_targets': []} for i in range(1, count + 1)]
+                before = deepcopy(catalog)
+                prices = {p['id']: (p['slug'], False) for p in catalog}
+                client = SimpleNamespace(get_published_products=lambda: catalog,
+                                         get_public_price_priority=lambda: prices)
+                with patch('sweep_priority_catalog.refresh_candidates') as writer:
+                    result = sweep(client=client, transport=Transport())
+                self.assertEqual(result['catalog_count'], count)
+                self.assertEqual(set(result['models_without_priority_hints']), {p['slug'] for p in catalog})
+                self.assertFalse(result['writes'])
+                writer.assert_not_called()
+                # All rows, including those beyond 200, remain in the real
+                # coverage denominator and incomplete readback fails closed.
+                self.assertEqual(coverage_readback(result, prices)['catalog'], count)
+                self.assertEqual(coverage_readback(result, prices)['minimum_ratio'], 0.8)
+                partial = coverage_readback(result, dict(list(prices.items())[:200]))
+                self.assertFalse(partial['passed'])
+                self.assertEqual(partial['reason'], 'public_catalog_readback_changed_or_incomplete')
+                if count == MAX_RECOVERY_CATALOG_PRODUCTS:
+                    first_200_priced = {p['id']: (p['slug'], p['id'] <= 200) for p in catalog}
+                    self.assertFalse(coverage_readback(result, first_200_priced)['passed'])
+                    self.assertEqual(coverage_readback(result, first_200_priced)['priced'], 200)
+                self.assertEqual(catalog, before)
+        catalog.append({'id': count + 1, 'slug': 'over-budget', 'name': 'Over budget'})
+        with self.assertRaisesRegex(ValueError, 'invalid_or_oversized_catalog'):
+            sweep(client=client, transport=Transport())
+
+    def test_readonly_target_beyond_200_keeps_complete_proof_and_the_full_catalog_count(self):
+        from test_hepsiburada_catalog_source import document, NAME, SPECS, TARGET
+        from types import SimpleNamespace
+        catalog = [{'id': i, 'slug': f'model-{i}', 'name': f'Catalog model {i}',
+                    'attributes': {}} for i in range(1, 201)]
+        catalog.append({'id': 201, 'slug': 'a36-test', 'name': NAME, 'attributes': deepcopy(SPECS)})
+        client = SimpleNamespace(get_published_products=lambda: catalog)
+        calls = []
+        class Source(Transport):
+            def read_document(self, url):
+                calls.append(url)
+                return document(), 'document_read', 200
+        result = target_preflight(client=client, url=TARGET, slug='a36-test', transport=Source())
+        self.assertEqual((result['catalog_count'], result['status']), (201, 'completed'))
+        self.assertEqual(calls, [TARGET])
+        self.assertFalse(result['writes'])
+        self.assertEqual(result['public_parser_proof']['storage_gb'], 128)
+
     def test_unread_cooldown_targets_resume_once_after_other_sources_and_keep_one_final_row(self):
         from priority_retailer_transport import PriorityRetailerTransport
         from test_hepsiburada_catalog_source import document, TARGET

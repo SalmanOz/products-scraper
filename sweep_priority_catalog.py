@@ -11,6 +11,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 from audit_priority_retailers import inspect_target
+from catalog_recovery_limits import MAX_RECOVERY_CATALOG_PRODUCTS
 from offer_ingestion_client import IngestionClientError, OfferIngestionClient
 from priority_retailer_transport import HOSTS, PriorityRetailerTransport, product_host
 from publish_priority_candidates import CandidatePublicationError, CandidateObservationExpired, _matched_rows, refresh_candidates
@@ -125,7 +126,7 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
     if category_audit_only and (publish or discover_n11):
         raise ValueError('Category routing audits cannot publish or fetch product search results')
     products, prices = client.get_published_products(), client.get_public_price_priority()
-    if (not products or len(products) > 200 or len({p['id'] for p in products}) != len(products)
+    if (not products or len(products) > MAX_RECOVERY_CATALOG_PRODUCTS or len({p['id'] for p in products}) != len(products)
             or len({p['slug'] for p in products}) != len(products)):
         raise ValueError('invalid_or_oversized_catalog')
     collector = getattr(client, 'n11_document_get', None)
@@ -907,7 +908,7 @@ def target_preflight(*, client, url, slug, transport=None):
             or not slug or len(slug) > 150):
         raise ValueError('invalid_existing_catalog_preflight_target')
     products = client.get_published_products()
-    if (not products or len(products) > 200
+    if (not products or len(products) > MAX_RECOVERY_CATALOG_PRODUCTS
             or len({p['id'] for p in products}) != len(products)
             or len({p['slug'] for p in products}) != len(products)):
         raise ValueError('invalid_or_oversized_catalog')
@@ -1000,7 +1001,7 @@ def main():
         from daily_discovery import write_json_checkpoint
         client = OfferIngestionClient.from_env()
         products = client.get_published_products()
-        if not products or len(products) > 200:
+        if not products or len(products) > MAX_RECOVERY_CATALOG_PRODUCTS:
             raise ValueError('invalid_or_oversized_catalog')
         transport = PriorityRetailerTransport(maximum_per_host=48, n11_collector=client.n11_document_get)
         result = memory_target_preflight(products, transport)

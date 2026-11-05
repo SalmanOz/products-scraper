@@ -40,6 +40,27 @@ def change_field(fixture, section, label, value):
     fixture['response']['data']['spec_content'] = str(soup)
 
 
+class GrowingCatalogTests(unittest.TestCase):
+    def test_radio_pass_preserves_the_whole_growing_catalog_without_extra_source_budget(self):
+        from types import SimpleNamespace
+        from catalog_recovery_limits import MAX_RECOVERY_CATALOG_PRODUCTS
+        catalog = [{'id': i, 'slug': f'model-{i}', 'name': f'Catalog model {i}',
+                    'attributes': {'network_generation': '4g'}} for i in range(1, 202)]
+        before = deepcopy(catalog)
+        client = SimpleNamespace(get_published_products=lambda: catalog)
+        reader = SimpleNamespace(documents=0, blocked=False)
+        result = resolve_catalog_radios(client, publish=True, reader=reader)
+        self.assertEqual(result['catalog_count'], 201)
+        self.assertEqual((result['resolved'], result['manufacturer_documents']), (0, 0))
+        self.assertFalse(result['writes'])
+        self.assertEqual(catalog, before)
+        catalog.extend({'id': i, 'slug': f'model-{i}', 'name': f'Catalog model {i}',
+                        'attributes': {'network_generation': '4g'}}
+                       for i in range(202, MAX_RECOVERY_CATALOG_PRODUCTS + 2))
+        with self.assertRaisesRegex(ValueError, 'invalid_or_oversized_catalog'):
+            resolve_catalog_radios(client, publish=True, reader=reader)
+
+
 class HttpResponse:
     def __init__(self, url, body, status=200):
         self.url, self.status_code, self.closed = url, status, False
