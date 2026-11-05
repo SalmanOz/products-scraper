@@ -432,6 +432,7 @@ class TRPriceScraper:
         text = ' '.join(cls._identity_words(value))
         return bool(re.search(r'\bredmi note (?:11|12|13|14|15)\b|'
                               r'\bgalaxy a(?:07|14|15|16|17)\b|'
+                              r'\boppo a6 pro\b|'
                               r'\btecno spark 20 pro(?: [45]g)?$|\binfinix note 40(?: [45]g)?$', text))
 
     @staticmethod
@@ -817,7 +818,8 @@ class TRPriceScraper:
             observed_radio = observed_radio or selected['network_generation']
         # These catalog families have both radio variants. Missing radio in
         # the sale title cannot select the 5G profile merely from its CPU.
-        if re.search(r'\bredmi note (?:11|12|13|14|15)\b|\bgalaxy a(?:14|15|16|17)\b|\btecno spark slim\b', self._normalize_words(product_name)):
+        if re.search(r'\bredmi note (?:11|12|13|14|15)\b|\bgalaxy a(?:14|15|16|17)\b|'
+                     r'\btecno spark slim\b|\boppo a6 pro\b', self._normalize_words(product_name)):
             if radio not in {'4g', '5g'} or observed_radio != radio:
                 return False
         try:

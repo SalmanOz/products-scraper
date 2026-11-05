@@ -46,7 +46,8 @@ class SelectedSkuEvidenceTests(unittest.TestCase):
         from mediamarkt_marketplace_audit import catalog_variant_matches
         matcher = TRPriceScraper()
         for name, ram, storage in [('Samsung Galaxy A07', 4, 64),
-                                   ('Tecno Spark 20 Pro', 8, 256), ('Infinix Note 40', 8, 256)]:
+                                   ('Tecno Spark 20 Pro', 8, 256), ('Infinix Note 40', 8, 256),
+                                   ('Oppo A6 Pro', 8, 256)]:
             unknown = {'ram_gb': ram, 'storage_gb': storage}
             for radio in ['4g', '5g']:
                 offer = {'source_title': f'{name} {radio} RAM {ram} GB; ROM {storage} GB',
@@ -62,6 +63,18 @@ class SelectedSkuEvidenceTests(unittest.TestCase):
                 self.assertFalse(matcher.has_observed_offer_evidence(name, offer, other), name)
                 self.assertFalse(catalog_variant_matches(offer, name, other), name)
             self.assertNotIn('network_generation', unknown)
+
+    def test_oppo_a6_pro_missing_radio_needs_selected_proof_even_with_exact_memory(self):
+        matcher = TRPriceScraper()
+        name = 'Oppo A6 Pro 4g 8GB 256GB'
+        specs = {'ram_gb': 8, 'storage_gb': 256, 'network_generation': '4g'}
+        title = 'Oppo A6 Pro 8/256 GB Gül Ağacı Kırmızısı Akıllı Telefon'
+        offer = {'source_title': title, 'gtin13': '6932169383806',
+                 'url': 'https://www.teknosa.com/oppo-a6-pro-8256-gb-gul-agaci-kirmizisi-akilli-telefon-p-100000059453'}
+        self.assertFalse(matcher.has_observed_offer_evidence(name, offer, specs))
+        for radio, expected in [('4G', True), ('5G', False)]:
+            qualified = {**offer, 'source_title': title.replace('Pro ', f'Pro {radio} ')}
+            self.assertEqual(matcher.has_observed_offer_evidence(name, qualified, specs), expected)
 
     def test_plus_capacity_requires_actual_selected_sku_and_preserves_raw_title(self):
         offer, specs = a16_offer()
