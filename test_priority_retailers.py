@@ -16,6 +16,56 @@ URLS = (
 
 
 class PriorityRetailerTests(unittest.TestCase):
+    def test_isolated_browser_timeouts_recover_after_a_healthy_other_sku_without_resetting_any_budget(self):
+        now, calls = [1000], []
+        first = URLS[0]
+        second = first.replace('1234', '1235')
+        healthy = first.replace('1234', '1236')
+        source = PriorityRetailerTransport(sleep=lambda _: None, clock=lambda: now[0], maximum_per_host=4)
+        def read(url, *args, **kwargs):
+            calls.append(url)
+            if url.endswith('robots.txt'): return b'User-agent: *\nAllow: /\n', 'ready', 200
+            if url == healthy: return b'<h1>Healthy selected phone PDP</h1>', 'ready', 200
+            return None, 'browser_timeout', 504
+        with patch.object(source, '_read', side_effect=read):
+            self.assertEqual(source.read_document(first)[1], 'browser_timeout')
+            self.assertEqual(source.read_document(healthy)[1], 'source_cooldown')
+            now[0] += 31
+            self.assertEqual(source.read_document(healthy)[1], 'document_read')
+            self.assertEqual(source.read_fresh_document(first)[1], 'same_sku_browser_timeout')
+            self.assertEqual(source.read_document(second)[1], 'browser_timeout')
+            self.assertEqual(source.read_fresh_document(healthy)[1], 'source_cooldown')
+            now[0] += 31
+            self.assertEqual(source.read_fresh_document(healthy)[1], 'document_read')
+            self.assertEqual(source.read_fresh_document(second)[1], 'same_sku_browser_timeout')
+            self.assertEqual(source.read_document(first + '2')[1], 'pdp_budget_exhausted')
+        self.assertEqual(calls, ['https://www.hepsiburada.com/robots.txt', first, healthy, second, healthy])
+        report = source.report()['Hepsiburada']
+        self.assertFalse(report['blocked'])
+        self.assertEqual((report['browser_timeout_recoveries'], report['browser_timeout_sku_count']), (2, 2))
+        self.assertEqual((report['document_requests'], report['pdp_requests']), (4, 4))
+
+    def test_healthy_recovery_never_resets_a_denial_or_a_challenge(self):
+        for failure, status, body in [('http_403', 403, None), ('http_429', 429, None),
+                                     ('ready', 200, b'<title>Just a moment...</title>')]:
+            now, calls = [1000], []
+            source = PriorityRetailerTransport(sleep=lambda _: None, clock=lambda: now[0], maximum_per_host=10)
+            def read(url, *args, **kwargs):
+                calls.append(url)
+                if url.endswith('robots.txt'): return b'User-agent: *\nAllow: /\n', 'ready', 200
+                if url == URLS[0]: return None, 'browser_timeout', 504
+                if url == URLS[0] + '1': return b'<h1>Healthy phone</h1>', 'ready', 200
+                return body, failure, status
+            with patch.object(source, '_read', side_effect=read):
+                source.read_document(URLS[0]); now[0] += 31
+                self.assertEqual(source.read_document(URLS[0] + '1')[1], 'document_read')
+                self.assertEqual(source.read_document(URLS[0] + '2')[1], 'challenge_page' if status == 200 else failure)
+                before = len(calls)
+                self.assertEqual(source.read_fresh_document(URLS[0] + '1')[1], 'source_circuit_open')
+                self.assertEqual(len(calls), before)
+            self.assertTrue(source.report()['Hepsiburada']['blocked'])
+            self.assertEqual(source.report()['Hepsiburada']['browser_timeout_recoveries'], 1)
+
     def test_phone_category_search_reuses_robots_denial_and_the_shared_document_cap(self):
         from priority_retailer_transport import N11_PHONE_SEARCH_PATH
         calls = []

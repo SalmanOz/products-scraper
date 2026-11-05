@@ -314,6 +314,7 @@ class PriorityRetailerTransport:
                     if status in (500, 502, 503, 504) and state['transient_retries']:
                         state['transient_retries'] -= 1
                         state['retry_after'] = self._clock() + 30
+                        state['hb_browser_timeout_pending'] = host == 'www.hepsiburada.com' and reason == 'browser_timeout' and status == 504
                     elif status in (403, 429, 500, 502, 503, 504):
                         state['blocked'] = True
                     return None, reason, status
@@ -321,6 +322,15 @@ class PriorityRetailerTransport:
                 if challenge_document(html):
                     state['blocked'] = True
                     return None, 'challenge_page', status
+                if (host == 'www.hepsiburada.com' and not category and timeout_sku
+                        and state.get('hb_browser_timeout_pending') and re.search(r'<h1\b', html, re.I)):
+                    # A different, normally rendered SKU after the cooldown
+                    # proves recovery from an isolated browser timeout. Keep
+                    # timed-out SKU aliases excluded for the whole run. This
+                    # never resets a denial/challenge, generic 5xx or budget.
+                    state['transient_retries'] = 1
+                    state['hb_browser_timeout_pending'] = False
+                    state['browser_timeout_recoveries'] = state.get('browser_timeout_recoveries', 0) + 1
                 return html, 'document_read', status
             except (requests.RequestException, CompatibleRequestException, ValueError, TypeError, UnicodeError) as error:
                 # Record only a class name, never exception text containing
@@ -332,7 +342,7 @@ class PriorityRetailerTransport:
     def report(self):
         return {HOSTS[host]: {**{key: value for key, value in state.items()
                               if key in {'robots', 'browser_requests', 'blocked', 'search_requests', 'category_requests',
-                                         'transport_error_type', 'classification_requests'}},
+                                         'transport_error_type', 'classification_requests', 'browser_timeout_recoveries'}},
                               **({'browser_timeout_sku_count': len(state['browser_timeout_skus']),
                                   'browser_timeout_sku_skips': state['browser_timeout_sku_skips']}
                                  if state['browser_timeout_skus'] else {}),
