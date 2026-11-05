@@ -210,7 +210,10 @@ def inspect_hepsiburada_memory_variant(html, url, name, catalog_specs):
             'observed_specs': actual, 'verification': reason, 'offer': offer}
 
 
-def inspect_trendyol_memory_variant(html, url, name, catalog_specs):
+def inspect_trendyol_memory_variant(html, url, name, catalog_specs, diagnostic=None):
+    if isinstance(diagnostic, dict):
+        diagnostic.update(status='selected_memory_source_incomplete', writes=False,
+                          scope='diagnostic_only_not_offer_evidence')
     identity = _product_id(url)
     if (identity is None or not isinstance(html, str) or len(html.encode()) > 5 * 1024 * 1024
             or not isinstance(catalog_specs, dict)):
@@ -236,8 +239,13 @@ def inspect_trendyol_memory_variant(html, url, name, catalog_specs):
     if len(states) != 1 or not isinstance(states[0], dict):
         return None
     product = states[0].get('product')
-    if (not isinstance(product, dict) or str(product.get('id')) != identity
-            or product.get('inStock') is not True or not isinstance(product.get('attributes'), list)):
+    if not isinstance(product, dict) or str(product.get('id')) != identity:
+        return None
+    if product.get('inStock') is not True:
+        if isinstance(diagnostic, dict):
+            diagnostic['status'] = 'selected_product_unavailable'
+        return None
+    if not isinstance(product.get('attributes'), list):
         return None
     fields = {}
     for row in product['attributes']:
@@ -270,14 +278,30 @@ def inspect_trendyol_memory_variant(html, url, name, catalog_specs):
             or not 32 <= actual['storage_gb'] <= 4096):
         return None
     actual['network_generation'] = '5g' if network == '5g' else '4g'
-    if actual['network_generation'] != radio or tuple(actual[k] for k in ('ram_gb', 'storage_gb')) == expected:
+    if isinstance(diagnostic, dict):
+        diagnostic['observed_specs'] = dict(actual)
+    if actual['network_generation'] != radio:
+        if isinstance(diagnostic, dict):
+            diagnostic['status'] = 'selected_radio_mismatch'
+        return None
+    if tuple(actual[k] for k in ('ram_gb', 'storage_gb')) == expected:
+        if isinstance(diagnostic, dict):
+            diagnostic['status'] = 'same_catalog_memory'
         return None
     # Re-run the complete ordinary selected-listing proof against ONLY the
     # capacities actually observed above. No expected catalog amount is copied
     # into the listing, and the original raw title remains untouched.
     offer, reason = parse_catalog_listing(html, url, model, actual)
     if offer is None or not catalog_offer_matches(offer, model, actual):
+        if isinstance(diagnostic, dict):
+            diagnostic['status'] = 'selected_variant_parse_rejected'
+            # Only this parser's bounded internal reason; never selected state,
+            # unrelated attributes, seller data or a response body.
+            if isinstance(reason, str) and re.fullmatch(r'[a-z_]{1,80}', reason):
+                diagnostic['reader_reason'] = reason
         return None
+    if isinstance(diagnostic, dict):
+        diagnostic['status'] = 'selected_variant_verified'
     return {'scope': 'other_memory_variant_preview_only', 'writes': False,
             'catalog_memory': dict(zip(('ram_gb', 'storage_gb'), expected)),
             'observed_specs': actual, 'verification': reason, 'offer': offer}

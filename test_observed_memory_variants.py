@@ -21,6 +21,40 @@ def alternate_document(changes=None):
 
 
 class ObservedMemoryVariantTests(unittest.TestCase):
+    def test_trendyol_other_memory_diagnostics_explain_stock_radio_and_later_proof_rejections(self):
+        parent = {'ram_gb': 8, 'storage_gb': 128, 'network_generation': '5g'}
+        original = deepcopy(parent)
+        product = {'name': NAME, 'slug': 'samsung-galaxy-a54-5g', 'attributes': parent}
+        for changes, expected_status, expected_reason in [
+            ({('state', 'product', 'inStock'): False}, 'selected_product_unavailable', None),
+            ({('state', 'product', 'attributes', 2, 'value', 'name'): '4.5G'}, 'selected_radio_mismatch', None),
+            ({('schema', 'offers', 'price'): '1.00'}, 'selected_variant_parse_rejected',
+             'schema_selected_offer_mismatch'),
+        ]:
+            with self.subTest(stage=expected_status):
+                html = alternate_document({**changes, ('state', 'unrelated_private_account'): 'must-not-appear'})
+                diagnostic = {}
+                self.assertIsNone(inspect_trendyol_memory_variant(html, ALT_URL, NAME, parent, diagnostic))
+                self.assertEqual(diagnostic['status'], expected_status)
+                self.assertFalse(diagnostic['writes'])
+                self.assertEqual(diagnostic['scope'], 'diagnostic_only_not_offer_evidence')
+                self.assertEqual(diagnostic.get('reader_reason'), expected_reason)
+                self.assertNotIn('must-not-appear', str(diagnostic))
+                if expected_status != 'selected_radio_mismatch':
+                    class Source:
+                        def read_document(self, url): return html, 'document_read', 200
+                        def resolved_url(self, url): return url
+                    row = inspect_target(Source(), ALT_URL, product)
+                    self.assertIsNone(row['prepared_offer'])
+                    self.assertNotIn('other_memory_variant', row)
+                    self.assertEqual(row['other_memory_variant_diagnostic'], diagnostic)
+        diagnostic = {}
+        preview = inspect_trendyol_memory_variant(alternate_document(), ALT_URL, NAME, parent, diagnostic)
+        self.assertEqual(diagnostic['status'], 'selected_variant_verified')
+        self.assertEqual(diagnostic['observed_specs'], {**parent, 'storage_gb': 256})
+        self.assertFalse(preview['writes'])
+        self.assertEqual(parent, original)
+
     def test_native_unknown_ram_field_discovers_explicit_other_physical_ram_without_changing_parent(self):
         from pathlib import Path
         html = Path('fixtures/trendyol-a16-6gb-selected-unknown-ram-property.html').read_text()

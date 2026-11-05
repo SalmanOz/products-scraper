@@ -183,11 +183,14 @@ def inspect_target(transport, url, product):
             offer, why = parse_catalog_listing(html, final_url, product['name'], specs)
             row['resolved_url'] = final_url
             row.update(reader_reason=why, prepared_offer=offer)
-            if offer is None and why == 'selected_memory_mismatch':
+            if offer is None and why in {'selected_memory_mismatch', 'selected_product_mismatch'}:
                 from observed_memory_variants import inspect_trendyol_memory_variant
-                other = inspect_trendyol_memory_variant(html, final_url, product['name'], specs)
+                diagnostic = {}
+                other = inspect_trendyol_memory_variant(html, final_url, product['name'], specs, diagnostic)
                 if other is not None:
                     row['other_memory_variant'] = other
+                else:
+                    row['other_memory_variant_diagnostic'] = diagnostic
     return row
 
 
