@@ -104,6 +104,67 @@ def discover_catalog_memory_targets(html, product, *, excluded_urls=()):
     return [card for _, card in memory_variant_destinations(cards, [product])][:2]
 
 
+def _selected_sku_destination(soup, state, canonical, observed_url):
+    """An obsolete shop selector may return a different native selected shop.
+
+    Its quote never belongs to the requested shop. Only the source-declared
+    SKU URL can become a routing hint for a separate, fully verified reread.
+    """
+    product, meta = state.get('product'), state.get('productMeta')
+    if not isinstance(product, dict) or not isinstance(meta, dict):
+        return None
+    links = soup.select('.sidebarSellerArea-top-name[href]')
+    seller = product.get('seller')
+    if len(links) != 1 or not isinstance(seller, dict):
+        return None
+    name, shop = seller.get('nickName'), links[0]['href'].removeprefix('/magaza/')
+    requested = n11_product_selectors(observed_url)
+    if (not isinstance(name, str) or not 1 <= len(name) <= 100
+            or re.search(r'[\x00-\x1f\x7f]', name)
+            or links[0]['href'] != '/magaza/' + shop
+            or links[0].get('title') != name or links[0].get_text(' ', strip=True) != name
+            or not requested or not requested.get('magaza') or requested['magaza'] == shop
+            or str(meta.get('sellerId')) != str(seller.get('id'))):
+        return None
+    raw = product.get('skuUrl')
+    if not isinstance(raw, str) or not raw.startswith(('/urun/', 'https://www.n11.com/urun/')):
+        return None
+    destination = urljoin('https://www.n11.com/', raw)
+    selectors = n11_product_selectors(destination)
+    if (selectors is None or selectors.get('magaza') != shop
+            or canonical_product_url(destination) != canonical or destination == observed_url):
+        return None
+    try:
+        skus = json.loads(state['skus']) if isinstance(state.get('skus'), str) else state.get('skus')
+    except (ValueError, TypeError):
+        return None
+    selected = [s for s in skus if isinstance(s, dict) and s.get('productId') == product.get('id')
+                and str(s.get('id')) == str(product.get('defaultSkuId'))] if isinstance(skus, list) else []
+    if len(selected) != 1 or not isinstance(selected[0].get('skuAttributes'), list):
+        return None
+    sku, values = selected[0], {}
+    for attribute in sku['skuAttributes']:
+        definition = attribute.get('skuDefinition') if isinstance(attribute, dict) else None
+        if (not isinstance(definition, dict) or not isinstance(definition.get('name'), str)
+                or definition['name'] in values):
+            return None
+        values[definition.get('name')] = attribute.get('name')
+    heading = soup.select('.pdpMainInfo h1.title')
+    if (len(heading) != 1 or heading[0].get_text(' ', strip=True) != product.get('title')
+            or str(meta.get('productId')) != str(product.get('id'))
+            or str(meta.get('skuId')) != str(sku.get('id')) or sku.get('storeName') != name
+            or not isinstance(values.get('Renk'), str) or storage_gb(values.get('Dahili Hafıza')) is None):
+        return None
+    expected = {'magaza': shop,
+                'renk': TRPriceScraper._normalize_words(values['Renk']).replace(' ', '-'),
+                'dahili-hafiza': values['Dahili Hafıza'].lower().replace(' ', '-')}
+    if any(expected.get(key) != value for key, value in selectors.items()):
+        return None
+    return {'source_url': destination, 'source_document_url': observed_url,
+            'seller_name': name, 'seller_slug': shop,
+            'discovery_scope': 'public_selected_sku_selector'}
+
+
 def discover_product_sellers(html, observed_url, maximum=3):
     """Actual public same-product shop links only; never copy a card price."""
     canonical = canonical_product_url(observed_url)
@@ -131,7 +192,11 @@ def discover_product_sellers(html, observed_url, maximum=3):
         return []
     selected = soup.select('.sidebarSellerArea-top-name[href]')
     current = selected[0]['href'].removeprefix('/magaza/') if len(selected) == 1 else None
-    rows, seen = [], set()
+    recovered = _selected_sku_destination(soup, states[0], canonical, observed_url)
+    rows = [recovered] if recovered is not None else []
+    seen = {recovered['source_url']} if recovered is not None else set()
+    if len(rows) >= maximum:
+        return rows
     for anchor in soup.select('.unifiedProduct a.titleAndPointWrapper[href]'):
         labels = anchor.select('.title .name')
         url = urljoin('https://www.n11.com/', anchor['href'])

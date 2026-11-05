@@ -337,7 +337,7 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                 destination = candidate.get('source_url') if isinstance(candidate, dict) else None
                 key = ('n11', product['slug'])
                 if (seller_counts[key] >= 3 or product_host(destination) != 'www.n11.com'
-                        or candidate.get('discovery_scope') != 'public_other_seller_selector'
+                        or candidate.get('discovery_scope') not in ('public_other_seller_selector', 'public_selected_sku_selector')
                         or candidate.get('source_document_url') != row.get('resolved_url', row.get('observed_url'))
                         or destination in refresh_urls or observed_url(destination) in inventory_urls
                         or (product['slug'], destination) in processed):

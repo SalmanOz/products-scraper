@@ -27,6 +27,66 @@ def document(change=None):
 
 
 class N11CatalogTests(unittest.TestCase):
+    def test_native_selected_sku_url_recovers_stale_shop_only_through_a_separate_fresh_read(self):
+        from sweep_priority_catalog import sweep
+        stale = Path('fixtures/n11-stale-shop-native-selected-sku-public.html').read_text()
+        fresh = Path('fixtures/n11-selected-iphone17promax-2tb-public.html').read_text()
+        base = 'https://www.n11.com/urun/apple-iphone-17-pro-max-2-tb-apple-turkiye-garantili-100819983'
+        old = base + '?magaza=cephaneteknoloji&renk=gumus&dahili-hafiza=2-tb'
+        actual = base + '?magaza=erateknoloji&renk=gumus'
+        specs = {'ram_gb': 12, 'storage_gb': 2048, 'network_generation': '5g'}
+        offer, reason = parse_catalog_listing(stale, old, 'Apple iPhone 17 Pro Max', specs)
+        self.assertIsNone(offer)
+        self.assertEqual(reason, 'selected_query_seller_mismatch')
+        hints = discover_product_sellers(stale, old)
+        self.assertEqual(hints, [{'source_url': actual, 'source_document_url': old,
+            'seller_name': 'ERATEKNOLOJİ', 'seller_slug': 'erateknoloji',
+            'discovery_scope': 'public_selected_sku_selector'}])
+        self.assertNotIn('price', str(hints))
+        self.assertEqual(discover_product_sellers(stale, actual), [])
+        class Client:
+            def get_published_products(self):
+                return [{'id': 1, 'name': 'Apple iPhone 17 Pro Max', 'slug': 'apple-iphone-17-pro-max',
+                         'attributes': specs, 'offer_targets': [{'source_url': old}]}]
+            def get_public_price_priority(self): return {1: ('apple-iphone-17-pro-max', False)}
+        class Transport:
+            def __init__(self): self.calls = []
+            def configure_catalog_budget(self, count): pass
+            def read_document(self, url):
+                self.calls.append(url)
+                assert url in (old, actual)
+                return (stale if url == old else fresh), 'document_read', 200
+            def resolved_url(self, url): return url
+            def report(self): return {}
+        transport = Transport()
+        result = sweep(client=Client(), transport=transport)
+        self.assertEqual(transport.calls, [old, actual])
+        self.assertEqual(result['queued'], 2)
+        self.assertFalse(result['writes'])
+        self.assertIsNone(result['rows'][0]['prepared_offer'])
+        self.assertEqual(result['rows'][1]['prepared_offer']['merchant'], 'ERATEKNOLOJİ')
+        self.assertEqual(result['rows'][1]['prepared_offer']['url'], actual)
+        # Neither an inferred URL nor different group, seller, SKU or color
+        # may route a request, even though these hints never authorize prices.
+        def changed(mutator):
+            soup = BeautifulSoup(stale, 'html.parser')
+            node = next(n for n in soup.select('script') if n.get_text().startswith('window.model = '))
+            state = json.loads(node.get_text()[len('window.model = '):].rstrip(';'))
+            mutator(state)
+            node.string = 'window.model = ' + json.dumps(state, ensure_ascii=False) + ';'
+            return str(soup)
+        for mutate in [
+            lambda s: s['product'].pop('skuUrl'),
+            lambda s: s['product'].__setitem__('skuUrl', 'https://evil.example/urun/phone-100819983'),
+            lambda s: s['product'].__setitem__('skuUrl', actual.replace('100819983', '100819984')),
+            lambda s: s['product'].__setitem__('skuUrl', actual.replace('erateknoloji', 'other')),
+            lambda s: s['product'].__setitem__('skuUrl', actual.replace('gumus', 'gri')),
+            lambda s: s['product'].__setitem__('skuUrl', actual + '&token=private'),
+            lambda s: s['productMeta'].__setitem__('skuId', '12345'),
+            lambda s: s['skus'].append(deepcopy(s['skus'][0])),
+        ]:
+            self.assertEqual(discover_product_sellers(changed(mutate), old), [])
+
     def test_actual_selected_two_tb_source_keeps_seller_sku_cash_and_parent_memory_boundaries(self):
         from observed_memory_variants import inspect_n11_memory_variant
         from selected_sku_evidence import selected_sku_evidence
