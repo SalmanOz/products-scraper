@@ -509,17 +509,21 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                     next_category_url = category_url
                 else:
                     discovery.setdefault('incomplete_pages', []).append(category_url)
-                    next_category_url = pending_branches.pop(0) if pending_branches else None
+                    # A stop must not consume a branch we never requested.
+                    # Remove it only when continuing or scheduling that read.
+                    next_category_url = pending_branches[0] if pending_branches else None
                 if (not source_blocked and next_category_url and reason in {
                         'browser_changed_url', 'unexpected_final_url', 'http_404', 'http_410', 'already_read'}):
                     # An obsolete/duplicate observed branch does not make the
                     # other queued categories unavailable. Do not retry it or
                     # accept its changed URL; visit the next observed branch.
-                    category_url = next_category_url
+                    category_url = pending_branches.pop(0)
                     continue
                 if (resume is None and transient and not source_blocked and next_category_url
                         and len(discovery['pages']) < module.MAX_CATEGORY_PAGES
                         and callable(getattr(module, 'discovery_links', None))):
+                    if reason != 'source_cooldown':
+                        pending_branches.pop(0)
                     deferred_categories.append((retailer, report_key, module, read_category,
                                                 (cards, next_category_url, category_seen, pending_branches)))
                     discovery['deferred_observed_pages'] = 1 + len(pending_branches)

@@ -115,6 +115,28 @@ class TrendyolCategoryFrontierTests(unittest.TestCase):
             self.assertEqual(state['pending'], [BRAND + '?pi=3'])
             self.assertIn(BRAND + '?pi=2', state['visited'])
 
+    def test_source_denial_preserves_every_unread_branch_without_attempting_or_retrying_it(self):
+        products = self.products
+        class Client:
+            def get_published_products(self): return deepcopy(products)
+            def get_public_price_priority(self): return {215: ('xiaomi-13t', False)}
+        class Transport:
+            def __init__(self): self.blocked, self.calls = False, []
+            def report(self): return {'Trendyol': {'blocked': self.blocked}}
+            def read_trendyol_category(self, url):
+                self.calls.append(url); self.blocked = True
+                return None, 'http_403', 403
+        with TemporaryDirectory() as folder:
+            path = Path(folder) / 'trendyol.json'
+            payload = self.payload(); payload['pending'].append(CATEGORY_URL + '?pi=18')
+            path.write_text(json.dumps(payload))
+            transport = Transport()
+            result = sweep(client=Client(), transport=transport, discover_trendyol=True, trendyol_frontier_path=path)
+            self.assertEqual(transport.calls, [CATEGORY_URL])
+            self.assertEqual(result['trendyol_category_discovery']['pending_observed_urls'], payload['pending'])
+            self.assertEqual(load_frontier(path, products)[0]['pending'], payload['pending'])
+            self.assertFalse(result['writes'])
+
     def test_price_and_score_changes_do_not_restart_the_route_cycle(self):
         with TemporaryDirectory() as folder:
             path = Path(folder) / 'trendyol.json'; path.write_text(json.dumps(self.payload()))
