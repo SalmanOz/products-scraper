@@ -17,7 +17,13 @@ from priority_retailer_transport import HOSTS, product_host
 from publish_priority_candidates import _exact_current, _matched_rows
 from tr_price_scraper import TRPriceScraper
 
-MAX_EARLY_COVERED_FAMILIES = 2
+MAX_EARLY_COVERED_FAMILIES = 6
+MAX_EARLY_COVERED_HINT_FAMILIES = 2
+
+
+def covered_preparation_limit():
+    # Leave at least half of the shared twelve attempts for missing families.
+    return min(MAX_EARLY_COVERED_FAMILIES, MAX_VARIANTS // 2)
 
 
 class FreshVariantTransport:
@@ -152,7 +158,8 @@ class IncrementalMemoryRecovery:
         self.report.update(observed_candidates=len(observed), attempted_candidates=len(self.attempted),
             early_covered_family_attempts=len(self.early_covered_families),
             early_covered_hint_families=len(self.early_covered_hint_families),
-            early_covered_family_limit=min(MAX_EARLY_COVERED_FAMILIES, max(0, MAX_VARIANTS - 1)),
+            early_covered_family_limit=covered_preparation_limit(),
+            early_covered_hint_family_limit=min(MAX_EARLY_COVERED_HINT_FAMILIES, max(0, MAX_VARIANTS - 1)),
             early_unpriced_family_attempts=len(self.early_families - self.early_covered_families),
             eligible_source_candidates=len(observed) - len(deferred),
             deferred_source_candidates=len(deferred), source_deferrals=deferred,
@@ -174,15 +181,16 @@ class IncrementalMemoryRecovery:
             and re.fullmatch(r'[a-z0-9_]{1,100}', reason) else type(error).__name__)
 
     def _covered_early_allowed(self, family):
-        limit = min(MAX_EARLY_COVERED_FAMILIES, max(0, MAX_VARIANTS - 1))
-        reserved = self.early_covered_families | self.early_covered_hint_families
-        return family not in self.early_families and (family in reserved or len(reserved) < limit)
+        # An unverified category URL cannot consume a selected-offer proof
+        # attempt. Both phases still share the same overall/source budgets.
+        return family not in self.early_families and len(self.early_covered_families) < covered_preparation_limit()
 
     def admit_early_memory_hint(self, parent, products, prices):
         """Reserve a bounded category-to-PDP read, never price/SKU evidence.
 
-        Share the two covered-family slots with actual early preparation, so
-        failed public hints cannot read every priced model before missing ones.
+        At most two covered families may spend speculative category-to-PDP
+        reads. Existing proved observations get a separate preparation limit;
+        failed hints cannot reserve those verification attempts indefinitely.
         """
         if self.failed or len(self.attempted) >= MAX_VARIANTS:
             return False
@@ -196,7 +204,10 @@ class IncrementalMemoryRecovery:
         if not model or radio not in ('4g', '5g'):
             return False
         family = family_key(model), radio
-        if not self._covered_early_allowed(family):
+        reserved = self.early_covered_families | self.early_covered_hint_families
+        limit = min(MAX_EARLY_COVERED_HINT_FAMILIES, max(0, MAX_VARIANTS - 1))
+        if (family in self.early_families or not self._covered_early_allowed(family)
+                or family not in reserved and len(reserved) >= limit):
             return False
         self.early_covered_hint_families.add(family)
         return True
@@ -206,9 +217,10 @@ class IncrementalMemoryRecovery:
             return
         try:
             # Other capacities of a covered model can disappear behind a
-            # source circuit by the final pass. Admit at most two known-priced
-            # families early, reserving the other ten shared slots for missing
-            # families until discovery finishes. Unknown price hints wait.
+            # source circuit by the final pass. Give already selected/proved
+            # observations up to half of the shared allowance before that
+            # source disappears; reserve the other half for missing families.
+            # Unproved category hints retain their smaller independent cap.
             priorities = memory_parent_priority(products, prices)['parent_priorities']
             level = priorities.get(row['slug'], 2)
             if level not in (0, 1):

@@ -384,7 +384,7 @@ class IncrementalMemoryRecoveryTests(unittest.TestCase):
             self.assertEqual(technical.call_count, 1)
         self.assertEqual(recovery.report['early_covered_family_attempts'], 0)
 
-    def test_category_hints_and_already_observed_preparations_share_the_same_covered_family_allowance(self):
+    def test_failed_category_reservation_cannot_block_already_selected_live_proof(self):
         client = GrowingClient()
         parents, rows = [], []
         for number in (36, 37, 38):
@@ -406,11 +406,52 @@ class IncrementalMemoryRecoveryTests(unittest.TestCase):
             self.assertFalse(recovery.admit_early_memory_hint(parents[2], parents, prices))
             recovery.observe(result, rows[1], parents, prices)
             recovery.observe(result, rows[2], parents, prices)
-            self.assertEqual([call.args[0]['id'] for call in technical.call_args_list], [36, 37])
+            self.assertEqual([call.args[0]['id'] for call in technical.call_args_list], [36, 37, 38])
             recovery.finish(result, parents, prices)
             self.assertEqual([call.args[0]['id'] for call in technical.call_args_list], [36, 37, 38])
-        self.assertEqual(recovery.report['early_covered_family_attempts'], 2)
+        self.assertEqual(recovery.report['early_covered_family_attempts'], 3)
         self.assertFalse(recovery.failed, recovery.report)
+
+    def test_proved_families_use_only_half_the_shared_allowance_before_source_closure(self):
+        client = GrowingClient()
+        parents, rows = [], []
+        for number in range(36, 44):
+            parent = deepcopy(client.product)
+            parent.update(id=number, slug=f'samsung-galaxy-a{number}-5g', name=NAME.replace('A36', f'A{number}'))
+            url = TARGET.replace('a36', f'a{number}')
+            body = document().replace('A36', f'A{number}').replace('a36', f'a{number}')
+            source = SimpleNamespace(read_document=lambda url, html=body: (html, 'document_read', 200),
+                                     resolved_url=lambda url: url)
+            parents.append(parent)
+            rows.append(inspect_target(source, url, parent))
+        prices = {p['id']: (p['slug'], p['id'] != 43) for p in parents}
+        state = {'Hepsiburada': {'blocked': False}}
+        recovery = self.recovery(client, SimpleNamespace(report=lambda: deepcopy(state)), publish=False)
+        recovery.start(parents, prices)
+        # Two routing-only reservations neither authorize offers nor consume
+        # the six selected-proof slots when their PDP never proves a variant.
+        self.assertTrue(recovery.admit_early_memory_hint(parents[0], parents, prices))
+        self.assertTrue(recovery.admit_early_memory_hint(parents[1], parents, prices))
+        self.assertFalse(recovery.admit_early_memory_hint(parents[2], parents, prices))
+        result = {'status': 'completed', 'catalog_count': len(parents), 'writes': False, 'rows': []}
+        with patch('automatic_memory_variants.technical_records', side_effect=ValueError('fixture_unavailable')) as technical:
+            for row in rows:
+                result['rows'].append(row)
+                recovery.observe(result, row, parents, prices)
+            # Six covered families then the later missing family; the seventh
+            # covered family cannot take the missing family's reserved turn.
+            self.assertEqual([call.args[0]['id'] for call in technical.call_args_list], [36, 37, 38, 39, 40, 41, 43])
+            self.assertEqual(recovery.report['early_covered_family_limit'], 6)
+            self.assertEqual(recovery.report['early_covered_hint_family_limit'], 2)
+            state['Hepsiburada']['blocked'] = True
+            recovery.finish(result, parents, prices)
+            self.assertEqual(technical.call_count, 7)
+        self.assertFalse(recovery.failed, recovery.report)
+        self.assertEqual(recovery.report['early_covered_family_attempts'], 6)
+        self.assertEqual(recovery.report['early_unpriced_family_attempts'], 1)
+        self.assertEqual(recovery.report['deferred_source_candidates'], 1)
+        self.assertEqual(recovery.report['attempt_limit'], 12)
+        self.assertFalse(result['writes'])
 
     def test_global_candidate_allowance_is_shared_between_early_and_final_preparation(self):
         client = GrowingClient()
