@@ -14,7 +14,7 @@ from automatic_memory_variants import (TechnicalVariantReader, PublicBrowserTech
     technical_model_matches, CONTRACT)
 from observed_memory_variants import inspect_trendyol_memory_variant
 from test_observed_memory_variants import alternate_document, ALT_URL
-from test_trendyol_catalog_source import NAME, SPECS
+from test_trendyol_catalog_source import NAME, SPECS, URL
 
 TECH_URL = 'https://www.kimovil.com/en/where-to-buy-samsung-galaxy-a54-5g'
 ALT_TECH_URL = TECH_URL + 'global-8gb-256gb'
@@ -304,10 +304,52 @@ class AutomaticMemoryVariantTests(unittest.TestCase):
     def test_provider_version_labels_are_only_routing_hints_and_foreign_or_generated_targets_are_not_used(self):
         slug = ALT_TECH_URL.rsplit('where-to-buy-', 1)[1]
         self.assertEqual(autocomplete_technical_variants({'vers': f'Global · 8GB · 256GB={slug}'}),
-            [{'source_url': ALT_TECH_URL, 'ram_gb': 8, 'storage_gb': 256}])
+            [{'source_url': ALT_TECH_URL, 'ram_gb': 8, 'storage_gb': 256, 'market': 'Global'}])
         for value in [f'8GB · 256GB=https://evil.test/{slug}', f'8GB · 256GB={slug}?token=private',
                       '8GB · 256GB=', f'8GB · 12GB · 256GB={slug}', f'256GB={slug}', 'x' * 32769]:
             self.assertEqual(autocomplete_technical_variants({'vers': value}), [])
+
+    def test_pro_plus_symbol_fallback_uses_the_provider_market_of_the_verified_root(self):
+        from urllib.parse import parse_qs, urlparse
+        from bs4 import BeautifulSoup
+
+        slug = 'xiaomi-redmi-note-13-pro-plus'
+        name = 'Xiaomi Redmi Note 13 Pro+'
+        root = 'https://www.kimovil.com/en/where-to-buy-' + slug
+        target = root + '-global-12gb-512gb'
+        china = root + '-12gb-512gb-cn'
+        target_document = BeautifulSoup(tech_document(root, ram=12, storage=512, name=name), 'html.parser')
+        meta = target_document.select_one('meta[name="devicecompare"]')
+        meta['content'] = json.dumps({**json.loads(meta['content']), 'slug': slug + '-global-12gb-512gb'})
+        calls = []
+
+        class Reader:
+            def read(self, url):
+                if '_json/autocomplete' not in url:
+                    calls.append(url)
+                    return {root: tech_document(root, name=name), target: str(target_document)}[url]
+                query = parse_qs(urlparse(url).query)['name'][0]
+                calls.append(query)
+                if query.endswith('Pro Plus'):
+                    return json.dumps({'results': []})
+                return json.dumps({'results': [
+                    {'full_name': 'Xiaomi Redmi Note 13 Pro', 'url': slug.removesuffix('-plus')},
+                    {'full_name': name, 'url': slug, 'vers': '#'.join((
+                        f'China · 12GB · 512GB={slug}-12gb-512gb-cn',
+                        f'Global · 8GB · 256GB={slug}',
+                        f'Global · 12GB · 512GB={slug}-global-12gb-512gb',
+                        f'India · 12GB · 512GB={slug}-12gb-512gb-in'))},
+                ]})
+
+        parent = {'name': 'Xiaomi Redmi Note 13 Pro Plus', 'slug': slug, 'attributes': {
+            'ram_gb': 8, 'storage_gb': 256, 'Connectivity': {'5G': True}}}
+        specs = {'ram_gb': 12, 'storage_gb': 512, 'network_generation': '5g'}
+        reader = TechnicalVariantReader(Reader())
+        _, proof = reader.locate(parent, specs)
+        self.assertEqual(calls, [parent['name'], name, root, target])
+        self.assertEqual(proof['source_url'], target)
+        self.assertNotIn(china, calls)
+        self.assertEqual(reader.diagnostics[-1]['provider_default_market'], 'global')
 
     def test_an_existing_sibling_needs_unique_same_family_memory_radio_and_complete_selected_seller_proof(self):
         preview = self.candidate_result()['rows'][0]['other_memory_variant']
@@ -452,12 +494,38 @@ class AutomaticMemoryVariantTests(unittest.TestCase):
         self.assertEqual(report['observed_capacity_hints'], 1)
         self.assertEqual((report['publish'], report['writes'], report['accepted']), (False, False, 0))
 
+    def test_exact_memory_preflight_reads_only_one_current_family_and_never_publishes(self):
+        parent = {**PARENT, 'offer_targets': [{'source_url': URL}]}
+        transport = SimpleNamespace(report=lambda: {})
+        preview = self.candidate_result()['rows'][0]['other_memory_variant']
+        row = {'slug': parent['slug'], 'other_memory_variant': preview}
+        with patch('audit_priority_retailers.inspect_target', return_value=row) as inspect:
+            result = memory_target_preflight([parent], transport, target=(parent['slug'], ALT_URL))
+            inspect.assert_called_once_with(transport, ALT_URL, parent)
+        self.assertEqual(result['scope'], 'exact_public_pdp_hint')
+        self.assertEqual(result['rows'], [row])
+        self.assertEqual((result['queued'], result['publish'], result['writes'], result['accepted']),
+                         (1, False, False, 0))
+
+        with patch('audit_priority_retailers.inspect_target') as inspect:
+            for target in [('unpublished', ALT_URL), (parent['slug'], 'https://example.com/phone'),
+                           (parent['slug'], ALT_URL.replace('galaxy-a54', 'galaxy-a34'))]:
+                with self.subTest(target=target), self.assertRaisesRegex(ValueError, 'memory_preflight'):
+                    memory_target_preflight([parent], transport, target=target)
+            inspect.assert_not_called()
+
     def test_readonly_variant_cli_rejects_every_writing_or_unrelated_mode_before_clients(self):
         from sweep_priority_catalog import main
         for flag in ('--publish', '--memory-variants', '--n11-preflight', '--coverage-first', '--hepsiburada-category-audit'):
             with patch('sys.argv', ['sweep', '--memory-variant-preflight', flag]), \
                  patch('sweep_priority_catalog.OfferIngestionClient.from_env') as client:
                 with self.assertRaisesRegex(ValueError, 'read_only_and_separate'):
+                    main()
+                client.assert_not_called()
+        for target_flags in (['--target-slug', PARENT['slug']], ['--target-preflight', ALT_URL]):
+            with patch('sys.argv', ['sweep', '--memory-variant-preflight', *target_flags]), \
+                 patch('sweep_priority_catalog.OfferIngestionClient.from_env') as client:
+                with self.assertRaisesRegex(ValueError, 'requires_target_url_and_slug'):
                     main()
                 client.assert_not_called()
 

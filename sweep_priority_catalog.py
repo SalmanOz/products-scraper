@@ -1063,23 +1063,29 @@ def main():
             args.n11_preflight, args.target_preflight, args.target_slug, args.hepsiburada_category_audit))):
         raise ValueError('manufacturer_radio_requires_memory_sweep')
     if args.memory_variant_preflight:
-        if any((args.publish, args.memory_variants, args.target_preflight, args.target_slug, args.n11_preflight,
+        if any((args.publish, args.memory_variants, args.teknosa_identity_preflight, args.n11_preflight,
                 args.coverage_first, args.hepsiburada_category_audit)):
             raise ValueError('memory_variant_preflight_is_read_only_and_separate')
+        if (args.target_preflight is not None or args.target_slug is not None) and not (
+                args.target_preflight and args.target_slug):
+            raise ValueError('memory_preflight_requires_target_url_and_slug')
+        target = (args.target_slug, args.target_preflight) if args.target_preflight else None
         from automatic_memory_variants import memory_target_preflight, prepare_memory_variants
         from daily_discovery import write_json_checkpoint
         client = OfferIngestionClient.from_env()
         products = client.get_published_products()
         if not products or len(products) > MAX_RECOVERY_CATALOG_PRODUCTS:
             raise ValueError('invalid_or_oversized_catalog')
-        transport = PriorityRetailerTransport(maximum_per_host=48, n11_collector=client.n11_document_get)
-        result = memory_target_preflight(products, transport)
+        transport = PriorityRetailerTransport(maximum_per_host=2 if target else 48,
+                                              n11_collector=client.n11_document_get)
+        result = memory_target_preflight(products, transport, target=target)
         save_report(result)
         print(Path('priority-catalog-sweep.md').read_text(), flush=True)
         def checkpoint_variant(report):
             write_json_checkpoint(Path('automatic-memory-variants.json'), report)
         report = prepare_memory_variants(result, products, transport=PriorityRetailerTransport(
-            maximum_per_host=24, n11_collector=client.n11_document_get), checkpoint=checkpoint_variant)
+            maximum_per_host=2 if target else 24, n11_collector=client.n11_document_get),
+            checkpoint=checkpoint_variant, maximum_variants=1 if target else None)
         checkpoint_variant(report)
         for row in report['rows']:
             print('Automatic memory variant: ' + json.dumps(row, ensure_ascii=False), flush=True)
@@ -1087,7 +1093,7 @@ def main():
             print('Technical memory discovery: ' + json.dumps(diagnostic, ensure_ascii=False), flush=True)
         print('Automatic memory variant summary: ' + json.dumps({key: report[key] for key in
             ('observed_candidates', 'verified_candidates', 'technical_documents', 'created', 'existing', 'writes')}, ensure_ascii=False), flush=True)
-        if report['observed_candidates'] and not report['verified_candidates']:
+        if (target or report['observed_candidates']) and not report['verified_candidates']:
             raise SystemExit('No selected technical and live retailer variant passed; no writes')
         return
     if args.target_preflight is not None:

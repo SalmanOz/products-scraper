@@ -162,13 +162,17 @@ def autocomplete_technical_variants(row):
         label, slug = item.split('=')
         if not re.fullmatch(r'[a-z0-9]+(?:-[a-z0-9]+)+', slug):
             continue
-        amounts = re.findall(r'(?<![\w.,])(\d{1,4})\s*(GB|TB)\b', label, re.I)
+        amounts = list(re.finditer(r'(?<![\w.,])(\d{1,4})\s*(GB|TB)\b', label, re.I))
         if len(amounts) != 2:
             continue
-        ram, storage = [int(n) * (1024 if unit.casefold() == 'tb' else 1) for n, unit in amounts]
+        ram, storage = [int(m[1]) * (1024 if m[2].casefold() == 'tb' else 1) for m in amounts]
         target = 'https://www.kimovil.com/en/where-to-buy-' + slug
         if 1 <= ram <= 64 and 32 <= storage <= 4096 and technical_url(target):
-            variants.append({'source_url': target, 'ram_gb': ram, 'storage_gb': storage})
+            variant = {'source_url': target, 'ram_gb': ram, 'storage_gb': storage}
+            market = label[:amounts[0].start()].strip(' ·•')
+            if re.fullmatch(r'[A-Za-z][A-Za-z0-9 -]{0,39}', market):
+                variant['market'] = market
+            variants.append(variant)
     return variants
 
 
@@ -427,29 +431,36 @@ class TechnicalVariantReader:
         # provider's search uses the spaced spelling; selected-page identity
         # still compares the original complete model, qualifiers and memory.
         query_model = re.sub(r'\b(iphone)(?=\d)', r'\1 ', query_model, flags=re.I)
-        endpoint = ('https://www.kimovil.com/_json/autocomplete_devicemodels_joined.json'
-                    '?device_type=0&name=' + quote(query_model, safe=''))
-        raw = self.read(endpoint)
-        if raw.lstrip().startswith('<'):
-            raw = BeautifulSoup(raw, 'html.parser').get_text()
-        data = json.loads(raw)
+        # Kimovil indexes Redmi Pro+ under the symbol even when the catalog
+        # spells it Pro Plus. Try this spelling only after no exact result.
+        symbol_query = re.sub(r'\bpro\s+plus\b', 'Pro+', query_model, flags=re.I)
         candidates = []
         variants_by_root = {}
-        for row in data.get('results', [])[:30]:
-            if not isinstance(row, dict) or row.get('is_rumor'):
-                continue
-            name = row.get('full_name') or row.get('alias')
-            target = row.get('url')
-            if (not isinstance(name, str) or not isinstance(target, str)
-                    or not technical_model_matches(model, name)
-                    or TRPriceScraper._radio_generation(name) not in (None, specs['network_generation'])):
-                continue
-            target = 'https://www.kimovil.com/en/where-to-buy-' + target
-            if technical_url(target):
-                candidates.append(target)
-                variants_by_root.setdefault(target, []).extend(autocomplete_technical_variants(row))
-        self.diagnostics.append({'scope': 'public_technical_model_discovery', 'model': model,
-            'result_count': len(data.get('results', [])), 'matching_model_urls': list(dict.fromkeys(candidates))[:6]})
+        for query in dict.fromkeys((query_model, symbol_query)):
+            endpoint = ('https://www.kimovil.com/_json/autocomplete_devicemodels_joined.json'
+                        '?device_type=0&name=' + quote(query, safe=''))
+            raw = self.read(endpoint)
+            if raw.lstrip().startswith('<'):
+                raw = BeautifulSoup(raw, 'html.parser').get_text()
+            results = json.loads(raw).get('results', [])
+            for row in results[:30]:
+                if not isinstance(row, dict) or row.get('is_rumor'):
+                    continue
+                name = row.get('full_name') or row.get('alias')
+                target = row.get('url')
+                if (not isinstance(name, str) or not isinstance(target, str)
+                        or not technical_model_matches(model, name)
+                        or TRPriceScraper._radio_generation(name) not in (None, specs['network_generation'])):
+                    continue
+                target = 'https://www.kimovil.com/en/where-to-buy-' + target
+                if technical_url(target):
+                    candidates.append(target)
+                    variants_by_root.setdefault(target, []).extend(autocomplete_technical_variants(row))
+            self.diagnostics.append({'scope': 'public_technical_model_discovery', 'model': model,
+                'result_count': len(results), 'symbol_spelling_fallback': query != query_model,
+                'matching_model_urls': list(dict.fromkeys(candidates))[:6]})
+            if candidates:
+                break
         unique = list(dict.fromkeys(candidates))
         roots = {re.sub(r'-[45]g$', '', url) for url in unique}
         if len(unique) > 1 and len(roots) == 1 and next(iter(roots)) in unique:
@@ -554,8 +565,17 @@ class TechnicalVariantReader:
                         int(exact_label),
                         int(base_region is not None and node.get('data-mk') == base_region))
         observed.sort(key=lambda url: tuple(-value for value in observed_priority[url]))
-        declared = {item['source_url'] for item in self.provider_variants.get(base, [])
-                    if item['ram_gb'] == specs['ram_gb'] and item['storage_gb'] == specs['storage_gb']}
+        versions = self.provider_variants.get(base, [])
+        root_markets = {item['market'].casefold() for item in versions if item.get('market')
+                        and item['source_url'] == base and item['ram_gb'] == default_specs['ram_gb']
+                        and item['storage_gb'] == default_specs['storage_gb']}
+        provider_market = next(iter(root_markets)) if len(root_markets) == 1 else None
+        declared_variants = [item for item in versions
+                             if item['ram_gb'] == specs['ram_gb'] and item['storage_gb'] == specs['storage_gb']]
+        different_market = {item['source_url'] for item in declared_variants if provider_market
+                            and item.get('market') and item['market'].casefold() != provider_market}
+        declared = {item['source_url'] for item in declared_variants} - different_market
+        observed = [url for url in observed if url not in different_market]
         for target in sorted(declared):
             if target != base and target not in observed:
                 observed.append(target)
@@ -563,6 +583,7 @@ class TechnicalVariantReader:
             'source_url': base, 'selected_default_specs': default_specs,
             'selected_default_region': base_region,
             'requested_specs': specs, 'version_lists': len(soup.select('.versions-list')),
+            'provider_default_market': provider_market,
             'provider_declared_capacity_urls': sorted(declared),
             'observed_capacity_urls': observed[:6], 'version_hints': version_hints,
             'version_structure': [
@@ -901,17 +922,29 @@ def memory_variant_destination_groups(cards, products):
     return list(found.values())
 
 
-def memory_target_preflight(products, transport, *, maximum=48):
+def memory_target_preflight(products, transport, *, maximum=48, target=None):
     """Find capacity hints in the current catalog, then GET the actual PDPs.
 
-    No manually selected models/URLs or persisted price observations are input.
-    This diagnostic does not consume category continuation state or publish.
+    An optional exact destination diagnoses one current catalog family. The
+    URL is a hint only. Selected memory, radio and commerce come from its PDP.
     """
     from audit_priority_retailers import inspect_target
     from priority_retailer_transport import product_host
     hints, seen = [], set()
     matcher = TRPriceScraper()
-    for parent in products:
+    if target is not None:
+        slug, url = target
+        parents = [product for product in products if product['slug'] == slug]
+        if len(parents) != 1 or not product_host(url):
+            raise ValueError('invalid_memory_preflight_target')
+        parent = parents[0]
+        specs = parent_specs(parent)
+        model = matcher._catalog_model_name(parent['name'], parent['attributes'])
+        if (specs.get('network_generation') not in {'4g', '5g'} or not model
+                or not matcher.is_strict_match(model, urlparse(url).path.replace('-', ' '), {})):
+            raise ValueError('memory_preflight_url_catalog_identity_conflict')
+        hints.append((parent, url))
+    for parent in products if target is None else ():
         specs = parent_specs(parent)
         if specs.get('network_generation') not in {'4g', '5g'}:
             continue
@@ -931,6 +964,7 @@ def memory_target_preflight(products, transport, *, maximum=48):
             hints.append((parent, url))
     rows = [inspect_target(transport, url, parent) for parent, url in hints[:maximum]]
     return {'purpose': 'readonly_automatic_memory_variant_preflight', 'catalog_count': len(products),
+            'scope': 'exact_public_pdp_hint' if target is not None else 'stored_catalog_hints',
             'publish': False, 'writes': False, 'accepted': 0, 'status': 'completed', 'queued': min(len(hints), maximum),
             'observed_capacity_hints': len(hints), 'rows': rows, 'sources': transport.report(),
             'models_without_priority_hints': []}
