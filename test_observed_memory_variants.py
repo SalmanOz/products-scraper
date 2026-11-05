@@ -276,10 +276,16 @@ class ObservedMemoryVariantTests(unittest.TestCase):
                        {'selected_teknosa_variant_verified': False}, {'url': url + '?shopId=1234'}):
             self.assertIsNone(variant_selected_evidence({**preview['offer'], **change}, 'POCO X6 Pro', preview['observed_specs']))
         for value in ('8+8 GB RAM 256 GB', 'RAM 6/8 GB 256 GB', '8 GB RAM 128/256 GB',
-                      '256 GB', '8 GB RAM', '8 GB RAM 256 GB 4G 5G'):
+                      '256 GB', '8 GB RAM', '8 GB RAM 256 GB 4G 5G', '8 GB RAM 256 GB'):
             soup = BeautifulSoup(html, 'html.parser')
             soup.select_one('#pdp-main button#addToCartButton')['data-product-name'] = 'Poco X6 Pro ' + value
-            self.assertIsNone(inspect_teknosa_memory_variant(str(soup), url, 'POCO X6 Pro', parent), value)
+            diagnostic = {}
+            self.assertIsNone(inspect_teknosa_memory_variant(str(soup), url, 'POCO X6 Pro', parent,
+                                                           diagnostic=diagnostic), value)
+            self.assertEqual(diagnostic['status'], 'selected_physical_specs_incomplete')
+            self.assertIn('network_generation', diagnostic['missing_or_invalid_fields'])
+            self.assertFalse(diagnostic['writes'])
+            self.assertNotIn('offer', diagnostic)
         for selector, attribute, value in [
             ('button#addToCartButton', 'data-product-ean', '6941812757995'),
             ('button#addToCartButton', 'data-shop-name', 'Other seller'),
@@ -287,7 +293,11 @@ class ObservedMemoryVariantTests(unittest.TestCase):
         ]:
             soup = BeautifulSoup(html, 'html.parser')
             soup.select_one('#pdp-main ' + selector)[attribute] = value
-            self.assertIsNone(inspect_teknosa_memory_variant(str(soup), url, 'POCO X6 Pro', parent))
+            diagnostic = {}
+            self.assertIsNone(inspect_teknosa_memory_variant(str(soup), url, 'POCO X6 Pro', parent,
+                                                           diagnostic=diagnostic))
+            self.assertEqual(diagnostic['status'], 'selected_variant_parse_rejected')
+            self.assertNotIn('offer', diagnostic)
         for name, specs in [('POCO X6', parent), ('POCO X6 Pro', dict(parent, network_generation='4g')),
                             ('POCO X6 Pro', dict(parent, ram_gb=8, storage_gb=256)),
                             ('POCO X6 Pro', {'ram_gb': 12, 'storage_gb': 512})]:

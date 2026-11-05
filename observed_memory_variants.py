@@ -13,7 +13,7 @@ from trendyol_catalog_source import (_product_id, parse_catalog_listing, catalog
                                     selected_attribute_capacity_gb)
 
 
-def inspect_teknosa_memory_variant(html, url, name, catalog_specs, technical_observation=None):
+def inspect_teknosa_memory_variant(html, url, name, catalog_specs, technical_observation=None, *, diagnostic=None):
     """Read selected source capacities, then prove that entire offer.
 
     A cart title is only a capacity hint here. The ordinary Teknosa reader
@@ -24,6 +24,9 @@ def inspect_teknosa_memory_variant(html, url, name, catalog_specs, technical_obs
     from priority_retailer_transport import product_host
     from teknosa_reviewed_source import parse_catalog_offer
     from teknosa_marketplace_source import selected_technical_specs
+    if isinstance(diagnostic, dict):
+        diagnostic.update(status='selected_memory_source_incomplete', writes=False,
+                          scope='diagnostic_only_not_offer_evidence')
     if (product_host(url) != 'www.teknosa.com' or not isinstance(html, str)
             or len(html.encode()) > 5 * 1024 * 1024 or not isinstance(catalog_specs, dict)):
         return None
@@ -56,23 +59,43 @@ def inspect_teknosa_memory_variant(html, url, name, catalog_specs, technical_obs
         if (ambiguous or ram is not None and ram != technical['ram_gb']
                 or storage is not None and storage != technical['storage_gb']
                 or radios and radios != {technical['network_generation']}):
+            if isinstance(diagnostic, dict):
+                diagnostic['status'] = 'selected_title_technical_conflict'
             return None
         ram, storage = technical['ram_gb'], technical['storage_gb']
         radios = {technical['network_generation']}
     if (ambiguous or ram is None or storage is None or len(radios) != 1
             or not 1 <= ram <= 64 or not 32 <= storage <= 4096):
+        if isinstance(diagnostic, dict):
+            diagnostic.update(status='selected_physical_specs_incomplete',
+                missing_or_invalid_fields=[key for key, valid in (
+                    ('ram_gb', ram is not None and 1 <= ram <= 64),
+                    ('storage_gb', storage is not None and 32 <= storage <= 4096),
+                    ('network_generation', len(radios) == 1)) if not valid],
+                ambiguous_title_capacities=ambiguous,
+                independent_technical_document_read=technical_observation is not None)
         return None
     actual = {'ram_gb': ram, 'storage_gb': storage, 'network_generation': radios.pop()}
     expected = tuple(matcher._spec_int(catalog_specs.get(k)) for k in ('ram_gb', 'storage_gb'))
     radio = catalog_specs.get('network_generation') or matcher._radio_generation(name)
     if (not all(expected) or actual['network_generation'] != radio
             or (ram, storage) == expected):
+        if isinstance(diagnostic, dict):
+            diagnostic.update(status='catalog_variant_scope_mismatch',
+                reason=('catalog_memory_incomplete' if not all(expected) else
+                        'catalog_radio_missing' if radio is None else
+                        'selected_radio_differs' if actual['network_generation'] != radio else
+                        'selected_memory_already_cataloged'))
         return None
     model = matcher._catalog_model_name(name, catalog_specs)
     if not model:
         return None
     offer, reason = parse_catalog_offer(html, url, {'name': model, 'specs': actual}, technical_observation)
     if offer is None or not matcher.has_observed_offer_evidence(model, offer, actual):
+        if isinstance(diagnostic, dict):
+            diagnostic.update(status='selected_variant_parse_rejected',
+                              reader_reason=reason if offer is None else 'selected_offer_evidence_incomplete',
+                              observed_specs=actual)
         return None
     return {'scope': 'other_memory_variant_preview_only', 'writes': False,
             'catalog_memory': dict(zip(('ram_gb', 'storage_gb'), expected)),

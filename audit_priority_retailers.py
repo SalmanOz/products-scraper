@@ -164,9 +164,13 @@ def inspect_target(transport, url, product):
                     {'name': product['name'], 'specs': specs}, maximum=3)
             if offer is None:
                 from observed_memory_variants import inspect_teknosa_memory_variant
-                other = inspect_teknosa_memory_variant(html, url, product['name'], specs, technical)
+                diagnostic = {}
+                other = inspect_teknosa_memory_variant(html, url, product['name'], specs, technical,
+                                                      diagnostic=diagnostic)
                 if other is not None:
                     row['other_memory_variant'] = other
+                else:
+                    row['other_memory_variant_diagnostic'] = diagnostic
         if host == 'www.hepsiburada.com':
             from hepsiburada_catalog_source import parse_catalog_buy_box
             from hepsiburada_catalog_discovery import discover_product_siblings, discover_product_sellers
