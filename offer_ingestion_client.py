@@ -26,8 +26,9 @@ class IngestionClientError(RuntimeError):
 
 
 class PublicDocumentResponse:
-    def __init__(self, url, status, document, content_type, location=None):
+    def __init__(self, url, status, document, content_type, location=None, redirect_diagnostic=None):
         self.url, self.status_code = url, status
+        self.redirect_diagnostic = redirect_diagnostic
         self._body = document.encode('utf-8')
         self.headers = {'Content-Type': content_type, 'Content-Length': str(len(self._body))}
         if location is not None:
@@ -695,7 +696,8 @@ class OfferIngestionClient:
         the collector never forwards it or visitor cookies to the retailer.
         """
         from priority_retailer_transport import (n11_product_selectors, n11_canonical_redirect,
-                                                n11_unscoped_redirect, N11_PHONE_SEARCH_PATH)
+                                                n11_unscoped_redirect, validated_n11_redirect_diagnostic,
+                                                N11_PHONE_SEARCH_PATH)
         parsed = urlparse(url)
         query = parse_qsl(parsed.query, keep_blank_values=True)
         search_key = {'/arama': 'q', N11_PHONE_SEARCH_PATH: 'iw'}.get(parsed.path)
@@ -729,7 +731,10 @@ class OfferIngestionClient:
                     or body['source_status'] not in (301, 302, 307, 308)
                     or not n11_unscoped_redirect(url, unscoped))):
                 raise ValueError('Unbound public default PDP redirect')
-            return PublicDocumentResponse(url, body['source_status'], body['document'], body['content_type'], redirect or unscoped)
+            diagnostic = (validated_n11_redirect_diagnostic(body.get('redirect_diagnostic'))
+                          if body['source_status'] in (301, 302, 307, 308) else None)
+            return PublicDocumentResponse(url, body['source_status'], body['document'], body['content_type'],
+                                          redirect or unscoped, diagnostic)
         except IngestionClientError:
             # Our collector's temporary gateway/restart failure is not a
             # retailer access denial. The source transport applies its bounded

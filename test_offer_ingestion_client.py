@@ -1040,6 +1040,44 @@ class TechnicalSourceHintContractTests(TestCase):
 
 
 class N11CollectorBoundaryTests(TestCase):
+    def test_redirect_diagnostics_never_authorize_a_destination_or_disclose_arbitrary_metadata(self):
+        from audit_priority_retailers import inspect_target
+        from priority_retailer_transport import PriorityRetailerTransport
+        target = 'https://www.n11.com/urun/samsung-galaxy-a57-256-gb-12345678?magaza=retired&renk=siyah'
+        diagnostic = {'scope': 'diagnostic_only_no_redirect_authorization',
+                      'reason': 'same_group_selectors', 'selector_keys': ['dahili-hafiza', 'renk']}
+        def body(url, status=301, info=diagnostic):
+            return {'purpose': 'public_n11_document', 'writes': False, 'url': url,
+                    'source_status': status, 'observed_at': datetime.now(timezone.utc).isoformat(),
+                    'document': 'User-agent: *\nAllow: /\n' if url.endswith('robots.txt') else '',
+                    'content_type': 'text/html', 'redirect_diagnostic': info}
+        session = FakeSession([FakeResponse(200, body('https://www.n11.com/robots.txt', 200)),
+                               FakeResponse(200, body(target))])
+        client = OfferIngestionClient('https://teknoskor.com', TEST_SECRET, session=session)
+        source = PriorityRetailerTransport(n11_collector=client.n11_document_get, sleep=lambda _: None)
+        row = inspect_target(source, target, {'slug': 'a57-test'})
+        self.assertEqual(row['reason'], 'http_301')
+        self.assertEqual(row['redirect_diagnostic'], diagnostic)
+        self.assertIsNone(row.get('prepared_offer'))
+        self.assertEqual(source.resolved_url(target), target)
+        self.assertEqual([c[2]['json']['url'] for c in session.calls], ['https://www.n11.com/robots.txt', target])
+        self.assertEqual(source.report()['n11']['pdp_requests'], 1)
+        for wrong in [None, {}, {**diagnostic, 'target': 'must-not-appear'},
+                      {**diagnostic, 'reason': ['must-not-appear']},
+                      {**diagnostic, 'reason': 'must-not-appear'},
+                      {**diagnostic, 'selector_keys': ['token-must-not-appear']},
+                      {**diagnostic, 'selector_keys': ['renk', 'renk']},
+                      {**diagnostic, 'selector_keys': {'private': 'must-not-appear'}}]:
+            client = OfferIngestionClient('https://teknoskor.com', TEST_SECRET,
+                session=FakeSession([FakeResponse(200, body(target, info=wrong))]))
+            response = client.n11_document_get(target)
+            self.assertIsNone(response.redirect_diagnostic)
+            self.assertNotIn('Location', response.headers)
+        for status in (200, 403, 429):
+            client = OfferIngestionClient('https://teknoskor.com', TEST_SECRET,
+                session=FakeSession([FakeResponse(200, body(target, status))]))
+            self.assertIsNone(client.n11_document_get(target).redirect_diagnostic)
+
     def test_native_default_redirect_metadata_never_carries_old_selectors_or_another_group(self):
         from priority_retailer_transport import PriorityRetailerTransport
         target = 'https://www.n11.com/urun/samsung-galaxy-a57-256-gb-12345678'

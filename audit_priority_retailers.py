@@ -115,6 +115,13 @@ def inspect_target(transport, url, product):
     html, reason, status = transport.read_document(observed_url)
     row = {'retailer': HOSTS[host], 'slug': product['slug'], 'url': url,
            'observed_url': observed_url, 'reason': reason, 'http_status': status}
+    if host == 'www.n11.com' and status in (301, 302, 307, 308):
+        diagnostic_reader = getattr(transport, 'redirect_diagnostic', None)
+        if callable(diagnostic_reader):
+            from priority_retailer_transport import validated_n11_redirect_diagnostic
+            diagnostic = validated_n11_redirect_diagnostic(diagnostic_reader(observed_url))
+            if diagnostic is not None:
+                row['redirect_diagnostic'] = diagnostic
     if html is not None:
         row.update(document_evidence(html, url))
         if host == 'www.n11.com':

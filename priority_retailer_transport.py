@@ -125,6 +125,22 @@ def n11_unscoped_redirect(original, target):
             and urlparse(original).path.rsplit('-', 1)[-1] == urlparse(target).path.rsplit('-', 1)[-1])
 
 
+def validated_n11_redirect_diagnostic(value):
+    """A bounded failure explanation, never a redirect address or SKU proof."""
+    if (not isinstance(value, dict) or set(value) != {'scope', 'reason', 'selector_keys'}
+            or value.get('scope') != 'diagnostic_only_no_redirect_authorization'
+            or not isinstance(value.get('reason'), str)
+            or value.get('reason') not in {'location_missing', 'invalid_location', 'non_public_destination',
+                'non_product_destination', 'different_product_group', 'same_group_default', 'same_group_selectors'}):
+        return None
+    keys = value.get('selector_keys')
+    if (not isinstance(keys, list) or len(keys) > 4
+            or any(not isinstance(key, str) or key not in {'magaza', 'renk', 'dahili-hafiza', 'other'} for key in keys)
+            or len(set(keys)) != len(keys)):
+        return None
+    return {'scope': value['scope'], 'reason': value['reason'], 'selector_keys': sorted(keys)}
+
+
 class PriorityRetailerTransport:
     def __init__(self, *, get=None, post=None, sleep=time.sleep, clock=time.monotonic,
                  maximum_per_host=2, n11_collector=None):
@@ -136,6 +152,7 @@ class PriorityRetailerTransport:
         self._maximum = maximum_per_host
         self._states = {}
         self._resolved = {}
+        self._redirect_diagnostics = {}
         self._category_redirects = {}
         self._lock = RLock()
 
@@ -153,7 +170,16 @@ class PriorityRetailerTransport:
             self._sleep(max(0, state['delay'] - (self._clock() - last)))
         state['last'] = self._clock()
         dedicated = self._n11_collector if urlparse(url).hostname == 'www.n11.com' else None
-        transport = HepsiburadaS25FeSource(get=dedicated or self._get, post=self._post, sleep=self._sleep)
+        def public_get(*args, **kwargs):
+            response = dedicated(*args, **kwargs)
+            diagnostic = (validated_n11_redirect_diagnostic(getattr(response, 'redirect_diagnostic', None))
+                          if response.status_code in (301, 302, 307, 308) else None)
+            self._redirect_diagnostics.pop(url, None)
+            if diagnostic is not None:
+                self._redirect_diagnostics[url] = diagnostic
+            return response
+        transport = HepsiburadaS25FeSource(get=public_get if dedicated else self._get,
+                                         post=self._post, sleep=self._sleep)
         try:
             result = (transport._read(url, limit, accept=accept) if dedicated else
                       transport._read_with_fallback(url, limit, accept=accept))
@@ -201,6 +227,9 @@ class PriorityRetailerTransport:
 
     def resolved_url(self, url):
         return self._resolved.get(url, url)
+
+    def redirect_diagnostic(self, url):
+        return validated_n11_redirect_diagnostic(self._redirect_diagnostics.get(url))
 
     def category_redirect_url(self, url):
         return self._category_redirects.get(url)
