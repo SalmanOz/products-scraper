@@ -52,6 +52,58 @@ def document(changes=None):
 
 
 class TrendyolCatalogTests(unittest.TestCase):
+    def test_actual_native_tb_storage_reaches_selected_proof_and_ingestion_without_parent_capacity(self):
+        from pathlib import Path
+        from selected_sku_evidence import selected_sku_evidence
+        from trendyol_catalog_source import catalog_offer_matches
+        html = Path('fixtures/trendyol-iphone17pro-native-tb-selected.html').read_text()
+        url = 'https://www.trendyol.com/apple/iphone-17-pro-1tb-abis-p-985256817'
+        specs = {'ram_gb': 12, 'storage_gb': 1024, 'network_generation': '5g'}
+        offer, reason = parse_catalog_listing(html, url, 'Apple iPhone 17 Pro', specs)
+        self.assertEqual(reason, 'selected_new_cash_offer_observed')
+        self.assertEqual((offer['merchant'], offer['price'], offer['gtin13']),
+                         ('BittiBitiyor', 138999, '0195950628807'))
+        self.assertEqual(offer['source_title'], 'Apple iPhone 17 Pro 1TB Abis')
+        self.assertTrue(catalog_offer_matches(offer, 'Apple iPhone 17 Pro', specs))
+        proof = selected_sku_evidence(offer)
+        self.assertEqual((proof['ram_gb'], proof['storage_gb'], proof['network_generation']),
+                         (12, 1024, '5g'))
+        updater = PriceUpdater(ingestion_client=object())
+        product = {'id': 999, 'slug': 'apple-iphone-17-pro-12gb-1024gb', 'name': 'Apple iPhone 17 Pro',
+                   'offer_targets': [{'merchant_name': 'Trendyol', 'source_url': url}],
+                   'offer_targets_truncated': False}
+        prepared = updater.prepare_product_offers(product, [offer], updater.utc_timestamp(), updater.utc_timestamp())
+        self.assertEqual(len(prepared), 1)
+        self.assertEqual(prepared[0]['source_variant_evidence']['storage_gb'], 1024)
+        for patch in ({'ram_gb': 8}, {'storage_gb': 512}, {'network_generation': '4g'}):
+            self.assertIsNone(parse_catalog_listing(html, url, product['name'], {**specs, **patch})[0])
+
+    def test_native_tb_storage_never_changes_conflicting_selected_radio_or_accepts_ambiguous_units(self):
+        from pathlib import Path
+        from bs4 import BeautifulSoup
+        from trendyol_catalog_source import selected_attribute_capacity_gb, _selected_group_schema
+        html = Path('fixtures/trendyol-s25ultra-native-tb-selected.html').read_text()
+        url = 'https://www.trendyol.com/samsung/galaxy-s25-ultra-5g-12gb-1tb-akilli-telefon-titanyum-gumus-p-889950716'
+        self.assertEqual(parse_catalog_listing(html, url, 'Samsung Galaxy S25 Ultra',
+            {'ram_gb': 12, 'storage_gb': 1024, 'network_generation': '5g'}),
+            (None, 'catalog_variant_mismatch'))
+        for label, amount in [('1 TB', 1024), ('2TB', 2048), ('4 tb', 4096), ('1024 GB', 1024)]:
+            self.assertEqual(selected_attribute_capacity_gb(label, 'storage_gb'), amount)
+        for label in [None, True, 1024, '', '1', '1 TB RAM', '1+1 TB', '1/2 TB', '1.0 TB',
+                      '1,024 GB', '01 TB', '0 TB', '3 TB', '8 TB', '1 TB - 2 TB', '1 TB sanal']:
+            self.assertIsNone(selected_attribute_capacity_gb(label, 'storage_gb'), label)
+        for label in ['1 TB', '2TB', '4 tb', '1024 GB', '8+8 GB']:
+            self.assertIsNone(selected_attribute_capacity_gb(label, 'ram_gb'), label)
+        # This native group independently says 1 TB too. Its 4G property must
+        # still agree with the selected state; it cannot override the 5G title.
+        schema = json.loads(BeautifulSoup(html, 'html.parser').select_one('script[type="application/ld+json"]').get_text())
+        physical = {'ram_gb': 12, 'storage_gb': 1024, 'network_generation': '4g'}
+        self.assertTrue(_selected_group_schema(schema, '889950716', url, physical, {'name': 'Samsung'}))
+        self.assertFalse(_selected_group_schema(schema, '889950716', url,
+                         {**physical, 'storage_gb': 2048}, {'name': 'Samsung'}))
+        self.assertFalse(_selected_group_schema(schema, '889950716', url,
+                         {**physical, 'network_generation': '5g'}, {'name': 'Samsung'}))
+
     def test_actual_product_group_uses_only_its_own_selected_offer_and_independent_physical_fields(self):
         from pathlib import Path
         from selected_sku_evidence import selected_sku_evidence

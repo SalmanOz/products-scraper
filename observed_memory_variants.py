@@ -9,7 +9,8 @@ import re
 from bs4 import BeautifulSoup
 
 from tr_price_scraper import TRPriceScraper
-from trendyol_catalog_source import _product_id, parse_catalog_listing, catalog_offer_matches
+from trendyol_catalog_source import (_product_id, parse_catalog_listing, catalog_offer_matches,
+                                    selected_attribute_capacity_gb)
 
 
 def inspect_teknosa_memory_variant(html, url, name, catalog_specs, technical_observation=None):
@@ -248,11 +249,10 @@ def inspect_trendyol_memory_variant(html, url, name, catalog_specs):
             fields[key] = row['value'].get('name')
     actual = {}
     for key, label in (('ram_gb', 'RAM Kapasitesi'), ('storage_gb', 'Dahili Hafıza')):
-        value = fields.get(label)
-        match = re.fullmatch(r'([1-9]\d{0,3})\s*GB', value, re.I) if isinstance(value, str) else None
-        if match is None:
+        amount = selected_attribute_capacity_gb(fields.get(label), key)
+        if amount is None:
             return None
-        actual[key] = int(match[1])
+        actual[key] = amount
     network = str(fields.get('Mobil Bağlantı Hızı') or '').casefold()
     if (network not in {'4g', '4.5g', '4,5g', '5g'} or not 1 <= actual['ram_gb'] <= 64
             or not 32 <= actual['storage_gb'] <= 4096):

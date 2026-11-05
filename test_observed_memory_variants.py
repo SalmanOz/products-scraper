@@ -21,6 +21,26 @@ def alternate_document(changes=None):
 
 
 class ObservedMemoryVariantTests(unittest.TestCase):
+    def test_native_tb_variant_preview_proves_its_own_capacity_and_keeps_parent_unchanged(self):
+        from pathlib import Path
+        html = Path('fixtures/trendyol-iphone17pro-native-tb-selected.html').read_text()
+        url = 'https://www.trendyol.com/apple/iphone-17-pro-1tb-abis-p-985256817'
+        parent = {'ram_gb': 12, 'storage_gb': 256, 'network_generation': '5g'}
+        before = deepcopy(parent)
+        result = inspect_trendyol_memory_variant(html, url, 'Apple iPhone 17 Pro', parent)
+        self.assertFalse(result['writes'])
+        self.assertEqual(result['observed_specs'], {**parent, 'storage_gb': 1024})
+        self.assertEqual(result['catalog_memory'], {'ram_gb': 12, 'storage_gb': 256})
+        self.assertEqual(parent, before)
+        self.assertIsNone(inspect_trendyol_memory_variant(html, url, 'Apple iPhone 17 Pro',
+                          {**parent, 'storage_gb': 1024}))
+        self.assertIsNone(inspect_trendyol_memory_variant(html, url, 'Apple iPhone 17 Pro',
+                          {**parent, 'network_generation': '4g'}))
+        samsung = Path('fixtures/trendyol-s25ultra-native-tb-selected.html').read_text()
+        self.assertIsNone(inspect_trendyol_memory_variant(samsung,
+            'https://www.trendyol.com/samsung/galaxy-s25-ultra-5g-12gb-1tb-akilli-telefon-titanyum-gumus-p-889950716',
+            'Samsung Galaxy S25 Ultra', parent))
+
     def test_observed_missing_first_g_cards_are_only_other_capacity_routing_hints(self):
         from pathlib import Path
         from bs4 import BeautifulSoup

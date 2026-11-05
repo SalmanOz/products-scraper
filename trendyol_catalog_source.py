@@ -48,6 +48,26 @@ def _selected(rows):
     return found[0] if len(found) == 1 else None
 
 
+def selected_attribute_capacity_gb(value, field):
+    """Read a single native physical attribute, without catalog defaults.
+
+    Trendyol uses literal "1 TB" for selected storage. TB is storage only;
+    ranges, virtual RAM and missing units cannot establish either capacity.
+    """
+    if not isinstance(value, str) or field not in {'ram_gb', 'storage_gb'}:
+        return None
+    match = re.fullmatch(r'([1-9]\d{0,3})\s*GB', value, re.I)
+    terabytes = re.fullmatch(r'(1|2|4)\s*TB', value, re.I) if field == 'storage_gb' else None
+    if match:
+        amount = int(match[1])
+    elif terabytes:
+        amount = int(terabytes[1]) * 1024
+    else:
+        return None
+    low, high = (1, 64) if field == 'ram_gb' else (32, 4096)
+    return amount if low <= amount <= high else None
+
+
 def _selected_group_schema(schema, identity, url, physical, brand):
     """Only the group's own current-PDP offer can corroborate a selected SKU.
 
@@ -83,8 +103,8 @@ def _selected_group_schema(schema, identity, url, physical, brand):
             return False
         fields[key] = prop['unitText']
     for key, label in (('ram_gb', 'RAM Kapasitesi'), ('storage_gb', 'Dahili Hafıza')):
-        match = re.fullmatch(r'([1-9]\d{0,3})\s*GB', fields.get(label, ''), re.I)
-        if match is None or int(match[1]) != physical.get(key):
+        actual = selected_attribute_capacity_gb(fields.get(label), key)
+        if actual is None or actual != physical.get(key):
             return False
     radio = fields.get('Mobil Bağlantı Hızı', '').casefold()
     return (radio in {'5g', '4g', '4.5g', '4,5g'}
@@ -148,8 +168,7 @@ def parse_catalog_listing(html, url, name, specs):
     physical = {}
     heading_ram, heading_storage, ambiguous_heading = matcher._unambiguous_listing_capacities(title)
     for key, label in (('ram_gb', 'RAM Kapasitesi'), ('storage_gb', 'Dahili Hafıza')):
-        match = re.fullmatch(r'(\d{1,4})\s*GB', str(features.get(label) or ''), re.I)
-        actual = int(match[1]) if match else None
+        actual = selected_attribute_capacity_gb(features.get(label), key)
         # The live S26 Ultra template supplies literal "Yok" for RAM despite
         # an explicit physical RAM amount in its selected heading. Unknown is
         # not a contradictory capacity: use only that heading's actual amount,
