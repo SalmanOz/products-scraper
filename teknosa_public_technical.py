@@ -139,13 +139,14 @@ def response_fields(observation, main, title, cart):
             'selected_teknosa_physical_specs_verified': True}
 
 
-def read_observation(transport, html, document_url):
+def read_observation(transport, html, document_url, *, fresh=False):
     """Read once through the caller's existing robots/circuit/request budget."""
     target = classification_url(document_url, html)
     read = getattr(type(transport), 'read_teknosa_classification', None)
     if target is None or not callable(read):
         return None, 'selected_public_technical_tab_unavailable'
-    body, reason, status = transport.read_teknosa_classification(document_url, target)
+    body, reason, status = (transport.read_teknosa_classification(document_url, target, fresh=True)
+                            if fresh else transport.read_teknosa_classification(document_url, target))
     if body is None or reason != 'document_read' or status != 200:
         return None, reason
     return {'document_url': document_url, 'source_url': target, 'body': body,

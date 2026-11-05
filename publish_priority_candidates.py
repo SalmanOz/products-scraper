@@ -46,9 +46,12 @@ def _matched_rows(identity):
 
 
 def _exact_current(record, current):
+    proof = record.get('source_variant_evidence') or {}
     for row in current:
         if (not isinstance(row, dict) or row.get('source_url') != record['source_url']
                 or row.get('merchant_name') != record['seller']):
+            continue
+        if proof.get('independent_radio') and row.get('source_variant_evidence') != proof:
             continue
         try:
             if Decimal(str(row.get('price'))) == Decimal(str(record['price'])):
@@ -58,7 +61,7 @@ def _exact_current(record, current):
     return False
 
 
-def refresh_candidates(audit, *, client, reader=None):
+def refresh_candidates(audit, *, client, reader=None, source_transport=None):
     if (not isinstance(audit, dict) or audit.get('purpose') != 'automatic_priority_retailer_diagnosis'
             or audit.get('writes') is not False or not isinstance(audit.get('rows'), list)
             or not 1 <= len(audit['rows']) <= 32):
@@ -101,13 +104,28 @@ def refresh_candidates(audit, *, client, reader=None):
             # selected SKU. This observation authorizes only the exact fresh
             # source read, never reuse of its price or identity as that read.
             target['observed_offer'] = old
-        offers = reader.refresh_existing_offer_targets(product['name'], [target], specs)
+        witness = old.get('independent_radio')
+        if witness is not None:
+            from audit_priority_retailers import inspect_target
+            fresh_row = (inspect_target(source_transport, url, product, prepare_teknosa_independent=True, fresh=True)
+                         if isinstance(witness, dict) and listing_scoped and source_transport is not None
+                         and host == 'www.teknosa.com' else {})
+            candidate = fresh_row.get('prepared_offer')
+            offers = [candidate] if isinstance(candidate, dict) else []
+        else:
+            offers = reader.refresh_existing_offer_targets(product['name'], [target], specs)
         record = {'slug': slug, 'url': url, 'status': 'blocked'}
         result['rows'].append(record)
         if len(offers) != 1:
             record['reason'] = 'fresh_selected_offer_unavailable'
             continue
         fresh = offers[0]
+        if witness is not None:
+            fresh_witness = fresh.get('independent_radio') or {}
+            if (not _fresh(fresh_witness.get('observed_at'), 60) or any(
+                    fresh_witness.get(key) != witness.get(key) for key in ('source_url', 'source_title', 'sku_evidence'))):
+                record['reason'] = 'independent_selected_sku_changed_or_expired'
+                continue
         identity = ('url', 'platform', 'merchant', 'merchant_id', 'price', 'currency', 'condition',
                     'availability', 'gtin13', 'sku', 'product_id', 'group_id', 'listing_id', 'item_number',
                     'source_document_url', 'source_offer_scope', 'observed_barcode', 'barcode_kind',
@@ -155,6 +173,10 @@ def refresh_candidates(audit, *, client, reader=None):
     if prepared:
         if any(not _fresh(o.get('observed_at')) for o in prepared):
             raise CandidateObservationExpired('prepared_observation_expired')
+        for offer in prepared:
+            witness = (offer.get('source_variant_evidence') or {}).get('independent_radio')
+            if witness and not _fresh(witness.get('observed_at'), 60):
+                raise CandidateObservationExpired('independent_selected_observation_expired')
         try:
             writer = client.ingest_listing_offers if listing_scoped else client.ingest_offers
             ingestion = writer(prepared, require_all_accepted=True)

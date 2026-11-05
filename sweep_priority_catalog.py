@@ -10,7 +10,7 @@ import re
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
-from audit_priority_retailers import inspect_target
+from audit_priority_retailers import inspect_target, teknosa_independent_candidate
 from catalog_recovery_limits import MAX_RECOVERY_CATALOG_PRODUCTS
 from offer_ingestion_client import IngestionClientError, OfferIngestionClient
 from priority_retailer_transport import HOSTS, PriorityRetailerTransport, product_host
@@ -258,13 +258,14 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
     memory_counts = Counter()
     memory_retailer_counts = Counter()
     cooldown_deferred = []
+    independent_teknosa_attempts = 0
     trendyol_category_hints = []
     if discover_trendyol and not category_audit_only:
         result['trendyol_brand_category_discovery'] = {'scope': 'observed_pdp_breadcrumbs_only',
             'initial_model_limit': 8, 'seed_models': [], 'observed_category_urls': trendyol_category_hints,
             'prices_or_offer_evidence_reused': False, 'source_budget_shared': True}
     def process_target(url, product, audited_row=None, cooldown_row=None):
-        nonlocal publication_failed
+        nonlocal publication_failed, independent_teknosa_attempts
         if cooldown_row is not None:
             # Resume only an existing, admitted target that received no HTML.
             # Keep one final row/denominator entry and one bounded resume;
@@ -281,7 +282,18 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
         if category_audit_only:
             result['category_candidates'].append({'slug': product['slug'], 'source_url': url})
             return  # A destination hint is never a fetched/verified/publishable quote.
-        row = audited_row if audited_row is not None else inspect_target(transport, url, product)
+        if audited_row is not None:
+            row = audited_row
+        elif (publish and memory_discovery and independent_teknosa_attempts < 12
+              and teknosa_independent_candidate(url, product)):
+            row = inspect_target(transport, url, product, prepare_teknosa_independent=True)
+            if row['reason'] == 'already_read' and any(previous['slug'] != product['slug']
+                    and previous.get('observed_url') == url and previous.get('reader_reason') == 'catalog_variant_mismatch'
+                    for previous in result['rows']):
+                row = inspect_target(transport, url, product, prepare_teknosa_independent=True, fresh=True)
+            independent_teknosa_attempts += int('independent_radio_preflight' in row)
+        else:
+            row = inspect_target(transport, url, product)
         extra_offers = row.pop('additional_prepared_offers', [])
         row['expected_specs'] = product.get('attributes') and {
             key: value for key, value in PriceUpdater.get_expected_specs(
@@ -315,7 +327,8 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                 # Re-read immediately, hydrate current complete seller targets, atomically
                 # ingest only this observation, and verify the commercial readback.
                 try:
-                    refreshed = refresh_candidates(audit, client=client, reader=reader)
+                    source = {'source_transport': transport} if row['prepared_offer'].get('independent_radio') else {}
+                    refreshed = refresh_candidates(audit, client=client, reader=reader, **source)
                 except CandidateObservationExpired:
                     # A slow preflight may age this observation before any
                     # writer is called. Skip it; subsequent targets require
@@ -860,10 +873,24 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                 row.get('reason') == 'source_cooldown' for _, _, row in cooldown_deferred)
         if memory_discovery and not category_audit_only:
             from automatic_memory_variants import teknosa_independent_identity_targets
+            pairs = teknosa_independent_identity_targets(result['rows'], products)
             result['teknosa_independent_identity_routing'] = {
                 'scope': 'paired_source_urls_for_fresh_reverification', 'writes': False,
-                'targets': teknosa_independent_identity_targets(result['rows'], products),
+                'targets': pairs,
             }
+            if publish and not publication_failed:
+                by_slug = {product['slug']: product for product in products}
+                for pair in pairs:
+                    if independent_teknosa_attempts >= 12 or publication_failed:
+                        break
+                    slug, url = pair['slug'], pair['source_url']
+                    product = by_slug[slug]
+                    if (slug, url) in processed or not teknosa_independent_candidate(url, product):
+                        continue
+                    independent_teknosa_attempts += 1
+                    row = inspect_target(transport, url, product, prepare_teknosa_independent=True, fresh=True)
+                    result['queued'] += 1
+                    process_target(url, product, audited_row=row)
         result['status'] = ('category_audit_completed' if category_audit_only else
                             'publication_failed' if publication_failed else 'completed')
     except Exception as error:

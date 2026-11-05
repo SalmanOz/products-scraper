@@ -99,7 +99,9 @@ class PublicTechnicalTests(unittest.TestCase):
                         calls.append(target)
                         return (body if target == url else witness_html), 'document_read', 200
 
-                    def read_teknosa_classification(self, document_url, target):
+                    read_fresh_document = read_document
+
+                    def read_teknosa_classification(self, document_url, target, *, fresh=False):
                         self.assert_source(document_url, target)
                         return json.dumps([{**fields[0], 'features': features}]), 'document_read', 200
 
@@ -122,6 +124,59 @@ class PublicTechnicalTests(unittest.TestCase):
                 self.assertIsNone(result['public_parser_proof'])
                 self.assertIsNone(row['prepared_offer'])
                 self.assertNotIn('price', linked)
+                if witness_read:
+                    calls.clear()
+                    prepared = inspect_target(Transport(), url, product, prepare_teknosa_independent=True, fresh=True)
+                    self.assertEqual(calls, [url, witness_url])
+                    if expected.endswith('_verified'):
+                        source = prepared['prepared_offer']
+                        self.assertNotIn('selected_teknosa_physical_specs_verified', source)
+                        sku = selected_sku_evidence(source)
+                        self.assertEqual(sku['version'], 'selected-retailer-sku-v3')
+                        self.assertEqual(sku['independent_radio']['source_url'], witness_url)
+                        self.assertEqual(sku['independent_radio']['sku_evidence']['gtin13'], sku['gtin13'])
+
+                        from publish_priority_candidates import refresh_candidates
+                        from test_priority_candidates import Client
+
+                        class ScopedClient(Client):
+                            def ingest_listing_offers(self, rows, *, require_all_accepted):
+                                return {**super().ingest_offers(rows, require_all_accepted=require_all_accepted),
+                                    'offer_identity_contract': 'seller-source-url-v1', 'server_scores_recalculated': True}
+
+                            def get_offer_identity_readiness(self):
+                                report = super().get_offer_identity_readiness()
+                                if self.writes:
+                                    report['productCoverage'][0]['matchedOffers'][0]['source_variant_evidence'] = (
+                                        self.writes[0][0]['source_variant_evidence'])
+                                return report
+
+                        for changed in (False, True):
+                            writer = ScopedClient()
+                            writer.product = deepcopy(product)
+                            fresh = Transport()
+                            if changed:
+                                read = fresh.read_fresh_document
+
+                                def changed_witness(target):
+                                    page, reason, status = read(target)
+                                    if target == witness_url:
+                                        page = page.replace('8806095832838', '8806097015154')
+                                    return page, reason, status
+
+                                fresh.read_fresh_document = changed_witness
+                            calls.clear()
+                            published = refresh_candidates({'purpose': 'automatic_priority_retailer_diagnosis',
+                                'writes': False, 'catalog_count': 1, 'rows': [prepared]},
+                                client=writer, source_transport=fresh)
+                            self.assertEqual(calls, [url, witness_url])
+                            self.assertEqual(len(writer.writes), int(not changed), published)
+                            if not changed:
+                                self.assertTrue(published['commercial_readback_verified'])
+                                self.assertEqual(writer.writes[0][0]['source_variant_evidence']['version'],
+                                                 'selected-retailer-sku-v3')
+                    else:
+                        self.assertIsNone(prepared['prepared_offer'])
 
     def test_real_public_feature_response_completes_same_selected_sku_not_a_catalog_default(self):
         html, proof = initial_document(), observation()

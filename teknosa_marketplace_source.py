@@ -218,9 +218,9 @@ def parse_selected_marketplace(html, url, profile, technical_observation=None):
     return result, reason
 
 
-def independent_radio_preflight(html, url, profile, technical_observation, read_witness):
-    """Check one 4G identity using fresh independent retail proof, without preparing an offer."""
-    from automatic_memory_variants import variant_selected_evidence
+def independent_radio_preflight(html, url, profile, technical_observation, read_witness, *, prepare=False):
+    """Require current selected commerce and a separate, current selected 4G SKU."""
+    from automatic_memory_variants import canonical_observation_time, variant_selected_evidence
     from teknosa_public_technical import classification_values
 
     result, reason = _selected_marketplace_commerce(html, url, technical_observation)
@@ -263,11 +263,23 @@ def independent_radio_preflight(html, url, profile, technical_observation, read_
         except (KeyError, TypeError, ValueError):
             continue
         proof = variant_selected_evidence(witness, profile['name'], specs)
-        if not proof or proof.get('gtin13') != result['gtin13']:
+        if (not proof or proof.get('version') != 'selected-retailer-sku-v1'
+                or proof.get('gtin13') != result['gtin13']
+                or (proof['ram_gb'], proof['storage_gb'], proof['network_generation']) != (ram, storage, '4g')):
             continue
-        return {'status': 'independent_radio_and_selected_commerce_verified', 'writes': False,
-                'source_url': url, 'witness_url': witness['url'], 'gtin13': result['gtin13'],
-                'sku': result['sku'], 'ram_gb': ram, 'storage_gb': storage, 'network_generation': '4g'}
+        report = {'status': 'independent_radio_and_selected_commerce_verified', 'writes': False,
+                  'source_url': url, 'witness_url': witness['url'], 'gtin13': result['gtin13'],
+                  'sku': result['sku'], 'ram_gb': ram, 'storage_gb': storage, 'network_generation': '4g'}
+        if prepare:
+            selected_time = datetime.fromisoformat(result['observed_at'])
+            if (abs((observed_at - selected_time).total_seconds()) > 60
+                    or (datetime.now(timezone.utc) - selected_time).total_seconds() > 60):
+                return {'status': 'selected_commerce_expired', 'writes': False}
+            report['prepared_offer'] = {**result, 'product_id': result['sku'],
+                'ram_gb': ram, 'storage_gb': storage, 'network_generation': '4g',
+                'independent_radio': {'source_url': witness['url'], 'source_title': witness['source_title'],
+                    'observed_at': canonical_observation_time(witness['observed_at']), 'sku_evidence': proof}}
+        return report
     return {'status': 'independent_selected_gtin_unavailable', 'writes': False}
 
 

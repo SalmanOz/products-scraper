@@ -51,7 +51,6 @@ def _teknosa_selected_sku_evidence(offer):
     from priority_retailer_transport import product_host
     from retailer_barcode import retailer_gtin13
     if (offer.get('selected_teknosa_variant_verified') is not True
-            or offer.get('selected_teknosa_physical_specs_verified') is not True
             or offer.get('merchant') != offer.get('selected_teknosa_seller')
             or offer.get('merchant_id') != offer.get('selected_teknosa_shop_id')
             or offer.get('currency') != 'TRY' or offer.get('condition') != 'new'
@@ -69,14 +68,28 @@ def _teknosa_selected_sku_evidence(offer):
             or not isinstance(listing, str) or not re.fullmatch(r'[1-9]\d{2,12}', listing)
             or not isinstance(gtin, str) or not re.fullmatch(r'\d{13}', gtin) or retailer_gtin13(gtin) != gtin
             or type(ram) is not int or not 1 <= ram <= 64
-            or type(storage) is not int or not 32 <= storage <= 4096 or radio != '5g'
+            or type(storage) is not int or not 32 <= storage <= 4096
             or product_host(url) != 'www.teknosa.com' or urlparse(url).query
             or not urlparse(url).path.endswith('-p-' + sku)):
         return None
-    return {'version': 'selected-retailer-sku-v1', 'platform': 'Teknosa',
+    proof = {'version': 'selected-retailer-sku-v1', 'platform': 'Teknosa',
             'product_id': sku, 'sku': sku, 'listing_id': listing,
             'merchant_id': merchant, 'merchant_name': name, 'gtin13': gtin,
             'ram_gb': ram, 'storage_gb': storage, 'network_generation': radio}
+    witness = offer.get('independent_radio')
+    if radio == '5g' and witness is None and offer.get('selected_teknosa_physical_specs_verified') is True:
+        return proof
+    if (radio != '4g' or not isinstance(witness, dict)
+            or set(witness) != {'source_url', 'source_title', 'observed_at', 'sku_evidence'}):
+        return None
+    observed = witness['sku_evidence']
+    platforms = {'www.hepsiburada.com': 'Hepsiburada', 'www.trendyol.com': 'Trendyol', 'www.n11.com': 'n11'}
+    platform = platforms.get(product_host(witness['source_url']))
+    if (not isinstance(observed, dict) or observed.get('version') != 'selected-retailer-sku-v1'
+            or platform is None or platform != observed.get('platform')
+            or any(observed.get(key) != proof[key] for key in ('gtin13', 'ram_gb', 'storage_gb', 'network_generation'))):
+        return None
+    return {**proof, 'version': 'selected-retailer-sku-v3', 'independent_radio': witness}
 
 
 def selected_sku_evidence(offer):
