@@ -249,12 +249,12 @@ def discovery_links(html, url, products):
     return sorted(model_links, key=lambda u: (model_links[u], u)) + sorted(found)
 
 
-def discover_product_siblings(html, url, product):
-    """Read explicit in-stock color links, never sibling prices or offer proof.
+def discover_product_siblings(html, url, product, *, include_other_storage=False):
+    """Read explicit in-stock variant links for separate fresh PDP reads.
 
     Even a currently unavailable selected color can expose other public SKU
-    destinations. Each destination must undergo a separate fresh full PDP read.
-    No URL is synthesized from an identifier and no other capacity is adopted.
+    destinations. Other storage links are optional routing hints and carry
+    neither a price nor evidence about the selected SKU at the destination.
     """
     from hepsiburada_catalog_source import _identity
     from reviewed_offer_targets import with_reviewed_radio
@@ -275,7 +275,8 @@ def discover_product_siblings(html, url, product):
             return []
         specs = with_reviewed_radio(product, PriceUpdater.get_expected_specs(product.get('attributes')))
         storage = TRPriceScraper._spec_int(specs.get('storage_gb'))
-        if not storage:
+        model = TRPriceScraper._catalog_model_name(product['name'], specs)
+        if not storage or not model:
             return []
     except (KeyError, ValueError, TypeError):
         return []
@@ -288,18 +289,33 @@ def discover_product_siblings(html, url, product):
         if (card_destination(target) != target or not isinstance(sku, str)
                 or not isinstance(target, str) or not urlparse(target).path.endswith('-p-' + sku)
                 or sku == state.get('sku') or not isinstance(title, str) or not 1 <= len(title) <= 500
-                or re.search(r'yenilenmi[sş]|refurbished|ikinci\s*el', title, re.I)
-                or not matcher.is_strict_match(product['name'], title, specs)):
+                or re.search(r'yenilenmi[sş]|refurbished|ikinci\s*el', title, re.I)):
             continue
         properties = variant.get('properties')
-        capacities = [p['valueObject'].get('actualValue') for p in properties
-                      if isinstance(p, dict) and p.get('name') == 'Kapasite'
-                      and isinstance(p.get('valueObject'), dict)] if isinstance(properties, list) else []
-        if capacities != [f'{storage} GB']:
+        capacities = [p['valueObject'].get('actualValue') if isinstance(p.get('valueObject'), dict) else None
+                      for p in properties if isinstance(p, dict) and p.get('name') == 'Kapasite'
+                      ] if isinstance(properties, list) else []
+        if capacities == [f'{storage} GB']:
+            if not matcher.is_strict_match(product['name'], title, specs):
+                continue
+            scope = 'public_product_variant_link'
+        elif include_other_storage and len(capacities) == 1 and isinstance(capacities[0], str):
+            capacity = capacities[0]
+            if not re.fullmatch(r'[1-9]\d{0,3} (?:GB|TB)', capacity):
+                continue
+            other_storage = matcher._spec_int(capacity)
+            ram, title_storage, ambiguous = matcher._unambiguous_listing_capacities(title)
+            if (ambiguous or other_storage == storage or not 32 <= other_storage <= 4096
+                    or title_storage != other_storage
+                    or not matcher.is_strict_match(model, title, {**specs, 'ram_gb': ram,
+                                                                   'storage_gb': other_storage})):
+                continue
+            scope = 'public_product_memory_variant_link'
+        else:
             continue
         found[target] = {'source_url': target, 'discovery_title': title,
                          'discovery_sku': sku, 'stock_priority': True,
-                         'discovery_scope': 'public_product_variant_link'}
+                         'discovery_scope': scope}
     return list(found.values())
 
 

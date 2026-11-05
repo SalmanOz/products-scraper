@@ -237,6 +237,24 @@ class HepsiburadaDiscoveryTests(unittest.TestCase):
         self.assertEqual(discover_product_siblings(html(sku='HBV0000120X67'), root, product), [])
         self.assertEqual(discover_product_siblings(html() + html(), root, product), [])
 
+        # Native capacity choice observed on the same selected public iPhone 11 PDP.
+        other = {**sibling, 'name': 'Apple iPhone 11 128 GB Beyaz', 'sku': 'HBV0000122JCR',
+                 'url': 'https://www.hepsiburada.com/apple-iphone-11-128-gb-beyaz-p-HBV0000122JCR',
+                 'properties': [{'name': 'Kapasite', 'valueObject': {'actualValue': '128 GB'}}]}
+        product['attributes']['Connectivity'] = {'5G': False}
+        self.assertEqual(discover_product_siblings(html(other), root, product), [])
+        found = discover_product_siblings(html(other), root, product, include_other_storage=True)
+        self.assertEqual(found, [{'source_url': other['url'], 'discovery_title': other['name'],
+            'discovery_sku': other['sku'], 'stock_priority': True,
+            'discovery_scope': 'public_product_memory_variant_link'}])
+        for patch in [{'name': 'Apple iPhone 11 256 GB Beyaz'},
+                      {'name': 'Apple iPhone 11 128 GB 5G Beyaz'},
+                      {'name': 'Apple iPhone 11 Pro 128 GB Beyaz'},
+                      {'name': 'Apple iPhone 11 128 GB / 256 GB Beyaz'},
+                      {'properties': other['properties'] * 2}, {'isInStock': False}]:
+            self.assertEqual(discover_product_siblings(html({**other, **patch}), root, product,
+                                                       include_other_storage=True), [], patch)
+
     def test_public_ad_link_discovers_only_its_explicit_canonical_product_without_tracking(self):
         from urllib.parse import urlencode
         tracker = 'https://adservice.hepsiburada.com/event/api/v1/track?' + urlencode({

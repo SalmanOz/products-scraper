@@ -173,7 +173,12 @@ def inspect_target(transport, url, product):
             specs = with_reviewed_radio(product, PriceUpdater.get_expected_specs(product.get('attributes')))
             offer, why = parse_catalog_buy_box(html, observed_url, product['name'], specs)
             row.update(reader_reason=why, prepared_offer=offer)
-            row['discovered_siblings'] = discover_product_siblings(html, observed_url, product)
+            siblings = discover_product_siblings(html, observed_url, product, include_other_storage=True)
+            row['discovered_siblings'] = [hint for hint in siblings
+                if hint['discovery_scope'] == 'public_product_variant_link']
+            memory_links = [hint for hint in siblings if hint['discovery_scope'] == 'public_product_memory_variant_link']
+            if memory_links:
+                row['discovered_memory_siblings'] = memory_links
             row['discovered_sellers'] = discover_product_sellers(html, observed_url) if offer is not None else []
             if offer is None:
                 from observed_memory_variants import inspect_hepsiburada_memory_variant

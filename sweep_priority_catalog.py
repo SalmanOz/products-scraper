@@ -402,6 +402,12 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                 sibling_counts[product['slug']] += 1
                 result['queued'] += 1
                 process_target(destination, product)
+            if (memory_discovery and row.get('discovered_memory_siblings')
+                    and not urlparse(row['observed_url']).query):
+                known = refresh_urls | inventory_urls | {observed_url(u) for _, u in processed}
+                links = [hint for hint in row['discovered_memory_siblings']
+                         if hint['source_url'] not in known]
+                process_memory_cards('Hepsiburada', row, links, early=True, source_parent=product)
         for offer in extra_offers:
             destination = offer.get('url')
             if ((product['slug'], destination) in processed or product_host(destination) != 'www.teknosa.com'
@@ -413,6 +419,36 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                 'slug': product['slug'], 'retailer': 'Teknosa', 'url': destination,
                 'observed_url': offer['source_document_url'], 'reason': 'document_read', 'http_status': 200,
                 'document_reused': True, 'reader_reason': 'observed_public_seller_card', 'prepared_offer': offer})
+    def process_memory_cards(retailer, discovery, cards, *, early, source_parent=None):
+        if not cards:
+            return
+        from automatic_memory_variants import memory_variant_destinations, parent_specs
+        source_radio = parent_specs(source_parent).get('network_generation') if source_parent else None
+        memory_hints = memory_variant_destinations(cards, products)
+        priorities = result['memory_variant_priority']['parent_priorities']
+        memory_hints.sort(key=lambda hint: priorities.get(hint[0]['slug'], 2))
+        for parent, card in memory_hints:
+            url = card['source_url']
+            memory_key = (retailer, parent['slug'])
+            # Public links only route fresh PDP reads. Share the early admission
+            # rule and the existing retailer and family ceilings.
+            if (source_parent is not None and parent_specs(parent).get('network_generation') != source_radio
+                    or memory_counts[memory_key] >= 2 or memory_retailer_counts[retailer] >= 24
+                    or (parent['slug'], url) in processed):
+                continue
+            if early:
+                if memory_counts[memory_key] >= 1:
+                    continue
+                admit = getattr(memory_recovery, 'admit_early_memory_hint', None)
+                if not (admit(parent, products, prices) if callable(admit)
+                        else priorities.get(parent['slug'], 2) == 0):
+                    continue
+            memory_counts[memory_key] += 1
+            memory_retailer_counts[retailer] += 1
+            discovery.setdefault('memory_variant_hints', []).append({'parent_slug': parent['slug'], **card})
+            result['queued'] += 1
+            process_target(url, parent)
+
     def process_category_cards(retailer, discovery, cards, *, early=False):
         from teknosa_catalog_discovery import match_catalog_destinations
         known = ({observed_url(url) for url, _ in targets}
@@ -430,31 +466,7 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                 result['models_without_priority_hints'] = [slug for slug in
                     result['models_without_priority_hints'] if slug != product['slug']]
         if memory_discovery:
-            from automatic_memory_variants import memory_variant_destinations
-            memory_hints = memory_variant_destinations(cards, products)
-            priorities = result['memory_variant_priority']['parent_priorities']
-            memory_hints.sort(key=lambda hint: priorities.get(hint[0]['slug'], 2))
-            for parent, card in memory_hints:
-                url = card['source_url']
-                memory_key = (retailer, parent['slug'])
-                # Category cards are only routing hints. Share the recovery's
-                # bounded early covered-family admission before spending a PDP
-                # read; the ordinary final pass keeps the same 2/24 counters.
-                if (memory_counts[memory_key] >= 2 or memory_retailer_counts[retailer] >= 24
-                        or (parent['slug'], url) in processed):
-                    continue
-                if early:
-                    if memory_counts[memory_key] >= 1:
-                        continue
-                    admit = getattr(memory_recovery, 'admit_early_memory_hint', None)
-                    if not (admit(parent, products, prices) if callable(admit)
-                            else priorities.get(parent['slug'], 2) == 0):
-                        continue
-                memory_counts[memory_key] += 1
-                memory_retailer_counts[retailer] += 1
-                discovery.setdefault('memory_variant_hints', []).append({'parent_slug': parent['slug'], **card})
-                result['queued'] += 1
-                process_target(url, parent)
+            process_memory_cards(retailer, discovery, cards, early=early)
 
     deferred_categories = []
     def discover_category(retailer, report_key, module, read_category, resume=None):

@@ -1107,6 +1107,42 @@ class SweepTests(unittest.TestCase):
         writer.assert_called_once()
         self.assertEqual(writer.call_args.args[0]['rows'][0]['url'], links[1])
 
+    def test_native_hepsiburada_capacity_link_requires_memory_mode_and_a_fresh_pdp(self):
+        import json
+        root = 'https://www.hepsiburada.com/apple-iphone-11-64-gb-beyaz-p-HBV0000120X66'
+        other = 'https://www.hepsiburada.com/apple-iphone-11-128-gb-beyaz-p-HBV0000122JCR'
+        choice = {'name': 'Apple iPhone 11 128 GB Beyaz', 'sku': 'HBV0000122JCR', 'url': other,
+                  'isDefault': False, 'isInStock': True, 'isPreOrder': False, 'price': 1,
+                  'properties': [{'name': 'Kapasite', 'valueObject': {'actualValue': '128 GB'}}]}
+        root_document = '<script id="reduxStore">' + json.dumps({'productState': {'product': {
+            'productId': 'HB00000NSBZ4', 'sku': 'HBV0000120X66', 'variants': [choice]}}}) + '</script>'
+        for mode, expected in [(False, [root]), (True, [root, other])]:
+            with self.subTest(memory_discovery=mode):
+                client = Client()
+                client.product.update(name='Apple iPhone 11', slug='apple-iphone-11',
+                    attributes={'ram_gb': 4, 'storage_gb': 64, 'Connectivity': {'5G': False}},
+                    offer_targets=[{'source_url': root}])
+                client.get_public_price_priority = lambda: {999: ('apple-iphone-11', False)}
+                calls = []
+                class Source(Transport):
+                    def read_document(self, url):
+                        calls.append(url)
+                        if url == root:
+                            return root_document, 'document_read', 200
+                        return None, 'http_404', 404
+                with patch('sweep_priority_catalog.refresh_candidates') as writer:
+                    result = sweep(client=client, transport=Source(), publish=True,
+                                   reader=sweep_reader(), memory_discovery=mode)
+                self.assertEqual(calls, expected)
+                self.assertEqual(result['queued'], len(expected))
+                self.assertFalse(result['writes'])
+                writer.assert_not_called()
+                if mode:
+                    hint, = result['rows'][0]['memory_variant_hints']
+                    self.assertEqual(hint['source_url'], other)
+                    self.assertNotIn('price', hint)
+                    self.assertEqual(result['rows'][1]['http_status'], 404)
+
     def test_coverage_priority_retains_only_current_confirmed_multi_seller_models_and_keeps_full_gate(self):
         from datetime import datetime, timezone
         catalog = products(5)
