@@ -16,6 +16,38 @@ URLS = (
 
 
 class PriorityRetailerTests(unittest.TestCase):
+    def test_cooldown_readiness_cannot_bypass_failed_sku_seen_documents_robots_or_shared_budget(self):
+        for budget in (1, 2):
+            now, calls = [1000], []
+            first, deferred = URLS[0], URLS[0] + '1'
+            source = PriorityRetailerTransport(clock=lambda: now[0], sleep=lambda _: None,
+                                               maximum_per_host=budget)
+            def read(url, *args, **kwargs):
+                calls.append(url)
+                if url.endswith('robots.txt'): return b'User-agent: *\nAllow: /\nDisallow: /forbidden\n', 'ready', 200
+                if url == first: return None, 'browser_timeout', 504
+                return b'<h1>Healthy selected PDP</h1>', 'ready', 200
+            with patch.object(source, '_read', side_effect=read):
+                self.assertFalse(source.can_resume_cooldown(deferred))
+                source.read_document(first)
+                self.assertEqual(source.read_document(deferred)[1], 'source_cooldown')
+                self.assertFalse(source.can_resume_cooldown(deferred))
+                now[0] += 31
+                self.assertFalse(source.can_resume_cooldown(first))
+                self.assertFalse(source.can_resume_cooldown(first + '?magaza=Another'))
+                forbidden = deferred.replace('/samsung-', '/forbidden-samsung-')
+                self.assertEqual(source.read_document(forbidden)[1], 'robots_disallowed')
+                self.assertTrue(source.can_resume_cooldown(deferred))
+                self.assertEqual(source.read_document(deferred)[1],
+                                 'document_read' if budget == 2 else 'pdp_budget_exhausted')
+                self.assertEqual(len(calls), budget + 1)  # Includes robots.
+                self.assertFalse(source.can_resume_cooldown('https://evil.example/phone'))
+                if budget == 2:
+                    self.assertFalse(source.can_resume_cooldown(deferred))
+                source._states['www.hepsiburada.com']['blocked'] = True
+                self.assertFalse(source.can_resume_cooldown(deferred + '2'))
+                self.assertEqual(source.read_document(deferred + '2')[1], 'source_circuit_open')
+
     def test_isolated_browser_timeouts_recover_after_a_healthy_other_sku_without_resetting_any_budget(self):
         now, calls = [1000], []
         first = URLS[0]
@@ -65,6 +97,7 @@ class PriorityRetailerTests(unittest.TestCase):
                 self.assertEqual(len(calls), before)
             self.assertTrue(source.report()['Hepsiburada']['blocked'])
             self.assertEqual(source.report()['Hepsiburada']['browser_timeout_recoveries'], 1)
+            self.assertFalse(source.can_resume_cooldown(URLS[0] + '3'))
 
     def test_phone_category_search_reuses_robots_denial_and_the_shared_document_cap(self):
         from priority_retailer_transport import N11_PHONE_SEARCH_PATH

@@ -246,14 +246,25 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
     seller_counts = Counter()
     memory_counts = Counter()
     memory_retailer_counts = Counter()
+    cooldown_deferred = []
     trendyol_category_hints = []
     if discover_trendyol and not category_audit_only:
         result['trendyol_brand_category_discovery'] = {'scope': 'observed_pdp_breadcrumbs_only',
             'initial_model_limit': 8, 'seed_models': [], 'observed_category_urls': trendyol_category_hints,
             'prices_or_offer_evidence_reused': False, 'source_budget_shared': True}
-    def process_target(url, product, audited_row=None):
+    def process_target(url, product, audited_row=None, cooldown_row=None):
         nonlocal publication_failed
-        if (product['slug'], url) in processed:
+        if cooldown_row is not None:
+            # Resume only an existing, admitted target that received no HTML.
+            # Keep one final row/denominator entry and one bounded resume;
+            # fetched failures and denied sources never enter this path.
+            if (audited_row is not None or cooldown_row.get('reason') != 'source_cooldown'
+                    or cooldown_row.get('http_status') is not None or cooldown_row.get('prepared_offer') is not None
+                    or cooldown_row.get('cooldown_resume') is not None
+                    or cooldown_row.get('slug') != product['slug'] or cooldown_row.get('url') != url
+                    or not any(r is cooldown_row for r in result['rows'])):
+                raise ValueError('invalid_cooldown_resume')
+        elif (product['slug'], url) in processed:
             return
         processed.add((product['slug'], url))
         if category_audit_only:
@@ -264,7 +275,16 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
         row['expected_specs'] = product.get('attributes') and {
             key: value for key, value in PriceUpdater.get_expected_specs(
                 product['attributes']).items() if key in ('ram_gb', 'storage_gb')}
-        result['rows'].append(row)
+        if cooldown_row is None:
+            result['rows'].append(row)
+            if row.get('reason') == 'source_cooldown':
+                cooldown_deferred.append((url, product, row))
+        else:
+            cooldown_row.clear()
+            cooldown_row.update(row)
+            row = cooldown_row
+            row['cooldown_resume'] = {'initial_reason': 'source_cooldown', 'attempts': 1,
+                                      'initial_document_fetched': False}
         if discover_trendyol and product_host(row.get('observed_url')) == 'www.trendyol.com':
             from trendyol_catalog_discovery import category_identity
             for hint in row.get('discovered_categories', []):
@@ -697,6 +717,21 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                 for url in destinations:
                     result['queued'] += 1
                     process_target(url, product)
+        # Other source work supplies useful time for the existing cooldown.
+        # Revisit only unread, already-admitted PDPs once, without sleeping,
+        # expanding quotas or retrying failed HTTP/challenge documents.
+        ready = getattr(transport, 'can_resume_cooldown', None)
+        if cooldown_deferred:
+            resumed = result['unread_cooldown_recovery'] = {
+                'deferred_targets': len(cooldown_deferred), 'attempted_targets': 0,
+                'source_budget_shared': True, 'resume_passes': 1}
+            for url, product, row in tuple(cooldown_deferred):
+                if callable(ready) and ready(row.get('observed_url') or url):
+                    resumed['attempted_targets'] += 1
+                    process_target(url, product, cooldown_row=row)
+            resumed['deferred_targets'] = len(cooldown_deferred)
+            resumed['remaining_unread_targets'] = sum(
+                row.get('reason') == 'source_cooldown' for _, _, row in cooldown_deferred)
         result['status'] = ('category_audit_completed' if category_audit_only else
                             'publication_failed' if publication_failed else 'completed')
     except Exception as error:
@@ -783,6 +818,9 @@ def save_report(result):
             result['hepsiburada_category_frontier_saved'], ensure_ascii=False)]
     if result.get('discovery_inventory'):
         lines += ['', 'Discovery inventory: ' + json.dumps(result['discovery_inventory'], ensure_ascii=False)]
+    if result.get('unread_cooldown_recovery'):
+        lines += ['', 'Unread cooldown recovery: ' + json.dumps(
+            result['unread_cooldown_recovery'], ensure_ascii=False)]
     if result.get('coverage_priority'):
         priority = result['coverage_priority']
         lines += ['', 'Coverage priority: ' + json.dumps({

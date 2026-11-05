@@ -196,6 +196,19 @@ class PriorityRetailerTransport:
             return None, 'invalid_priority_pdp', None
         return self._read_document(url, host)
 
+    def can_resume_cooldown(self, url):
+        """Routing readiness only; never resets source state or authorizes a read.
+
+        A cooldown skip has not spent a document request. The normal reader
+        still enforces robots, selected-SKU exclusions and the original quota.
+        """
+        host = product_host(url)
+        with self._lock:
+            state = self._states.get(host)
+            return bool(state and not state['blocked'] and state.get('retry_after')
+                        and state['retry_after'] <= self._clock() and url not in state['seen']
+                        and _hepsiburada_selected_sku_key(url) not in state['browser_timeout_skus'])
+
     def read_fresh_document(self, url):
         """Reverify a selected public PDP inside this run's existing circuit.
 

@@ -21,6 +21,63 @@ class Transport:
 
 
 class TargetPreflightTests(unittest.TestCase):
+    def test_unread_cooldown_targets_resume_once_after_other_sources_and_keep_one_final_row(self):
+        from priority_retailer_transport import PriorityRetailerTransport
+        from test_hepsiburada_catalog_source import document, TARGET
+        fail = TARGET.replace('/samsung-', '/aaa-samsung-').replace('HBC0000TEST00', 'HBC0000FAIL00')
+        ty = ['https://www.trendyol.com/samsung/galaxy-a36-128gb-p-12345001',
+              'https://www.trendyol.com/samsung/galaxy-a36-128gb-p-12345002']
+        for advance, fresh_changed in [(False, False), (True, False), (True, True)]:
+            with self.subTest(cooldown_elapsed=advance, fresh_changed=fresh_changed):
+                client = Client()
+                client.get_public_price_priority = lambda: {999: (client.product['slug'], False)}
+                client.product['offer_targets'] = [{'source_url': u, 'merchant_name':
+                    'Hepsiburada' if 'hepsiburada.com' in u else 'Trendyol'} for u in [fail, TARGET, *ty]]
+                now, calls = [1000], []
+                transport = PriorityRetailerTransport(clock=lambda: now[0], sleep=lambda _: None,
+                                                       maximum_per_host=2)
+                def read(url, *args, **kwargs):
+                    calls.append(url)
+                    if url.endswith('robots.txt'):
+                        return b'User-agent: *\nAllow: /\n', 'ready', 200
+                    if url == fail:
+                        return None, 'http_503', 503
+                    if url == ty[1] and advance:
+                        now[0] += 31
+                    return (document() if url == TARGET else '<h1>Other phone page</h1>').encode(), 'ready', 200
+                fresh_reader = reader()
+                fresh_reader.hepsiburada_catalog_source.transport.configure_catalog_budget = lambda count: None
+                if fresh_changed:
+                    # The resumed diagnostic passes, but a changed fresh
+                    # selected barcode must prevent every publication.
+                    fresh_reader.hepsiburada_catalog_source.transport.read_document = lambda url: (
+                        document().replace('8806094821437', '8806094821438'), 'document_read', 200)
+                with patch.object(transport, '_read', side_effect=read):
+                    result = sweep(client=client, publish=True, transport=transport, reader=fresh_reader)
+                self.assertEqual((result['queued'], len(result['rows'])), (4, 4))
+                self.assertEqual(result['status'], 'completed')
+                self.assertEqual(calls.count(fail), 1)  # Fetched HTTP failures are never resumed.
+                self.assertEqual(calls.count(TARGET), int(advance))
+                self.assertEqual(len(client.writes), int(advance and not fresh_changed),
+                                 [(r['url'], r.get('reader_reason'), r.get('publication')) for r in result['rows']])
+                row = next(r for r in result['rows'] if r['url'] == TARGET)
+                recovery = result['unread_cooldown_recovery']
+                self.assertEqual(recovery['attempted_targets'], int(advance))
+                self.assertTrue(recovery['source_budget_shared'])
+                if advance:
+                    self.assertEqual(row['reader_reason'], 'selected_new_cash_offer_observed')
+                    self.assertEqual(row['cooldown_resume']['initial_reason'], 'source_cooldown')
+                    if fresh_changed:
+                        self.assertFalse(row['publication']['writes'])
+                        self.assertEqual(client.scores, 0)
+                    else:
+                        self.assertTrue(row['publication']['commercial_readback_verified'])
+                        self.assertEqual(client.scores, 1)
+                    self.assertEqual(transport.report()['Hepsiburada']['pdp_requests'], 2)
+                else:
+                    self.assertEqual(row['reason'], 'source_cooldown')
+                    self.assertFalse(result['writes'])
+
     def test_refurbished_history_spends_no_source_reads_and_keeps_model_in_fresh_catalog_discovery(self):
         from pathlib import Path
         from html import escape
