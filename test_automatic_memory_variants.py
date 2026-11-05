@@ -235,6 +235,34 @@ class AutomaticMemoryVariantTests(unittest.TestCase):
                       'Apple iPhone 17 Pro Max 512 GB', 'Apple iPhone 16 Pro Max']:
             self.assertEqual(memory_variant_destinations([{**card, 'discovery_title': title}], [parent]), [], title)
 
+    def test_teknosa_barcode_witness_routes_only_to_one_existing_exact_variant(self):
+        from automatic_memory_variants import teknosa_independent_identity_targets
+
+        preview = inspect_trendyol_memory_variant(alternate_document(), ALT_URL, NAME, SPECS)
+        child = {**PARENT, 'id': 124, 'slug': 'a54-8gb-256gb',
+                 'attributes': {**PARENT['attributes'], 'storage_gb': 256}}
+        url = 'https://www.teknosa.com/samsung-galaxy-a54-8gb-256gb-grafit-p-125079845'
+        target = {'slug': PARENT['slug'], 'observed_url': url, 'http_status': 200,
+                  'reader_reason': 'catalog_variant_mismatch', 'heading': ['Samsung Galaxy A54 8 GB RAM 256 GB'],
+                  'teknosa_cart': {'data-product-id': '125079845', 'data-product-ean': preview['offer']['gtin13']}}
+        witness = {'slug': PARENT['slug'], 'http_status': 200, 'other_memory_variant': preview}
+        rows = [target, witness]
+        self.assertEqual(teknosa_independent_identity_targets(rows, [PARENT, child]), [{
+            'source_url': url, 'slug': child['slug'], 'gtin13': preview['offer']['gtin13'],
+            'variant': preview['observed_specs'], 'witness_urls': [preview['offer']['url']],
+        }])
+        for changed in (
+            {**target, 'heading': ['Samsung Galaxy A54 8 GB RAM 128 GB']},
+            {**target, 'heading': ['Samsung Galaxy A54 4G 8 GB RAM 256 GB']},
+            {**target, 'heading': ['Samsung Galaxy A55 8 GB RAM 256 GB']},
+            {**target, 'reader_reason': 'selected_marketplace_schema_mismatch'},
+            {**target, 'teknosa_cart': {**target['teknosa_cart'], 'data-product-id': '125079846'}},
+        ):
+            self.assertEqual(teknosa_independent_identity_targets([changed, witness], [PARENT, child]), [])
+        self.assertEqual(teknosa_independent_identity_targets(rows, [PARENT]), [])
+        self.assertEqual(teknosa_independent_identity_targets(rows, [PARENT, child,
+            {**child, 'id': 125, 'slug': 'ambiguous-child'}]), [])
+
     def test_provider_declared_version_recovers_missing_menu_without_inventing_a_capacity_url(self):
         from bs4 import BeautifulSoup
         base = tech_document(TECH_URL, storage=128)

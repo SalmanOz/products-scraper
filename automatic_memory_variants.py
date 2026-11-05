@@ -710,6 +710,76 @@ def existing_selected_memory_sibling(parent, preview, products):
     return matches[0] if len(matches) == 1 else None
 
 
+def teknosa_independent_identity_targets(rows, products):
+    """Identify exact existing SKUs that merit separate fresh source reads.
+
+    Neither a Teknosa cart's barcode nor another retailer's offer authorizes
+    a price write. The result is only paired URLs for a future re-verification.
+    """
+    from priority_retailer_transport import product_host
+    from retailer_barcode import retailer_gtin13
+
+    fields = ('ram_gb', 'storage_gb', 'network_generation')
+    matcher = TRPriceScraper()
+    catalog, owners = {}, {}
+    for product in products:
+        model = matcher._catalog_model_name(product['name'], product['attributes'])
+        if model:
+            specs = parent_specs(product)
+            family = family_key(model)
+            catalog[product['slug']] = (model, family, specs)
+            key = (family, *(specs.get(field) for field in fields))
+            owners.setdefault(key, []).append(product['slug'])
+
+    witnesses = {}
+    for row in rows:
+        entry = catalog.get(row['slug'])
+        if entry is None or row.get('http_status') != 200:
+            continue
+        model, family, parent = entry
+        offer, specs = row.get('prepared_offer'), parent
+        preview = row.get('other_memory_variant')
+        if (offer is None and isinstance(preview, dict) and preview.get('writes') is False
+                and preview.get('scope') == 'other_memory_variant_preview_only'):
+            offer, specs = preview.get('offer'), preview.get('observed_specs')
+        if (not isinstance(offer, dict) or not isinstance(specs, dict)
+                or product_host(offer.get('url')) not in
+                {'www.hepsiburada.com', 'www.trendyol.com', 'www.n11.com'}):
+            continue
+        proof = variant_selected_evidence(offer, model, specs)
+        gtin = retailer_gtin13(proof.get('gtin13')) if proof else None
+        if gtin:
+            key = (family, *(proof[field] for field in fields))
+            witnesses.setdefault(gtin, {}).setdefault(key, set()).add(offer['url'])
+
+    targets = {}
+    for row in rows:
+        entry = catalog.get(row['slug'])
+        url, cart = row.get('observed_url'), row.get('teknosa_cart')
+        if (entry is None or row.get('http_status') != 200
+                or row.get('reader_reason') != 'catalog_variant_mismatch'
+                or product_host(url) != 'www.teknosa.com' or urlparse(url).query
+                or not isinstance(cart, dict)
+                or cart.get('data-product-id') != urlparse(url).path.rsplit('-p-', 1)[-1]):
+            continue
+        model, family, parent = entry
+        gtin = retailer_gtin13(cart.get('data-product-ean'))
+        matches = witnesses.get(gtin, {})
+        if len(matches) != 1:
+            continue
+        (identity, urls), = matches.items()
+        owner = owners.get(identity, [])
+        actual = dict(zip(fields, identity[1:]))
+        if (len(owner) != 1 or identity[0] != family
+                or parent.get('network_generation') != actual['network_generation']
+                or not any(matcher.is_strict_match(model, title, actual)
+                           for title in row.get('heading', []) if isinstance(title, str))):
+            continue
+        targets[url] = {'source_url': url, 'slug': owner[0], 'gtin13': gtin,
+                        'variant': actual, 'witness_urls': sorted(urls)[:3]}
+    return list(targets.values())
+
+
 def observed_variant_candidates(result, products):
     by_slug = {p['slug']: p for p in products}
     matcher = TRPriceScraper()

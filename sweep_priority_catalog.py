@@ -814,6 +814,12 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
             resumed['deferred_targets'] = len(cooldown_deferred)
             resumed['remaining_unread_targets'] = sum(
                 row.get('reason') == 'source_cooldown' for _, _, row in cooldown_deferred)
+        if memory_discovery and not category_audit_only:
+            from automatic_memory_variants import teknosa_independent_identity_targets
+            result['teknosa_independent_identity_routing'] = {
+                'scope': 'paired_source_urls_for_fresh_reverification', 'writes': False,
+                'targets': teknosa_independent_identity_targets(result['rows'], products),
+            }
         result['status'] = ('category_audit_completed' if category_audit_only else
                             'publication_failed' if publication_failed else 'completed')
     except Exception as error:
