@@ -470,9 +470,9 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
 
     deferred_categories = []
     def discover_category(retailer, report_key, module, read_category, resume=None):
+        is_ty = report_key == 'trendyol_category_discovery'
         if resume is None:
             is_hb = report_key == 'hepsiburada_category_discovery'
-            is_ty = report_key == 'trendyol_category_discovery'
             current_frontier = frontier if is_hb else ty_frontier if is_ty else None
             history = current_frontier['visited'] if current_frontier is not None else []
             pending_branches = ([u for u in current_frontier['pending'] if u != module.CATEGORY_URL]
@@ -486,11 +486,19 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
             category_seen = set(history) - {module.CATEGORY_URL}
             discovery = result[report_key] = {'retailer': retailer, 'pages': [],
                                             'new_targets': [], 'pagination_complete': False}
+            if is_ty:
+                discovery['model_branch_limit'] = module.MAX_MODEL_BRANCHES
         else:
             cards, category_url, category_seen, pending_branches = resume
             discovery = result[report_key]
             discovery['resume_passes'] = 1
         redirected_categories = set(discovery.get('redirected_categories', {}).values())
+        model_branches = set()
+        if is_ty:
+            for url in pending_branches + [page['url'] for page in discovery['pages']]:
+                identity = module.category_identity(url)
+                if identity and identity.get('model'):
+                    model_branches.add(identity['path'])
         # One shared budget across both passes, including failed attempts.
         for _ in range(module.MAX_CATEGORY_PAGES - len(discovery['pages'])):
             if not category_url or category_url in category_seen:
@@ -557,6 +565,9 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                         # GTIN, stock claim or selected evidence is retained.
                         gap_cards[destination] = {key: card[key] for key in
                             ('source_url', 'discovery_title', 'stock_priority')}
+            if (is_ty and parser.get('category_scope') == 'phone_model' and not category_audit_only
+                    and (coverage_first or memory_discovery)):
+                process_category_cards(retailer, discovery, found, early=True)
             if parser.get('status') != 'parsed':
                 if callable(getattr(module, 'discovery_links', None)):
                     discovery.setdefault('incomplete_pages', []).append(category_url)
@@ -568,8 +579,18 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                 discovery_products = sorted(
                     (p for p in products if p['slug'] not in covered_models),
                     key=lambda p: (prices.get(p['id'], ('', True))[1], p['id']))
-                pending_branches.extend(link for link in module.discovery_links(html, category_url, discovery_products)
-                                        if link not in category_seen and link not in pending_branches)
+                model_links = []
+                for link in module.discovery_links(html, category_url, discovery_products):
+                    if link in category_seen or link in pending_branches:
+                        continue
+                    identity = module.category_identity(link) if is_ty else None
+                    if identity and identity.get('model'):
+                        if len(model_branches) < module.MAX_MODEL_BRANCHES and identity['path'] not in model_branches:
+                            model_branches.add(identity['path'])
+                            model_links.append(link)
+                    else:
+                        pending_branches.append(link)
+                pending_branches[:0] = model_links
                 if next_category_url and next_category_url not in category_seen and next_category_url not in pending_branches:
                     pending_branches.append(next_category_url)
                 next_category_url = pending_branches.pop(0) if pending_branches else None

@@ -155,6 +155,64 @@ class TrendyolDiscoveryTests(unittest.TestCase):
                 brand.replace('-c164461','-c103498'),brand.replace('infinix','inventedbrand')]:
             self.assertIsNone(category_identity(bad), bad)
 
+    def test_observed_model_filter_routes_missing_radio_variant_to_fresh_pdp_before_brand_scan(self):
+        from unittest.mock import patch
+        from sweep_priority_catalog import sweep
+
+        base = 'https://www.trendyol.com/redmi-note-13-pro-cep-telefonu-x-c103498-a292-v10617480'
+        brand = 'https://www.trendyol.com/xiaomi-cep-telefonu-x-b101939-c103498'
+        target = ('https://www.trendyol.com/xiaomi/redmi-note-13-pro-5g-8gb-ram-256-gb-'
+                  'akilli-cep-telefonu-turkiye-garantili-p-930528202')
+        product = {'id': 275, 'slug': 'xiaomi-redmi-note-13-pro', 'name': 'Xiaomi Redmi Note 13 Pro',
+                   'attributes': {'ram_gb': 8, 'storage_gb': 128, 'Connectivity': {'5G': True}},
+                   'offer_targets': []}
+        root = document(
+            f'<a href="{brand}">Xiaomi</a><a href="{base}">Redmi Note 13 Pro Cep Telefonu</a>'
+            f'<a href="{base.replace("10617480", "10617481")}">Redmi Note 13 Pro Plus</a>'
+            f'<a href="{base.replace(".com/", ".com.evil.test/")}">Redmi Note 13 Pro</a>')
+        selected = ('<input type="checkbox" id="checkbox-web-aggregations-checkbox-292-10617480-10617480" '
+                    'aria-label="Redmi Note 13 Pro" checked="" value="10617480">')
+        model = ('<h1 class="title">Redmi Note 13 Pro Cep Telefonu</h1>' + selected
+                 + card('Xiaomi Redmi Note 13 Pro 5G 8GB RAM 256 GB Akıllı Cep Telefonu', target))
+        self.assertEqual(discovery_links(root, CATEGORY_URL, [product]), [base, brand])
+        for bad in [base + '?pi=2&token=x', base + '#x', base.replace('-a292-', '-a299-')]:
+            self.assertIsNone(category_identity(bad), bad)
+        for bad in [model.replace(' checked=""', ''), model.replace('value="10617480"', 'value="10617481"'),
+                    model + selected, model.replace('Pro Cep Telefonu</h1>', 'Pro Plus Cep Telefonu</h1>')]:
+            self.assertEqual(parse_category_document(bad, base), ([], None))
+
+        class Client:
+            def get_published_products(self): return [deepcopy(product)]
+            def get_public_price_priority(self): return {275: (product['slug'], False)}
+
+        calls = []
+        class Transport:
+            def read_trendyol_category(self, url):
+                calls.append(url)
+                if url == CATEGORY_URL:
+                    return root, 'document_read', 200
+                if url == base:
+                    return model, 'document_read', 200
+                return None, 'http_404', 404
+
+            def read_document(self, url):
+                calls.append(url)
+                return None, 'http_404', 404
+
+            def report(self): return {}
+
+        with patch('sweep_priority_catalog.refresh_candidates') as writer:
+            result = sweep(client=Client(), transport=Transport(), publish=True, discover_trendyol=True,
+                           memory_discovery=True)
+        self.assertEqual(calls, [CATEGORY_URL, base, target, brand, CATEGORY_URL + '?pi=2'])
+        discovery = result['trendyol_category_discovery']
+        self.assertEqual(discovery['pages'][1]['parser']['category_scope'], 'phone_model')
+        hint, = discovery['memory_variant_hints']
+        self.assertEqual(hint['source_url'], target)
+        self.assertNotIn('price', hint)
+        self.assertFalse(result['writes'])
+        writer.assert_not_called()
+
     def test_pdp_breadcrumbs_discover_only_observed_catalog_brand_phone_routes_even_when_sold_out(self):
         from audit_priority_retailers import inspect_target
         from test_trendyol_catalog_source import document as pdp, URL as target, NAME, SPECS

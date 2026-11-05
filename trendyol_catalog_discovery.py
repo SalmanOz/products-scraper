@@ -15,6 +15,7 @@ from tr_price_scraper import TRPriceScraper
 
 CATEGORY_URL = 'https://www.trendyol.com/cep-telefonu-x-c103498'
 MAX_CATEGORY_PAGES = 100
+MAX_MODEL_BRANCHES = 12
 
 
 def category_identity(url):
@@ -25,7 +26,7 @@ def category_identity(url):
     except ValueError:
         return None
     if (parsed.scheme != 'https' or parsed.netloc != 'www.trendyol.com'
-            or parsed.fragment):
+            or parsed.fragment or parsed.params):
         return None
     page = 1
     if parsed.query:
@@ -35,6 +36,12 @@ def category_identity(url):
         page = int(match[1])
     if parsed.path == '/cep-telefonu-x-c103498':
         return {'page': page, 'brand': None, 'path': parsed.path, 'heading': 'Cep Telefonu'}
+    model = re.fullmatch(r'/([a-z0-9]+(?:-[a-z0-9]+){1,12})-cep-telefonu-x-c103498-a292-v([1-9]\d{0,8})',
+                         parsed.path)
+    if model:
+        label = model[1].replace('-', ' ')
+        return {'page': page, 'brand': None, 'path': parsed.path, 'heading': label + ' Cep Telefonu',
+                'model': label, 'model_id': model[2]}
     match = re.fullmatch(r'/([a-z0-9]+)-(android-cep-telefonu|cep-telefonu)-x-b[1-9]\d{0,8}-c(103498|164461)', parsed.path)
     if (match is None or match[1] not in TRPriceScraper.PHONE_BRAND_ALIASES or
             (match[2], match[3]) not in {('cep-telefonu', '103498'), ('android-cep-telefonu', '164461')}):
@@ -53,8 +60,19 @@ def _brand_keys(product):
     return {brand for brand, aliases in TRPriceScraper.PHONE_BRAND_ALIASES.items() if words & aliases}
 
 
+def _model_key(label):
+    words = TRPriceScraper._identity_words(label)
+    if words[-2:] == ['cep', 'telefonu']:
+        words = words[:-2]
+    if words[:2] in (['apple', 'iphone'], ['samsung', 'galaxy'], ['xiaomi', 'redmi'], ['xiaomi', 'poco']):
+        words = words[1:]
+    # The retailer's model filter can include both radios. The selected PDP
+    # must still establish the actual radio and capacity.
+    return tuple(word for word in words if word not in ('4g', '5g', 'lte'))
+
+
 def discovery_links(html, url, products):
-    """Actual public phone-brand anchors only; never construct a brand ID."""
+    """Follow observed phone model and brand anchors matching the catalog."""
     identity = category_identity(url)
     if (not isinstance(html, str) or len(html.encode()) > MAX_HTML_BYTES or
             identity is None and product_host(url) != 'www.trendyol.com'):
@@ -73,10 +91,13 @@ def discovery_links(html, url, products):
         # A phone-brand category spans both radios. Omitting that word only
         # broadens routing; the selected PDP price guard is unchanged.
         return []
-    priorities = {}
+    priorities, model_priorities = {}, {}
     for index, product in enumerate(products):
         for brand in _brand_keys(product):
             priorities.setdefault(brand, index)
+        model = TRPriceScraper._catalog_model_name(product.get('name', ''), product.get('attributes', {}))
+        if model:
+            model_priorities.setdefault(_model_key(model), index)
     found = {}
     for anchor in soup.select('a[href]'):
         try:
@@ -84,9 +105,15 @@ def discovery_links(html, url, products):
         except ValueError:
             continue
         other = category_identity(target)
-        if other and other['brand'] in priorities and other['page'] == 1:
-            found.setdefault(other['path'], target)
-    return sorted(found.values(), key=lambda target: (priorities[category_identity(target)['brand']], target))
+        if not other or other['page'] != 1:
+            continue
+        if identity and other.get('model'):
+            key = _model_key(other['model'])
+            if key in model_priorities and _model_key(anchor.get_text(' ', strip=True)) == key:
+                found.setdefault(target, (0, model_priorities[key], target))
+        elif other['brand'] in priorities:
+            found.setdefault(target, (1, priorities[other['brand']], target))
+    return sorted(found, key=found.__getitem__)
 
 
 def recovery_seed_targets(targets, prices, maximum=8):
@@ -189,6 +216,15 @@ def parse_category_document(html, url, diagnostic=None):
         if isinstance(diagnostic, dict):
             diagnostic['status'] = 'category_identity_missing'
         return [], None
+    if identity.get('model'):
+        selected = soup.select('input[type="checkbox"][id^="checkbox-web-aggregations-checkbox-292-"][checked]')
+        model_id = identity['model_id']
+        if (len(selected) != 1 or selected[0].get('id') != f'checkbox-web-aggregations-checkbox-292-{model_id}-{model_id}'
+                or selected[0].get('value') != model_id
+                or _model_key(selected[0].get('aria-label', '')) != _model_key(identity['model'])):
+            if isinstance(diagnostic, dict):
+                diagnostic['status'] = 'category_model_filter_missing'
+            return [], None
     cards, seen = [], set()
     for anchor in soup.select('a.product-card[href]'):
         titles = anchor.select('h2.title')
@@ -237,6 +273,7 @@ def parse_category_document(html, url, diagnostic=None):
     if isinstance(diagnostic, dict):
         diagnostic.update(status=status, destinations=len(cards),
                           pagination_source=pagination_source,
-                          category_scope='phone_brand' if identity['brand'] else 'phones',
+                          category_scope=('phone_model' if identity.get('model') else
+                                          'phone_brand' if identity['brand'] else 'phones'),
                           highest_observed_page=max(page_numbers) if page_numbers else None)
     return cards, next_url
