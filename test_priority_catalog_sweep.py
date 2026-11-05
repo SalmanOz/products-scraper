@@ -21,6 +21,54 @@ class Transport:
 
 
 class TargetPreflightTests(unittest.TestCase):
+    def test_refurbished_history_spends_no_source_reads_and_keeps_model_in_fresh_catalog_discovery(self):
+        from pathlib import Path
+        from html import escape
+        name = 'Samsung Galaxy S23 FE'
+        bad = [
+            'https://www.trendyol.com/samsung/yenilenmis-galaxy-s23-fe-128gb-b-kalite-beyaz-p-1081764427',
+            'https://www.teknosa.com/yenilenmis-samsung-galaxy-s23-fe-8-gb-ram-128-gb-grafit-cep-telefonu-1-yil-garantili-b-kalite-p-790186297',
+        ]
+        new = 'https://www.n11.com/urun/samsung-galaxy-s23-fe-8-gb-128-gb-samsung-turkiye-garantili-44089317'
+        product = {'id': 1, 'name': name, 'slug': 'samsung-galaxy-s23-fe',
+                   'attributes': {'ram_gb': 8, 'storage_gb': 128, 'Connectivity': {'5G': True}},
+                   'offer_targets': [{'source_url': url} for url in bad]}
+        original = deepcopy(product)
+        diagnostic = []
+        self.assertEqual(catalog_queue([product], {}, diagnostic=diagnostic), [])
+        self.assertEqual(len(diagnostic), 2)
+        self.assertTrue(all(row['reason'] == 'url_non_new_condition' for row in diagnostic))
+        class Client:
+            def get_published_products(self): return [deepcopy(product)]
+            def get_public_price_priority(self): return {1: (product['slug'], False)}
+        class FreshTransport(Transport):
+            def __init__(self): self.calls = []; self.queries = []
+            def read_n11_phone_search(self, query):
+                self.queries.append(query)
+                return ('<a href="' + new + '"><h2 class="product-item-title">' +
+                        escape(name + ' 8 GB 128 GB (Samsung Türkiye Garantili)') + '</h2></a>'), 'document_read', 200
+            def read_document(self, url):
+                self.calls.append(url)
+                assert url == new
+                return Path('fixtures/n11-selected-ssr-basket.html').read_text(), 'document_read', 200
+            def resolved_url(self, url): return url
+        transport = FreshTransport()
+        result = sweep(client=Client(), transport=transport, discover_n11=True)
+        self.assertEqual(transport.calls, [new])
+        self.assertEqual(len(transport.queries), 1)
+        self.assertEqual(result['catalog_count'], 1)
+        self.assertEqual(len(result['non_new_hint_exclusions']), 2)
+        self.assertEqual((result['queued'], result['accepted']), (1, 0))
+        self.assertEqual(result['rows'][0]['prepared_offer']['url'], new)
+        self.assertEqual(result['rows'][0]['reader_reason'], 'selected_n11_basket_offer')
+        self.assertFalse(result['writes'])
+        self.assertEqual(product, original)
+        # Whole-token condition evidence only: brandless and other-memory
+        # hints still need a fresh reader, and substrings prove nothing.
+        for url in ['https://www.n11.com/urun/samsung-galaxy-s23-fe-256-gb-12345678',
+                    'https://www.n11.com/urun/samsung-galaxy-s23-fe-outletplus-12345678']:
+            self.assertEqual(len(catalog_queue([{**product, 'offer_targets': [{'source_url': url}]}], {})), 1)
+
     def test_hb_and_trendyol_platform_gaps_require_current_missing_platform_audit_and_two_targets(self):
         from datetime import datetime, timedelta, timezone
         cases=[('Hepsiburada','discover_hepsiburada',

@@ -6,6 +6,7 @@ One manual invocation exhausts the bounded source queue; writing is opt-in.
 import argparse
 from collections import Counter, defaultdict
 import json
+import re
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
@@ -48,6 +49,15 @@ def catalog_queue(products, prices, *, diagnostic=None):
             url = target.get('source_url') if isinstance(target, dict) else None
             if product_host(url):
                 path_words = set(matcher._identity_words(unquote(urlparse(url).path)))
+                # These explicit condition labels can never yield the new
+                # phones accepted by the full readers. Do not spend their
+                # shared source allowance on historical refurbished hints.
+                # Keep every model in the catalog and ordinary discovery.
+                condition_words = ' '.join(matcher._identity_words(unquote(urlparse(url).path)))
+                if re.search(r'\b(?:yenilenmis|refurbished|ikinci el|2 el|outlet|teshir)\b', condition_words):
+                    if isinstance(diagnostic, list):
+                        diagnostic.append({'slug': product['slug'], 'url': url, 'reason': 'url_non_new_condition'})
+                    continue
                 observed_brands = {brand for brand, aliases in matcher.PHONE_BRAND_ALIASES.items()
                                    if path_words & set(aliases)}
                 # Negative routing evidence only. Unknown/brandless slugs and
@@ -132,6 +142,7 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
               'publish': publish, 'writes': False, 'status': 'running', 'queued': len(targets),
               'conflicting_hint_exclusions': [r for r in hint_exclusions if r['reason'] == 'url_brand_conflict'],
               'unroutable_hint_exclusions': [r for r in hint_exclusions if r['reason'] == 'unroutable_public_pdp_selector'],
+              'non_new_hint_exclusions': [r for r in hint_exclusions if r['reason'] == 'url_non_new_condition'],
               'rows': [], 'accepted': 0, 'discovery': [], 'models_without_priority_hints': sorted(
                   {p['slug'] for p in products} - {p['slug'] for _, p in targets})}
     if memory_recovery is not None:
@@ -727,6 +738,8 @@ def save_report(result):
         lines.insert(2, f"Excluded {len(result['conflicting_hint_exclusions'])} historical URL hints with explicit conflicting brands; catalog coverage denominator is unchanged.")
     if result.get('unroutable_hint_exclusions'):
         lines.insert(2, f"Skipped {len(result['unroutable_hint_exclusions'])} unsupported historical PDP selectors; their catalog models remain eligible for automatic category discovery.")
+    if result.get('non_new_hint_exclusions'):
+        lines.insert(2, f"Skipped {len(result['non_new_hint_exclusions'])} explicit refurbished/used/outlet URL hints; all catalog models and the coverage denominator remain unchanged and eligible for fresh discovery.")
     if result.get('purpose') == 'readonly_category_routing_audit':
         lines.insert(2, 'Read-only category routing audit: retailer product pages were not fetched; no prices were written. This does not pass the catalog price coverage gate.')
     if result.get('purpose') == 'readonly_existing_catalog_target_preflight':
