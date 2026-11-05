@@ -24,7 +24,10 @@ class PriorityRetailerTests(unittest.TestCase):
                                                maximum_per_host=budget)
             def read(url, *args, **kwargs):
                 calls.append(url)
-                if url.endswith('robots.txt'): return b'User-agent: *\nAllow: /\nDisallow: /forbidden\n', 'ready', 200
+                # Python 3.11 takes the first matching rule; 3.14 uses the
+                # most specific rule. Keep this fixture's denial unambiguous
+                # so both runtimes exercise the same production guards.
+                if url.endswith('robots.txt'): return b'User-agent: *\nDisallow: /forbidden\n', 'ready', 200
                 if url == first: return None, 'browser_timeout', 504
                 return b'<h1>Healthy selected PDP</h1>', 'ready', 200
             with patch.object(source, '_read', side_effect=read):
