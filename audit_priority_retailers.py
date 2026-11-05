@@ -150,11 +150,11 @@ def inspect_target(transport, url, product, *, probe_teknosa_identity=False):
             offer, why = parse_catalog_offer(html, url,
                 {'name': product['name'], 'specs': specs})
             technical = None
-            if offer is None and why == 'catalog_variant_mismatch':
+            if probe_teknosa_identity or (offer is None and why == 'catalog_variant_mismatch'):
                 from teknosa_public_technical import read_observation
                 technical, technical_reason = read_observation(transport, html, observed_url)
                 row['teknosa_public_technical_reason'] = technical_reason
-                if technical is not None:
+                if technical is not None and offer is None and why == 'catalog_variant_mismatch':
                     offer, why = parse_catalog_offer(html, url,
                         {'name': product['name'], 'specs': specs}, technical)
             row.update(reader_reason=why, prepared_offer=offer)
@@ -162,7 +162,8 @@ def inspect_target(transport, url, product, *, probe_teknosa_identity=False):
                 from teknosa_seller_cards import public_seller_offers
                 row['additional_prepared_offers'] = public_seller_offers(html, observed_url,
                     {'name': product['name'], 'specs': specs}, maximum=3)
-            if probe_teknosa_identity and offer is None and why == 'catalog_variant_mismatch':
+            if probe_teknosa_identity:
+                from automatic_memory_variants import parent_specs
                 from offer_target_selection import select_offer_targets
                 from teknosa_marketplace_source import independent_radio_preflight
 
@@ -176,7 +177,8 @@ def inspect_target(transport, url, product, *, probe_teknosa_identity=False):
                             yield witness['prepared_offer']
 
                 row['independent_radio_preflight'] = independent_radio_preflight(
-                    html, observed_url, {'name': product['name'], 'specs': specs}, technical, read_witnesses)
+                    html, observed_url, {'name': product['name'], 'specs': parent_specs(product)},
+                    technical, read_witnesses)
             if offer is None:
                 from observed_memory_variants import inspect_teknosa_memory_variant
                 diagnostic = {}

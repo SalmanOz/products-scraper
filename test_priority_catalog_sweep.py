@@ -29,12 +29,14 @@ class TargetPreflightTests(unittest.TestCase):
         client = SimpleNamespace(get_published_products=lambda: [product])
         url = 'https://www.teknosa.com/oppo-a6-pro-8256-gb-gul-agaci-kirmizisi-akilli-telefon-p-100000059453'
         transport = Transport()
-        row = {'prepared_offer': None, 'independent_radio_preflight': {'status': 'selected_commerce_unverified'}}
+        row = {'prepared_offer': {'merchant': 'Cephane Teknoloji', 'sku': '100000059453'},
+               'independent_radio_preflight': {'status': 'independent_selected_gtin_unavailable'}}
         with patch('sweep_priority_catalog.inspect_target', return_value=row) as inspect:
             report = target_preflight(client=client, url=url, slug=product['slug'], transport=transport,
                                       probe_teknosa_identity=True)
             inspect.assert_called_once_with(transport, url, product, probe_teknosa_identity=True)
             self.assertEqual((report['status'], report['writes']), ('rejected', False))
+            self.assertEqual(report['public_parser_proof']['sku'], '100000059453')
             for bad in (url.replace('8256-gb', '8128-gb'), url.replace('8256-gb', '12256-gb'),
                         url.replace('oppo-a6-pro', 'oppo-a6')):
                 with self.assertRaisesRegex(ValueError, 'preflight_url_catalog_identity_conflict'):

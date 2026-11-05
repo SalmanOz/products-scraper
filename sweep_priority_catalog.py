@@ -1039,8 +1039,9 @@ def target_preflight(*, client, url, slug, transport=None, probe_teknosa_identit
         'listing_id', 'item_number', 'gtin13', 'ram_gb', 'storage_gb', 'network_generation',
         'price', 'currency', 'condition', 'availability', 'observed_at', 'storage_evidence_source')}
         if isinstance(offer, dict) else None)
-    linked = row.get('independent_radio_preflight', {})
-    passed = (offer is not None or linked.get('status') == 'independent_radio_and_selected_commerce_verified')
+    linked = row.get('independent_radio_preflight') or {}
+    passed = (linked.get('status') == 'independent_radio_and_selected_commerce_verified'
+              if probe_teknosa_identity else offer is not None)
     return {'purpose': 'readonly_existing_catalog_target_preflight', 'catalog_count': len(products),
             'status': 'completed' if passed else 'rejected',
             'publish': False, 'writes': False, 'accepted': 0, 'queued': 1, 'rows': [row],

@@ -40,6 +40,29 @@ def observation():
 
 
 class PublicTechnicalTests(unittest.TestCase):
+    def test_independent_probe_reads_classification_even_if_regular_offer_parser_accepts(self):
+        from unittest.mock import patch
+
+        html = initial_document()
+        proof = observation()
+        offer = {'merchant': 'hepsi10line', 'sku': '125079845'}
+        product = {'name': PROFILE['name'], 'slug': 's25-ultra', 'attributes': SPECS}
+
+        class Transport:
+            def read_document(self, target): return html, 'document_read', 200
+
+        transport = Transport()
+        linked = {'status': 'independent_radio_scope_mismatch', 'writes': False}
+        with patch('teknosa_reviewed_source.parse_catalog_offer', return_value=(offer, 'selected_offer')), \
+             patch('teknosa_seller_cards.public_seller_offers', return_value=[]), \
+             patch('teknosa_public_technical.read_observation', return_value=(proof, 'observed')) as technical, \
+             patch('teknosa_marketplace_source.independent_radio_preflight', return_value=linked) as independent:
+            row = inspect_target(transport, URL, product, probe_teknosa_identity=True)
+        technical.assert_called_once_with(transport, html, URL)
+        self.assertEqual(independent.call_args.args[:4], (html, URL, PROFILE, proof))
+        self.assertEqual(row['independent_radio_preflight'], linked)
+        self.assertEqual(row['prepared_offer'], offer)
+
     def test_exact_readonly_identity_preflight_keeps_selected_commerce_and_independent_radio_separate(self):
         from types import SimpleNamespace
         from sweep_priority_catalog import target_preflight

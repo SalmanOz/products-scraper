@@ -230,12 +230,13 @@ def independent_radio_preflight(html, url, profile, technical_observation, read_
     title = result['source_title']
     matcher = TRPriceScraper()
     ram, storage, ambiguous = matcher._unambiguous_listing_capacities(title)
+    path = matcher.split_joined_retailer_url_capacity(urlparse(url).path)
     if (specs.get('network_generation') != '4g' or ambiguous or ram is None or storage is None
             or set(matcher._identity_words(title)) & {'4g', '5g', 'lte'}
             or ram != matcher._spec_int(specs.get('ram_gb'))
             or storage != matcher._spec_int(specs.get('storage_gb'))
             or not matcher.is_strict_match(profile['name'], title, specs)
-            or not matcher.is_strict_match(profile['name'], urlparse(url).path.replace('-', ' '), specs)):
+            or not matcher.is_strict_match(profile['name'], path.replace('-', ' '), specs)):
         return {'status': 'independent_radio_scope_mismatch', 'writes': False}
     main = BeautifulSoup(html, 'html.parser').select_one('#pdp-main')
     cart = main.select_one('button#addToCartButton')
