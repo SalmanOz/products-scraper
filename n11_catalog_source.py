@@ -217,6 +217,10 @@ def discover_product_sellers(html, observed_url, maximum=3):
 
 
 def parse_catalog_listing(html, url, name, specs):
+    return _parse_selected_listing(html, url, name, specs)
+
+
+def _parse_selected_listing(html, url, name, specs, *, verify_tws=None):
     requested, canonical = catalog_request_url(url), canonical_product_url(url)
     if requested is None or not isinstance(html, str) or len(html.encode()) > 5 * 1024 * 1024:
         return None, 'invalid_catalog_pdp'
@@ -250,7 +254,14 @@ def parse_catalog_listing(html, url, name, specs):
     heading = main[0].select('h1.title') if len(main) == 1 else []
     title = ' '.join(heading[0].get_text(' ', strip=True).split()) if len(heading) == 1 else ''
     matcher = TRPriceScraper()
-    if (title != product.get('title') or not matcher.is_strict_match(name, title, specs)):
+    product_title = product.get('title')
+    if verify_tws is None:
+        matches_title = lambda value: matcher.is_strict_match(name, value, specs)
+        selected_details = {}
+    else:
+        product_title = ' '.join(str(product_title or '').split())
+        matches_title, selected_details = verify_tws(product)
+    if not title or title != product_title or not matches_title(title):
         return None, 'catalog_title_variant_mismatch'
     seller = product.get('seller')
     if not isinstance(seller, dict):
@@ -297,32 +308,46 @@ def parse_catalog_listing(html, url, name, specs):
                    for d in definitions if isinstance(d, dict)):
             return None, 'selected_sku_definition_mismatch'
         values[definition.get('name')] = attribute.get('name')
-    selected_storage = storage_gb(values.get('Dahili Hafıza'))
-    if (selected_storage is None or selected_storage != matcher._spec_int(specs.get('storage_gb'))
-            or not isinstance(values.get('Renk'), str) or len(values['Renk']) > 60):
-        return None, 'selected_sku_memory_missing'
     physical = {}
-    technical = {}
-    for attribute in product.get('productAttributes') or []:
-        if not isinstance(attribute, dict):
-            return None, 'selected_technical_attributes_invalid'
-        key = attribute.get('key')
-        if key not in ('Bellek Kapasitesi', '5G Desteği', '4.5G Desteği'):
-            continue
-        if key in technical:
-            return None, 'selected_technical_attributes_ambiguous'
-        technical[key] = attribute.get('value')
-    memory = re.fullmatch(r'([1-9]\d?) GB', str(technical.get('Bellek Kapasitesi') or ''))
-    if memory:
-        physical.update(ram_gb=int(memory[1]), storage_gb=selected_storage)
-    if technical.get('5G Desteği') == 'Var':
-        physical['network_generation'] = '5g'
-    elif technical.get('5G Desteği') == 'Yok' and technical.get('4.5G Desteği') == 'Var':
-        physical['network_generation'] = '4g'
+    if verify_tws is not None:
+        if 'dahili-hafiza' in query or 'Dahili Hafıza' in values:
+            return None, 'unexpected_tws_memory_selector'
+        if not isinstance(values.get('Renk'), str) or not 1 <= len(values['Renk']) <= 60:
+            return None, 'selected_tws_color_missing'
+        native = product.get('skuUrl')
+        native_url = urljoin(canonical, native) if isinstance(native, str) else ''
+        selectors = n11_product_selectors(native_url)
+        if (canonical_product_url(native_url) != canonical or selectors is None
+                or selectors.get('magaza') != seller_slug
+                or selectors.get('renk', matcher._normalize_words(values['Renk']).replace(' ', '-'))
+                != matcher._normalize_words(values['Renk']).replace(' ', '-')):
+            return None, 'selected_tws_native_url_mismatch'
+    if verify_tws is None:
+        selected_storage = storage_gb(values.get('Dahili Hafıza'))
+        if (selected_storage is None or selected_storage != matcher._spec_int(specs.get('storage_gb'))
+                or not isinstance(values.get('Renk'), str) or len(values['Renk']) > 60):
+            return None, 'selected_sku_memory_missing'
+        technical = {}
+        for attribute in product.get('productAttributes') or []:
+            if not isinstance(attribute, dict):
+                return None, 'selected_technical_attributes_invalid'
+            key = attribute.get('key')
+            if key not in ('Bellek Kapasitesi', '5G Desteği', '4.5G Desteği'):
+                continue
+            if key in technical:
+                return None, 'selected_technical_attributes_ambiguous'
+            technical[key] = attribute.get('value')
+        memory = re.fullmatch(r'([1-9]\d?) GB', str(technical.get('Bellek Kapasitesi') or ''))
+        if memory:
+            physical.update(ram_gb=int(memory[1]), storage_gb=selected_storage)
+        if technical.get('5G Desteği') == 'Var':
+            physical['network_generation'] = '5g'
+        elif technical.get('5G Desteği') == 'Yok' and technical.get('4.5G Desteği') == 'Var':
+            physical['network_generation'] = '4g'
     if query.get('renk', [matcher._normalize_words(values['Renk']).replace(' ', '-')]) != [
             matcher._normalize_words(values['Renk']).replace(' ', '-')]:
         return None, 'selected_query_color_mismatch'
-    if query.get('dahili-hafiza', [values['Dahili Hafıza'].lower().replace(' ', '-')]) != [
+    if verify_tws is None and query.get('dahili-hafiza', [values['Dahili Hafıza'].lower().replace(' ', '-')]) != [
             values['Dahili Hafıza'].lower().replace(' ', '-')]:
         return None, 'selected_query_memory_mismatch'
     choices = main[0].select('button.sku-selection .sku-attributes-text')
@@ -356,7 +381,7 @@ def parse_catalog_listing(html, url, name, specs):
     schema = schemas[0] if len(schemas) == 1 else {}
     offer = schema.get('offers')
     if (str(schema.get('sku')) != str(sku.get('id'))
-            or not matcher.is_strict_match(name, str(schema.get('name') or ''), specs)
+            or not matches_title(str(schema.get('name') or ''))
             or not isinstance(offer, dict) or offer.get('@type') != 'Offer'
             or offer.get('url') != canonical or offer.get('priceCurrency') != 'TRY'
             or _amount(offer.get('price')) != price
@@ -388,9 +413,12 @@ def parse_catalog_listing(html, url, name, specs):
             'selected_n11_color_slug': matcher._normalize_words(values['Renk']).replace(' ', '-'),
             'source_title': title, 'url': requested, 'price': float(price), 'currency': 'TRY',
             'condition': 'new', 'availability': 'in_stock',
-            **physical, 'observed_at': datetime.now(timezone.utc).isoformat()}
+            **physical, **selected_details, 'observed_at': datetime.now(timezone.utc).isoformat()}
     if basket:
         result.update(price_kind='basket', listed_price=float(listed))
+    if verify_tws is not None:
+        result['url'] = native_url
+        return result, 'selected_n11_basket_offer' if basket else 'selected_n11_cash_offer'
     from selected_sku_evidence import selected_sku_evidence
     selected_evidence = selected_sku_evidence(result)
     expected_radio = specs.get('network_generation') or matcher._radio_generation(name)

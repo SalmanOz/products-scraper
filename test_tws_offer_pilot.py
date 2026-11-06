@@ -1,7 +1,7 @@
 import unittest
 
 from test_trendyol_catalog_source import document
-from tws_offer_pilot import MODEL_NAMES, model_name, selected_tws_offer
+from tws_offer_pilot import MODEL_NAMES, independent_sellers, model_name, select_sku_offers, selected_tws_offer
 
 
 class TwsOfferPilotTests(unittest.TestCase):
@@ -13,14 +13,24 @@ class TwsOfferPilotTests(unittest.TestCase):
             ('title',): title,
             ('state', 'product', 'name'): title.removeprefix('Samsung '),
             ('state', 'product', 'category'): {'id': 1058, 'name': 'Kulak içi TWS Bluetooth Kulaklık'},
+            ('state', 'product', 'merchantListing', 'otherMerchants'): [
+                {'id': 29, 'url': canonical.removeprefix('https://www.trendyol.com') + '?boutiqueId=61&merchantId=29&sav=true',
+                 'variants': [{'itemNumber': 894997311, 'barcode': '8806094821437',
+                               'inStock': True, 'sellable': True}]},
+                {'id': 30, 'url': canonical.removeprefix('https://www.trendyol.com') + '?merchantId=30',
+                 'variants': [{'itemNumber': 894997311, 'barcode': '8806094821438',
+                               'inStock': True, 'sellable': True}]},
+            ],
             ('schema', '@id'): canonical,
             ('schema', 'offers', 'url'): canonical,
             ('schema', 'name'): title,
         }
         model = 'Samsung Galaxy Buds Core'
-        offer, _ = selected_tws_offer(document(changes), url, model)
+        hints = []
+        offer, _ = selected_tws_offer(document(changes), url, model, seller_hints=hints)
         self.assertEqual((offer['gtin13'], offer['item_number'], offer['merchant_id'], offer['merchant']),
                          ('8806094821437', 894997311, 657799, 'Test Satıcı'))
+        self.assertEqual(hints, [(canonical + '?boutiqueId=61&merchantId=29', 29)])
         for mutation in (
             {('state', 'product', 'category'): {'id': 200, 'name': 'Kulak içi TWS Bluetooth Kulaklık'}},
             {('state', 'product', 'merchantListing', 'winnerVariant', 'barcode'): '8806094821438'},
@@ -38,6 +48,21 @@ class TwsOfferPilotTests(unittest.TestCase):
         self.assertEqual(model_name('Apple AirPods 4 Aktif Gürültü Engelleme MXP93TU/A', 'Apple'), 'Apple AirPods 4 ANC')
         self.assertIsNone(model_name('Apple AirPods 4. Nesil (MXP63TU/A) Yenilenmiş', 'Apple'))
         self.assertIsNone(model_name('AirPods 4. Nesil (MXP63TU/A)', 'TARÇIN'))
+
+    def test_pair_requires_same_gtin_and_two_legal_identities(self):
+        first = {'platform': 'Vatan Bilgisayar', 'gtin13': '6941812791271', 'price': 800,
+                 'url': 'https://vatan.example/white', '_legal_name': 'vatan bilgisayar'}
+        duplicate = {**first, 'platform': 'Trendyol', 'merchant_id': 10, 'url': 'https://ty.example/white',
+                     'price': 790, '_legal_name': 'vatan bilgisayar sanayi ve ticaret anonim sirketi'}
+        cheaper = {**duplicate, 'merchant_id': 11, 'gtin13': '6941812791240',
+                   'price': 730, '_legal_name': 'ayri satici'}
+        matching = {**cheaper, 'platform': 'n11', 'gtin13': first['gtin13'],
+                    'price': 810, 'url': 'https://n11.example/white'}
+        self.assertFalse(independent_sellers(first, duplicate))
+        self.assertEqual(select_sku_offers([first, duplicate, cheaper, matching]), [duplicate, matching])
+        self.assertEqual(select_sku_offers([first, duplicate, cheaper]), [cheaper])
+        self.assertFalse(independent_sellers({**first, '_tax_key': '1111111111'},
+                                             {**matching, '_tax_key': '1111111111'}))
 
 
 if __name__ == '__main__':
