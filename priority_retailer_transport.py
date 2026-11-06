@@ -22,6 +22,8 @@ HOSTS = {'www.hepsiburada.com': 'Hepsiburada', 'www.trendyol.com': 'Trendyol',
          'www.n11.com': 'n11', 'www.teknosa.com': 'Teknosa'}
 BOT = 'TeknoskorPriceBot'
 N11_PHONE_SEARCH_PATH = '/telefon-ve-aksesuarlari/cep-telefonu'
+TRENDYOL_TWS_CATEGORY = 'https://www.trendyol.com/kulak-ici-bluetooth-kulaklik-x-c165994'
+TRENDYOL_TWS_PAGE_LIMIT = 12
 MAX_HTML_BYTES = 5 * 1024 * 1024
 
 
@@ -317,6 +319,12 @@ class PriorityRetailerTransport:
         # retains its unchanged 100 category requests for this invocation.
         if page is None:
             return None, 'invalid_catalog_category', None
+        return self._read_document(url, 'www.trendyol.com', category=True)
+
+    def read_trendyol_tws_category(self, url):
+        observed_pages = {f'{TRENDYOL_TWS_CATEGORY}?pi={page}' for page in range(2, TRENDYOL_TWS_PAGE_LIMIT + 1)}
+        if url != TRENDYOL_TWS_CATEGORY and url not in observed_pages:
+            return None, 'invalid_tws_category', None
         return self._read_document(url, 'www.trendyol.com', category=True)
 
     def _read_document(self, url, host, category=False, fresh=False, classification=False):

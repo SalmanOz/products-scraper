@@ -99,13 +99,13 @@ def product_url(url):
         return False
 
 
-def _selected_offer(html, final_url):
+def _selected_offer(html, final_url, *, allowed_url=product_url, verify_product=None):
     soup = BeautifulSoup(html, 'html.parser')
     headings = soup.select('h1')
     if len(headings) != 1:
         return None
     title = ' '.join(headings[0].get_text(' ', strip=True).split())
-    if not title or _USED.search(title) or not product_url(final_url):
+    if not title or _USED.search(title) or not allowed_url(final_url):
         return None
     canonical = soup.select('link[rel="canonical"]')
     if len(canonical) != 1 or canonical[0].get('href') != final_url:
@@ -135,6 +135,9 @@ def _selected_offer(html, final_url):
         return None
     brand = product.get('brand')
     if not isinstance(brand, dict) or not isinstance(brand.get('name'), str):
+        return None
+    product_evidence = verify_product(product, title, brand['name']) if verify_product else {}
+    if product_evidence is None:
         return None
     if (offer.get('@type') != 'Offer' or offer.get('url') != final_url
             or offer.get('priceCurrency') != 'TRY'
@@ -193,7 +196,7 @@ def _selected_offer(html, final_url):
     return {'merchant': 'MediaMarkt', 'price': price, 'currency': 'TRY',
             'availability': 'in_stock' if availability == 'InStock' else 'limited',
             'source_title': unescape(title), 'url': final_url,
-            'observed_at': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')}
+            'observed_at': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'), **product_evidence}
 
 
 class MediaMarktSource:

@@ -68,13 +68,8 @@ def selected_attribute_capacity_gb(value, field):
     return amount if low <= amount <= high else None
 
 
-def _selected_group_schema(schema, identity, url, physical, brand):
-    """Only the group's own current-PDP offer can corroborate a selected SKU.
-
-    No child offer or aggregate amount is selected. Its direct identity and
-    separate physical properties must agree with the actual selected listing;
-    this function never receives catalog expectations.
-    """
+def _selected_group_root(schema, identity, url, brand):
+    """A group's own selected offer must be distinct from every child."""
     canonical = urlparse(url)._replace(query='').geturl()
     offer = schema.get('offers')
     schema_brand = schema.get('brand')
@@ -91,6 +86,12 @@ def _selected_group_schema(schema, identity, url, physical, brand):
                 or _product_id(variant.get('@id')) == identity
                 or isinstance(child_offer, dict) and _product_id(child_offer.get('url')) == identity):
             return False
+    return True
+
+
+def _selected_group_schema(schema, identity, url, physical, brand):
+    if not _selected_group_root(schema, identity, url, brand):
+        return False
     properties = schema.get('additionalProperty')
     if not isinstance(properties, list) or len(properties) > 100:
         return False
@@ -119,34 +120,7 @@ def _selected_group_schema(schema, identity, url, physical, brand):
             and ('5g' if radio == '5g' else '4g') == physical.get('network_generation'))
 
 
-def parse_catalog_listing(html, url, name, specs):
-    """Require schema, selected state, two variant lists and visible cash/cart agreement."""
-    identity = _product_id(url)
-    if (identity is None or not isinstance(html, str) or len(html.encode()) > 5 * 1024 * 1024
-            or not isinstance(specs, dict)):
-        return None, 'invalid_catalog_pdp'
-    soup = BeautifulSoup(html, 'html.parser')
-    states = []
-    for script in soup.select('script'):
-        body = script.get_text()
-        matches = list(re.finditer(r'window\["__envoy__SHARED_PROPS"\]\s*=\s*', body))
-        for match in matches:
-            try:
-                state, end = json.JSONDecoder().raw_decode(body[match.end():])
-                if body[match.end() + end:].strip() not in ('', ';'):
-                    return None, 'selected_state_ambiguous'
-                states.append(state)
-            except (ValueError, TypeError):
-                return None, 'selected_state_invalid'
-    if len(states) != 1 or not isinstance(states[0], dict):
-        return None, 'selected_state_missing'
-    product = states[0].get('product')
-    if not isinstance(product, dict) or str(product.get('id')) != identity or product.get('inStock') is not True:
-        return None, 'selected_product_mismatch'
-    headings = soup.select('h1[data-testid="product-title"]')
-    title = _normalized(headings[0].get_text(' ', strip=True)) if len(headings) == 1 else ''
-    brand = product.get('brand')
-    state_title = _normalized(str(brand.get('name') or '') + ' ' + str(product.get('name') or '')) if isinstance(brand, dict) else ''
+def _phone_variant(product, title, brand, name, specs):
     matcher = TRPriceScraper()
     expected_words = set(matcher._identity_words(name))
     expected_brands = {key for key, aliases in matcher.PHONE_BRAND_ALIASES.items()
@@ -158,9 +132,6 @@ def parse_catalog_listing(html, url, name, specs):
     if (not isinstance(brand, dict) or not allowed_brand_names
             or matcher._normalize_words(brand.get('name')) not in allowed_brand_names):
         return None, 'selected_brand_mismatch'
-    if (not title or matcher._normalize_words(title) != matcher._normalize_words(state_title)
-            or re.search(r'yenilenmi[sş]|refurbished|ikinci\s*el', title, re.I)):
-        return None, 'catalog_title_mismatch'
     features = {}
     attributes = product.get('attributes')
     if not isinstance(attributes, list):
@@ -194,6 +165,52 @@ def parse_catalog_listing(html, url, name, specs):
     physical['network_generation'] = '5g' if radio == '5g' else '4g'
     if not catalog_variant_matches({'source_title': title, **physical}, name, specs):
         return None, 'catalog_variant_mismatch'
+    return physical, None
+
+
+def parse_catalog_listing(html, url, name, specs):
+    """Require the retailer's selected physical phone variant and commerce."""
+    if not isinstance(specs, dict):
+        return None, 'invalid_catalog_pdp'
+    return _parse_selected_listing(html, url,
+        lambda product, title, brand: _phone_variant(product, title, brand, name, specs),
+        _selected_group_schema)
+
+
+def _parse_selected_listing(html, url, read_variant, check_group):
+    """Cross-check shared selected listing, SKU, merchant, cart and price."""
+    identity = _product_id(url)
+    if identity is None or not isinstance(html, str) or len(html.encode()) > 5 * 1024 * 1024:
+        return None, 'invalid_catalog_pdp'
+    soup = BeautifulSoup(html, 'html.parser')
+    states = []
+    for script in soup.select('script'):
+        body = script.get_text()
+        matches = list(re.finditer(r'window\["__envoy__SHARED_PROPS"\]\s*=\s*', body))
+        for match in matches:
+            try:
+                state, end = json.JSONDecoder().raw_decode(body[match.end():])
+                if body[match.end() + end:].strip() not in ('', ';'):
+                    return None, 'selected_state_ambiguous'
+                states.append(state)
+            except (ValueError, TypeError):
+                return None, 'selected_state_invalid'
+    if len(states) != 1 or not isinstance(states[0], dict):
+        return None, 'selected_state_missing'
+    product = states[0].get('product')
+    if not isinstance(product, dict) or str(product.get('id')) != identity or product.get('inStock') is not True:
+        return None, 'selected_product_mismatch'
+    headings = soup.select('h1[data-testid="product-title"]')
+    title = _normalized(headings[0].get_text(' ', strip=True)) if len(headings) == 1 else ''
+    brand = product.get('brand')
+    state_title = _normalized(str(brand.get('name') or '') + ' ' + str(product.get('name') or '')) if isinstance(brand, dict) else ''
+    matcher = TRPriceScraper()
+    if (not title or matcher._normalize_words(title) != matcher._normalize_words(state_title)
+            or re.search(r'yenilenmi[sş]|refurbished|ikinci\s*el', title, re.I)):
+        return None, 'catalog_title_mismatch'
+    physical, reason = read_variant(product, title, brand)
+    if physical is None:
+        return None, reason
     listing = product.get('merchantListing')
     merchant = listing.get('merchant') if isinstance(listing, dict) else None
     winner = listing.get('winnerVariant') if isinstance(listing, dict) else None
@@ -241,7 +258,7 @@ def parse_catalog_listing(html, url, name, specs):
             return None, 'conditional_price'
     schemas = [node for node in _nodes(soup) if node.get('@type') in ('Product', 'ProductGroup')]
     schema = schemas[0] if len(schemas) == 1 else {}
-    if schema.get('@type') == 'ProductGroup' and not _selected_group_schema(schema, identity, url, physical, brand):
+    if schema.get('@type') == 'ProductGroup' and not check_group(schema, identity, url, physical, brand):
         return None, 'schema_selected_group_mismatch'
     offer = schema.get('offers')
     if (str(schema.get('sku')) != identity or _product_id(schema.get('@id')) != identity
