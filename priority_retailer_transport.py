@@ -289,6 +289,11 @@ class PriorityRetailerTransport:
             return None, 'invalid_catalog_category', None
         return self._read_document(url, 'www.teknosa.com', category=True)
 
+    def read_teknosa_seller(self, url):
+        if not re.fullmatch(r'https://www\.teknosa\.com/magaza/[a-z0-9-]{1,100}', url):
+            return None, 'invalid_seller_url', None
+        return self._read_document(url, 'www.teknosa.com', category=True)
+
     def read_teknosa_classification(self, document_url, url, *, fresh=False):
         # Only the selected native PDP code may address its public lazy tab.
         # Share the same source circuit, robots, delay and total PDP allowance.

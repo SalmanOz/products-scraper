@@ -82,8 +82,8 @@ def _gtin13(raw):
     return raw if (10 - total % 10) % 10 == int(raw[-1]) else None
 
 
-def _product_capacities(apollo, graph_product, sku):
-    """Read RAM, storage and optional radio from this SKU's feature graph."""
+def product_features(apollo, graph_product, sku):
+    """Read features from the graph linked to the selected product ID."""
     product_ref = graph_product.get('product')
     if product_ref != {'__ref': 'GraphqlProduct:Media:tr-TR:' + sku}:
         return None
@@ -95,8 +95,7 @@ def _product_capacities(apollo, graph_product, sku):
     groups = apollo.get('GraphqlProductFeatureGroups:' + sku)
     if not isinstance(groups, dict) or groups.get('productId') != sku:
         return None
-    found = {'RAM Bellek Boyutu': [], 'Bellek Kapasitesi': [],
-             'Mobil Telefon Standardı': []}
+    features = []
     for group in groups.get('featureGroups', []):
         if not isinstance(group, dict) or not isinstance(group.get('features'), list):
             return None
@@ -106,9 +105,17 @@ def _product_capacities(apollo, graph_product, sku):
             feature = apollo.get(link['__ref'])
             if not isinstance(feature, dict) or feature.get('__typename') != 'GraphqlProductFeature':
                 return None
-            name = feature.get('name')
-            if name in found:
-                found[name].append(str(feature.get('value', '')))
+            features.append(feature)
+    return features
+
+
+def _product_capacities(apollo, graph_product, sku):
+    """Read RAM, storage and optional radio from this SKU's feature graph."""
+    features = product_features(apollo, graph_product, sku)
+    if features is None:
+        return None
+    found = {name: [str(row.get('value', '')) for row in features if row.get('name') == name]
+             for name in ('RAM Bellek Boyutu', 'Bellek Kapasitesi', 'Mobil Telefon Standardı')}
     if any(len(found[name]) != 1 or
            not re.fullmatch(r'\d{1,4}', found[name][0])
            for name in ('RAM Bellek Boyutu', 'Bellek Kapasitesi')):
@@ -158,13 +165,15 @@ def selected_marketplace_offer(html, final_url, *,
                                allow_cents=False,
                                require_selected_condition_radio=False,
                                allow_delivery_card=False,
-                               require_gtin_variant=False):
+                               require_gtin_variant=False,
+                               allowed_url=product_url,
+                               verify_product=None):
     """Return selected-offer evidence only when every independent layer agrees.
 
     The returned record is an audit observation, not an ingestion offer. Its
     seller is named separately from the MediaMarkt marketplace platform.
     """
-    if not product_url(final_url) or not isinstance(html, (str, bytes)):
+    if not allowed_url(final_url) or not isinstance(html, (str, bytes)):
         return None
     soup = BeautifulSoup(html, 'html.parser')
     heading = _one(soup.select('h1'))
@@ -300,14 +309,19 @@ def selected_marketplace_offer(html, final_url, *,
             _normal(marketplace.get('sellerName')) != seller_name or
             str(marketplace.get('sellerId')) != seller_id):
         return None
-    features = _product_capacities(apollo, graph_product, sku)
-    if features is None:
-        return None
-    capacities = features[:2]
-    from tr_price_scraper import TRPriceScraper
-    title_ram, title_storage = TRPriceScraper()._extract_listing_capacities(title)
-    if (title_ram, title_storage) != capacities:
-        return None
+    if verify_product is not None:
+        verified = verify_product(product, title, brand['name'], product_features(apollo, graph_product, sku))
+        if verified is None:
+            return None
+    else:
+        features = _product_capacities(apollo, graph_product, sku)
+        if features is None:
+            return None
+        capacities = features[:2]
+        from tr_price_scraper import TRPriceScraper
+        title_ram, title_storage = TRPriceScraper()._extract_listing_capacities(title)
+        if (title_ram, title_storage) != capacities:
+            return None
     site_seller = priced.get('marketplaceSeller')
     site_price = priced.get('price')
     if (priced.get('isProductOfTypeMarketplace') is not True or
@@ -376,9 +390,12 @@ def selected_marketplace_offer(html, final_url, *,
         return None
     whole = _one(visible_price.select('[data-test="branded-price-whole-value"]'))
     match = _PRICE.fullmatch(whole.get_text(' ', strip=True)) if whole else None
-    decimal = _one(visible_price.select('[data-test="branded-price-decimal-value"]'))
+    decimals = visible_price.select('[data-test="branded-price-decimal-value"]')
     if allow_cents:
-        decimal_text = decimal.get_text(' ', strip=True) if decimal else None
+        decimal = _one(decimals)
+        decimal_text = decimal.get_text(' ', strip=True) if decimal else '00' if not decimals else ''
+        if decimal_text == '–':
+            decimal_text = '00'
         displayed = (float(match[1].replace('.', '') + '.' + decimal_text)
                      if match and decimal_text and
                      re.fullmatch(r'\d{2}', decimal_text) else None)
@@ -409,26 +426,28 @@ def selected_marketplace_offer(html, final_url, *,
                _normal(button.get_text(' ', strip=True)) == 'Sepete Ekle'
                for button in buttons):
         return None
-    title_radios = {value.casefold() for value in re.findall(
-        r'(?<![a-z0-9])([45]g)(?![a-z0-9])', title, re.I)}
-    path_radios = {value.casefold() for value in re.findall(
-        r'(?<![a-z0-9])([45]g)(?![a-z0-9])', urlparse(final_url).path, re.I)}
-    if (len(title_radios) > 1 or len(path_radios) > 1 or
-            (title_radios and path_radios and title_radios != path_radios)):
-        return None
-    radio = next(iter(title_radios or path_radios), None)
-    if features[2] and radio and features[2] != radio:
-        return None
-    radio = radio or features[2]
     result = {'platform': 'MediaMarkt', 'seller_name': unescape(seller_name),
               'seller_id': seller_id, 'price': price, 'currency': 'TRY',
               'availability': 'in_stock' if availability == 'InStock' else 'limited',
               'condition': 'new', 'source_title': unescape(title),
               'sku': sku, 'gtin13': gtin,
               'selected_variant_gtin13': selected_variant_gtin,
-              'offer_id': offer_id, 'url': final_url,
-              'ram_gb': capacities[0], 'storage_gb': capacities[1],
-              'network_generation': radio}
+              'offer_id': offer_id, 'url': final_url}
+    if verify_product is not None:
+        result.update(verified)
+    else:
+        title_radios = {value.casefold() for value in re.findall(
+            r'(?<![a-z0-9])([45]g)(?![a-z0-9])', title, re.I)}
+        path_radios = {value.casefold() for value in re.findall(
+            r'(?<![a-z0-9])([45]g)(?![a-z0-9])', urlparse(final_url).path, re.I)}
+        if (len(title_radios) > 1 or len(path_radios) > 1 or
+                (title_radios and path_radios and title_radios != path_radios)):
+            return None
+        radio = next(iter(title_radios or path_radios), None)
+        if features[2] and radio and features[2] != radio:
+            return None
+        result.update(ram_gb=capacities[0], storage_gb=capacities[1],
+                      network_generation=radio or features[2])
     if require_gtin_variant:
         result['selected_variant_sku'] = selected_variant_sku
     return result

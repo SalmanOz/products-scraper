@@ -7,7 +7,7 @@ from unittest.mock import patch
 from bs4 import BeautifulSoup
 
 from laptop_pilot import build_model, compatible, read_retailer, select_offers, valid_pair
-from laptop_retailer_sources import laptop_facts, selected_n11
+from laptop_retailer_sources import laptop_facts, marketplace_seller_identity, selected_n11
 
 ATTRS = {
     'bellek kapasitesi': '16 GB', 'disk kapasitesi': '512 GB', 'disk turu': 'SSD',
@@ -85,6 +85,33 @@ class LaptopPilotTests(TestCase):
         for spec, wrong in (('cpu', 'Intel Core i7-13620H'), ('ram', 32), ('ssd', 1024),
                             ('os', 'FreeDOS'), ('discrete', 'RTX 4050')):
             self.assertFalse(compatible(first, second | {'facts': second['facts'] | {spec: wrong}}), spec)
+
+    def test_laptop_configuration_distinguishes_ram_from_gpu_memory(self):
+        title = ('MSI Katana 15 HX B14WFK-450XTR i9-14900HX 15.6" '
+                 '32 GB 1 TB SSD 8 GB RTX5060 115 W QHD 165Hz FreeDOS Gaming Laptop')
+        facts = laptop_facts(title, {}, 'MSI')
+        self.assertEqual((facts['ram'], facts['ssd'], facts['discrete']), (32, 1024, 'RTX 5060'))
+        self.assertIsNone(laptop_facts(title, {'ram': '16 GB'}, 'MSI'))
+        self.assertIsNone(laptop_facts(title + ' 512 GB SSD', {}, 'MSI'))
+
+    def test_published_platforms_must_remain_in_an_expansion(self):
+        n11 = observation()
+        trendyol = observation(2, 'Trendyol', 'Mağaza B', 'magaza b anonim sirketi')
+        teknosa = observation(3, 'Teknosa', 'Mağaza C', 'magaza c anonim sirketi')
+        mediamarkt = observation(4, 'MediaMarkt', 'Mağaza D', 'magaza d anonim sirketi')
+        offers = select_offers([trendyol, teknosa, mediamarkt, n11], required_platforms={'n11', 'Teknosa'})
+        self.assertTrue({'n11', 'Teknosa'} <= {o['platform'] for o in offers})
+        self.assertFalse(select_offers([trendyol, teknosa], required_platforms={'n11'}))
+
+    def test_seller_profile_binds_teknosa_shop_id_and_tax_number(self):
+        profile = ('<h1 class="plp-title">Mağaza</h1><input id="SelectedShopId" value="123">'
+                   '<div class="msd-section">Firma Resmi Adı: Örnek Limited Şirketi '
+                   'Şehir: İstanbul Vergi No: 0123456789</div>')
+        offer = {'platform': 'Teknosa', 'merchant': 'Mağaza', 'merchant_id': '123'}
+        self.assertEqual(marketplace_seller_identity(profile, offer),
+                         {'_legal_name': 'ornek limited sirketi', '_tax_key': '0123456789'})
+        self.assertIsNone(marketplace_seller_identity(profile, offer | {'merchant_id': '124'}))
+        self.assertIsNone(marketplace_seller_identity(profile, offer | {'merchant': 'Başka'}))
 
     def test_prefers_cross_platform_and_never_exports_company_identifiers(self):
         a = observation()

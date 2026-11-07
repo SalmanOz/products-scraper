@@ -13,7 +13,7 @@ from urllib.parse import parse_qs, urljoin, urlsplit
 
 from bs4 import BeautifulSoup
 
-from laptop_pilot import FIRST_PARTY, MAX_URLS, PARSERS, _target, compatible, select_offers
+from laptop_pilot import FIRST_PARTY, MAX_URLS, PARSERS, _target, compatible, select_offers, verify_seller
 from laptop_retailer_sources import model_codes
 from mediamarkt_source import MediaMarktSource, SourceBudgetExhausted, SourceCircuitOpen
 from n11_catalog_source import discover_product_sellers
@@ -26,6 +26,7 @@ ROOTS = {
     'www.trendyol.com': 'https://www.trendyol.com/laptop-x-c103108',
     'www.vatanbilgisayar.com': 'https://www.vatanbilgisayar.com/notebook/',
     'www.mediamarkt.com.tr': 'https://www.mediamarkt.com.tr/tr/category/laptop-504926.html',
+    'www.teknosa.com': 'https://www.teknosa.com/laptop-notebook-c-116004',
 }
 BRANDS = frozenset(('acer', 'apple', 'asus', 'casper', 'dell', 'gigabyte', 'hp',
                     'huawei', 'lenovo', 'monster', 'msi', 'samsung'))
@@ -38,10 +39,12 @@ class Reader:
         self.stop = False
         self.maximum = maximum
         self.pdp_count = 0
+        self.source = self.transport = None
+        self.sellers = {}
         if host in FIRST_PARTY:
             self.source = VatanCategorySource() if host.startswith('www.vatan') else MediaMarktSource(get=compatible_get)
             if host.startswith('www.mediamarkt'):
-                self.source.configure_catalog_budget(maximum + 20)
+                self.source.configure_catalog_budget(maximum * 2 + 20)
             self.source._load_robots()
         else:
             self.transport = PriorityRetailerTransport(maximum_per_host=maximum)
@@ -72,7 +75,7 @@ class Reader:
             return None, None
         if reason in STOP:
             self.stop = True
-        return (html, final) if reason == 'ready' else (None, None)
+        return (html, final) if reason in ('ready', 'document_read') else (None, None)
 
 
 def _pdp(host, url):
@@ -99,6 +102,8 @@ def _category_link(host, target):
         return route.path == root.path and set(params) == {'m'} and len(params['m']) == 1 and params['m'][0].lower() in BRANDS
     if host.startswith('www.vatan'):
         return len(parts) == 2 and parts[0] in BRANDS and parts[1] == 'notebook' and not params
+    if host == 'www.teknosa.com':
+        return route.path == root.path and set(params) == {'page'} and len(params['page']) == 1 and params['page'][0].isdigit()
     return not params and bool(re.fullmatch(
         r'/tr/category/(?:' + '|'.join(sorted(BRANDS | {'macbook', 'gaming', 'notebook'})) + r')[-a-z]*-\d+\.html', route.path))
 
@@ -111,6 +116,7 @@ def collect_cards(host, reader, max_pages):
         'www.trendyol.com': 'a.product-card[href]',
         'www.vatanbilgisayar.com': '#productsLoad a.product-list-link[href]',
         'www.mediamarkt.com.tr': 'a[data-test="mms-router-link"][href^="/tr/product/"]',
+        'www.teknosa.com': 'a[href*="-p-"]:has(img)',
     }
     while queue and len(seen) < max_pages:
         url = queue.popleft()
@@ -144,8 +150,9 @@ def _collect_offers(host, reader, cards, count):
         if not html or urlsplit(url).query != urlsplit(resolved).query:
             return
         offer, _ = PARSERS[host](html, resolved)
-        if (not offer or not offer['_legal_name'] or offer['availability'] != 'in_stock'
-                or expected and not compatible(offer, expected)):
+        if (not offer or offer['availability'] != 'in_stock'
+                or expected and not compatible(offer, expected)
+                or not verify_seller(offer, reader.source, reader.transport, reader.sellers)):
             return
         offers.append(offer)
         if host.startswith('www.n11') and expected is None:
@@ -191,7 +198,7 @@ def targets_from_observations(observations):
 
 def discover():
     budgets = {'www.n11.com': 240, 'www.trendyol.com': 230,
-               'www.vatanbilgisayar.com': 130, 'www.mediamarkt.com.tr': 85}
+               'www.vatanbilgisayar.com': 130, 'www.mediamarkt.com.tr': 85, 'www.teknosa.com': 85}
     readers = {host: Reader(host, count) for host, count in budgets.items()}
     with ThreadPoolExecutor(max_workers=4) as pool:
         all_cards = {host: job.result() for host, job in

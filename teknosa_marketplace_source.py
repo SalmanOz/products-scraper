@@ -1,5 +1,6 @@
 """Read the actual selected Teknosa marketplace offer, not other seller cards."""
 from datetime import datetime, timezone
+from html import unescape
 import json
 import re
 from urllib.parse import urlparse
@@ -69,7 +70,7 @@ def selected_technical_specs(main, title, cart, technical_observation=None):
             'selected_teknosa_physical_specs_verified': True}
 
 
-def _selected_marketplace_commerce(html, url, technical_observation=None):
+def _selected_marketplace_commerce(html, url, technical_observation=None, *, verify_product=None):
     """Verify the selected store's commercial facts independently of a catalog profile."""
     if (product_host(url) != 'www.teknosa.com' or urlparse(url).query
             or not isinstance(html, str) or len(html.encode()) > MAX_HTML_BYTES):
@@ -164,7 +165,7 @@ def _selected_marketplace_commerce(html, url, technical_observation=None):
     state = states[0] if len(states) == 1 and isinstance(states[0], dict) else {}
     custom = state.get('custom')
     if (not isinstance(custom, dict) or state.get('id') != sku + '-' + shop
-            or state.get('name') != title or state.get('currency') != 'TRY'
+            or unescape(str(state.get('name') or '')) != title or state.get('currency') != 'TRY'
             or state.get('url') != url + '?shopId=' + shop
             or custom.get('shop_name') != seller or str(custom.get('shop_id')) != shop
             or _amount(state.get('unit_price')) != list_price or _amount(state.get('unit_sale_price')) != price):
@@ -176,7 +177,11 @@ def _selected_marketplace_commerce(html, url, technical_observation=None):
     schema_seller = offer.get('seller') if isinstance(offer, dict) else None
     # The same observed schema omits literal warranty parentheses and uses
     # spaces for numeric slash pairs. Preserve every word and model qualifier.
-    normalize_pair = lambda text: ' '.join(re.sub(r'(?<=\d)/(?=\d)|[()]', ' ', str(text or '')).split())
+    punctuation = r'(?<=\d)/(?=\d)|[()]'
+    if verify_product is not None:
+        # Laptop schemas also flatten title hyphens and remove inch quotes.
+        punctuation += r'|[-]|["″]'
+    normalize_pair = lambda text: ' '.join(re.sub(punctuation, ' ', str(text or '')).split())
     if (str(schema.get('sku')) != sku or normalize_pair(schema.get('name')) != normalize_pair(title)
             or not isinstance(offer, dict) or offer.get('@type') != 'Offer'
             or offer.get('url') != url or offer.get('priceCurrency') != 'TRY'
@@ -201,6 +206,12 @@ def _selected_marketplace_commerce(html, url, technical_observation=None):
               'source_title': title, 'url': url,
               'currency': 'TRY', 'condition': 'new', 'availability': 'in_stock',
               'price': float(price), 'observed_at': datetime.now(timezone.utc).isoformat()}
+    if verify_product is not None:
+        physical = verify_product(cart, title, schema)
+        if physical is None:
+            return None, 'selected_laptop_config_missing'
+        result.update(physical, seller_url='https://www.teknosa.com' + seller_links[0]['href'])
+        return result, 'selected_teknosa_marketplace_cash_offer'
     technical = selected_technical_specs(main, title, cart, technical_observation)
     if technical is not None:
         result.update(product_id=sku, **technical)

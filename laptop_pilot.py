@@ -20,7 +20,10 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from curl_cffi.requests import RequestsError
 from requests import RequestException
 
-from laptop_retailer_sources import selected_mediamarkt, selected_n11, selected_trendyol, selected_vatan, WORDS
+from laptop_retailer_sources import (
+    marketplace_seller_identity, selected_mediamarkt, selected_n11, selected_teknosa,
+    selected_trendyol, selected_vatan, WORDS,
+)
 from mediamarkt_source import MediaMarktSource, SourceBudgetExhausted, SourceCircuitOpen
 from priority_retailer_transport import PriorityRetailerTransport, compatible_get
 from retailer_barcode import retailer_gtin13
@@ -30,10 +33,11 @@ from vatan_category_source import VatanCategorySource
 
 MINIMUM = 25
 PARSERS = {'www.n11.com': selected_n11, 'www.trendyol.com': selected_trendyol,
-           'www.vatanbilgisayar.com': selected_vatan, 'www.mediamarkt.com.tr': selected_mediamarkt}
+           'www.vatanbilgisayar.com': selected_vatan, 'www.mediamarkt.com.tr': selected_mediamarkt,
+           'www.teknosa.com': selected_teknosa}
 FIRST_PARTY = {'www.mediamarkt.com.tr', 'www.vatanbilgisayar.com'}
 IMAGE_HOSTS = {'n11scdn.akamaized.net', 'n11scdn2-im.akamaized.net',
-               'cdn.dsmcdn.com', 'assets.mmsrg.com', 'cdn.vatanbilgisayar.com'}
+               'cdn.dsmcdn.com', 'assets.mmsrg.com', 'cdn.vatanbilgisayar.com', 'img-teknosa-sap.mncdn.com'}
 CORE = ('mpn', 'brand', 'cpu', 'ram', 'ssd', 'discrete')
 MAX_URLS = 200
 
@@ -59,18 +63,20 @@ def _cohort_score(rows):
     return len({row['platform'] for row in rows}), len(rows), -min(row['price'] for row in rows)
 
 
-def select_offers(observations):
+def select_offers(observations, *, required_platforms=frozenset()):
     """Prefer stores across platforms; every published seller must be independent."""
     best = []
     for pair in combinations(observations, 2):
         if not valid_pair(*pair):
             continue
-        if not best or _cohort_score(pair) > _cohort_score(best):
+        if (required_platforms <= {row['platform'] for row in pair}
+                and (not best or _cohort_score(pair) > _cohort_score(best))):
             best = pair
         for third in observations:
             if all(valid_pair(o, third) for o in pair):
                 triple = (*pair, third)
-                if _cohort_score(triple) > _cohort_score(best):
+                if (required_platforms <= {row['platform'] for row in triple}
+                        and (not best or _cohort_score(triple) > _cohort_score(best))):
                     best = triple
     return sorted(best, key=lambda row: (row['price'], row['url']))
 
@@ -170,18 +176,42 @@ def _image(url):
 def _target(url):
     p = urlparse(url)
     return p if (p.scheme == 'https' and p.netloc in PARSERS and len(url) <= 800
-                 and not p.fragment and not (p.netloc in FIRST_PARTY and p.query)) else None
+                 and not p.fragment
+                 and not (p.netloc in FIRST_PARTY | {'www.teknosa.com'} and p.query)) else None
+
+
+def verify_seller(offer, source, transport, identities):
+    url = offer.get('seller_url')
+    if not url:
+        return bool(offer.get('_legal_name'))
+    key = (url, offer['merchant_id'], offer['merchant'])
+    if key not in identities:
+        raw = None
+        if offer['platform'] == 'MediaMarkt':
+            if source._rules.can_fetch(BOT, url):
+                body, reason, _ = source._direct(url, 5 * 1024 * 1024, 'text/html')
+                if reason == 'ready':
+                    raw = body
+        elif offer['platform'] == 'Teknosa':
+            raw, _, _ = transport.read_teknosa_seller(url)
+        identities[key] = marketplace_seller_identity(raw, offer) if raw else None
+    if not identities[key]:
+        return False
+    offer.update(identities[key])
+    return bool(offer.get('_legal_name'))
 
 
 def read_retailer(host, rows):
     failures, output = Counter(), []
+    identities = {}
     parser = PARSERS[host]
     transport = PriorityRetailerTransport(maximum_per_host=min(MAX_URLS, max(1, len(rows))))
+    source = None
     if host in FIRST_PARTY:
         source = (VatanCategorySource() if host.startswith('www.vatan') else
                   MediaMarktSource(get=compatible_get))
         if host.startswith('www.mediamarkt'):
-            source.configure_catalog_budget(len(rows))
+            source.configure_catalog_budget(len(rows) * 2)
         source._load_robots()
 
     for row in rows:
@@ -213,6 +243,9 @@ def read_retailer(host, rows):
                 failures['selected_seller_route_changed'] += 1
                 continue
             offer, reason = parser(html, final)
+            if (offer and offer['facts']['mpn'] == row['mpn'] and offer['gtin13'] == row['gtin']
+                    and not verify_seller(offer, source, transport, identities)):
+                offer, reason = None, 'selected_seller_legal_identity_unproven'
         except (SourceBudgetExhausted, SourceCircuitOpen):
             failures['source_budget_or_circuit'] += 1
             break
@@ -223,7 +256,7 @@ def read_retailer(host, rows):
         except (OSError, UnicodeError, ValueError):
             failures['read_or_parse_error'] += 1
             continue
-        if (offer and offer['_legal_name'] and offer['facts']['mpn'] == row['mpn']
+        if (offer and offer.get('_legal_name') and offer['facts']['mpn'] == row['mpn']
                 and offer['gtin13'] == row['gtin'] and offer['currency'] == 'TRY'
                 and offer['condition'] == 'new' and offer['availability'] == 'in_stock'
                 and 3_000 <= offer['price'] <= 1_000_000):
@@ -233,10 +266,8 @@ def read_retailer(host, rows):
     return output, failures
 
 
-def publish(targets, output, images, *, pinned=None, existing=None):
+def collect_offers(targets, minimum_targets):
     by_host, grouped, skipped = defaultdict(list), defaultdict(list), Counter()
-    target_count = len(pinned) if pinned is not None else MINIMUM
-    minimum_targets = 2 if existing is not None else 2 * target_count
     if not isinstance(targets, list) or not minimum_targets <= len(targets) <= MAX_URLS:
         raise ValueError(f'Expected {minimum_targets}–{MAX_URLS} read-only candidate URLs')
     seen = set()
@@ -255,6 +286,34 @@ def publish(targets, output, images, *, pinned=None, existing=None):
             for o in offers:
                 grouped[o['facts']['mpn'], o['gtin13']].append(o)
             skipped.update({f'{host}:{reason}': count for reason, count in reasons.items()})
+    return grouped, skipped
+
+
+def improve_offers(targets, output, existing):
+    """Refresh exact catalog variants when verified cross-platform coverage grows."""
+    grouped, skipped = collect_offers(targets, 2)
+    models, improved = [], {}
+    for original in existing['models']:
+        model = dict(original)
+        current = {o['platform'] for o in model['offers']}
+        expected = {'facts': model, 'gtin13': model['gtin']}
+        options = [o for o in grouped[model['mpn'], model['gtin']] if compatible(o, expected)]
+        selected = select_offers(options, required_platforms=current)
+        platforms = {o['platform'] for o in selected}
+        if current < platforms:
+            model['offers'] = _public_offers(selected)
+            improved[model['mpn']] = sorted(platforms - current)
+        models.append(model)
+    print(json.dumps({'improved': improved, 'rejected': dict(skipped)}, ensure_ascii=False), flush=True)
+    if not improved:
+        raise ValueError('No existing model gained a verified platform')
+    snapshot = {**existing, 'checkedAt': datetime.now(timezone.utc).isoformat(), 'models': models}
+    output.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+
+
+def publish(targets, output, images, *, pinned=None, existing=None):
+    target_count = len(pinned) if pinned is not None else MINIMUM
+    grouped, skipped = collect_offers(targets, 2 if existing is not None else 2 * target_count)
     ready = []
     for identity, options in grouped.items():
         if pinned and identity not in pinned:
@@ -326,12 +385,17 @@ def main():
     mode = cli.add_mutually_exclusive_group()
     mode.add_argument('--keep-models', action='store_true', help='Keep the already published pilot cohort')
     mode.add_argument('--expand-from', type=Path, help='Preserve published models and add newly verified configurations')
+    mode.add_argument('--improve-offers-from', type=Path, help='Keep existing variants and add verified platform coverage')
     args = cli.parse_args()
+    targets = json.loads(args.targets.read_text())
+    if args.improve_offers_from:
+        improve_offers(targets, args.output, json.loads(args.improve_offers_from.read_text()))
+        return
     pinned = {(m['mpn'], m['gtin']) for m in json.loads(args.output.read_text())['models']} if args.keep_models else None
     if pinned is not None and not MINIMUM <= len(pinned) <= MAX_URLS // 2:
         raise ValueError('Unexpected number of existing model codes/GTINs')
     existing = json.loads(args.expand_from.read_text())['models'] if args.expand_from else None
-    publish(json.loads(args.targets.read_text()), args.output, args.images, pinned=pinned, existing=existing)
+    publish(targets, args.output, args.images, pinned=pinned, existing=existing)
 
 
 if __name__ == '__main__':
