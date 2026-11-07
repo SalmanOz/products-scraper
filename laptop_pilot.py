@@ -20,6 +20,8 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from curl_cffi.requests import RequestsError
 from requests import RequestException
 
+from laptop_direct_source import DIRECT_STORES, direct_company_identity, selected_direct_laptop
+from laptop_hepsiburada_source import hepsiburada_company_identity, selected_hepsiburada
 from laptop_retailer_sources import (
     marketplace_seller_identity, selected_mediamarkt, selected_n11, selected_teknosa,
     selected_trendyol, selected_vatan, WORDS,
@@ -34,7 +36,8 @@ from vatan_category_source import VatanCategorySource
 MINIMUM = 25
 PARSERS = {'www.n11.com': selected_n11, 'www.trendyol.com': selected_trendyol,
            'www.vatanbilgisayar.com': selected_vatan, 'www.mediamarkt.com.tr': selected_mediamarkt,
-           'www.teknosa.com': selected_teknosa}
+           'www.teknosa.com': selected_teknosa, 'www.hepsiburada.com': selected_hepsiburada,
+           **dict.fromkeys(DIRECT_STORES, selected_direct_laptop)}
 FIRST_PARTY = {'www.mediamarkt.com.tr', 'www.vatanbilgisayar.com'}
 IMAGE_HOSTS = {'n11scdn.akamaized.net', 'n11scdn2-im.akamaized.net',
                'cdn.dsmcdn.com', 'assets.mmsrg.com', 'cdn.vatanbilgisayar.com', 'img-teknosa-sap.mncdn.com'}
@@ -177,7 +180,15 @@ def _target(url):
     p = urlparse(url)
     return p if (p.scheme == 'https' and p.netloc in PARSERS and len(url) <= 800
                  and not p.fragment
-                 and not (p.netloc in FIRST_PARTY | {'www.teknosa.com'} and p.query)) else None
+                 and not (p.netloc in FIRST_PARTY | DIRECT_STORES.keys() | {'www.teknosa.com'} and p.query)
+                 and (p.netloc not in DIRECT_STORES or re.fullmatch(r'/[a-z0-9./-]{10,600}', p.path))) else None
+
+
+def _hepsiburada_public_get(url, **kwargs):
+    # The public storefront responds normally to the browser client's standard
+    # headers. Reuse the same robots checks, host quota and denial circuit.
+    kwargs['headers'] = {'Accept': kwargs['headers']['Accept']}
+    return compatible_get(url, **kwargs)
 
 
 def verify_seller(offer, source, transport, identities):
@@ -194,7 +205,20 @@ def verify_seller(offer, source, transport, identities):
                     raw = body
         elif offer['platform'] == 'Teknosa':
             raw, _, _ = transport.read_teknosa_seller(url)
-        identities[key] = marketplace_seller_identity(raw, offer) if raw else None
+        elif offer['platform'] == 'Hepsiburada':
+            if (offer['merchant'] == 'Hepsiburada'
+                    and offer['merchant_id'] == 'e750130c-d0ff-469f-8767-66a63af8ea0c'
+                    and url == 'https://www.hepsiburada.com/magaza/hepsiburada'):
+                raw, _, _ = transport._read_document(
+                    'https://www.hepsiburada.com/iletisim', 'www.hepsiburada.com', category=True)
+                if raw:
+                    identities[key] = hepsiburada_company_identity(raw)
+        elif urlparse(url).netloc in DIRECT_STORES:
+            raw, _, _ = transport._read_document(url, urlparse(url).netloc, category=True)
+            if raw:
+                identities[key] = direct_company_identity(raw, url)
+        if key not in identities:
+            identities[key] = marketplace_seller_identity(raw, offer) if raw else None
     if not identities[key]:
         return False
     offer.update(identities[key])
@@ -205,7 +229,9 @@ def read_retailer(host, rows):
     failures, output = Counter(), []
     identities = {}
     parser = PARSERS[host]
-    transport = PriorityRetailerTransport(maximum_per_host=min(MAX_URLS, max(1, len(rows))))
+    hb = host == 'www.hepsiburada.com'
+    transport = PriorityRetailerTransport(maximum_per_host=min(MAX_URLS, max(1, len(rows))),
+        get=_hepsiburada_public_get if hb else None, browser_fallback=not (hb or host in DIRECT_STORES))
     source = None
     if host in FIRST_PARTY:
         source = (VatanCategorySource() if host.startswith('www.vatan') else
@@ -231,6 +257,9 @@ def read_retailer(host, rows):
                     raw, reason, _ = source._direct(url, 5 * 1024 * 1024, 'text/html')
                 html = raw.decode('utf-8', errors='replace') if isinstance(raw, bytes) else raw
                 final = url if reason == 'ready' else None
+            elif host in DIRECT_STORES:
+                html, reason, _ = transport._read_document(url, host, fresh=True)
+                final = url if html else None
             else:
                 html, reason, _ = transport.read_fresh_document(url)
                 final = transport.resolved_url(url)

@@ -71,6 +71,22 @@ def _amount(value):
     return amount if amount.is_finite() and 0 < amount <= 5_000_000 else None
 
 
+def _first_party_laptop_cash(product, price):
+    """Cash for first-party laptop PDPs whose price component is client-rendered."""
+    prices = product.get('prices')
+    if (product.get('merchantId') != 'e750130c-d0ff-469f-8767-66a63af8ea0c'
+            or product.get('merchantName') != 'Hepsiburada'
+            or product.get('campaignIds') != [] or product.get('campaignNote') != ''
+            or product.get('isCampaignParticipationClosed') is not True
+            or not isinstance(prices, list) or len(prices) != 2
+            or any(not isinstance(row, dict) or row.get('currency') != 0 for row in prices)):
+        return False
+    listed, payable = (_amount(row.get('value')) for row in prices)
+    return (listed is not None and payable is not None and payable == price and listed > payable
+            and prices[0].get('discountRate') == 0
+            and type(prices[1].get('discountRate')) is int and 0 < prices[1]['discountRate'] < 100)
+
+
 def _valid_gtin13(value):
     if not isinstance(value, str) or not re.fullmatch(r'\d{13}', value):
         return False
@@ -156,7 +172,7 @@ def _selected_variant(product, scope=None):
     return variant
 
 
-def parse_exact_buy_box(html: str, final_url: str = URL, *, scope=None):
+def parse_exact_buy_box(html: str, final_url: str = URL, *, scope=None, verify_laptop=None):
     """Reconcile all selected buy-box layers; default to the reviewed audit SKU."""
     scope = DEFAULT_REVIEWED_TARGET if scope is None else scope
     if (final_url != scope['URL'] or not isinstance(html, str)
@@ -171,9 +187,9 @@ def parse_exact_buy_box(html: str, final_url: str = URL, *, scope=None):
         return None, 'selected_title_missing'
     title = _normalized(headings[0].get_text(' ', strip=True))
     matcher = TRPriceScraper()
-    if (not matcher.is_strict_match(scope['CATALOG']['name'], title, scope['SPECS'])
+    if (verify_laptop is None and (not matcher.is_strict_match(scope['CATALOG']['name'], title, scope['SPECS'])
             or scope['COLOR'].casefold() not in title.casefold()
-            or re.search(r'yenilenmi[sş]|refurbished|ikinci\s*el', title, re.I)):
+            or re.search(r'yenilenmi[sş]|refurbished|ikinci\s*el', title, re.I))):
         return None, 'selected_variant_mismatch'
 
     scripts = soup.select('script#reduxStore')
@@ -215,7 +231,8 @@ def parse_exact_buy_box(html: str, final_url: str = URL, *, scope=None):
             or merchant.get('name') != scope['SELLER']
             or merchant.get('urlPostfix') != scope['MERCHANT_POSTFIX']):
         return None, 'selected_redux_merchant_mismatch'
-    variant = _selected_variant(product, scope)
+    variant = (_selected_variant(product, scope) if verify_laptop is None else
+               verify_laptop(soup, product, title))
     if variant is None:
         return None, 'selected_redux_variant_mismatch'
 
@@ -236,7 +253,8 @@ def parse_exact_buy_box(html: str, final_url: str = URL, *, scope=None):
 
     schema_products = [node for node in _nodes(soup)
                        if node.get('@type') == 'Product' and node.get('sku') == scope['SKU']]
-    if len(schema_products) != 1 or schema_products[0].get('color') != scope['COLOR']:
+    if (len(schema_products) != 1 or verify_laptop is None
+            and schema_products[0].get('color') != scope['COLOR']):
         return None, 'schema_selected_variant_mismatch'
     schema_offer = schema_products[0].get('offers')
     if (not isinstance(schema_offer, dict) or schema_offer.get('@type') != 'Offer'
@@ -256,49 +274,28 @@ def parse_exact_buy_box(html: str, final_url: str = URL, *, scope=None):
                and re.search(r'\bSatıcı\s*:', _normalized(link.parent.get_text(' ', strip=True)))]
     if len(sellers) != 1:
         return None, 'selected_visible_seller_mismatch'
-    capacity_label = str(scope['SPECS']['storage_gb']) + ' GB'
-    if generic:
-        capacity_label = next(p['valueObject']['actualValue'] for p in variant['properties'] if p['name'] == 'Kapasite')
-    controls = (('Kapasite', capacity_label), ('Renk', scope['COLOR']))
-    if generic and (neutral_option := _neutral_selected_option(variant['properties'])) is not None:
-        controls += (('Seçenek', neutral_option),)
-    for kind, value in controls:
-        buttons = soup.select(f'button[data-test-id="variant-box-{kind}-{value}"]')
-        if len(buttons) != 1 or buttons[0].get('aria-label') != f'Seçili {kind} {value}':
-            return None, 'selected_controls_mismatch'
-    technical = soup.select('#techSpecs[data-test-id="KeyFeaturesTable"]')
-    detail = _normalized(technical[0].get_text(' ', strip=True)) if len(technical) == 1 else ''
-    if generic:
-        from hepsiburada_catalog_source import selected_technical_text
-        detail = selected_technical_text(soup, scope['SKU'], scope['PRODUCT_ID'],
-                                         scope['LISTING_ID'], scope['MERCHANT_ID'])
-    storage_matches = bool(re.search(rf"\bDahili Hafıza\s+{scope['SPECS']['storage_gb']} GB\b", detail))
-    if generic and not storage_matches:
-        from hepsiburada_capacity import selected_tb_storage
-        storage_matches = selected_tb_storage(soup, detail) == scope['SPECS']['storage_gb']
-    # Observed Redmi Note 15 Pro pages put literal "Var" in this table cell.
-    # It does not assert a capacity. The already validated selected SKU's
-    # Kapasite property AND its visible selected control still state the exact
-    # amount independently; neither can be missing or disagree with the title.
-    selected_storage_fallback = (generic and not storage_matches
-        and len(re.findall(r'\bDahili Hafıza\b', detail)) == 1
-        and bool(re.search(r'\bDahili Hafıza\s+Var\b', detail))
-        and any(p.get('name') == 'Kapasite' and p.get('valueObject', {}).get('actualValue') ==
-                str(scope['SPECS']['storage_gb']) + ' GB' for p in variant['properties']))
-    if (not (storage_matches or selected_storage_fallback)
-            or not re.search(rf"\bRAM Kapasitesi\s+{scope['SPECS']['ram_gb']} GB(?: RAM)?\b", detail)
-            or (scope['SPECS']['network_generation'] is not None and not re.search((r'\bMobil Bağlantı Hızı\s+5G\b' if scope['SPECS']['network_generation'] == '5g' else r'\bMobil Bağlantı Hızı\s+4(?:[.,]5)?G\b'), detail))
-            or not re.search(r'\bStok Kodu\s+' + scope['SKU'] + r'\b', detail)):
-        return None, 'technical_variant_mismatch'
+    if verify_laptop is None:
+        phone_evidence, failure = _phone_technical_evidence(soup, scope, variant, generic)
+        if not phone_evidence:
+            return None, failure
 
     price_regions = soup.select('[data-test-id="default-price"]')
-    if len(price_regions) != 1:
+    client_rendered_cash = False
+    if len(price_regions) == 1:
+        visible = price_regions[0].find('span')
+    elif not price_regions and verify_laptop is not None:
+        # Some discounted laptop PDPs render cash only on the checked SSD
+        # option. The laptop verifier already binds this control to the SKU.
+        selected_prices = soup.select(
+            'button[aria-label^="Seçili SSD Kapasitesi "] [data-test-id="variant-box-price"]')
+        visible = selected_prices[0] if len(selected_prices) == 1 else None
+        client_rendered_cash = not selected_prices and _first_party_laptop_cash(product, price)
+    else:
         return None, 'selected_price_region_missing'
-    visible = price_regions[0].find('span')
     match = re.fullmatch(r'(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)\s*TL',
                          _normalized(visible.get_text(' ', strip=True)) if visible else '', re.I)
     visible_price = _amount(match[1].replace('.', '').replace(',', '.')) if match else None
-    if visible_price != price:
+    if visible_price != price and not client_rendered_cash:
         return None, 'visible_cash_price_mismatch'
     if _is_conditional_price(soup, schema_offer, float(price)):
         return None, 'conditional_price'
@@ -338,15 +335,55 @@ def parse_exact_buy_box(html: str, final_url: str = URL, *, scope=None):
              'availability': 'in_stock', 'condition': 'new',
              'source_title': title, 'url': scope['URL'],
              'observed_at': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')}
+    if verify_laptop is not None:
+        return offer, 'selected_new_cash_offer_observed'
     if generic:
         offer['observed_gtins'] = list(scope['GTIN13S'])
-        if selected_storage_fallback:
-            offer['storage_evidence_source'] = 'selected_sku_and_visible_capacity_control'
+        if phone_evidence == 'selected_sku_and_visible_capacity_control':
+            offer['storage_evidence_source'] = phone_evidence
     matches = matcher.has_observed_offer_evidence(scope['CATALOG']['name'], offer,
                   scope['CATALOG_SPECS'] if generic else scope['SPECS'])
     if not matches:
         return None, 'catalog_variant_mismatch'
     return offer, 'selected_new_cash_offer_observed'
+
+
+def _phone_technical_evidence(soup, scope, variant, generic):
+    capacity_label = str(scope['SPECS']['storage_gb']) + ' GB'
+    if generic:
+        capacity_label = next(p['valueObject']['actualValue'] for p in variant['properties'] if p['name'] == 'Kapasite')
+    controls = (('Kapasite', capacity_label), ('Renk', scope['COLOR']))
+    if generic and (neutral_option := _neutral_selected_option(variant['properties'])) is not None:
+        controls += (('Seçenek', neutral_option),)
+    for kind, value in controls:
+        buttons = soup.select(f'button[data-test-id="variant-box-{kind}-{value}"]')
+        if len(buttons) != 1 or buttons[0].get('aria-label') != f'Seçili {kind} {value}':
+            return None, 'selected_controls_mismatch'
+    technical = soup.select('#techSpecs[data-test-id="KeyFeaturesTable"]')
+    detail = _normalized(technical[0].get_text(' ', strip=True)) if len(technical) == 1 else ''
+    if generic:
+        from hepsiburada_catalog_source import selected_technical_text
+        detail = selected_technical_text(soup, scope['SKU'], scope['PRODUCT_ID'],
+                                         scope['LISTING_ID'], scope['MERCHANT_ID'])
+    storage_matches = bool(re.search(rf"\bDahili Hafıza\s+{scope['SPECS']['storage_gb']} GB\b", detail))
+    if generic and not storage_matches:
+        from hepsiburada_capacity import selected_tb_storage
+        storage_matches = selected_tb_storage(soup, detail) == scope['SPECS']['storage_gb']
+    # Observed Redmi Note 15 Pro pages put literal "Var" in this table cell.
+    # It does not assert a capacity. The already validated selected SKU's
+    # Kapasite property AND its visible selected control still state the exact
+    # amount independently; neither can be missing or disagree with the title.
+    selected_storage_fallback = (generic and not storage_matches
+        and len(re.findall(r'\bDahili Hafıza\b', detail)) == 1
+        and bool(re.search(r'\bDahili Hafıza\s+Var\b', detail))
+        and any(p.get('name') == 'Kapasite' and p.get('valueObject', {}).get('actualValue') ==
+                str(scope['SPECS']['storage_gb']) + ' GB' for p in variant['properties']))
+    if (not (storage_matches or selected_storage_fallback)
+            or not re.search(rf"\bRAM Kapasitesi\s+{scope['SPECS']['ram_gb']} GB(?: RAM)?\b", detail)
+            or (scope['SPECS']['network_generation'] is not None and not re.search((r'\bMobil Bağlantı Hızı\s+5G\b' if scope['SPECS']['network_generation'] == '5g' else r'\bMobil Bağlantı Hızı\s+4(?:[.,]5)?G\b'), detail))
+            or not re.search(r'\bStok Kodu\s+' + scope['SKU'] + r'\b', detail)):
+        return None, 'technical_variant_mismatch'
+    return ('selected_sku_and_visible_capacity_control' if selected_storage_fallback else 'technical_table'), None
 
 
 class HepsiburadaIphone16PmAuditSource:

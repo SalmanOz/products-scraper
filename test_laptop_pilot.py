@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from bs4 import BeautifulSoup
 
+from audit_hepsiburada_iphone16pm_readonly import _first_party_laptop_cash
 from laptop_pilot import build_model, compatible, read_retailer, select_offers, valid_pair
 from laptop_retailer_sources import laptop_facts, marketplace_seller_identity, selected_n11
 
@@ -93,6 +94,18 @@ class LaptopPilotTests(TestCase):
         self.assertEqual((facts['ram'], facts['ssd'], facts['discrete']), (32, 1024, 'RTX 5060'))
         self.assertIsNone(laptop_facts(title, {'ram': '16 GB'}, 'MSI'))
         self.assertIsNone(laptop_facts(title + ' 512 GB SSD', {}, 'MSI'))
+
+    def test_hepsiburada_client_price_needs_first_party_ordinary_sale(self):
+        state = {
+            'merchantId': 'e750130c-d0ff-469f-8767-66a63af8ea0c', 'merchantName': 'Hepsiburada',
+            'campaignIds': [], 'campaignNote': '', 'isCampaignParticipationClosed': True,
+            'prices': [{'value': 31499, 'discountRate': 0, 'currency': 0},
+                       {'value': 30999, 'discountRate': 2, 'currency': 0}],
+        }
+        self.assertTrue(_first_party_laptop_cash(state, 30999))
+        self.assertFalse(_first_party_laptop_cash(state, 31499))
+        self.assertFalse(_first_party_laptop_cash(state | {'campaignIds': ['coupon']}, 30999))
+        self.assertFalse(_first_party_laptop_cash(state | {'merchantName': 'Başka satıcı'}, 30999))
 
     def test_published_platforms_must_remain_in_an_expansion(self):
         n11 = observation()

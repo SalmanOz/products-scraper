@@ -67,6 +67,7 @@ def _cpu(text):
     text = WORDS(text).upper()
     for pattern, fmt in [
         (r'\b(?:INTEL )?(?:CORE )?ULTRA\s*([579])\s*(\d{3}[A-Z]{0,3})\b', 'Intel Core Ultra {} {}'),
+        (r'\bU([579])\s+(\d{3}[A-Z]{1,3})\b', 'Intel Core Ultra {} {}'),
         (r'\b(?:INTEL )?CORE\s*(?:U\s*)?([357])\s*(\d{3}[A-Z]{0,3})\b', 'Intel Core {} {}'),
         (r'\bI([3579])[- ]?(\d{4,5}[A-Z]{0,3})\b', 'Intel Core i{}-{}'),
         (r'\b(?:AMD )?RYZEN AI\s*([579])\s*(\d{3}[A-Z]{0,3})\b', 'AMD Ryzen AI {} {}'),
@@ -95,6 +96,8 @@ def _os(text):
         if re.search(r'\b(?:home|w11h|win11h)\b', normalized):
             return 'Windows 11 Home'
         return 'Windows 11'
+    if re.search(r'\bdos\b', normalized):
+        return 'FreeDOS'
     return None
 
 

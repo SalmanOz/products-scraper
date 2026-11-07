@@ -145,11 +145,12 @@ def validated_n11_redirect_diagnostic(value):
 
 class PriorityRetailerTransport:
     def __init__(self, *, get=None, post=None, sleep=time.sleep, clock=time.monotonic,
-                 maximum_per_host=2, n11_collector=None):
+                 maximum_per_host=2, n11_collector=None, browser_fallback=True):
         if type(maximum_per_host) is not int or not 1 <= maximum_per_host <= 400:
             raise ValueError('Invalid priority retailer request budget')
         self._get, self._post = get or compatible_get, post
         self._n11_collector = n11_collector
+        self._browser_fallback = browser_fallback
         self._sleep, self._clock = sleep, clock
         self._maximum = maximum_per_host
         self._states = {}
@@ -183,7 +184,7 @@ class PriorityRetailerTransport:
         transport = HepsiburadaS25FeSource(get=public_get if dedicated else self._get,
                                          post=self._post, sleep=self._sleep)
         try:
-            result = (transport._read(url, limit, accept=accept) if dedicated else
+            result = (transport._read(url, limit, accept=accept) if dedicated or not self._browser_fallback else
                       transport._read_with_fallback(url, limit, accept=accept))
             location = transport._redirect_location
             if (accept == 'text/html' and urlparse(url).hostname == 'www.hepsiburada.com'
