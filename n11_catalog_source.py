@@ -220,7 +220,7 @@ def parse_catalog_listing(html, url, name, specs):
     return _parse_selected_listing(html, url, name, specs)
 
 
-def _parse_selected_listing(html, url, name, specs, *, verify_tws=None):
+def _parse_selected_listing(html, url, name, specs, *, verify_tws=None, verify_laptop=None):
     requested, canonical = catalog_request_url(url), canonical_product_url(url)
     if requested is None or not isinstance(html, str) or len(html.encode()) > 5 * 1024 * 1024:
         return None, 'invalid_catalog_pdp'
@@ -255,12 +255,13 @@ def _parse_selected_listing(html, url, name, specs, *, verify_tws=None):
     title = ' '.join(heading[0].get_text(' ', strip=True).split()) if len(heading) == 1 else ''
     matcher = TRPriceScraper()
     product_title = product.get('title')
-    if verify_tws is None:
+    verify_category = verify_laptop or verify_tws
+    if verify_category is None:
         matches_title = lambda value: matcher.is_strict_match(name, value, specs)
         selected_details = {}
     else:
         product_title = ' '.join(str(product_title or '').split())
-        matches_title, selected_details = verify_tws(product)
+        matches_title, selected_details = verify_category(product)
     if not title or title != product_title or not matches_title(title):
         return None, 'catalog_title_variant_mismatch'
     seller = product.get('seller')
@@ -286,15 +287,25 @@ def _parse_selected_listing(html, url, name, specs, *, verify_tws=None):
         return None, 'selected_skus_invalid'
     if not isinstance(skus, list) or not isinstance(definitions, list):
         return None, 'selected_skus_missing'
-    selected = [s for s in skus if isinstance(s, dict) and s.get('productId') == product.get('id')
+    selected = [s for s in skus if isinstance(s, dict)
+                and (verify_laptop is not None or s.get('productId') == product.get('id'))
                 and str(s.get('id')) == str(product.get('defaultSkuId'))]
     sku = selected[0] if len(selected) == 1 else {}
     gtin = _gtin13(sku.get('gtin'))
-    if (gtin is None or product.get('defaultGtin') != gtin or sku.get('outOfStock') is not False
-            or type(sku.get('stock')) is not int or sku['stock'] <= 0
-            or sku.get('currentStock') != sku['stock'] or sku['stock'] != product['stock']
-            or sku.get('storeName') != seller_name or str(meta.get('productId')) != str(product.get('id'))
-            or str(meta.get('skuId')) != str(sku.get('id')) or meta.get('stock') != sku['stock']):
+    # A laptop with no options has an identity-only SKU shell. The page's
+    # product and commercial metadata carry stock and prices for its sole SKU.
+    laptop_shell = (verify_laptop is not None and len(skus) == 1 and not definitions
+                    and sku.get('skuAttributes') == [] and sku.get('outOfStock') is True
+                    and all(key in sku and sku[key] is None for key in
+                            ('productId', 'stock', 'currentStock', 'storeName', 'price',
+                             'displayPrice', 'displayPriceNumber', 'instantDiscountedPriceForSku')))
+    if (gtin is None or product.get('defaultGtin') != gtin
+            or str(meta.get('productId')) != str(product.get('id'))
+            or str(meta.get('skuId')) != str(sku.get('id')) or meta.get('stock') != product['stock']
+            or not laptop_shell and (sku.get('productId') != product.get('id')
+                or sku.get('outOfStock') is not False or type(sku.get('stock')) is not int
+                or sku['stock'] != product['stock'] or sku.get('currentStock') != sku['stock']
+                or sku.get('storeName') != seller_name)):
         return None, 'selected_sku_stock_or_gtin_mismatch'
     attributes = sku.get('skuAttributes')
     if not isinstance(attributes, list):
@@ -322,7 +333,14 @@ def _parse_selected_listing(html, url, name, specs, *, verify_tws=None):
                 or selectors.get('renk', matcher._normalize_words(values['Renk']).replace(' ', '-'))
                 != matcher._normalize_words(values['Renk']).replace(' ', '-')):
             return None, 'selected_tws_native_url_mismatch'
-    if verify_tws is None:
+    if verify_laptop is not None:
+        native = product.get('skuUrl')
+        native_url = urljoin(canonical, native) if isinstance(native, str) else ''
+        if (len(skus) != 1 or definitions or attributes or set(query) - {'magaza'}
+                or canonical_product_url(native_url) != canonical
+                or n11_product_selectors(native_url) != {'magaza': seller_slug}):
+            return None, 'selected_laptop_native_sku_mismatch'
+    if verify_category is None:
         selected_storage = storage_gb(values.get('Dahili Hafıza'))
         if (selected_storage is None or selected_storage != matcher._spec_int(specs.get('storage_gb'))
                 or not isinstance(values.get('Renk'), str) or len(values['Renk']) > 60):
@@ -344,25 +362,27 @@ def _parse_selected_listing(html, url, name, specs, *, verify_tws=None):
             physical['network_generation'] = '5g'
         elif technical.get('5G Desteği') == 'Yok' and technical.get('4.5G Desteği') == 'Var':
             physical['network_generation'] = '4g'
-    if query.get('renk', [matcher._normalize_words(values['Renk']).replace(' ', '-')]) != [
+    if verify_laptop is None and query.get('renk', [matcher._normalize_words(values['Renk']).replace(' ', '-')]) != [
             matcher._normalize_words(values['Renk']).replace(' ', '-')]:
         return None, 'selected_query_color_mismatch'
-    if verify_tws is None and query.get('dahili-hafiza', [values['Dahili Hafıza'].lower().replace(' ', '-')]) != [
+    if verify_category is None and query.get('dahili-hafiza', [values['Dahili Hafıza'].lower().replace(' ', '-')]) != [
             values['Dahili Hafıza'].lower().replace(' ', '-')]:
         return None, 'selected_query_memory_mismatch'
     choices = main[0].select('button.sku-selection .sku-attributes-text')
     selected_choice = ', '.join(str(a.get('name') or '') for a in attributes)
     choice = choices[0].get_text(' ', strip=True) if len(choices) == 1 else None
+    if verify_laptop is not None and not choices:
+        choice = ''
     if choice not in (selected_choice, 'Seçim Yap'):
         return None, 'visible_selected_variant_mismatch'
     listed = _amount(product.get('displayPriceFloat'))
     original = _amount(product.get('priceFloat'))
     if (listed is None or _cash(product.get('displayPrice')) != listed
             or _amount(product.get('displayPriceNumber')) != listed
-            or _cash(sku.get('displayPrice')) != listed or _amount(sku.get('displayPriceNumber')) != listed
+            or not laptop_shell and (_cash(sku.get('displayPrice')) != listed or _amount(sku.get('displayPriceNumber')) != listed)
             or _cash(meta.get('discountedPrice')) != listed
             or original is None or _cash(product.get('price')) != original
-            or _cash(sku.get('price')) != original or _amount(meta.get('price')) != original
+            or not laptop_shell and _cash(sku.get('price')) != original or _amount(meta.get('price')) != original
             or product.get('hasDiscount') not in (True, False)):
         return None, 'conditional_or_inconsistent_cash_price'
     # n11's public PDP distinguishes displayPrice (the listed amount) from
@@ -399,7 +419,7 @@ def _parse_selected_listing(html, url, name, specs, *, verify_tws=None):
     # selected SKU, commercial metadata and separate JSON-LD must still agree
     # on the same in-stock SKU and ordinary cash price above. No JavaScript is
     # evaluated and no DOM price/cart contradiction is ignored.
-    pending = (choice == 'Seçim Yap' and visible_price == ''
+    pending = ((choice == 'Seçim Yap' or verify_laptop is not None and not choices) and visible_price == ''
                and carts[0].has_attr('disabled') and 'disabled' in carts[0].get('class', [])
                and state.get('isProductDetailPage') is True)
     if (not (hydrated or pending) or (not basket and _is_conditional_price(main[0], offer, float(price)))):
@@ -410,13 +430,14 @@ def _parse_selected_listing(html, url, name, specs, *, verify_tws=None):
             'product_id': str(product['id']), 'group_id': group, 'gtin13': gtin,
             'source_render_state': 'ssr_placeholder' if pending else 'hydrated_selected',
             'selected_n11_seller_slug': seller_slug,
-            'selected_n11_color_slug': matcher._normalize_words(values['Renk']).replace(' ', '-'),
             'source_title': title, 'url': requested, 'price': float(price), 'currency': 'TRY',
             'condition': 'new', 'availability': 'in_stock',
             **physical, **selected_details, 'observed_at': datetime.now(timezone.utc).isoformat()}
     if basket:
         result.update(price_kind='basket', listed_price=float(listed))
-    if verify_tws is not None:
+    if 'Renk' in values:
+        result['selected_n11_color_slug'] = matcher._normalize_words(values['Renk']).replace(' ', '-')
+    if verify_category is not None:
         result['url'] = native_url
         return result, 'selected_n11_basket_offer' if basket else 'selected_n11_cash_offer'
     from selected_sku_evidence import selected_sku_evidence

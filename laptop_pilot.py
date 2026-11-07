@@ -1,0 +1,313 @@
+"""Revalidate a candidate laptop cohort and generate a public pilot snapshot.
+
+The input contains retailer URLs discovered from public categories/product
+selectors and expected manufacturer codes/barcodes. It never contains prices.
+All offer prices and seller identities are reread from the selected product pages.
+"""
+import argparse
+from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
+from datetime import datetime, timezone
+from io import BytesIO
+from itertools import combinations
+import json
+from pathlib import Path
+import re
+from urllib.parse import urlparse
+
+from PIL import Image, ImageOps, UnidentifiedImageError
+from curl_cffi.requests import RequestsError
+from requests import RequestException
+
+from laptop_retailer_sources import selected_mediamarkt, selected_n11, selected_trendyol, selected_vatan, WORDS
+from mediamarkt_source import MediaMarktSource, SourceBudgetExhausted, SourceCircuitOpen
+from priority_retailer_transport import PriorityRetailerTransport, compatible_get
+from retailer_barcode import retailer_gtin13
+from tws_offer_pilot import independent_sellers
+from tws_retailer_sources import BOT, STOP_REASONS, _vatan_url
+from vatan_category_source import VatanCategorySource
+
+MINIMUM = 25
+PARSERS = {'www.n11.com': selected_n11, 'www.trendyol.com': selected_trendyol,
+           'www.vatanbilgisayar.com': selected_vatan, 'www.mediamarkt.com.tr': selected_mediamarkt}
+FIRST_PARTY = {'www.mediamarkt.com.tr', 'www.vatanbilgisayar.com'}
+IMAGE_HOSTS = {'n11scdn.akamaized.net', 'n11scdn2-im.akamaized.net',
+               'cdn.dsmcdn.com', 'assets.mmsrg.com', 'cdn.vatanbilgisayar.com'}
+CORE = ('mpn', 'brand', 'cpu', 'ram', 'ssd', 'discrete')
+MAX_URLS = 200
+
+
+def compatible(a, b):
+    x, y = a['facts'], b['facts']
+    return (a['gtin13'] == b['gtin13'] and all(x[k] == y[k] for k in CORE)
+            and (x['os'].startswith(y['os']) or y['os'].startswith(x['os']))
+            and (not x['screen'] or not y['screen'] or x['screen'] == y['screen']))
+
+
+def _merchant_key(row):
+    return WORDS(row['merchant']).replace(' ', '')
+
+
+def valid_pair(a, b):
+    return (compatible(a, b) and a['url'] != b['url'] and independent_sellers(a, b)
+            and _merchant_key(a) != _merchant_key(b)
+            and min(a['price'], b['price']) >= max(a['price'], b['price']) * .62)
+
+
+def _cohort_score(rows):
+    return len({row['platform'] for row in rows}), len(rows), -min(row['price'] for row in rows)
+
+
+def select_offers(observations):
+    """Prefer stores across platforms; every published seller must be independent."""
+    best = []
+    for pair in combinations(observations, 2):
+        if not valid_pair(*pair):
+            continue
+        if not best or _cohort_score(pair) > _cohort_score(best):
+            best = pair
+        for third in observations:
+            if all(valid_pair(o, third) for o in pair):
+                triple = (*pair, third)
+                if _cohort_score(triple) > _cohort_score(best):
+                    best = triple
+    return sorted(best, key=lambda row: (row['price'], row['url']))
+
+
+def _explicit_os(offers):
+    return max((o['facts']['os'] for o in offers), key=len)
+
+
+def _agreed(offers, key):
+    values = {row['facts'][key] for row in offers if row['facts'][key]}
+    return next(iter(values)) if len(values) == 1 else None
+
+
+def _display_name(offers, facts):
+    code = facts['mpn']
+    ranked = sorted(offers, key=lambda o: (o['platform'] == 'MediaMarkt', len(o['source_title'])))
+    for row in ranked:
+        raw = row['source_title']
+        name = re.split(r'(?i)(?<![A-Z0-9])' + re.escape(code) + r'(?![A-Z0-9])|'
+                        r'\b(?:Intel|AMD|Core[ -]?[3579]|Ryzen|R[3579][ -]*\d+[A-Z]*|i[3579][ -]*\d+[A-Z]*|'
+                        r'M[1-9]\b|\d\.Nesil|\d{1,2}\s*GB|Ultra[ -]?[579]|Dizüstü)\b', raw, maxsplit=1)[0]
+        name = re.sub(r'\s+', ' ', name).strip(' /-–,')
+        head, _, tail = name.partition(' ')
+        if len(tail) > 3 and WORDS(head) == WORDS(facts['brand']):
+            tail = re.sub(r'^NB\s+', '', tail, flags=re.I)
+            tail = re.sub(r'\bideapad\b', 'IdeaPad', tail, flags=re.I)
+            tail = re.sub(r'\bvivobook\b', 'Vivobook', tail, flags=re.I)
+            return f"{facts['brand']} {tail}"
+    return f"{facts['brand']} {code}"
+
+
+def _storage(size):
+    return f'{size // 1024} TB SSD' if size >= 1024 else f'{size} GB SSD'
+
+
+def build_model(offers, photo_offer):
+    first = offers[0]
+    facts = first['facts']
+    screen, graphics = _agreed(offers, 'screen'), facts['discrete'] or _agreed(offers, 'graphics')
+    os_name = _explicit_os(offers)
+    specs = [
+        ('Model kodu', facts['mpn']), ('İşlemci', facts['cpu']),
+        ('Bellek (RAM)', f"{facts['ram']} GB"), ('Depolama', _storage(facts['ssd'])),
+        ('İşletim sistemi', os_name), ('Ekran boyutu', f"{screen.replace('.', ',')} inç" if screen else None),
+        ('Ekran kartı', graphics), ('Çözünürlük', _agreed(offers, 'resolution')),
+        ('Ekran yenileme hızı', _agreed(offers, 'refresh')), ('Bellek türü', _agreed(offers, 'memory_type')),
+    ]
+    return {
+        'name': _display_name(offers, facts),
+        'slug': re.sub(r'[^a-z0-9]+', '-', f"{facts['brand']}-{facts['mpn']}".lower()).strip('-'),
+        **{key: facts[key] for key in CORE},
+        'gtin': first['gtin13'], 'screen': screen, 'os': os_name, 'graphics': graphics,
+        'photoSource': photo_offer['url'],
+        'specSources': [{'name': o['merchant'] if o['merchant'] == o['platform'] else
+                         f"{o['platform']} · {o['merchant']}", 'url': o['url']} for o in offers],
+        'specs': [{'label': label, 'value': value} for label, value in specs if value],
+        'offers': [{**{key: o[key] for key in ('platform', 'merchant', 'url', 'observed_at', 'price')},
+                    'basket': o.get('price_kind') == 'basket'} for o in offers],
+    }
+
+
+def _image(url):
+    route = urlparse(url)
+    if route.scheme != 'https' or route.netloc not in IMAGE_HOSTS or route.query or route.fragment:
+        return None
+    try:
+        with closing(compatible_get(url, timeout=(6, 18), stream=True, allow_redirects=False,
+                                    headers={'Accept': 'image/avif,image/webp,image/png,image/jpeg'})) as response:
+            if response.status_code != 200 or not response.headers.get('Content-Type', '').startswith('image/'):
+                return None
+            buffer = bytearray()
+            for chunk in response.iter_content(32768):
+                buffer.extend(chunk)
+                if len(buffer) > 5_000_000:
+                    return None
+        with Image.open(BytesIO(buffer)) as source:
+            if min(source.size) < 220 or source.width * source.height > 16_000_000:
+                return None
+            source.load()
+            transformed = ImageOps.exif_transpose(source).convert('RGBA')
+            rgb = Image.new('RGB', transformed.size, 'white')
+            rgb.paste(transformed, mask=transformed.getchannel('A'))
+            rgb.thumbnail((780, 650))
+            if min(rgb.size) < 180 or ImageOps.grayscale(rgb).getextrema()[0] > 190:
+                return None
+            image = BytesIO()
+            rgb.save(image, 'WEBP', quality=83, method=6)
+            return image.getvalue()
+    except (OSError, ValueError, UnidentifiedImageError, RequestsError):
+        return None
+
+
+def _target(url):
+    p = urlparse(url)
+    return p if (p.scheme == 'https' and p.netloc in PARSERS and len(url) <= 800
+                 and not p.fragment and not (p.netloc in FIRST_PARTY and p.query)) else None
+
+
+def read_retailer(host, rows):
+    failures, output = Counter(), []
+    parser = PARSERS[host]
+    transport = PriorityRetailerTransport(maximum_per_host=min(MAX_URLS, max(1, len(rows))))
+    if host in FIRST_PARTY:
+        source = (VatanCategorySource() if host.startswith('www.vatan') else
+                  MediaMarktSource(get=compatible_get))
+        if host.startswith('www.mediamarkt'):
+            source.configure_catalog_budget(len(rows))
+        source._load_robots()
+
+    for row in rows:
+        url = row['url']
+        try:
+            if host in FIRST_PARTY:
+                if (source._rules is None or not source._rules.can_fetch(BOT, url)
+                        or host.startswith('www.vatan') and not _vatan_url(url)
+                        or host.startswith('www.mediamarkt') and not re.fullmatch(
+                            r'/tr/product/_[a-z0-9-]+-\d{6,12}\.html', urlparse(url).path)):
+                    failures['source_policy'] += 1
+                    continue
+                if host.startswith('www.vatan'):
+                    source._sleep(max(.5, source._delay))
+                    raw, reason, _ = source._read(url, 5 * 1024 * 1024, 'text/html')
+                else:
+                    raw, reason, _ = source._direct(url, 5 * 1024 * 1024, 'text/html')
+                html = raw.decode('utf-8', errors='replace') if isinstance(raw, bytes) else raw
+                final = url if reason == 'ready' else None
+            else:
+                html, reason, _ = transport.read_fresh_document(url)
+                final = transport.resolved_url(url)
+            if not html or not final:
+                failures[reason] += 1
+                if reason in STOP_REASONS:
+                    break
+                continue
+            if urlparse(url).query != urlparse(final).query:
+                failures['selected_seller_route_changed'] += 1
+                continue
+            offer, reason = parser(html, final)
+        except (SourceBudgetExhausted, SourceCircuitOpen):
+            failures['source_budget_or_circuit'] += 1
+            break
+        except (RequestsError, RequestException):
+            skipped_reason = 'transport_error'
+            failures[skipped_reason] += 1
+            break
+        except (OSError, UnicodeError, ValueError):
+            failures['read_or_parse_error'] += 1
+            continue
+        if (offer and offer['_legal_name'] and offer['facts']['mpn'] == row['mpn']
+                and offer['gtin13'] == row['gtin'] and offer['currency'] == 'TRY'
+                and offer['condition'] == 'new' and offer['availability'] == 'in_stock'
+                and 3_000 <= offer['price'] <= 1_000_000):
+            output.append(offer)
+        else:
+            failures[reason if not offer else 'selected_identity_mismatch'] += 1
+    return output, failures
+
+
+def publish(targets, output, images, *, pinned=None):
+    by_host, grouped, skipped = defaultdict(list), defaultdict(list), Counter()
+    if not isinstance(targets, list) or not 2 * MINIMUM <= len(targets) <= MAX_URLS:
+        raise ValueError(f'Expected {2 * MINIMUM}–{MAX_URLS} read-only candidate URLs')
+    seen = set()
+    for row in targets:
+        url, mpn, gtin = row['url'], row['mpn'], row['gtin']
+        route = _target(url)
+        if (not route or url in seen or not re.fullmatch(r'[A-Z0-9.\-/+#]{5,36}', mpn)
+                or not gtin or retailer_gtin13(gtin) != gtin):
+            raise ValueError('Invalid or duplicate selected product target')
+        seen.add(url)
+        by_host[route.netloc].append(row)
+    with ThreadPoolExecutor(max_workers=len(by_host)) as pool:
+        jobs = {host: pool.submit(read_retailer, host, rows) for host, rows in by_host.items()}
+        for host, job in jobs.items():
+            offers, reasons = job.result()
+            for o in offers:
+                grouped[o['facts']['mpn'], o['gtin13']].append(o)
+            skipped.update({f'{host}:{reason}': count for reason, count in reasons.items()})
+    ready = []
+    for identity, options in grouped.items():
+        if pinned and identity not in pinned:
+            continue
+        offers = select_offers(options)
+        if offers:
+            ready.append((identity, offers, options))
+    print(json.dumps({'pairs': len(ready), 'rejected': dict(skipped)}, ensure_ascii=False), flush=True)
+    models, files, mpns, gtins = [], {}, set(), set()
+    brand_counts = Counter()
+    while ready:
+        # Prefer cross-platform offers, then diversify the pilot across brands.
+        ready.sort(key=lambda item: (-_cohort_score(item[1])[0],
+                                     brand_counts[item[1][0]['facts']['brand']],
+                                     -len(item[1]), item[0]))
+        (mpn, gtin), offers, options = ready.pop(0)
+        if mpn in mpns or gtin in gtins:
+            continue
+        photos = [*offers, *(o for o in options if all(compatible(o, item) for item in offers))]
+        used = set()
+        for photo in photos:
+            url = photo.get('_image')
+            if not url or url in used:
+                continue
+            used.add(url)
+            image = _image(url)
+            if image:
+                model = build_model(offers, photo)
+                models.append(model)
+                files[model['slug']] = image
+                mpns.add(mpn)
+                gtins.add(gtin)
+                brand_counts[model['brand']] += 1
+                break
+        if len(models) == MINIMUM:
+            break
+    if len(models) != MINIMUM or pinned and {(m['mpn'], m['gtin']) for m in models} != pinned:
+        raise ValueError(f'Publication gate: {len(models)}/{MINIMUM} complete products with photos and two sellers')
+    images.mkdir(parents=True, exist_ok=True)
+    for slug, image in files.items():
+        (images / f'{slug}.webp').write_bytes(image)
+    snapshot = {'checkedAt': datetime.now(timezone.utc).isoformat(),
+                'models': sorted(models, key=lambda row: row['slug'])}
+    output.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+    print(json.dumps({'models': len(models), 'offers': sum(len(m['offers']) for m in models)}, ensure_ascii=False))
+
+
+def main():
+    cli = argparse.ArgumentParser(description=__doc__)
+    cli.add_argument('targets', type=Path)
+    cli.add_argument('output', type=Path)
+    cli.add_argument('images', type=Path)
+    cli.add_argument('--keep-models', action='store_true', help='Keep the already published pilot cohort')
+    args = cli.parse_args()
+    pinned = {(m['mpn'], m['gtin']) for m in json.loads(args.output.read_text())['models']} if args.keep_models else None
+    if pinned is not None and len(pinned) != MINIMUM:
+        raise ValueError('Expected 25 existing model codes/GTINs')
+    publish(json.loads(args.targets.read_text()), args.output, args.images, pinned=pinned)
+
+
+if __name__ == '__main__':
+    main()

@@ -787,3 +787,23 @@ seller or stock state; those still need the ordinary fresh selected-PDP proof,
 publication read and exact commercial readback. The catalog size and 80% gate
 are unchanged by this optional phase.
 
+
+### Dizüstü bilgisayar pilotu
+
+Mağaza kategori kartları sadece ilan bulmak için kullanılır. Seçili ürün sayfasından
+doğrulanan üretici kodu, GTIN, işlemci, RAM, SSD, işletim sistemi, stok, satıcı ve
+fiyat üzerinden eşleştirme yapılır. Aynı pazar yerinde iki ilan ancak ayrı tüzel
+satıcılar ve ayrı seçili mağaza bağlantıları varsa bağımsız sayılır.
+
+```sh
+python laptop_discovery.py /tmp/laptop-candidates.json
+python laptop_pilot.py laptop_pilot_targets.json /tmp/laptopPilot.json /tmp/laptop-images
+```
+
+Aday keşfi yeniden çalıştırılabilir; yayınlanmış kohort için son doğrulanmış URL
+havuzu `laptop_pilot_targets.json` içindedir ve fiyat içermez. Üretim JSON'u yalnız
+25 modelin her birinde en az iki bağımsız teklif ve bir kaynak fotoğrafı
+doğrulandıysa oluşturulur. Mevcut 25 modeli koruyarak yenilemek için site
+kopyasındaki `laptopPilot.json` dosyasını çıktı olarak verip `--keep-models`
+kullanın. Komut hiçbir mağazaya veya TeknoSkor üretim veritabanına yazmaz.
+Site, 72 saatten eski fiyatı göstermez; yeni bir doğrulanmış çift gerekir.
