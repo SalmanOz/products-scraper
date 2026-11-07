@@ -1,7 +1,7 @@
 import unittest
 
 from test_trendyol_catalog_source import document
-from tws_offer_pilot import MODEL_NAMES, independent_sellers, model_name, select_sku_offers, selected_tws_offer
+from tws_offer_pilot import MODEL_NAMES, PILOT_MODEL_NAMES, independent_sellers, model_name, select_sku_offers, selected_tws_offer
 
 
 class TwsOfferPilotTests(unittest.TestCase):
@@ -43,11 +43,18 @@ class TwsOfferPilotTests(unittest.TestCase):
 
     def test_distinct_models_and_airpods_variants(self):
         self.assertEqual(len(MODEL_NAMES), len(set(MODEL_NAMES)))
-        self.assertEqual(len(MODEL_NAMES), 25)
+        self.assertEqual(len(PILOT_MODEL_NAMES), 25)
+        self.assertGreater(len(MODEL_NAMES), len(PILOT_MODEL_NAMES))
         self.assertEqual(model_name('Xiaomi Redmi Buds 8 Lite Siyah', 'Xiaomi'), 'Xiaomi Redmi Buds 8 Lite')
         self.assertEqual(model_name('Apple AirPods 4 Aktif Gürültü Engelleme MXP93TU/A', 'Apple'), 'Apple AirPods 4 ANC')
         self.assertIsNone(model_name('Apple AirPods 4. Nesil (MXP63TU/A) Yenilenmiş', 'Apple'))
         self.assertIsNone(model_name('AirPods 4. Nesil (MXP63TU/A)', 'TARÇIN'))
+        self.assertEqual(model_name('JBL Wave Flex2 TWS Pembe', 'JBL'), 'JBL Wave Flex 2')
+        self.assertEqual(model_name('JBL Wave Buds Bluetooth Siyah', 'JBL'), 'JBL Wave Buds')
+        self.assertEqual(model_name('JBL Wave Buds2 Siyah', 'JBL'), 'JBL Wave Buds 2')
+        self.assertEqual(model_name('Soundcore P20i Kulak İçi Kulaklık', 'soundcore'), 'Anker Soundcore P20i')
+        self.assertIsNone(model_name('JBL Tune Flex 2 NC Ghost Edition Siyah', 'JBL'))
+        self.assertIsNone(model_name('JBL Wave Flex 2 Yedek Şarj Kutusu', 'JBL'))
 
     def test_pair_requires_same_gtin_and_two_legal_identities(self):
         first = {'platform': 'Vatan Bilgisayar', 'gtin13': '6941812791271', 'price': 800,
@@ -63,6 +70,10 @@ class TwsOfferPilotTests(unittest.TestCase):
         self.assertEqual(select_sku_offers([first, duplicate, cheaper]), [cheaper])
         self.assertFalse(independent_sellers({**first, '_tax_key': '1111111111'},
                                              {**matching, '_tax_key': '1111111111'}))
+        third = {**matching, 'merchant_id': 27, '_legal_name': 'ucuncu sirket',
+                 'price': 900, 'url': 'https://n11.example/third'}
+        self.assertEqual(select_sku_offers([first, duplicate, cheaper, matching, third]),
+                         [duplicate, matching, third])
 
 
 if __name__ == '__main__':

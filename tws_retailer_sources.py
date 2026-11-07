@@ -52,6 +52,7 @@ def n11_offers(transport, models, model_name, failures):
     results = defaultdict(list)
     visited = set()
     alternatives = defaultdict(list)
+    remaining = defaultdict(list)
     def read(url, name):
         if (name, url) in visited:
             return None, None, None
@@ -64,6 +65,16 @@ def n11_offers(transport, models, model_name, failures):
         if offer is None:
             failures[f'n11_{reason}'] += 1
         return html, offer, reason
+
+    def read_candidate(url, name):
+        html, offer, reason = read(url, name)
+        if offer:
+            results[name].append(offer)
+            if not alternatives[name]:
+                alternatives[name].extend((offer['gtin13'], hint)
+                    for hint in discover_product_sellers(html, offer['url'], maximum=2)
+                    if hint['discovery_scope'] == 'public_other_seller_selector')
+        return reason
 
     for name in models:
         html, reason, _ = transport.read_n11_search(name)
@@ -82,17 +93,14 @@ def n11_offers(transport, models, model_name, failures):
                           and re.search(r'\bapple airpods 4\b', _words(title)))
             if model == name or apple_hint:
                 matches.append(card['href'])
-        for url in matches[:5]:
-            html, offer, reason = read(url, name)
-            if reason in STOP_REASONS:
+        if matches:
+            if read_candidate(matches[0], name) in STOP_REASONS:
                 return results
-            if not offer:
-                continue
-            results[name].append(offer)
-            if not alternatives[name]:
-                alternatives[name].extend((offer['gtin13'], hint)
-                    for hint in discover_product_sellers(html, offer['url'], maximum=2)
-                    if hint['discovery_scope'] == 'public_other_seller_selector')
+            remaining[name] = matches[1:5]
+    for index in range(4):
+        for name, urls in remaining.items():
+            if len(urls) > index and read_candidate(urls[index], name) in STOP_REASONS:
+                return results
     for name, hints in alternatives.items():
         for gtin, hint in hints:
             _, second, reason = read(hint['source_url'], name)

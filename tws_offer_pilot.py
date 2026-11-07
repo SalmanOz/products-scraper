@@ -1,4 +1,4 @@
-"""Read-only offer audit for a fixed cohort of 25 Turkish TWS models.
+"""Read-only offer audit for Turkish TWS models.
 
 The cohort contains product names only. Category cards discover product URLs.
 Every price comes from a selected product page.
@@ -58,8 +58,27 @@ COHORT = (
     ('QCY', 'HT08 MeloBuds Pro', r'ht08 melobuds pro|melobuds pro ht08'),
     ('QCY', 'MeloBuds N50', r'melobuds n50'),
 )
-MODEL_NAMES = tuple(f'{brand} {name}' for brand, name, _ in COHORT)
-BAD_CONDITION = re.compile(r'\b(?:yenilenmis|ikinci el|teshir|outlet|muadil|replika|sadece kutu)\b')
+EXPANSION_COHORT = (
+    ('JBL', 'Tune Beam 2', r'tune beam ?2'),
+    ('JBL', 'Tune Flex 2', r'tune flex ?2'),
+    ('JBL', 'Tune Buds', r'tune buds(?! ?2| pro| plus)'),
+    ('JBL', 'Wave Buds', r'wave buds(?! ?2| pro| plus)'),
+    ('JBL', 'Wave Flex 2', r'wave flex ?2'),
+    ('Anker', 'Soundcore P20i', r'soundcore p20i|p20i (?:tws|kulak|bluetooth)'),
+    ('Anker', 'Soundcore Liberty 4 Pro', r'(?:soundcore )?liberty 4 pro'),
+    ('Anker', 'Soundcore P41i', r'(?:soundcore )?p41i'),
+    ('Anker', 'Soundcore A30i', r'(?:soundcore )?a30i'),
+    ('Huawei', 'FreeClip', r'freeclip(?! ?2| pro| plus)'),
+    ('QCY', 'T13 Pro', r't13 pro(?! ?2| plus)'),
+    ('QCY', 'MeloBuds N20', r'melobuds n20'),
+    ('Honor', 'Earbuds 4', r'earbuds ?4(?! ?i| pro| plus)'),
+    ('realme', 'Buds T100', r'buds t100(?! pro| plus)'),
+    ('Philips', 'TAT3509', r'tat ?3509(?:bk|wt|gy)?'),
+)
+PILOT_MODEL_NAMES = tuple(f'{brand} {name}' for brand, name, _ in COHORT)
+MODEL_NAMES = (*PILOT_MODEL_NAMES, *(f'{brand} {name}' for brand, name, _ in EXPANSION_COHORT))
+BAD_CONDITION = re.compile(
+    r'\b(?:yenilenmis|ikinci el|teshir|outlet|muadil|replika|sadece kutu|yedek|kilif|tek kulaklik)\b')
 MEDIAMARKT_CATEGORIES = (
     ('https://www.mediamarkt.com.tr/tr/category/kulak-ici-kulakliklar-795546.html', 'kulak ici kulaklik'),
     ('https://www.mediamarkt.com.tr/tr/category/anker-kulaklik-901010.html', 'anker kulaklik'),
@@ -71,9 +90,14 @@ def model_name(title, brand):
     words = TRPriceScraper._normalize_words(title)
     if BAD_CONDITION.search(words):
         return None
-    matches = [f'{maker} {model}' for maker, model, pattern in COHORT
-               if maker.casefold() == brand.casefold()
+    maker_name = TRPriceScraper._normalize_words(brand)
+    if maker_name == 'soundcore':
+        maker_name = 'anker'
+    matches = [f'{maker} {model}' for maker, model, pattern in (*COHORT, *EXPANSION_COHORT)
+               if maker.casefold() == maker_name
                and re.search(r'\b(?:' + pattern + r')\b', words)]
+    if matches == ['JBL Tune Flex 2'] and re.search(r'\bghost\b', words):
+        return None
     return matches[0] if len(matches) == 1 else None
 
 
@@ -277,8 +301,11 @@ def _trendyol_offers(transport, failures):
         return offer
 
     alternatives = defaultdict(list)
-    for name in MODEL_NAMES:
-        for url in candidates[name][:6]:
+    for index in range(6):
+        for name in MODEL_NAMES:
+            if len(candidates[name]) <= index:
+                continue
+            url = candidates[name][index]
             hints = []
             offer = read(url, name, seller_hints=hints)
             if offer:
@@ -299,11 +326,16 @@ def _trendyol_offers(transport, failures):
 
 
 def select_sku_offers(observations):
-    pairs = [(first, second) for first, second in combinations(observations, 2)
-             if first['gtin13'] == second['gtin13'] and independent_sellers(first, second)]
-    if pairs:
-        return sorted(min(pairs, key=lambda pair: (sum(o['price'] for o in pair),
-                      tuple(o['url'] for o in pair))), key=lambda o: o['price'])
+    by_gtin = defaultdict(list)
+    for offer in sorted(observations, key=lambda o: (o['price'], o['url'])):
+        by_gtin[offer['gtin13']].append(offer)
+    for size in (3, 2):
+        matches = (offers for group in by_gtin.values() for offers in combinations(group, size)
+                   if all(independent_sellers(a, b) for a, b in combinations(offers, 2)))
+        best = min(matches, key=lambda offers: (sum(o['price'] for o in offers),
+                   tuple(o['url'] for o in offers)), default=None)
+        if best:
+            return list(best)
     return [min(observations, key=lambda o: (o['price'], o['url']))] if observations else []
 
 
@@ -328,11 +360,17 @@ def audit(transport, mediamarkt=None, *, n11=None, vatan=None):
     collisions = {gtin for gtin, names in owners.items() if len(names) != 1}
     if collisions:
         failures['gtin_claimed_by_multiple_models'] += len(collisions)
-    results = {name: select_sku_offers([o for o in offers if o['gtin13'] not in collisions])
-               for name, offers in observed.items()}
+    eligible = {name: [o for o in offers if o['gtin13'] not in collisions] for name, offers in observed.items()}
+    results = {name: select_sku_offers(offers) for name, offers in eligible.items()}
+
+    def public_evidence(offer):
+        return {key: value for key, value in offer.items() if not key.startswith('_')}
+
     rows = [{
         'model': name, 'candidate_urls': len(candidates[name]),
-        'offers': [{key: val for key, val in offer.items() if not key.startswith('_')} for offer in offers],
+        'offers': [public_evidence(offer) for offer in offers],
+        'alternatives': [public_evidence(o) for o in sorted(eligible[name], key=lambda o: (o['price'], o['url']))
+                         if o not in offers][:8],
     } for name, offers in results.items()]
     priced = sum(bool(row['offers']) for row in rows)
     multi = sum(len(row['offers']) >= 2 for row in rows)
@@ -352,8 +390,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
-    report = audit(PriorityRetailerTransport(maximum_per_host=210), MediaMarktSource(get=compatible_get),
-                   n11=PriorityRetailerTransport(maximum_per_host=210), vatan=VatanCategorySource())
+    report = audit(PriorityRetailerTransport(maximum_per_host=250), MediaMarktSource(get=compatible_get),
+                   n11=PriorityRetailerTransport(maximum_per_host=260), vatan=VatanCategorySource())
     args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     print(json.dumps({key: value for key, value in report.items() if key != 'models'}, ensure_ascii=False))
 
