@@ -106,6 +106,11 @@ def _storage(size):
     return f'{size // 1024} TB SSD' if size >= 1024 else f'{size} GB SSD'
 
 
+def _public_offers(offers):
+    return [{**{key: offer[key] for key in ('platform', 'merchant', 'url', 'observed_at', 'price')},
+             'basket': offer.get('price_kind') == 'basket'} for offer in offers]
+
+
 def build_model(offers, photo_offer):
     first = offers[0]
     facts = first['facts']
@@ -127,8 +132,7 @@ def build_model(offers, photo_offer):
         'specSources': [{'name': o['merchant'] if o['merchant'] == o['platform'] else
                          f"{o['platform']} · {o['merchant']}", 'url': o['url']} for o in offers],
         'specs': [{'label': label, 'value': value} for label, value in specs if value],
-        'offers': [{**{key: o[key] for key in ('platform', 'merchant', 'url', 'observed_at', 'price')},
-                    'basket': o.get('price_kind') == 'basket'} for o in offers],
+        'offers': _public_offers(offers),
     }
 
 
@@ -229,10 +233,12 @@ def read_retailer(host, rows):
     return output, failures
 
 
-def publish(targets, output, images, *, pinned=None):
+def publish(targets, output, images, *, pinned=None, existing=None):
     by_host, grouped, skipped = defaultdict(list), defaultdict(list), Counter()
-    if not isinstance(targets, list) or not 2 * MINIMUM <= len(targets) <= MAX_URLS:
-        raise ValueError(f'Expected {2 * MINIMUM}–{MAX_URLS} read-only candidate URLs')
+    target_count = len(pinned) if pinned is not None else MINIMUM
+    minimum_targets = 2 if existing is not None else 2 * target_count
+    if not isinstance(targets, list) or not minimum_targets <= len(targets) <= MAX_URLS:
+        raise ValueError(f'Expected {minimum_targets}–{MAX_URLS} read-only candidate URLs')
     seen = set()
     for row in targets:
         url, mpn, gtin = row['url'], row['mpn'], row['gtin']
@@ -257,8 +263,22 @@ def publish(targets, output, images, *, pinned=None):
         if offers:
             ready.append((identity, offers, options))
     print(json.dumps({'pairs': len(ready), 'rejected': dict(skipped)}, ensure_ascii=False), flush=True)
-    models, files, mpns, gtins = [], {}, set(), set()
-    brand_counts = Counter()
+    models = [dict(model) for model in existing or []]
+    files = {}
+    mpns = {model['mpn'] for model in models}
+    gtins = {model['gtin'] for model in models}
+    brand_counts = Counter(model['brand'] for model in models)
+    if existing is not None:
+        fresh = {identity: offers for identity, offers, _ in ready}
+        for model in models:
+            offers = fresh.get((model['mpn'], model['gtin']))
+            if offers and all(offer['facts']['cpu'] == model['cpu']
+                              and offer['facts']['ram'] == model['ram']
+                              and offer['facts']['ssd'] == model['ssd']
+                              and offer['facts']['discrete'] == model['discrete']
+                              and (offer['facts']['os'].startswith(model['os']) or model['os'].startswith(offer['facts']['os']))
+                              for offer in offers):
+                model['offers'] = _public_offers(offers)
     while ready:
         # Prefer cross-platform offers, then diversify the pilot across brands.
         ready.sort(key=lambda item: (-_cohort_score(item[1])[0],
@@ -283,10 +303,12 @@ def publish(targets, output, images, *, pinned=None):
                 gtins.add(gtin)
                 brand_counts[model['brand']] += 1
                 break
-        if len(models) == MINIMUM:
+        if existing is None and len(models) == target_count:
             break
-    if len(models) != MINIMUM or pinned and {(m['mpn'], m['gtin']) for m in models} != pinned:
-        raise ValueError(f'Publication gate: {len(models)}/{MINIMUM} complete products with photos and two sellers')
+    if existing is not None and len(models) <= len(existing):
+        raise ValueError('No new model passed the offer and photo checks')
+    if existing is None and (len(models) != target_count or pinned and {(m['mpn'], m['gtin']) for m in models} != pinned):
+        raise ValueError(f'Publication gate: {len(models)}/{target_count} complete products with photos and two sellers')
     images.mkdir(parents=True, exist_ok=True)
     for slug, image in files.items():
         (images / f'{slug}.webp').write_bytes(image)
@@ -301,12 +323,15 @@ def main():
     cli.add_argument('targets', type=Path)
     cli.add_argument('output', type=Path)
     cli.add_argument('images', type=Path)
-    cli.add_argument('--keep-models', action='store_true', help='Keep the already published pilot cohort')
+    mode = cli.add_mutually_exclusive_group()
+    mode.add_argument('--keep-models', action='store_true', help='Keep the already published pilot cohort')
+    mode.add_argument('--expand-from', type=Path, help='Preserve published models and add newly verified configurations')
     args = cli.parse_args()
     pinned = {(m['mpn'], m['gtin']) for m in json.loads(args.output.read_text())['models']} if args.keep_models else None
-    if pinned is not None and len(pinned) != MINIMUM:
-        raise ValueError('Expected 25 existing model codes/GTINs')
-    publish(json.loads(args.targets.read_text()), args.output, args.images, pinned=pinned)
+    if pinned is not None and not MINIMUM <= len(pinned) <= MAX_URLS // 2:
+        raise ValueError('Unexpected number of existing model codes/GTINs')
+    existing = json.loads(args.expand_from.read_text())['models'] if args.expand_from else None
+    publish(json.loads(args.targets.read_text()), args.output, args.images, pinned=pinned, existing=existing)
 
 
 if __name__ == '__main__':

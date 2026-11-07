@@ -9,7 +9,9 @@ from urllib.parse import parse_qs, urlparse
 
 from priority_retailer_transport import PriorityRetailerTransport
 from retailer_barcode import retailer_gtin13
-from tws_offer_pilot import MODEL_NAMES, PILOT_MODEL_NAMES, model_name, select_sku_offers, selected_tws_offer
+from tws_offer_pilot import (
+    MODEL_NAMES, PAIR_REQUIRED_MODEL_NAMES, PILOT_MODEL_NAMES, model_name, select_sku_offers, selected_tws_offer,
+)
 from tws_retailer_sources import selected_n11_tws
 
 PLATFORMS = {
@@ -130,6 +132,9 @@ def public_snapshot(report, catalog_names=MODEL_NAMES):
     rows = []
     for name, observations in verified.items():
         offers = select_sku_offers(observations)
+        if name in PAIR_REQUIRED_MODEL_NAMES and len(offers) < 2:
+            failures['snapshot_independent_pair_missing'] += 1
+            continue
         if not offers and name not in PILOT_MODEL_NAMES:
             continue
         rows.append({

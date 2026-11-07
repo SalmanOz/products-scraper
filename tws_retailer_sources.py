@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from html import unescape
 import re
 import time
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 from bs4 import BeautifulSoup
 
@@ -25,6 +25,16 @@ def _words(value):
     return TRPriceScraper._normalize_words(value)
 
 
+def selected_photo(url, hosts):
+    if not isinstance(url, str) or len(url) > 500:
+        return None
+    route = urlsplit(url)
+    if (route.scheme == 'https' and route.netloc in hosts and not route.query
+            and not route.fragment and route.path):
+        return url
+    return None
+
+
 def selected_n11_tws(html, url, name, model_name):
     def verify_product(product):
         category = product.get('category')
@@ -43,7 +53,12 @@ def selected_n11_tws(html, url, name, model_name):
                 name in ('Apple AirPods 4', 'Apple AirPods 4 ANC')
                 and model_name(f'{title} {model_code}', brand) == name)
         tax = seller.get('taxNumber')
-        return matches, {'model': name, '_legal_name': _words(seller.get('companyName')),
+        photo = next((photo for row in product.get('images') or []
+                      if isinstance(row, dict) and row.get('isVideoBannerImage') is False
+                      and isinstance(row.get('path'), str)
+                      and (photo := selected_photo(row['path'].replace('{0}', '640'),
+                                                   {'n11scdn.akamaized.net', 'n11scdn2-im.akamaized.net'}))), None)
+        return matches, {'model': name, '_image': photo, '_legal_name': _words(seller.get('companyName')),
                          '_tax_key': tax if isinstance(tax, str) and re.fullmatch(r'\d{10,11}', tax) else ''}
     return _parse_selected_listing(html, url, name, {}, verify_tws=verify_product)
 
@@ -157,11 +172,13 @@ def selected_vatan_tws(html, url, name, model_name):
     if (not gtin or len(visible) != 1 or _cash_price(visible[0].get_text(' ', strip=True)) != price
             or _is_conditional_price(visible[0], offer, float(price))):
         return None
+    photo = next((value for anchor in soup.select('.product-detail a[href*="/Upload/PRODUCT/"]')
+                  if (value := selected_photo(urljoin(url, anchor['href']), {'cdn.vatanbilgisayar.com'}))), None)
     return {'platform': 'Vatan Bilgisayar', 'merchant': 'Vatan Bilgisayar', 'model': name,
             'gtin13': gtin, 'sku': sku, 'retailer_model_code': product['mpn'], 'source_title': title,
             'url': url, 'price': float(price), 'currency': 'TRY', 'condition': 'new', 'availability': 'in_stock',
             'observed_at': datetime.now(timezone.utc).isoformat(),
-            '_legal_name': 'vatan bilgisayar sanayi ve ticaret anonim sirketi'}
+            '_image': photo, '_legal_name': 'vatan bilgisayar sanayi ve ticaret anonim sirketi'}
 
 
 def vatan_offers(source, models, model_name, failures):

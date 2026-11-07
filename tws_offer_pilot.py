@@ -27,7 +27,7 @@ from priority_retailer_transport import (
 from retailer_barcode import retailer_gtin13
 from tr_price_scraper import TRPriceScraper
 from trendyol_catalog_source import _parse_selected_listing, _selected_group_root
-from tws_retailer_sources import n11_offers, vatan_offers
+from tws_retailer_sources import n11_offers, selected_photo, vatan_offers
 from vatan_category_source import VatanCategorySource
 
 # Match variant words explicitly when retail titles share the same base name.
@@ -75,8 +75,47 @@ EXPANSION_COHORT = (
     ('realme', 'Buds T100', r'buds t100(?! pro| plus)'),
     ('Philips', 'TAT3509', r'tat ?3509(?:bk|wt|gy)?'),
 )
+NEW_MODELS = (
+    ('Xiaomi', 'Redmi Buds 6', r'redmi buds 6(?! play| active| lite| pro| plus)'),
+    ('Xiaomi', 'Buds 5', r'xiaomi buds 5(?! pro| lite| plus)'),
+    ('Xiaomi', 'Buds 5 Pro', r'xiaomi buds 5 pro(?! wi fi)'),
+    ('Huawei', 'FreeClip 2', r'freeclip ?2(?! pro| plus)'),
+    ('Huawei', 'FreeBuds Pro 5', r'freebuds pro ?5'),
+    ('Samsung', 'Galaxy Buds FE', r'galaxy buds fe'),
+    ('Samsung', 'Galaxy Buds3 FE', r'galaxy buds ?3 fe'),
+    ('Samsung', 'Galaxy Buds3', r'galaxy buds ?3(?! fe| pro)'),
+    ('Samsung', 'Galaxy Buds3 Pro', r'galaxy buds ?3 pro'),
+    ('Samsung', 'Galaxy Buds4', r'galaxy buds ?4(?! fe| pro)'),
+    ('Sony', 'WF-C510', r'wf ?c510'),
+    ('Sony', 'WF-C710N', r'wf ?c710n'),
+    ('Sony', 'WF-1000XM5', r'wf ?1000xm5'),
+    ('Sony', 'WF-1000XM6', r'wf ?1000xm6'),
+    ('Sony', 'LinkBuds Fit', r'linkbuds fit|wf ?ls910n'),
+    ('JBL', 'Wave Beam', r'wave beam(?! ?2| pro| plus)'),
+    ('JBL', 'Tune Beam', r'tune beam(?! ?2| pro| plus)'),
+    ('JBL', 'Tune Buds 2', r'tune buds ?2'),
+    ('JBL', 'Live Beam 3', r'live beam ?3'),
+    ('JBL', 'Live Buds 3', r'live buds ?3'),
+    ('JBL', 'Live Flex 3', r'live flex ?3'),
+    ('JBL', 'Endurance Race 2', r'endurance race ?2'),
+    ('JBL', 'Tour Pro 3', r'tour pro ?3'),
+    ('Anker', 'Soundcore Liberty 4 NC', r'(?:soundcore )?liberty 4 nc'),
+    ('Anker', 'Soundcore C30i', r'(?:soundcore )?c30i'),
+    ('Anker', 'Soundcore AeroFit 2', r'(?:soundcore )?aerofit ?2(?! pro)'),
+    ('Anker', 'Soundcore Sport X20', r'(?:soundcore )?sport x20'),
+    ('QCY', 'T13 ANC 2', r't13 anc ?2'),
+    ('QCY', 'T17', r't17(?! ?s| pro| plus)'),
+    ('QCY', 'AilyBuds Pro+', r'ailybuds pro plus'),
+    ('realme', 'Buds Air 6 Pro', r'buds air 6 pro'),
+)
+NEW_MODEL_NAMES = tuple(f'{brand} {name}' for brand, name, _ in NEW_MODELS)
+PAIR_REQUIRED_MODEL_NAMES = (
+    'Huawei FreeBuds Pro 5', 'Huawei FreeClip 2', 'JBL Live Flex 3', 'JBL Tune Buds 2',
+    'Samsung Galaxy Buds FE', 'Samsung Galaxy Buds3', 'Samsung Galaxy Buds4',
+)
 PILOT_MODEL_NAMES = tuple(f'{brand} {name}' for brand, name, _ in COHORT)
-MODEL_NAMES = (*PILOT_MODEL_NAMES, *(f'{brand} {name}' for brand, name, _ in EXPANSION_COHORT))
+MODEL_NAMES = (*PILOT_MODEL_NAMES, *(f'{brand} {name}' for brand, name, _ in EXPANSION_COHORT),
+               *PAIR_REQUIRED_MODEL_NAMES)
 BAD_CONDITION = re.compile(
     r'\b(?:yenilenmis|ikinci el|teshir|outlet|muadil|replika|sadece kutu|yedek|kilif|tek kulaklik)\b')
 MEDIAMARKT_CATEGORIES = (
@@ -93,7 +132,7 @@ def model_name(title, brand):
     maker_name = TRPriceScraper._normalize_words(brand)
     if maker_name == 'soundcore':
         maker_name = 'anker'
-    matches = [f'{maker} {model}' for maker, model, pattern in (*COHORT, *EXPANSION_COHORT)
+    matches = [f'{maker} {model}' for maker, model, pattern in (*COHORT, *EXPANSION_COHORT, *NEW_MODELS)
                if maker.casefold() == maker_name
                and re.search(r'\b(?:' + pattern + r')\b', words)]
     if matches == ['JBL Tune Flex 2'] and re.search(r'\bghost\b', words):
@@ -148,6 +187,8 @@ def selected_tws_offer(html, url, expected_model, *, seller_hints=None):
         tax_number = merchant.get('taxNumber')
         return {
             'model': expected_model,
+            '_image': next((photo for url in product.get('images') or []
+                            if (photo := selected_photo(url, {'cdn.dsmcdn.com'}))), None),
             'retailer_model_code': str(product.get('productCode') or ''),
             '_legal_name': TRPriceScraper._normalize_words(merchant.get('officialName')),
             '_tax_key': tax_number if isinstance(tax_number, str) and re.fullmatch(r'\d{10,11}', tax_number) else '',
@@ -275,7 +316,7 @@ def _mediamarkt_offers(source, failures):
     return offers
 
 
-def _trendyol_offers(transport, failures):
+def _trendyol_offers(transport, failures, models=MODEL_NAMES):
     candidates, results = defaultdict(list), defaultdict(list)
     url = TRENDYOL_TWS_CATEGORY
     for page in range(1, TRENDYOL_TWS_PAGE_LIMIT + 1):
@@ -302,7 +343,7 @@ def _trendyol_offers(transport, failures):
 
     alternatives = defaultdict(list)
     for index in range(6):
-        for name in MODEL_NAMES:
+        for name in models:
             if len(candidates[name]) <= index:
                 continue
             url = candidates[name][index]
