@@ -66,6 +66,7 @@ def compatible(a, b):
 def independent_pair(a, b):
     return (a['platform'] != b['platform'] and compatible(a, b) and independent_sellers(a, b)
             and WORDS(a['merchant']).replace(' ', '') != WORDS(b['merchant']).replace(' ', '')
+            and not all(re.match(r'^garaj online elektronik\b', o['_legal_name']) for o in (a, b))
             and min(a['price'], b['price']) >= max(a['price'], b['price']) * .62)
 
 
@@ -163,11 +164,11 @@ def pick_pilot(records):
     return output
 
 
-def publish(targets, output, images):
+def collect_observations(targets):
     by_host = defaultdict(list)
     seen = set()
-    if not isinstance(targets, list) or not PILOT_SIZE <= len(targets) <= 180:
-        raise ValueError('Expected 25–180 price-free monitor targets')
+    if not isinstance(targets, list) or not 1 <= len(targets) <= 180:
+        raise ValueError('Expected 1–180 price-free monitor targets')
     for row in targets:
         url, code, gtin = row['url'], row['code'], row['gtin']
         route = _target(url)
@@ -183,6 +184,11 @@ def publish(targets, output, images):
             for offer in offers:
                 groups[offer['code'], offer['gtin13']].append(offer)
             rejections.update(rejected)
+    return groups, rejections
+
+
+def publish(targets, output, images):
+    groups, rejections = collect_observations(targets)
     with ThreadPoolExecutor(max_workers=6) as pool:
         records = [row for row in pool.map(materialize_group, groups.values()) if row]
     result = pick_pilot(records)
