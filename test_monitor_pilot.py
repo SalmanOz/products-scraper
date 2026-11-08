@@ -1,7 +1,7 @@
 from unittest import TestCase
 from unittest.mock import patch
 
-from monitor_pilot import independent_pair, materialize
+from monitor_pilot import independent_pair, materialize, read_targets
 from monitor_sources import monitor_facts
 
 
@@ -29,6 +29,33 @@ class MonitorPilotTests(TestCase):
     def test_pair_rejects_conflicting_variant_facts_and_barcode(self):
         self.assertFalse(independent_pair(self.first, {**self.second, 'gtin13': '8806097931393'}))
         self.assertFalse(independent_pair(self.first, {**self.second, 'facts': {**self.facts, 'refresh': 120}}))
+
+    def test_verified_monitor_category_can_supply_a_truncated_title(self):
+        title = 'ASUS VG249QM5A 23.8 inç 240Hz Fast IPS Gaming Monitö'
+        self.assertIsNone(monitor_facts(title, 'ASUS', 'vg249qm5a'))
+        facts = monitor_facts(title, 'ASUS', 'vg249qm5a', category_verified=True)
+        self.assertEqual(facts['refresh'], 240)
+        self.assertIsNone(monitor_facts(title + ' askı aparatı', 'ASUS', 'vg249qm5a', category_verified=True))
+
+    def test_redirected_product_is_skipped_but_denial_stops_source(self):
+        host = 'www.mediamarkt.com.tr'
+        rows = [{'url': f'https://{host}/tr/product/_monitor-{sku}.html',
+                 'gtin': self.first['gtin13'], 'code': self.first['code']} for sku in (123456, 123457)]
+        for reason, expected_reads in [('redirect', 2), ('http_403', 1)]:
+            with self.subTest(reason=reason), patch('monitor_pilot.Reader') as factory:
+                reader = factory.return_value
+                reader.stop = False
+
+                def unavailable(url):
+                    reader.last_reason = reason
+                    reader.stop = True
+                    return None, None
+
+                reader.read.side_effect = unavailable
+                offers, rejected = read_targets(host, rows)
+                self.assertEqual(offers, [])
+                self.assertEqual(rejected, {reason: expected_reads})
+                self.assertEqual(reader.read.call_count, expected_reads)
 
     def test_manufacturer_spec_has_precedence_for_the_exact_gtin(self):
         with patch('monitor_pilot._image', return_value=b'photo'):

@@ -5,15 +5,12 @@ from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
-from threading import local
+from threading import Lock, local
 
 from laptop_pilot import _public_offers
-from monitor_pilot import CORE, MANUFACTURER_SPECS, PILOT_SIZE, candidates, collect_observations
+from monitor_pilot import CORE, CROSS_PLATFORM_MINIMUM, MANUFACTURER_SPECS, PILOT_SIZE, candidates, collect_observations
 from offer_ingestion_client import OfferIngestionClient
 from retailer_barcode import retailer_gtin13
-
-MINIMUM_FRESH_MODELS = 20
-
 
 def matches_model(offer, model):
     facts = offer['facts']
@@ -71,18 +68,22 @@ def main():
     targets = [row for row in json.loads(args.targets.read_text()) if row['gtin'] in gtins]
     token = os.getenv('MONITOR_READER_OIDC')
     sessions = local()
+    collector_slot = Lock()
 
     def read_document(url, **options):
         if not hasattr(sessions, 'client'):
             sessions.client = OfferIngestionClient('https://teknoskor.com', token, timeout=(5, 25), max_attempts=2)
-        return sessions.client.monitor_document_get(url, **options)
+        # Keep the production gateway to one large upstream document at a
+        # time. Direct retailer readers still run independently.
+        with collector_slot:
+            return sessions.client.monitor_document_get(url, **options)
 
     groups, rejected = collect_observations(targets, read_document if token else None)
     snapshot, fresh, paired = refresh(catalog, groups, datetime.now(timezone.utc))
     print(json.dumps({'fresh_models': fresh, 'fresh_pairs': paired,
                       'rejected': rejected}, ensure_ascii=False), flush=True)
-    if fresh < MINIMUM_FRESH_MODELS:
-        raise SystemExit(f'Refresh stopped: only {fresh} of {PILOT_SIZE} models verified')
+    if paired < CROSS_PLATFORM_MINIMUM:
+        raise SystemExit(f'Refresh stopped: only {paired} models had two newly verified independent platform offers')
     args.output.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
 
 

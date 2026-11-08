@@ -54,10 +54,11 @@ def mentions(title, code):
     return any(''.join(words[i:i+count]) == code for i in range(len(words)) for count in range(1, 5))
 
 
-def monitor_facts(title, brand, code, attrs=None):
+def monitor_facts(title, brand, code, attrs=None, *, category_verified=False):
     brand = BRANDS.get(WORDS(brand))
     words = WORDS(title)
-    if not brand or not re.search(r'\bmonitor(?:u|ler)?\b', words) or NOT_MONITOR.search(words) or not mentions(title, code):
+    if (not brand or not (category_verified or re.search(r'\bmonitor(?:u|ler)?\b', words))
+            or NOT_MONITOR.search(words) or not mentions(title, code)):
         return None
     attrs = attrs or {}
 
@@ -86,8 +87,8 @@ def monitor_facts(title, brand, code, attrs=None):
             'usb_c': bool(re.search(r'\b(?:usb|type) c\b', words))}
 
 
-def _evidence(title, brand, code, attrs, images, hosts):
-    facts = monitor_facts(title, brand, code, attrs)
+def _evidence(title, brand, code, attrs, images, hosts, *, category_verified=False):
+    facts = monitor_facts(title, brand, code, attrs, category_verified=category_verified)
     if not facts:
         return None
     if isinstance(images, str):
@@ -105,7 +106,7 @@ def selected_n11(html, url, code):
         photos = [row['path'].replace('{0}', '640') for row in product.get('images') or []
                   if isinstance(row, dict) and isinstance(row.get('path'), str) and row.get('isVideoBannerImage') is False]
         evidence = _evidence(title, product.get('productBrand'), code, _attrs(product.get('productAttributes')),
-                             photos, ('n11scdn.akamaized.net', 'n11scdn2-im.akamaized.net'))
+                             photos, ('n11scdn.akamaized.net', 'n11scdn2-im.akamaized.net'), category_verified=True)
         if not evidence:
             return lambda value: False, {}
         return (lambda value: WORDS(value.removesuffix(' Fiyatları ve Özellikleri')) == WORDS(title)), {
@@ -119,7 +120,7 @@ def selected_trendyol(html, url, code):
         if not isinstance(category, dict) or WORDS(category.get('name')) not in {'monitor', 'bilgisayar ekrani', 'oyuncu monitor'}:
             return None, 'not_monitor_category'
         evidence = _evidence(title, brand.get('name'), code, _attrs(product.get('attributes'), trendyol=True),
-                             product.get('images'), ('cdn.dsmcdn.com',))
+                             product.get('images'), ('cdn.dsmcdn.com',), category_verified=True)
         if not evidence:
             return None, 'selected_monitor_identity_missing'
         return {**evidence, **_legal(product['merchantListing']['merchant'], 'officialName')}, None

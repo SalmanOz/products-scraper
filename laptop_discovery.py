@@ -37,6 +37,7 @@ class Reader:
     def __init__(self, host, maximum, *, get=None):
         self.host = host
         self.stop = False
+        self.last_reason = None
         self.maximum = maximum
         self.pdp_count = 0
         self.source = self.transport = None
@@ -50,6 +51,7 @@ class Reader:
             self.transport = PriorityRetailerTransport(maximum_per_host=maximum, get=get, browser_fallback=not get)
 
     def read(self, url, category=False):
+        self.last_reason = None
         if self.stop or not category and self.pdp_count >= self.maximum:
             return None, None
         if urlsplit(url).netloc != self.host:
@@ -58,7 +60,11 @@ class Reader:
             self.pdp_count += 1
         try:
             if self.host in FIRST_PARTY:
-                if not self.source._rules or not self.source._rules.can_fetch(BOT, url):
+                if not self.source._rules:
+                    self.last_reason = f'robots_{self.source._robots_status}'
+                    return None, None
+                if not self.source._rules.can_fetch(BOT, url):
+                    self.last_reason = 'robots_disallowed'
                     return None, None
                 if self.host.startswith('www.vatan'):
                     self.source._sleep(max(.75, self.source._delay))
@@ -72,7 +78,9 @@ class Reader:
                 final = url if category else self.transport.resolved_url(url)
         except (SourceBudgetExhausted, SourceCircuitOpen):
             self.stop = True
+            self.last_reason = 'source_budget_or_circuit'
             return None, None
+        self.last_reason = reason
         if reason in STOP:
             self.stop = True
         return (html, final) if reason in ('ready', 'document_read') else (None, None)

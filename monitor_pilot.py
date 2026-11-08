@@ -41,8 +41,16 @@ def read_targets(host, rows, collector=None):
             break
         try:
             raw, url = reader.read(row['url'])
-            if not raw or not url or urlparse(row['url']).query != urlparse(url).query:
-                rejected['selected_document_unavailable'] += 1
+            if not raw or not url:
+                reason = reader.last_reason or 'selected_document_unavailable'
+                rejected[reason] += 1
+                # A retired PDP may redirect while other allowlisted products
+                # on the same host remain healthy. Reject it without following.
+                if reason == 'redirect' and reader.source is not None:
+                    reader.stop = False
+                continue
+            if urlparse(row['url']).query != urlparse(url).query:
+                rejected['listing_selector_changed'] += 1
                 continue
             offer, reason = PARSERS[host](raw, url, row['code'])
             if not offer or offer.get('gtin13') != row['gtin']:
