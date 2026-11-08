@@ -3,10 +3,12 @@ import argparse
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 import json
+import os
 from pathlib import Path
 
 from laptop_pilot import _public_offers
 from monitor_pilot import CORE, MANUFACTURER_SPECS, PILOT_SIZE, candidates, collect_observations
+from offer_ingestion_client import OfferIngestionClient
 from retailer_barcode import retailer_gtin13
 
 MINIMUM_FRESH_MODELS = 20
@@ -66,7 +68,9 @@ def main():
             or any(retailer_gtin13(gtin) != gtin for gtin in gtins)):
         raise ValueError('Expected the 25 published monitor GTINs')
     targets = [row for row in json.loads(args.targets.read_text()) if row['gtin'] in gtins]
-    groups, rejected = collect_observations(targets)
+    token = os.getenv('MONITOR_N11_OIDC')
+    collector = OfferIngestionClient('https://teknoskor.com', token, timeout=(5, 25), max_attempts=2) if token else None
+    groups, rejected = collect_observations(targets, collector.n11_document_get if collector else None)
     snapshot, fresh, paired = refresh(catalog, groups, datetime.now(timezone.utc))
     print(json.dumps({'fresh_models': fresh, 'fresh_pairs': paired,
                       'rejected': rejected}, ensure_ascii=False), flush=True)
