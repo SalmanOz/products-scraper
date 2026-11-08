@@ -26,11 +26,12 @@ PHOTO_HOSTS = IMAGE_HOSTS | {'productimages.hepsiburada.net', 'www.gaming.gen.tr
 MANUFACTURER_SPECS = json.loads(Path(__file__).with_name('monitor_manufacturer_specs.json').read_text())
 
 
-def read_targets(host, rows, n11_collector=None):
-    reader = Reader(host, len(rows))
-    if host == 'www.n11.com' and n11_collector:
+def read_targets(host, rows, collector=None):
+    get = collector if host in {'www.vatanbilgisayar.com', 'www.mediamarkt.com.tr', 'www.incehesap.com'} else None
+    reader = Reader(host, len(rows), get=get)
+    if host == 'www.n11.com' and collector:
         reader.transport = PriorityRetailerTransport(maximum_per_host=len(rows),
-            n11_collector=n11_collector, browser_fallback=False)
+            n11_collector=collector, browser_fallback=False)
     elif host == 'www.hepsiburada.com':
         reader.transport = PriorityRetailerTransport(maximum_per_host=len(rows),
             get=_hepsiburada_public_get, browser_fallback=False)
@@ -167,7 +168,7 @@ def pick_pilot(records):
     return output
 
 
-def collect_observations(targets, n11_collector=None):
+def collect_observations(targets, collector=None):
     by_host = defaultdict(list)
     seen = set()
     if not isinstance(targets, list) or not 1 <= len(targets) <= 180:
@@ -184,7 +185,7 @@ def collect_observations(targets, n11_collector=None):
     groups, rejections = defaultdict(list), Counter()
     with ThreadPoolExecutor(max_workers=len(by_host)) as pool:
         for (host, rows), (offers, rejected) in zip(by_host.items(), pool.map(
-                lambda pair: read_targets(*pair, n11_collector=n11_collector), by_host.items())):
+                lambda pair: read_targets(*pair, collector=collector), by_host.items())):
             for offer in offers:
                 groups[offer['code'], offer['gtin13']].append(offer)
             rejections.update(rejected)

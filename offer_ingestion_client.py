@@ -689,7 +689,7 @@ class OfferIngestionClient:
             raise IngestionClientError('Offer identity readiness response is invalid')
         return identity
 
-    def n11_document_get(self, url, **_transport_options):
+    def n11_document_get(self, url, *, monitor=False, **_transport_options):
         """Read a public document from the website's dedicated collector.
 
         The ingestion credential goes only to our existing application host;
@@ -708,7 +708,8 @@ class OfferIngestionClient:
                         and 1 <= len(query[0][1]) <= 180 and not re.search(r'[\x00-\x1f\x7f]', query[0][1]))):
             raise requests.RequestException('Invalid public n11 collector destination')
         try:
-            body = self._request_json('POST', '/api/ingestion/n11-document',
+            path = '/api/ingestion/monitor-document' if monitor else '/api/ingestion/n11-document'
+            body = self._request_json('POST', path,
                 headers={'Authorization': f'Bearer {self.secret}', 'Accept': 'application/json'},
                 json={'url': url})
             stamp = datetime.fromisoformat(body['observed_at'].replace('Z', '+00:00'))
@@ -742,6 +743,34 @@ class OfferIngestionClient:
             return PublicDocumentResponse(url, 503, '', 'text/plain')
         except (ValueError, TypeError, KeyError, AttributeError) as error:
             raise requests.RequestException('Dedicated public source collector unavailable') from error
+
+    def monitor_document_get(self, url, **_transport_options):
+        route = urlparse(url)
+        if route.netloc == 'www.n11.com':
+            return self.n11_document_get(url, monitor=True)
+        if (route.scheme != 'https' or route.netloc not in {
+                'www.vatanbilgisayar.com', 'www.mediamarkt.com.tr', 'www.incehesap.com'}
+                or route.query or route.fragment):
+            raise requests.RequestException('Invalid public monitor collector destination')
+        try:
+            body = self._request_json('POST', '/api/ingestion/monitor-document',
+                headers={'Authorization': f'Bearer {self.secret}', 'Accept': 'application/json'},
+                json={'url': url})
+            stamp = datetime.fromisoformat(body['observed_at'].replace('Z', '+00:00'))
+            maximum = 64 * 1024 if route.path == '/robots.txt' else 5 * 1024 * 1024
+            if (body.get('purpose') != 'public_monitor_document' or body.get('writes') is not False
+                    or body.get('url') != url or type(body.get('source_status')) is not int
+                    or not 100 <= body['source_status'] <= 599 or not isinstance(body.get('document'), str)
+                    or len(body['document'].encode('utf-8')) > maximum
+                    or not isinstance(body.get('content_type'), str) or len(body['content_type']) > 200
+                    or stamp.tzinfo is None
+                    or not -60 <= (datetime.now(timezone.utc) - stamp).total_seconds() <= 60):
+                raise ValueError('Unbound or stale monitor document response')
+            return PublicDocumentResponse(url, body['source_status'], body['document'], body['content_type'])
+        except IngestionClientError:
+            return PublicDocumentResponse(url, 503, '', 'text/plain')
+        except (ValueError, TypeError, KeyError, AttributeError) as error:
+            raise requests.RequestException('Dedicated monitor source collector unavailable') from error
 
     def ingest_listing_offers(self, offers, *, require_all_accepted=True):
         """Use only the full-evidence, URL-keyed endpoint; never fall back.

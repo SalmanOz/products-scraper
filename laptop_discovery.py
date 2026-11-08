@@ -34,7 +34,7 @@ STOP = STOP_REASONS | {'redirect', 'unexpected_final_url'}
 
 
 class Reader:
-    def __init__(self, host, maximum):
+    def __init__(self, host, maximum, *, get=None):
         self.host = host
         self.stop = False
         self.maximum = maximum
@@ -42,12 +42,12 @@ class Reader:
         self.source = self.transport = None
         self.sellers = {}
         if host in FIRST_PARTY:
-            self.source = VatanCategorySource() if host.startswith('www.vatan') else MediaMarktSource(get=compatible_get)
+            self.source = VatanCategorySource(fetch=get) if host.startswith('www.vatan') else MediaMarktSource(get=get or compatible_get)
             if host.startswith('www.mediamarkt'):
                 self.source.configure_catalog_budget(maximum * 2 + 20)
             self.source._load_robots()
         else:
-            self.transport = PriorityRetailerTransport(maximum_per_host=maximum)
+            self.transport = PriorityRetailerTransport(maximum_per_host=maximum, get=get, browser_fallback=not get)
 
     def read(self, url, category=False):
         if self.stop or not category and self.pdp_count >= self.maximum:
