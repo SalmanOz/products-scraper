@@ -87,6 +87,18 @@ def _first_party_laptop_cash(product, price):
             and type(prices[1].get('discountRate')) is int and 0 < prices[1]['discountRate'] < 100)
 
 
+def _ordinary_laptop_cash(product, price):
+    prices = product.get('prices')
+    if (price is None or product.get('campaignIds') != [] or product.get('campaignNote') != ''
+            or product.get('isCampaignParticipationClosed') is not True
+            or not isinstance(prices, list) or len(prices) != 1 or not isinstance(prices[0], dict)):
+        return False
+    row = prices[0]
+    formatted = f'{price:,.2f}'.translate(str.maketrans(',.', '.,'))
+    return (row.get('currency') == 0 and row.get('discountRate') == 0
+            and _amount(row.get('value')) == price and row.get('formattedPrice') == formatted)
+
+
 def _valid_gtin13(value):
     if not isinstance(value, str) or not re.fullmatch(r'\d{13}', value):
         return False
@@ -289,7 +301,10 @@ def parse_exact_buy_box(html: str, final_url: str = URL, *, scope=None, verify_l
         selected_prices = soup.select(
             'button[aria-label^="Seçili SSD Kapasitesi "] [data-test-id="variant-box-price"]')
         visible = selected_prices[0] if len(selected_prices) == 1 else None
-        client_rendered_cash = not selected_prices and _first_party_laptop_cash(product, price)
+        client_rendered_cash = not selected_prices and (
+            _first_party_laptop_cash(product, price)
+            or (len(soup.select('[data-test-id="price-skeleton"]')) == 1
+                and _ordinary_laptop_cash(product, price)))
     else:
         return None, 'selected_price_region_missing'
     match = re.fullmatch(r'(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)\s*TL',

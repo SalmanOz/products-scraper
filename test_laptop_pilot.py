@@ -1,4 +1,5 @@
 from copy import deepcopy
+from decimal import Decimal
 import json
 from pathlib import Path
 from unittest import TestCase
@@ -6,8 +7,9 @@ from unittest.mock import patch
 
 from bs4 import BeautifulSoup
 
-from audit_hepsiburada_iphone16pm_readonly import _first_party_laptop_cash
+from audit_hepsiburada_iphone16pm_readonly import _first_party_laptop_cash, _ordinary_laptop_cash
 from laptop_direct_source import selected_direct_laptop
+from laptop_hepsiburada_source import hepsiburada_seller_profile_matches
 from laptop_pilot import build_model, compatible, read_retailer, select_offers, valid_pair
 from laptop_retailer_sources import laptop_facts, marketplace_seller_identity, selected_n11
 
@@ -125,6 +127,27 @@ class LaptopPilotTests(TestCase):
         self.assertFalse(_first_party_laptop_cash(state, 31499))
         self.assertFalse(_first_party_laptop_cash(state | {'campaignIds': ['coupon']}, 30999))
         self.assertFalse(_first_party_laptop_cash(state | {'merchantName': 'Başka satıcı'}, 30999))
+
+    def test_hepsiburada_marketplace_cash_requires_one_ordinary_price(self):
+        price = {'value': 86999, 'formattedPrice': '86.999,00', 'discountRate': 0, 'currency': 0}
+        state = {'prices': [price], 'campaignIds': [], 'campaignNote': '', 'isCampaignParticipationClosed': True}
+        self.assertTrue(_ordinary_laptop_cash(state, Decimal('86999')))
+        for change in ({'campaignIds': ['offer']}, {'prices': [price, price]},
+                       {'prices': [price | {'discountRate': 5}]},
+                       {'prices': [price | {'formattedPrice': '79.999,00'}]}):
+            self.assertFalse(_ordinary_laptop_cash(state | change, Decimal('86999')))
+
+    def test_hepsiburada_seller_profile_binds_account_not_just_display_name(self):
+        url = 'https://www.hepsiburada.com/magaza/notebookstore'
+        offer = {'merchant': 'notebookstore', 'merchant_id': 'selected-account', 'seller_url': url}
+        state = {'merchantState': {'merchantDetail': {
+            'name': 'notebookstore', 'urlPostfix': 'notebookstore', 'id': 'selected-account',
+        }}}
+        html = (f'<link rel="canonical" href="{url}"><h1>notebookstore</h1>'
+                f'<script id="reduxStore">{json.dumps(state)}</script>')
+        self.assertTrue(hepsiburada_seller_profile_matches(html, offer, 'notebookstore'))
+        self.assertFalse(hepsiburada_seller_profile_matches(
+            html, offer | {'merchant_id': 'different-account'}, 'notebookstore'))
 
     def test_published_platforms_must_remain_in_an_expansion(self):
         n11 = observation()

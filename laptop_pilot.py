@@ -21,7 +21,10 @@ from curl_cffi.requests import RequestsError
 from requests import RequestException
 
 from laptop_direct_source import DIRECT_STORES, direct_company_identity, selected_direct_laptop
-from laptop_hepsiburada_source import hepsiburada_company_identity, selected_hepsiburada
+from laptop_hepsiburada_source import (
+    TEKNOSA_SELLER_PROFILES, hepsiburada_company_identity,
+    hepsiburada_seller_profile_matches, selected_hepsiburada,
+)
 from laptop_retailer_sources import (
     marketplace_seller_identity, selected_mediamarkt, selected_n11, selected_teknosa,
     selected_trendyol, selected_vatan, WORDS,
@@ -187,7 +190,8 @@ def _target(url):
 def _hepsiburada_public_get(url, **kwargs):
     # The public storefront responds normally to the browser client's standard
     # headers. Reuse the same robots checks, host quota and denial circuit.
-    kwargs['headers'] = {'Accept': kwargs['headers']['Accept']}
+    if urlparse(url).netloc == 'www.hepsiburada.com':
+        kwargs['headers'] = {'Accept': kwargs['headers']['Accept']}
     return compatible_get(url, **kwargs)
 
 
@@ -213,6 +217,8 @@ def verify_seller(offer, source, transport, identities):
                     'https://www.hepsiburada.com/iletisim', 'www.hepsiburada.com', category=True)
                 if raw:
                     identities[key] = hepsiburada_company_identity(raw)
+            else:
+                identities[key] = _hepsiburada_marketplace_identity(offer, transport)
         elif urlparse(url).netloc in DIRECT_STORES:
             raw, _, _ = transport._read_document(url, urlparse(url).netloc, category=True)
             if raw:
@@ -223,6 +229,22 @@ def verify_seller(offer, source, transport, identities):
         return False
     offer.update(identities[key])
     return bool(offer.get('_legal_name'))
+
+
+def _hepsiburada_marketplace_identity(offer, transport):
+    slug = urlparse(offer['seller_url']).path.rsplit('/', 1)[-1]
+    profile = TEKNOSA_SELLER_PROFILES.get(slug)
+    if not profile or offer['merchant_id'] != profile[0]:
+        return None
+    raw, _, _ = transport._read_document(
+        f'https://www.hepsiburada.com/magaza/{slug}', 'www.hepsiburada.com', category=True)
+    if not raw or not hepsiburada_seller_profile_matches(raw, offer, slug):
+        return None
+    company, _, _ = transport.read_teknosa_seller(f'https://www.teknosa.com/magaza/{slug}')
+    identity = marketplace_seller_identity(company, {
+        'platform': 'Teknosa', 'merchant': profile[1], 'merchant_id': profile[2],
+    }) if company else None
+    return identity if identity and identity['_legal_name'] == profile[3] else None
 
 
 def read_retailer(host, rows):

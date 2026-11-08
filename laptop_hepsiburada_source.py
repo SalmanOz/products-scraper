@@ -12,6 +12,13 @@ from laptop_retailer_sources import LAPTOP_LABEL, WORDS, _brand, _gb, _photo, la
 from priority_retailer_transport import product_host
 from retailer_barcode import retailer_gtin13
 
+# Reviewed marketplace account links. Both public profiles must still agree
+# with these identities before an offer can count as an independent seller.
+TEKNOSA_SELLER_PROFILES = {
+    'notebookstore': ('f21b5d6e-acee-4b69-85c2-1633598a0115', 'notebookstore', '2272',
+                      'victory bilgisayar yazilim temizlik gida ve emlak otomotiv sanayi limited sirketi'),
+}
+
 
 def selected_hepsiburada(html, url):
     if (product_host(url) != 'www.hepsiburada.com' or not isinstance(html, str)
@@ -94,6 +101,9 @@ def selected_hepsiburada(html, url):
     facts = laptop_facts(title, attrs, brand)
     if not facts or not LAPTOP_LABEL.search(WORDS(title)):
         return None, 'selected_laptop_config_missing'
+    processor_vendors = re.findall(r'\bislemci(?: tipi)? (amd ryzen|intel core)\b', WORDS(detail))
+    if any(not WORDS(facts['cpu']).startswith(vendor) for vendor in processor_vendors):
+        return None, 'selected_laptop_processor_conflict'
     for title_to_verify, native in ((schema.get('name'), facts['mpn']),
                                     (variant.get('name'), ''), (product.get('name'), '')):
         # This schema shortens the heading but is independently tied to the
@@ -119,3 +129,19 @@ def hepsiburada_company_identity(html):
         return {'_legal_name': 'd market elektronik hizmetler ve ticaret anonim sirketi',
                 '_tax_key': ''}
     return None
+
+
+def hepsiburada_seller_profile_matches(html, offer, slug):
+    seller_url = f'https://www.hepsiburada.com/magaza/{slug}'
+    if offer['seller_url'] != seller_url or WORDS(offer['merchant']) != WORDS(slug):
+        return False
+    soup = BeautifulSoup(html, 'html.parser')
+    try:
+        scripts = soup.select('script#reduxStore')
+        detail = json.loads(scripts[0].get_text())['merchantState']['merchantDetail'] if len(scripts) == 1 else None
+    except (ValueError, KeyError, TypeError):
+        return False
+    return (isinstance(detail, dict) and detail.get('id') == offer['merchant_id']
+            and detail.get('urlPostfix') == slug and detail.get('name') == offer['merchant']
+            and [tag.get('href') for tag in soup.select('link[rel="canonical"]')] == [seller_url]
+            and [tag.get_text(' ', strip=True) for tag in soup.select('h1')] == [offer['merchant']])
