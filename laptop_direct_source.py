@@ -39,6 +39,14 @@ DIRECT_STORES = {
         'Netsipariş', '.ns-product-right .pd-price',
         '.ns-product-right button.sepete-at-adetli',
         '/mesafeli-satis-sozlesmesi', 'Arslan Bilgisayar Elektronik ve Dekorasyon Dizayn Hizmetleri San.Tic.Ltd.Sti.'),
+    'nevavm.com': (
+        'Neva AVM', '.summary.entry-summary p.price > ins bdi, .summary.entry-summary p.price > .amount bdi',
+        '.summary.entry-summary form.cart button[name="add-to-cart"]',
+        '/mesafeli-satis-sozlesmesi/', 'Neva AVM'),
+    'tasozbilgisayar.com': (
+        'Taşöz Bilgisayar', '.product-details > .product-price > ins.new-price',
+        '.product-details a.btn-cart-emphasis[data-sepete-ekle]',
+        '/sayfa/mesafeli-satis-sozlesmesi', '4A Bilişim & Gayrimenkul'),
 }
 
 
@@ -74,10 +82,15 @@ def selected_direct_laptop(html, url):
     title = headings[0].get_text(' ', strip=True) if len(headings) == 1 else ''
     if host == 'www.gaming.gen.tr' and brand is None and title.startswith('HP '):
         brand = 'HP'
-    if not title or WORDS(title) != WORDS(unescape(str(product.get('name') or ''))):
+    schema_title = unescape(str(product.get('name') or ''))
+    if host == 'nevavm.com':
+        schema_title = schema_title.removesuffix(' | Neva AVM')
+    if not title or WORDS(title) != WORDS(schema_title):
         return None, 'direct_selected_title_mismatch'
     facts = laptop_facts(title, {}, brand, product.get('mpn', ''))
     gtin = retailer_gtin13(product.get('gtin13') or product.get('gtin'))
+    if host == 'tasozbilgisayar.com':
+        gtin = _tasoz_gtin(soup, gtin)
     if not facts or not gtin:
         return None, 'direct_selected_identity_missing'
 
@@ -92,7 +105,7 @@ def selected_direct_laptop(html, url):
     ordinary_woo = (host == 'www.gaming.gen.tr' and offer.get('itemCondition') is None
                     and stock_label and 'Stoktan gönderim' in stock_label.get_text(' ', strip=True))
     if (offer.get('url') != url or offer.get('priceCurrency') != 'TRY'
-            or offer.get('availability') != 'https://schema.org/InStock'
+            or offer.get('availability') not in {'https://schema.org/InStock', 'http://schema.org/InStock'}
             or (offer.get('itemCondition') != 'https://schema.org/NewCondition' and not ordinary_woo)
             or any(key in offer for key in ('validForMemberTier', 'eligibleCustomerType', 'eligibleTransactionVolume'))):
         return None, 'direct_new_cash_stock_unproven'
@@ -104,6 +117,12 @@ def selected_direct_laptop(html, url):
         price = _netsiparis_cash(soup, prices, price)
     elif len(prices) != 1 or _visible_cash(prices[0]) != price:
         price = None
+    if host == 'tasozbilgisayar.com' and len(carts) == 1:
+        cart = carts[0]
+        product_id = urlparse(url).path.rstrip('/').rsplit('-', 1)[-1]
+        if (cart['data-sepete-ekle'] != product_id or WORDS(cart.get('data-urun-ad')) != WORDS(title)
+                or amount(str(cart.get('data-urun-fiyat', '')).replace('.', '').replace(',', '.')) != price):
+            return None, 'direct_selected_cart_mismatch'
     if not price:
         return None, 'direct_visible_price_mismatch'
     if (len(carts) != 1 or carts[0].has_attr('disabled')
@@ -128,6 +147,20 @@ def _visible_cash(node):
     match = re.fullmatch(r'(?:₺\s*)?(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)\s*(?:TL|₺)?',
                          node.get_text(' ', strip=True))
     return amount(match[1].replace('.', '').replace(',', '.')) if match else None
+
+
+def _tasoz_gtin(soup, schema_gtin):
+    codes = []
+    for table in ('table.product-specs-table', 'table#as_SpecData'):
+        matches = []
+        for row in soup.select(f'#product-tab-description {table} tr'):
+            cells = row.find_all('td', recursive=False)
+            if len(cells) == 2 and cells[0].get_text(' ', strip=True) == 'EAN / UPC / JAN':
+                matches.append(retailer_gtin13(cells[1].get_text(' ', strip=True)))
+        if len(matches) != 1 or not matches[0]:
+            return None
+        codes.extend(matches)
+    return codes[0] if len(set(codes)) == 1 and schema_gtin in (None, codes[0]) else None
 
 
 def _netsiparis_cash(soup, blocks, listed):
@@ -197,7 +230,9 @@ def direct_company_identity(html, url):
     name = WORDS(company)
     if not re.search(r'\b' + re.escape(name) + r'\b', WORDS(text)):
         return None
-    tax = re.findall(r'\b(?:Vergi No\s*:|Vergi Dairesi / No\s+.{0,70}?–|Vno\s*:)\s*((?:\d\s*){10})(?!\d)',
+    tax = re.findall(r'\b(?:Vergi No\s*:|Vergi Dairesi / No\s+.{0,70}?–|Vno\s*:)\s*((?:\d\s*){10,11})(?!\d)',
                      ' '.join(text.split()), re.I)
     normalized = {re.sub(r'\s+', '', key) for key in tax}
+    if host in {'nevavm.com', 'tasozbilgisayar.com'} and len(normalized) != 1:
+        return None
     return {'_legal_name': name, '_tax_key': next(iter(normalized)) if len(normalized) == 1 else ''}

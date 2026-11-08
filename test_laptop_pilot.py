@@ -7,6 +7,7 @@ from unittest.mock import patch
 from bs4 import BeautifulSoup
 
 from audit_hepsiburada_iphone16pm_readonly import _first_party_laptop_cash
+from laptop_direct_source import selected_direct_laptop
 from laptop_pilot import build_model, compatible, read_retailer, select_offers, valid_pair
 from laptop_retailer_sources import laptop_facts, marketplace_seller_identity, selected_n11
 
@@ -65,6 +66,24 @@ def laptop_document(change=None):
 
 
 class LaptopPilotTests(TestCase):
+    def test_neva_reads_current_price_and_checks_enabled_cart(self):
+        url = 'https://nevavm.com/urun/lenovo-ideapad-slim-3/'
+        schema = {
+            '@type': 'Product', 'name': TITLE + ' | Neva AVM', 'brand': 'Lenovo', 'gtin': EAN,
+            'offers': {'@type': 'Offer', 'url': url, 'price': 30000, 'priceCurrency': 'TRY',
+                       'availability': 'http://schema.org/InStock', 'itemCondition': 'https://schema.org/NewCondition'},
+        }
+        html = f'''<link rel="canonical" href="{url}">
+        <script type="application/ld+json">{json.dumps(schema)}</script>
+        <div class="summary entry-summary"><h1>{TITLE}</h1>
+        <p class="price"><del><bdi>32.000 TL</bdi></del><ins><bdi>30.000 TL</bdi></ins></p>
+        <form class="cart"><button name="add-to-cart">Sepete Ekle</button></form></div>'''
+        offer, reason = selected_direct_laptop(html, url)
+        self.assertIsNotNone(offer, reason)
+        self.assertEqual(offer['price'], 30000)
+        self.assertIsNone(selected_direct_laptop(html.replace('30.000 TL', '31.000 TL'), url)[0])
+        self.assertIsNone(selected_direct_laptop(html.replace('<button ', '<button disabled '), url)[0])
+
     def test_matching_title_and_technical_record(self):
         facts = laptop_facts(TITLE, ATTRS, 'Lenovo')
         self.assertEqual((facts['mpn'], facts['cpu'], facts['ram'], facts['ssd'], facts['os']),
