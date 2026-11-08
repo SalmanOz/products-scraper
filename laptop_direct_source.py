@@ -50,7 +50,7 @@ DIRECT_STORES = {
 }
 
 
-def selected_direct_laptop(html, url):
+def selected_direct_laptop(html, url, *, read_facts=None):
     host = urlparse(url).netloc
     platform, cash_selector, cart_selector, legal_path, _ = DIRECT_STORES[host]
     soup = BeautifulSoup(html, 'html.parser')
@@ -87,7 +87,8 @@ def selected_direct_laptop(html, url):
         schema_title = schema_title.removesuffix(' | Neva AVM')
     if not title or WORDS(title) != WORDS(schema_title):
         return None, 'direct_selected_title_mismatch'
-    facts = laptop_facts(title, {}, brand, product.get('mpn', ''))
+    facts = read_facts(title, brand_node.get('name') if isinstance(brand_node, dict) else brand_node) if read_facts else (
+        laptop_facts(title, {}, brand, product.get('mpn', '')))
     gtin = retailer_gtin13(product.get('gtin13') or product.get('gtin'))
     if host == 'tasozbilgisayar.com':
         gtin = _tasoz_gtin(soup, gtin)

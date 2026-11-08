@@ -1,0 +1,146 @@
+{
+  "8806097322344": {
+    "code": "ls32fm700uuxuf",
+    "url": "https://www.samsung.com/tr/monitors/smart/smart-monitor-m7-32-inch-smart-tv-apps-4k-uhd-ls32fm700uuxuf/",
+    "facts": {
+      "panel": "VA",
+      "hdmi": true,
+      "dp": false,
+      "usb_c": true
+    },
+    "name": "Smart Monitör M7 32″"
+  },
+  "8806097931393": {
+    "code": "ls27hg612suxuf",
+    "url": "https://www.samsung.com/tr/monitors/gaming/odyssey-oled-g6-g61sh-27-inch-240hz-oled-qhd-ls27hg612suxuf/",
+    "facts": {
+      "panel": "QD-OLED",
+      "hdmi": true,
+      "dp": true,
+      "usb_c": false
+    },
+    "name": "Odyssey OLED G6 G61SH"
+  },
+  "4711636529754": {
+    "code": "xg27aqdmesz",
+    "url": "https://rog.asus.com/tr/monitors/27-to-31-5-inches/rog-strix-oled-xg27aqdmesz/spec/",
+    "facts": {
+      "panel": "QD-OLED"
+    },
+    "name": "ROG Strix OLED XG27AQDMESZ"
+  },
+  "4711377131711": {
+    "code": "mp161",
+    "model": "PRO MP161 E2",
+    "url": "https://www.msi.com/Portable-Monitor/PRO-MP161-E2/Specification",
+    "facts": {
+      "size": 15.6,
+      "hdmi": true,
+      "dp": false,
+      "usb_c": true
+    }
+  },
+  "4711377346290": {
+    "code": "mp243w",
+    "model": "PRO MP243W E14",
+    "url": "https://www.msi.com/Business-Productivity-Monitor/PRO-MP243W-E14/Specification",
+    "facts": {
+      "size": 23.8,
+      "hdmi": true,
+      "dp": true,
+      "usb_c": false
+    }
+  },
+  "0766907031140": {
+    "code": "vx2779a",
+    "model": "VX2779A-HD-PRO",
+    "url": "https://www.viewsonic.com/uk/products/lcd/VX2779A-HD-PRO",
+    "facts": {
+      "hdmi": true,
+      "dp": true
+    }
+  },
+  "4711387906835": {
+    "code": "vg27aq5a",
+    "name": "TUF Gaming VG27AQ5A",
+    "url": "https://www.asus.com/us/displays-desktops/monitors/tuf-gaming/tuf-gaming-vg27aq5a/techspec/",
+    "facts": {
+      "hdmi": true,
+      "dp": true,
+      "usb_c": false
+    }
+  },
+  "0199271706381": {
+    "code": "67ddkac6tk",
+    "name": "L24-4C",
+    "url": "https://psref.lenovo.com/Product/Lenovo%20Monitors/Lenovo_L24_4C_Monitor",
+    "facts": {
+      "size": 23.8,
+      "hdmi": true,
+      "dp": false,
+      "usb_c": false
+    }
+  },
+  "0198157072183": {
+    "code": "68c5gac4tk",
+    "name": "Legion 27-10",
+    "url": "https://psref.lenovo.com/Detail/Legion_27_10_Monitor?M=68C5GAC4TK",
+    "facts": {
+      "hdmi": true,
+      "dp": true,
+      "usb_c": false
+    }
+  },
+  "4711377395052": {
+    "code": "255f",
+    "model": "MAG 255F X24",
+    "url": "https://storage-asset.msi.com/datasheet/monitor/global/MAG-255F-X24.pdf",
+    "facts": {
+      "hdmi": true,
+      "dp": true,
+      "usb_c": false
+    }
+  },
+  "4711377142755": {
+    "code": "g255pf",
+    "model": "G255PF E2",
+    "url": "https://storage-asset.msi.com/datasheet/monitor/global/G255PF-E2.pdf",
+    "facts": {
+      "hdmi": true,
+      "dp": true,
+      "usb_c": false
+    }
+  },
+  "4711377381697": {
+    "code": "mp271",
+    "model": "PRO MP271 E14A",
+    "url": "https://www.msi.com/Business-Productivity-Monitor/PRO-MP271-E14A/Specification",
+    "facts": {
+      "size": 27,
+      "hdmi": true,
+      "dp": true,
+      "usb_c": false
+    }
+  },
+  "8806097322306": {
+    "code": "ls43fm700uuxuf",
+    "name": "Smart Monitör M7 43″",
+    "url": "https://www.samsung.com/tr/monitors/smart/smart-monitor-m7-43-inch-smart-tv-apps-4k-uhd-ls43fm700uuxuf/",
+    "facts": {
+      "panel": "VA",
+      "hdmi": true,
+      "dp": false,
+      "usb_c": true
+    }
+  },
+  "6941948702097": {
+    "code": "g34wqi",
+    "name": "Curved Gaming Monitor G34WQi",
+    "url": "https://www.mi.com/us/product/xiaomi-curved-gaming-monitor-g34wqi/specs/",
+    "facts": {
+      "hdmi": true,
+      "dp": true,
+      "usb_c": false
+    }
+  }
+}

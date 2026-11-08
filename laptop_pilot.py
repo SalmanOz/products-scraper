@@ -148,9 +148,9 @@ def build_model(offers, photo_offer):
     }
 
 
-def _image(url):
+def _image(url, *, allowed_hosts=IMAGE_HOSTS):
     route = urlparse(url)
-    if route.scheme != 'https' or route.netloc not in IMAGE_HOSTS or route.query or route.fragment:
+    if route.scheme != 'https' or route.netloc not in allowed_hosts or route.query or route.fragment:
         return None
     try:
         with closing(compatible_get(url, timeout=(6, 18), stream=True, allow_redirects=False,
