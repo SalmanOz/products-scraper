@@ -57,6 +57,30 @@ class MonitorPilotTests(TestCase):
                 self.assertEqual(rejected, {reason: expected_reads})
                 self.assertEqual(reader.read.call_count, expected_reads)
 
+    def test_transport_failure_retries_only_the_unfinished_rows_once(self):
+        host = 'www.mediamarkt.com.tr'
+        rows = [{'url': f'https://{host}/tr/product/_monitor-{sku}.html',
+                 'gtin': self.first['gtin13'], 'code': self.first['code']} for sku in (123456, 123457)]
+        with patch('monitor_pilot.Reader') as factory, patch('monitor_pilot.sleep') as wait:
+            reader = factory.return_value
+
+            def fail(url):
+                reader.last_reason = 'transport_error'
+                reader.stop = True
+                return None, None
+
+            reader.read.side_effect = fail
+            factory.side_effect = lambda *args, **kwargs: self.reset_reader(reader)
+            _, rejected = read_targets(host, rows)
+            self.assertEqual([call.args[0] for call in reader.read.call_args_list], [rows[0]['url']] * 2)
+            self.assertEqual(rejected, {'transport_error': 2})
+            wait.assert_called_once_with(8)
+
+    @staticmethod
+    def reset_reader(reader):
+        reader.stop = False
+        return reader
+
     def test_manufacturer_spec_has_precedence_for_the_exact_gtin(self):
         with patch('monitor_pilot._image', return_value=b'photo'):
             model, _ = materialize((self.first,), [self.first])

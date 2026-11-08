@@ -7,6 +7,7 @@ from itertools import combinations
 import json
 from pathlib import Path
 import re
+from time import sleep
 from urllib.parse import urlparse
 
 from curl_cffi.requests import RequestsError
@@ -26,7 +27,7 @@ PHOTO_HOSTS = IMAGE_HOSTS | {'productimages.hepsiburada.net', 'www.gaming.gen.tr
 MANUFACTURER_SPECS = json.loads(Path(__file__).with_name('monitor_manufacturer_specs.json').read_text())
 
 
-def read_targets(host, rows, collector=None):
+def read_targets(host, rows, collector=None, *, retry_transient=True):
     get = collector if host in {'www.vatanbilgisayar.com', 'www.mediamarkt.com.tr', 'www.incehesap.com'} else None
     reader = Reader(host, len(rows), get=get)
     if host == 'www.n11.com' and collector:
@@ -36,7 +37,7 @@ def read_targets(host, rows, collector=None):
         reader.transport = PriorityRetailerTransport(maximum_per_host=len(rows),
             get=_hepsiburada_public_get, browser_fallback=False)
     accepted, rejected = [], Counter()
-    for row in rows:
+    for index, row in enumerate(rows):
         if reader.stop:
             break
         try:
@@ -48,6 +49,12 @@ def read_targets(host, rows, collector=None):
                 # on the same host remain healthy. Reject it without following.
                 if reason == 'redirect' and reader.source is not None:
                     reader.stop = False
+                if reader.stop and retry_transient and reason in {'transport_error', 'request_error'}:
+                    sleep(8)
+                    recovered, more_rejected = read_targets(host, rows[index:], collector, retry_transient=False)
+                    accepted.extend(recovered)
+                    rejected.update(more_rejected)
+                    break
                 continue
             if urlparse(row['url']).query != urlparse(url).query:
                 rejected['listing_selector_changed'] += 1
