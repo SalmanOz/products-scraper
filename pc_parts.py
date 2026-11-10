@@ -77,6 +77,20 @@ def read(url,kind):
     for row in soup.select('table.woocommerce-product-attributes tr'):
         k,v=row.find('th'),row.find('td')
         if k and v: specs[k.get_text(' ',strip=True)]=v.get_text(' ',strip=True)
+    fields = {
+        'cpu': ('Soket Tipi', 'İşlemci Modeli'),
+        'motherboard': ('Soket Tipi', 'RAM Tipi', 'Form Faktörü'),
+        'ram': ('RAM Tipi', 'RAM Kapasitesi'),
+        'gpu': ('Grafik İşlemci Modeli', 'Grafik Bellek'),
+        'ssd': ('Depolama Tipi', 'Depolama Biçimi'),
+        'case': ('Kasa Tipi', 'Anakart Desteği'),
+        'psu': ('Güç Kaynağı Değeri', 'Güç Kaynağı Tipi'),
+        'cooler': ('Uyumlu Soketler', 'Soğutma Yöntemi'),
+    }
+    if (not all(specs.get(key) for key in fields[kind])
+        or kind == 'ram' and specs.get('RAM Uyumluluğu') != 'Masaüstü'
+        or kind == 'ssd' and specs.get('Depolama Tipi') != 'Dahili SSD'):
+        raise ValueError('component_type_mismatch')
     barcode=gtin(specs.get('EAN'))
     if not barcode or barcode!=gtin(product.get('gtin')) or not specs.get('Üretici Kodu'):
         raise ValueError('gtin_or_mpn')
