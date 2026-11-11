@@ -1310,7 +1310,7 @@ class TRPriceScraper:
             for r in results:
                 if expected_specs is not None and not self.has_observed_offer_evidence(product_name, r, expected_specs):
                     continue
-                key = r['merchant']
+                key = r['url']
                 if key not in seen or r['price'] < seen[key]['price']:
                     seen[key] = r
             final = sorted(seen.values(), key=lambda x: x['price'])
