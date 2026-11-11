@@ -96,6 +96,8 @@ def refresh(snapshot, catalog):
         updated = {**updated, 'sourceTargets': targets}
     return updated, {**counts, 'rejections': dict(rejected),
                      'verifiedOffers': sum(map(len, observations.values())),
+                     'completedTargetReads': sum(status != 'unavailable' for status in statuses.values()),
+                     'configuredTargets': sum(map(len, groups.values())),
                      'changed': updated is not snapshot}
 
 

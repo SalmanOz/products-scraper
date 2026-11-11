@@ -481,10 +481,11 @@ def main():
         import publish_galaxy_a18_queue as galaxy_a18
         import publish_galaxy_a08_queue as galaxy_a08
         import publish_redmi_17_4g_queue as redmi_17_4g
+        import publish_redmi_a7_pro_queue as redmi_a7_pro
         run_discovery(client=client, reader=reader, specs=specs, price_scraper=TRPriceScraper(),
                       refresher=RetailerOfferRefresher(), publish=args.publish, previous=previous, report=report,
                       checkpoint=checkpoint, reviewed=tuple((entry.CANDIDATE, entry.specifications, entry.prepare)
-                          for entry in (pro_max, redmi_17, galaxy_a18, galaxy_a08, redmi_17_4g)))
+                          for entry in (pro_max, redmi_17, galaxy_a18, galaxy_a08, redmi_17_4g, redmi_a7_pro)))
     except Exception as error:
         report['fatal'] = type(error).__name__
         code = 1

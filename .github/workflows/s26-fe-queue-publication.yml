@@ -15,6 +15,7 @@ on:
           - galaxy-a18
           - galaxy-a08
           - redmi-17-4g
+          - redmi-a7-pro
           - redmi-note-17-pro-5g
           - redmi-note-17-pro-max-5g
           - redmi-17-5g
@@ -92,11 +93,13 @@ jobs:
               else
                 python publish_galaxy_a18_queue.py --validate
               fi ;;
-            galaxy-a08|redmi-17-4g)
+            galaxy-a08|redmi-17-4g|redmi-a7-pro)
               if [[ "$MODEL" == "galaxy-a08" ]]; then
                 script=publish_galaxy_a08_queue.py
-              else
+              elif [[ "$MODEL" == "redmi-17-4g" ]]; then
                 script=publish_redmi_17_4g_queue.py
+              else
+                script=publish_redmi_a7_pro_queue.py
               fi
               if [[ "$PUBLISH" == "true" ]]; then
                 python "$script" --publish
