@@ -37,8 +37,8 @@ def merge_snapshot(snapshot, catalog, observations, statuses, now):
         previous = row['offers']
         if name not in models:
             raise ValueError(f'Missing detail page for {name}')
-        current = observations.get(name, [])
-        required = models[name].get('requiresIndependentPair') is True
+        current = [offer for offer in observations.get(name, []) if offer['gtin13'] == row['gtin']]
+        required = row.get('requiresIndependentPair') is True or models[name].get('requiresIndependentPair') is True
         fresh = exact_tws_sellers(current) if required else select_sku_offers(current)
         if fresh:
             offers = _public_offers(fresh)
@@ -61,16 +61,20 @@ def merge_snapshot(snapshot, catalog, observations, statuses, now):
 def refresh(snapshot, catalog):
     groups = defaultdict(list)
     targets = {}
+    previous_targets = dict(snapshot.get('sourceTargets', {}))
+    model_counts = Counter(row['name'] for row in snapshot['models'])
     for row in snapshot['models']:
         gtin = row['gtin']
         name = row['name']
-        known = {o['url']: o for o in snapshot.get('sourceTargets', {}).get(name, [])}
+        target_key = f'{name}/{gtin}' if model_counts[name] > 1 else name
+        legacy = previous_targets.pop(name, [])
+        known = {o['url']: o for o in previous_targets.get(target_key, legacy)}
         for offer in row['offers']:
             known[offer['url']] = {key: offer[key] for key in ('url', 'merchant')}
         if known and retailer_gtin13(gtin) != gtin:
             raise ValueError(f'Invalid GTIN for {name}')
         if known:
-            targets[name] = list(known.values())
+            targets[target_key] = list(known.values())
         for url, offer in known.items():
             host = selected_host(url)
             if host is None:

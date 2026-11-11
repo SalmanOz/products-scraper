@@ -5,6 +5,33 @@ from tws_refresh import refresh
 
 
 class TwsRefreshTest(TestCase):
+    def test_color_variants_keep_separate_gtins_and_refresh_targets(self):
+        name = 'Huawei FreeBuds 6i'
+        white = '6942103123535'
+        black = '6942103123542'
+        catalog = {'models': [{'name': name}]}
+        urls = [f'https://www.n11.com/urun/uyumlu-kulaklik-{123456 + i}' for i in range(3)]
+        existing = [{'url': url, 'merchant': f'Satıcı {i}', 'price': 3000.0}
+                    for i, url in enumerate(urls)]
+        snapshot = {'checked_at': 'old', 'models': [
+            {'name': name, 'gtin': white, 'offers': [existing[0]]},
+            {'name': name, 'gtin': black, 'offers': existing[1:], 'requiresIndependentPair': True},
+        ], 'sourceTargets': {name: [{k: existing[0][k] for k in ('url', 'merchant')}]}}
+
+        def collect(host, rows, statuses, document_reader=None):
+            self.assertEqual([target['gtin13'] for _, target in rows], [white, black, black])
+            for _, target in rows:
+                statuses[target['url']] = 'verified'
+            return {name: [dict(target, price=3000.0, observed_at='new', platform='n11',
+                                _legal_name=target['merchant']) for _, target in rows]}, {}
+
+        with patch('tws_refresh.reread', side_effect=collect):
+            updated, _ = refresh(snapshot, catalog)
+            repeated, _ = refresh(updated, catalog)
+        self.assertEqual([[o['url'] for o in row['offers']] for row in updated['models']], [urls[:1], urls[1:]])
+        self.assertEqual(updated['sourceTargets'], repeated['sourceTargets'])
+        self.assertEqual(set(updated['sourceTargets']), {f'{name}/{white}', f'{name}/{black}'})
+
     def test_unverified_offer_is_withdrawn_and_rechecked_on_next_run(self):
         name = 'Anker Soundcore AeroFit 2'
         gtin = '0194644298876'
