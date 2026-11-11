@@ -81,7 +81,7 @@ NEW_MODELS = (
     ('Xiaomi', 'Buds 5 Pro', r'xiaomi buds 5 pro(?! wi fi)'),
     ('Huawei', 'FreeClip 2', r'freeclip ?2(?! pro| plus)'),
     ('Huawei', 'FreeBuds Pro 5', r'freebuds pro ?5'),
-    ('Huawei', 'FreeBuds 6', r'freebuds 6(?! ?[is]| pro| se)'),
+    ('Huawei', 'FreeBuds 6', r'freebuds 6(?! i\b| s\b| pro\b| se\b)'),
     ('Samsung', 'Galaxy Buds FE', r'galaxy buds fe'),
     ('Samsung', 'Galaxy Buds3 FE', r'galaxy buds ?3 fe'),
     ('Samsung', 'Galaxy Buds3', r'galaxy buds ?3(?! fe| pro)'),

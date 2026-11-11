@@ -49,10 +49,11 @@ class TwsOfferPilotTests(unittest.TestCase):
         self.assertEqual(model_name('Apple AirPods 4 Aktif Gürültü Engelleme MXP93TU/A', 'Apple'), 'Apple AirPods 4 ANC')
         self.assertIsNone(model_name('Apple AirPods 4. Nesil (MXP63TU/A) Yenilenmiş', 'Apple'))
         self.assertIsNone(model_name('AirPods 4. Nesil (MXP63TU/A)', 'TARÇIN'))
-        self.assertEqual(model_name('HUAWEI FreeBuds 6 Bluetooth Kulaklık Beyaz', 'Huawei'),
+        self.assertEqual(model_name('HUAWEI FreeBuds 6 Siyah Bluetooth Kulaklık', 'Huawei'),
                          'Huawei FreeBuds 6')
         self.assertEqual(model_name('HUAWEI FreeBuds 6i Bluetooth Kulaklık Beyaz', 'Huawei'),
                          'Huawei FreeBuds 6i')
+        self.assertIsNone(model_name('HUAWEI FreeBuds 6 i Kulaklık', 'Huawei'))
         self.assertEqual(model_name('JBL Wave Flex2 TWS Pembe', 'JBL'), 'JBL Wave Flex 2')
         self.assertEqual(model_name('JBL Wave Buds Bluetooth Siyah', 'JBL'), 'JBL Wave Buds')
         self.assertEqual(model_name('JBL Wave Buds2 Siyah', 'JBL'), 'JBL Wave Buds 2')
