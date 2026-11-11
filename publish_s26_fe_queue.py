@@ -61,6 +61,10 @@ def mediamarkt_offer():
     if source._rules is None or not source._rules.can_fetch('TeknoskorPriceBot', MEDIAMARKT):
         raise ValueError('mediamarkt_document_unavailable')
     body, reason, _ = source._direct(MEDIAMARKT, 5 * 1024 * 1024, 'text/html')
+    if reason == 'http_403':
+        body, resolved, reason = source._browser_get(MEDIAMARKT)
+        if reason == 'ready' and resolved != MEDIAMARKT:
+            raise ValueError('mediamarkt_selected_url_changed')
     if reason != 'ready' or not body:
         raise ValueError('mediamarkt_' + reason)
 
