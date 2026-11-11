@@ -49,6 +49,11 @@ CIMRI_SITEMAP_INDEX = f'https://{CIMRI}/sitemaps/product.xml'
 CIMRI_SITEMAP_PATH = re.compile(r'/sitemaps/product_([1-9]\d{0,3})\.xml')
 CIMRI_SITEMAP_LIMIT = 50 * 1024 * 1024
 PHONE_MEMORY = re.compile(r'(?: [1-9]\d? gb)? (?:[1-9]\d{1,3} gb|[1-9] tb)$')
+PHONE_COLOR_AFTER_MEMORY = re.compile(
+    r'( [1-9]\d{0,3} (?:gb(?: ram)?|tb)) (?:[a-z]{2,16} ){0,2}'
+    r'(?:siyah|beyaz|gri|mavi|mavisi|mor|moru|yesil|yesili|kirmizi|pembe|'
+    r'turuncu|sari|gumus|altin|lacivert|bej|grafit|titanyum)$'
+)
 CATEGORIES = {
     'phone': ('/cep-telefonu.html', '/cep-telefonlari', '/akilli-telefonlar/'),
     'tws': ('/bluetooth-kulaklik/tws.html', '/kulaklik/kulak-ici-bluetooth-kulaklik', '/kulaklik/'),
@@ -180,6 +185,7 @@ def catalog_match(title, index):
 
 def phone_family(title):
     label = WORDS(re.sub(r'(\d+)(gb|tb)\b', r'\1 \2', title, flags=re.I))
+    label = PHONE_COLOR_AFTER_MEMORY.sub(r'\1', label)
     label = re.sub(r' [1-9]\d? gb ram$', '', label)
     return PHONE_MEMORY.sub('', label)
 

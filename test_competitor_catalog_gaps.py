@@ -141,6 +141,13 @@ class CompetitorCatalogGapsTest(unittest.TestCase):
         self.assertEqual(candidate_family('phone', title, index), 'apple-iphone-16-plus')
         self.assertIsNone(candidate_family('phone', 'Apple iPhone 16 Pro (256 GB)', index))
 
+    def test_color_suffix_retains_family_for_discovery_only(self):
+        index = identity_index([{'name': 'Xiaomi Redmi 17 5G', 'slug': 'xiaomi-redmi-17-5g'}])
+        title = 'Xiaomi Redmi 17 5G 128 GB 4 GB RAM Derin Mavi'
+        self.assertIsNone(catalog_match(title, index))
+        self.assertEqual(candidate_family('phone', title, index), 'xiaomi-redmi-17-5g')
+        self.assertIsNone(candidate_family('phone', 'Xiaomi Redmi 17 4G 128 GB 4 GB RAM Derin Mavi', index))
+
 
     def test_market_sitemap_only_prioritizes_native_product_price_pages(self):
         xml = """<urlset>
