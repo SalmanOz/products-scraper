@@ -212,6 +212,16 @@ def urunai_sitemap_cards(xml, kinds, indexes):
                'category': kind, 'catalogSlug': catalog_match(title, indexes[kind])}
 
 
+def urunai_market_slugs(xml):
+    root = ElementTree.fromstring(xml)
+    if root.tag.rsplit('}', 1)[-1] != 'urlset':
+        raise ValueError('Expected market URL set')
+    pattern = re.compile(r'https://urunai\.com/en-ucuz/([a-z0-9-]{1,220})')
+    return {match[1] for entry in root for node in entry
+            if node.tag.rsplit('}', 1)[-1] == 'loc' and node.text
+            and (match := pattern.fullmatch(node.text))}
+
+
 def scan_urunai(reader, kinds, indexes):
     url = f'https://{URUNAI}/sitemap-products.xml'
     body, reason, _ = reader._read_document(url, URUNAI, category=True, sitemap=True)
@@ -219,10 +229,25 @@ def scan_urunai(reader, kinds, indexes):
         rows = list(urunai_sitemap_cards(body, kinds, indexes)) if body is not None else []
     except (ValueError, ElementTree.ParseError):
         reason, rows = 'invalid_product_sitemap', []
+    market_counts = Counter()
+    if rows:
+        market_xml, _, _ = reader._read_document(f'https://{URUNAI}/sitemap-en-ucuz.xml',
+                                                URUNAI, category=True, sitemap=True)
+        if market_xml:
+            try:
+                market = urunai_market_slugs(market_xml)
+                for row in rows:
+                    brand, model = row['id'].split('/', 1)
+                    slug = model if model.startswith(brand + '-') else f'{brand}-{model}'
+                    row['hasMarketPage'] = slug in market
+                    market_counts[row['category']] += int(row['hasMarketPage'])
+            except (ValueError, ElementTree.ParseError):
+                pass
     counts = Counter(row['category'] for row in rows)
     matched = Counter(row['category'] for row in rows if row['catalogSlug'])
     return ([{'source': URUNAI, 'category': kind, 'status': 'sitemap_read' if counts[kind] else reason,
               'nextPage': None, 'pages': int(bool(counts[kind])), 'cards': counts[kind],
+              'marketPages': market_counts[kind],
               'matched': matched[kind], 'unmatched': counts[kind] - matched[kind]} for kind in kinds], rows)
 
 
@@ -446,7 +471,8 @@ def scan_retailer_leads(state, host, kinds, maximum, now, priority=(), pinned=()
                 and product_path.fullmatch(unquote(route.path))):
             candidates[row['category']].append(row)
     for kind, rows in candidates.items():
-        rows.sort(key=lambda row: (row.get('lastLeadAttemptAt', ''), row['firstSeenAt'], row['id']))
+        rows.sort(key=lambda row: (row.get('lastLeadAttemptAt', ''), not row.get('hasMarketPage'),
+                                   row['firstSeenAt'], row['id']))
         first = [row for row in rows if row.get('catalogFamily') in pinned]
         others = [row for row in rows if row.get('catalogFamily') not in pinned]
         gaps = (row for row in others if row.get('catalogFamily') in priority)

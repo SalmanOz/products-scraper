@@ -1,6 +1,6 @@
 import unittest
 
-from competitor_catalog_gaps import (AKAKCE, CIMRI, EPEY, KARSILASTIRICI, PAHALIMI, URUNAI, candidate_family, urunai_sitemap_cards, catalog_match, category_url, comparison_cards, comparison_retailer_leads,
+from competitor_catalog_gaps import (AKAKCE, CIMRI, EPEY, KARSILASTIRICI, PAHALIMI, URUNAI, candidate_family, urunai_market_slugs, urunai_sitemap_cards, catalog_match, category_url, comparison_cards, comparison_retailer_leads,
                                      identity_index, in_scope, merge_state, read_state)
 
 
@@ -139,3 +139,13 @@ class CompetitorCatalogGapsTest(unittest.TestCase):
         self.assertIsNone(catalog_match(title, index))
         self.assertEqual(candidate_family('phone', title, index), 'apple-iphone-16-plus')
         self.assertIsNone(candidate_family('phone', 'Apple iPhone 16 Pro (256 GB)', index))
+
+
+    def test_market_sitemap_only_prioritizes_native_product_price_pages(self):
+        xml = """<urlset>
+          <url><loc>https://urunai.com/en-ucuz/apple-iphone-16-plus</loc></url>
+          <url><loc>https://urunai.com/en-ucuz/apple-iphone-16-plus?anything=yes</loc></url>
+          <url><loc>https://else.example/en-ucuz/apple-iphone-17</loc></url>
+          <url><loc>https://urunai.com/telefon/apple/iphone-18</loc></url>
+        </urlset>"""
+        self.assertEqual(urunai_market_slugs(xml), {'apple-iphone-16-plus'})
