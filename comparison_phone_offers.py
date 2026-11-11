@@ -14,7 +14,7 @@ from competitor_catalog_gaps import public_phone_catalog, read_state, retailer_d
 from laptop_retailer_sources import marketplace_seller_identity
 from mediamarkt_marketplace_audit import selected_marketplace_offer
 from mediamarkt_source import product_url as mediamarkt_url
-from offer_ingestion_client import OfferIngestionClient
+from offer_ingestion_client import IngestionClientError, OfferIngestionClient
 from pazarama_category_source import pazarama_product_url
 from priority_retailer_transport import PriorityRetailerTransport, product_host
 from retailer_offer_refresh import _product_offer, _schema_nodes
@@ -150,6 +150,10 @@ def checked_offers(urls, name, specs, transport, documents=None):
             continue
         observed.append({**offer, '_legal_name': identity[0], '_tax_key': identity[1],
                          'observed_at': datetime.now(timezone.utc).isoformat()})
+    return next(iter(ranked_pairs(observed)), []), observed, rejects
+
+
+def ranked_pairs(observed):
     groups = defaultdict(list)
     for offer in sorted(observed, key=lambda row: (row['price'], row['url'])):
         groups[offer['gtin13']].append(offer)
@@ -157,7 +161,7 @@ def checked_offers(urls, name, specs, transport, documents=None):
              for i, first in enumerate(group) for second in group[i + 1:]
              if (first['platform'] != second['platform'] and independent_sellers(first, second)
                  and first['price'] >= second['price'] * .60)]
-    return min(pairs, key=lambda pair: (pair[0]['price'], pair[1]['price']), default=[]), observed, rejects
+    return sorted(pairs, key=lambda pair: (pair[0]['price'], pair[1]['price']))
 
 
 def product_family(slug):
@@ -216,6 +220,26 @@ def audit_queue(state, products, maximum=4):
         audited.get(row['slug'], ''), row.get('fresh_offer_count') not in (0, '0'), row['slug']))[:maximum]
 
 
+def publishable_pair(observations, client, product):
+    decisions = {}
+    for pair in ranked_pairs(observations):
+        for offer in pair:
+            key = offer['url'], offer['merchant']
+            if key not in decisions:
+                try:
+                    proof = client.get_raw_seller_collision_proof(product['id'], offer['merchant'], offer['url'])
+                    decisions[key] = proof.get('complete') is True and proof.get('blocked') is False
+                except IngestionClientError:
+                    decisions[key] = False
+        if all(decisions[offer['url'], offer['merchant']] for offer in pair):
+            return pair
+    return []
+
+
+def report_offer(row):
+    return {key: row[key] for key in ('url', 'platform', 'merchant', 'price', 'gtin13')}
+
+
 def run(state, slugs, client=None, *, publish=False, maximum=24, products=None):
     if publish and client is None:
         raise ValueError('Publication requires the authenticated catalog')
@@ -235,18 +259,19 @@ def run(state, slugs, client=None, *, publish=False, maximum=24, products=None):
         urls.sort(key=lambda url: not bool(capacity.search(urlsplit(url).path)))
         pair, observations, rejects = checked_offers(urls, product['name'], specs, transport, documents)
         result = {'slug': slug, 'sameGtin': pair[0]['gtin13'] if pair else None,
-                  'offers': [{key: row[key] for key in ('url', 'platform', 'merchant', 'price', 'gtin13')}
-                             for row in observations], 'rejections': rejects}
+                  'selectedPair': [report_offer(row) for row in pair],
+                  'offers': [report_offer(row) for row in observations], 'rejections': rejects}
         if publish and pair:
-            proof = [client.get_raw_seller_collision_proof(product['id'], offer['merchant'], offer['url'])
-                     for offer in pair]
-            if not all(row.get('complete') is True and row.get('blocked') is False for row in proof):
+            pair = publishable_pair(observations, client, product)
+            if not pair:
                 result['publicationReason'] = 'existing_seller_collision_or_incomplete_proof'
                 results.append(result)
                 continue
             if any((datetime.now(timezone.utc) - datetime.fromisoformat(offer['observed_at'])).total_seconds() > 180
                    for offer in pair):
                 raise ValueError('Verified retailer pair expired before publication')
+            result['sameGtin'] = pair[0]['gtin13']
+            result['selectedPair'] = [report_offer(row) for row in pair]
             records = []
             for offer in pair:
                 record = PriceUpdater(ingestion_client=client).prepare_product_offers(
@@ -292,8 +317,10 @@ def main():
         return
     if not 1 <= len(args.slug) <= 4 or len(set(args.slug)) != len(args.slug):
         parser.error('Provide one to four distinct catalog slugs')
-    print(json.dumps(run(state, args.slug, OfferIngestionClient.from_env(),
-                         publish=args.publish), ensure_ascii=False, indent=2))
+    rows = run(state, args.slug, OfferIngestionClient.from_env(), publish=args.publish)
+    print(json.dumps(rows, ensure_ascii=False, indent=2))
+    if args.publish and any(row.get('readback') != 'verified' for row in rows):
+        raise SystemExit('One or more requested capacities have no verified publication')
 
 
 if __name__ == '__main__':
