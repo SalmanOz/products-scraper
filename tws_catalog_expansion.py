@@ -18,13 +18,13 @@ from priority_retailer_transport import PriorityRetailerTransport, compatible_ge
 from retailer_barcode import retailer_gtin13
 from tws_offer_pilot import NEW_MODEL_NAMES, _mediamarkt_tws_url, independent_sellers, model_name, selected_tws_offer
 from tws_retailer_sources import (BOT, STOP_REASONS, _vatan_url, selected_hepsiburada_tws,
-                                  selected_n11_tws, selected_photo, selected_vatan_tws)
+                                  selected_n11_tws, selected_photo, selected_teknosa_tws, selected_vatan_tws)
 from tr_price_scraper import TRPriceScraper
 from vatan_category_source import VatanCategorySource
 
-MARKETPLACES = {'www.n11.com', 'www.trendyol.com', 'www.hepsiburada.com'}
+MARKETPLACES = {'www.n11.com', 'www.trendyol.com', 'www.hepsiburada.com', 'www.teknosa.com'}
 STORES = {'www.vatanbilgisayar.com', 'www.mediamarkt.com.tr'}
-TWS_IMAGE_HOSTS = IMAGE_HOSTS | {'productimages.hepsiburada.net'}
+TWS_IMAGE_HOSTS = IMAGE_HOSTS | {'productimages.hepsiburada.net', 'reimg-teknosa-cloud-prod.mncdn.com'}
 
 
 def exact_tws_sellers(offers):
@@ -98,6 +98,8 @@ def reread(host, rows):
                 current, reason = selected_tws_offer(html, final, name)
             elif host == 'www.hepsiburada.com':
                 current, reason = selected_hepsiburada_tws(html, final, name, model_name)
+            elif host == 'www.teknosa.com':
+                current, reason = selected_teknosa_tws(html, final, name, model_name)
             else:
                 current = (selected_vatan_tws(html, final, name, model_name)
                            if host == 'www.vatanbilgisayar.com' else verify_media(html, final, name))

@@ -14,7 +14,7 @@ from tws_offer_pilot import (
     MODEL_NAMES, PAIR_REQUIRED_MODEL_NAMES, PILOT_MODEL_NAMES, TWS_PRICE_RATIO_BY_MODEL,
     model_name, select_sku_offers, selected_tws_offer,
 )
-from tws_retailer_sources import selected_hepsiburada_tws, selected_n11_tws
+from tws_retailer_sources import selected_hepsiburada_tws, selected_n11_tws, selected_teknosa_tws
 
 PLATFORMS = {
     'Trendyol': 'www.trendyol.com',
@@ -22,6 +22,7 @@ PLATFORMS = {
     'MediaMarkt': 'www.mediamarkt.com.tr',
     'Vatan Bilgisayar': 'www.vatanbilgisayar.com',
     'Hepsiburada': 'www.hepsiburada.com',
+    'Teknosa': 'www.teknosa.com',
 }
 
 
@@ -53,6 +54,9 @@ def selected_marketplace_offer(transport, name, offer):
             return None, 'snapshot_hepsiburada_sku_changed'
         current, reason = selected_hepsiburada_tws(html, resolved, name, model_name)
         selector = 'magaza'
+    elif platform == 'Teknosa':
+        current, reason = selected_teknosa_tws(html, resolved, name, model_name)
+        selector = 'shopId'
     else:
         current, reason = selected_n11_tws(html, resolved, name, model_name)
         selector = 'magaza'
@@ -111,7 +115,7 @@ def public_snapshot(report, catalog_names=MODEL_NAMES):
                 seen.add(key)
                 queue[platform].append((name, offer))
 
-    platforms = ('Trendyol', 'n11', 'Hepsiburada')
+    platforms = ('Trendyol', 'n11', 'Hepsiburada', 'Teknosa')
     transports = {platform: PriorityRetailerTransport(maximum_per_host=135) for platform in platforms}
     transports['Hepsiburada'] = PriorityRetailerTransport(maximum_per_host=12, get=_hepsiburada_public_get,
                                                          browser_fallback=False)

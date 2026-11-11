@@ -27,7 +27,7 @@ from priority_retailer_transport import (
 from retailer_barcode import retailer_gtin13
 from tr_price_scraper import TRPriceScraper
 from trendyol_catalog_source import _parse_selected_listing, _selected_group_root
-from tws_retailer_sources import n11_offers, selected_hepsiburada_tws, selected_photo, vatan_offers
+from tws_retailer_sources import n11_offers, selected_hepsiburada_tws, selected_photo, selected_teknosa_tws, vatan_offers
 from vatan_category_source import VatanCategorySource
 
 # Match variant words explicitly when retail titles share the same base name.
@@ -120,6 +120,7 @@ PAIR_REQUIRED_MODEL_NAMES = (
     'JBL Tour Pro 3', 'Sony WF-1000XM5',
     'JBL Live Beam 3', 'Anker Soundcore Sport X20', 'JBL Live Buds 3', 'JBL Endurance Race 2',
     'Sony WF-C510', 'Sony WF-C710N', 'Sony LinkBuds Clip', 'QCY T13 ANC', 'Huawei FreeBuds 6',
+    'Anker Soundcore AeroFit 2',
 )
 PILOT_MODEL_NAMES = tuple(f'{brand} {name}' for brand, name, _ in COHORT)
 MODEL_NAMES = (*PILOT_MODEL_NAMES, *(f'{brand} {name}' for brand, name, _ in EXPANSION_COHORT),
@@ -421,21 +422,37 @@ def _hepsiburada_offers(transport, failures):
     return results
 
 
-def audit(transport, mediamarkt=None, *, n11=None, vatan=None, hepsiburada=None):
+def _teknosa_offers(transport, failures):
+    name = 'Anker Soundcore AeroFit 2'
+    url = 'https://www.teknosa.com/anker-soundcore-aerofit-2-a3874-siyah-kulaklik-p-100000063496'
+    html, reason, _ = transport.read_document(url)
+    if html and transport.resolved_url(url) == url:
+        offer, reason = selected_teknosa_tws(html, url, name, model_name)
+        if offer and offer['gtin13'] == '0194644298876':
+            return {name: [offer]}
+        if offer:
+            reason = 'selected_gtin_changed'
+    failures['teknosa_' + reason] += 1
+    return {}
+
+
+def audit(transport, mediamarkt=None, *, n11=None, vatan=None, hepsiburada=None, teknosa=None):
     failures, n11_failures, vatan_failures, mm_failures = Counter(), Counter(), Counter(), Counter()
-    hb_failures = Counter()
-    with ThreadPoolExecutor(max_workers=5) as pool:
+    hb_failures, teknosa_failures = Counter(), Counter()
+    with ThreadPoolExecutor(max_workers=6) as pool:
         trendyol = pool.submit(_trendyol_offers, transport, failures)
         mm = pool.submit(_mediamarkt_offers, mediamarkt, mm_failures) if mediamarkt is not None else None
         n11_task = pool.submit(n11_offers, n11, MODEL_NAMES, model_name, n11_failures) if n11 is not None else None
         vatan_task = pool.submit(vatan_offers, vatan, MODEL_NAMES, model_name, vatan_failures) if vatan is not None else None
         hb = pool.submit(_hepsiburada_offers, hepsiburada, hb_failures) if hepsiburada is not None else None
+        tek = pool.submit(_teknosa_offers, teknosa, teknosa_failures) if teknosa is not None else None
         observations, candidates = trendyol.result()
-        all_sources = [observations, *(task.result() for task in (mm, n11_task, vatan_task, hb) if task is not None)]
+        all_sources = [observations, *(task.result() for task in (mm, n11_task, vatan_task, hb, tek) if task is not None)]
     failures.update(mm_failures)
     failures.update(n11_failures)
     failures.update(vatan_failures)
     failures.update(hb_failures)
+    failures.update(teknosa_failures)
     observed = {name: [offer for source in all_sources for offer in source.get(name, [])]
                 for name in MODEL_NAMES}
     owners = defaultdict(set)
@@ -480,7 +497,8 @@ def main():
     report = audit(PriorityRetailerTransport(maximum_per_host=250), MediaMarktSource(get=compatible_get),
                    n11=PriorityRetailerTransport(maximum_per_host=260), vatan=VatanCategorySource(),
                    hepsiburada=PriorityRetailerTransport(maximum_per_host=12, get=_hepsiburada_public_get,
-                                                         browser_fallback=False))
+                                                         browser_fallback=False),
+                   teknosa=PriorityRetailerTransport(browser_fallback=False))
     args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     print(json.dumps({key: value for key, value in report.items() if key != 'models'}, ensure_ascii=False))
 

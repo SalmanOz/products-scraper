@@ -13,27 +13,35 @@ from xml.etree import ElementTree
 from bs4 import BeautifulSoup
 
 from laptop_retailer_sources import WORDS
-from priority_retailer_transport import PriorityRetailerTransport, compatible_get
+from priority_retailer_transport import PriorityRetailerTransport, compatible_get, product_host
 
 AKAKCE = 'www.akakce.com'
 CIMRI = 'www.cimri.com'
+EPEY = 'www.epey.com'
+SOURCES = (AKAKCE, CIMRI, EPEY)
 CATEGORIES = {
-    'phone': ('/cep-telefonu.html', '/cep-telefonlari'),
-    'laptop': ('/laptop-notebook.html', '/dizustu-bilgisayar'),
-    'monitor': ('/monitor.html', '/monitor'),
-    'tws': ('/bluetooth-kulaklik/tws.html', '/kulaklik/kulak-ici-bluetooth-kulaklik'),
-    'cpu': ('/islemci.html', '/islemci'),
-    'motherboard': ('/anakart.html', '/anakart'),
-    'ram': ('/ram.html', '/ram-bellekler'),
-    'gpu': ('/ekran-karti.html', '/ekran-kartlari'),
-    'ssd': ('/ssd.html', '/ssd-solid-state-drive'),
-    'case': ('/bilgisayar-kasasi.html', '/pc-kasalari'),
-    'psu': ('/power-supply.html', '/power-supply'),
-    'cooler': ('/islemci-sogutucu.html', '/islemci-sogutucu'),
+    'phone': ('/cep-telefonu.html', '/cep-telefonlari', '/akilli-telefonlar/'),
+    'tws': ('/bluetooth-kulaklik/tws.html', '/kulaklik/kulak-ici-bluetooth-kulaklik', '/kulaklik/'),
+    'laptop': ('/laptop-notebook.html', '/dizustu-bilgisayar', '/laptop/'),
+    'monitor': ('/monitor.html', '/monitor', '/monitor/'),
+    'cpu': ('/islemci.html', '/islemci', '/islemci/'),
+    'motherboard': ('/anakart.html', '/anakart', '/anakart/'),
+    'ram': ('/ram.html', '/ram-bellekler', '/bellek-ram/'),
+    'gpu': ('/ekran-karti.html', '/ekran-kartlari', '/ekran-karti/'),
+    'ssd': ('/ssd.html', '/ssd-solid-state-drive', '/sabit-disk/'),
+    'case': ('/bilgisayar-kasasi.html', '/pc-kasalari', '/bilgisayar-kasasi/'),
+    'psu': ('/power-supply.html', '/power-supply', '/power-supply-psu/'),
+    'cooler': ('/islemci-sogutucu.html', '/islemci-sogutucu', '/islemci-sogutucu/'),
 }
 CARD = {
     AKAKCE: re.compile(r'/[a-z0-9-]+/en-ucuz-[a-z0-9-]+-fiyati,(\d{4,12})\.html'),
-    CIMRI: re.compile(r'/[a-z0-9-]+/en-ucuz-[a-z0-9-]+-fiyatlari,(\d{4,12})'),
+    CIMRI: re.compile(r'/[a-z0-9-]+/en-ucuz-[a-z0-9-]+-fiyatlari,(a?\d{4,12})'),
+    EPEY: re.compile(r'/[a-z0-9-]+/[a-z0-9-]+\.html'),
+}
+CARD_SELECTOR = {
+    AKAKCE: '#CPL a.iC[href][title]',
+    CIMRI: 'a[href][title]:has(h3)',
+    EPEY: '#listele ul.metin.row[id] a.urunadi[href][title]',
 }
 MODEL_TOKEN = re.compile(r'[a-zA-Z0-9]+(?:[-./_][a-zA-Z0-9]+)*')
 STOP_SOURCE = {'http_403', 'http_429', 'challenge_page', 'source_circuit_open',
@@ -45,6 +53,8 @@ def category_url(host, path, page):
         return 'https://' + host + path
     if host == AKAKCE:
         return f'https://{host}{path.removesuffix(".html")},{page}.html'
+    if host == EPEY:
+        return f'https://{host}{path}{page}/'
     return f'https://{host}{path}?page={page}'
 
 
@@ -52,22 +62,36 @@ def comparison_cards(html, host, url):
     soup = BeautifulSoup(html, 'html.parser')
     cards = {}
     links = set()
-    for anchor in soup.select('a[href]'):
+    for anchor in soup.select('a[href], link[rel=next][href]'):
         try:
             target = urlsplit(urljoin(url, anchor['href']))
         except ValueError:
             continue
-        if target.scheme != 'https' or target.netloc != host:
+        if target.scheme == 'https' and target.netloc == host and not target.fragment:
+            links.add(unquote(target.geturl()))
+    for anchor in soup.select(CARD_SELECTOR[host]):
+        try:
+            target = urlsplit(urljoin(url, anchor['href']))
+        except ValueError:
             continue
-        links.add(unquote(target.geturl()))
-        match = CARD[host].fullmatch(unquote(target.path))
-        title = ' '.join(anchor.get('title', '').split())
-        if not match or not 3 <= len(title) <= 260 or host == CIMRI and not anchor.find('h3'):
+        path = unquote(target.path)
+        if (target.scheme != 'https' or target.netloc != host or not CARD[host].fullmatch(path)
+                or target.fragment):
             continue
-        cards.setdefault(match[1], {
-            'id': match[1], 'title': title,
-            'url': target._replace(path=unquote(target.path), query='', fragment='').geturl(),
-        })
+        if host == EPEY:
+            if path.split('/')[1] != urlsplit(url).path.split('/')[1]:
+                continue
+            source_id = anchor.find_parent('ul', class_='metin')['id']
+            if not re.fullmatch(r'[1-9]\d{2,11}', source_id):
+                continue
+        else:
+            source_id = CARD[host].fullmatch(path)[1]
+        title = ' '.join(anchor['title'].split())
+        if 3 <= len(title) <= 260:
+            cards.setdefault(source_id, {
+                'id': source_id, 'title': title,
+                'url': target._replace(path=path, query='', fragment='').geturl(),
+            })
     return cards.values(), links
 
 
@@ -117,23 +141,26 @@ def in_scope(kind, title):
         return False
     if kind == 'ram' and re.search(r'\b(?:sodimm|so dimm|notebook|laptop)\b', title):
         return False
-    if kind == 'ssd' and re.search(r'\b(?:tasinabilir|harici|portable|external)\b', title):
+    if kind == 'ssd' and re.search(r'\b(?:tasinabilir|harici|portable|external|hdd)\b', title):
+        return False
+    if kind == 'tws' and re.search(r'\b(?:intercom|kulak ustu|yedek|kilif|kablolu)\b', title):
         return False
     return True
 
 
-def scan_source(host, kinds, indexes, start_page, pages):
+def scan_source(host, kinds, indexes, start_page, pages, cursors=None):
     reader = PriorityRetailerTransport(browser_fallback=False, get=compatible_get)
-    reports, candidates = [], []
+    reports, observations = [], []
     stopped = None
     for kind in kinds:
-        akakce_path, cimri_path = CATEGORIES[kind]
-        path = cimri_path if host == CIMRI else akakce_path
+        path = CATEGORIES[kind][SOURCES.index(host)]
+        previous = (cursors or {}).get(f'{host}/{kind}', {})
+        first_page = previous.get('nextPage') or start_page
         stats = Counter()
         seen = set()
         state = 'page_limit'
-        next_page = start_page
-        for page in range(start_page, start_page + pages):
+        next_page = first_page
+        for page in range(first_page, first_page + pages):
             if stopped:
                 state = stopped
                 break
@@ -141,33 +168,124 @@ def scan_source(host, kinds, indexes, start_page, pages):
             body, reason, _ = reader._read_document(url, host, category=True)
             if body is None:
                 state = reason
-                if reason in STOP_SOURCE or reason.startswith('robots_'):
+                if reason in STOP_SOURCE or reason.startswith('robots_') and reason != 'robots_disallowed':
                     stopped = reason
                 break
-            stats['pages'] += 1
             cards, links = comparison_cards(body, host, url)
+            if not cards:
+                # A changed template or an empty response is not proof of the end.
+                state = 'product_cards_missing'
+                break
+            stats['pages'] += 1
             distinct = [card for card in cards if card['id'] not in seen]
             if not distinct:
-                state = 'no_new_product_cards'
-                next_page = None
+                state = 'pagination_repeated_cards'
                 break
             seen.update(card['id'] for card in distinct)
             stats['cards'] += len(distinct)
             for card in distinct:
-                if not in_scope(kind, card['title']):
+                if not in_scope(kind, card['title']) or (
+                        host == EPEY and kind == 'tws' and 'tam kablosuz' not in WORDS(card['title'])):
                     stats['excluded'] += 1
                     continue
                 known = catalog_match(card['title'], indexes[kind])
                 stats['matched' if known else 'unmatched'] += 1
-                if not known:
-                    candidates.append({**card, 'source': host, 'category': kind})
-            if category_url(host, path, page + 1) not in links:
+                observations.append({**card, 'source': host, 'category': kind, 'catalogSlug': known})
+            next_page = page + 1
+            if category_url(host, path, next_page) not in links:
                 state = 'no_next_page_link'
                 next_page = None
                 break
-            next_page = page + 1
         reports.append({'source': host, 'category': kind, 'status': state, 'nextPage': next_page, **stats})
-    return reports, candidates
+    return reports, observations
+
+
+def read_state(path):
+    if path is None or not path.exists():
+        return {'version': 1, 'sources': {}, 'products': {}}
+    data = json.loads(path.read_text(encoding='utf-8'))
+    if data.get('version') != 1 or not isinstance(data.get('sources'), dict) or not isinstance(data.get('products'), dict):
+        raise ValueError('Unsupported competitor discovery state')
+    return data
+
+
+def merge_state(state, reports, observations, indexes, now):
+    for row in reports:
+        key = f"{row['source']}/{row['category']}"
+        previous = state['sources'].get(key, {})
+        state['sources'][key] = {
+            **row,
+            'lastAttemptAt': now,
+            'completedPasses': previous.get('completedPasses', 0) + (row['nextPage'] is None),
+        }
+    for row in observations:
+        key = f"{row['source']}/{row['category']}/{row['id']}"
+        previous = state['products'].get(key, {})
+        state['products'][key] = {**previous, **row, 'firstSeenAt': previous.get('firstSeenAt', now),
+                                  'lastSeenAt': now}
+    for row in state['products'].values():
+        if row['category'] in indexes:
+            row['catalogSlug'] = catalog_match(row['title'], indexes[row['category']])
+    return state
+
+
+def epey_retailer_leads(html):
+    soup = BeautifulSoup(html, 'html.parser')
+    leads = set()
+    for anchor in soup.select('a.git[data-link]:has(.urun_adi)'):
+        raw = unquote(anchor['data-link'])
+        if len(raw) > 1000 or re.search(r'[\x00-\x20\\]', raw):
+            continue
+        try:
+            route = urlsplit(raw)
+        except ValueError:
+            continue
+        if route.scheme != 'https' or route.fragment:
+            continue
+        first_party = (
+            route.netloc == 'www.vatanbilgisayar.com' and re.fullmatch(r'/[a-z0-9-]+\.html', route.path)
+            or route.netloc == 'www.mediamarkt.com.tr' and re.fullmatch(
+                r'/tr/product/_[a-z0-9-]+-[1-9]\d{5,11}\.html', route.path)
+        )
+        if product_host(raw) or first_party and not route.query:
+            leads.add(raw)
+    return sorted(leads)
+
+
+def scan_retailer_leads(state, kinds, maximum, now):
+    if maximum == 0:
+        return
+    candidates = defaultdict(list)
+    for row in state['products'].values():
+        if row['source'] == EPEY and row['category'] in kinds and row['catalogSlug'] is None:
+            candidates[row['category']].append(row)
+    for rows in candidates.values():
+        rows.sort(key=lambda row: (row.get('lastLeadAttemptAt', ''), row['firstSeenAt'], row['id']))
+    reader = PriorityRetailerTransport(browser_fallback=False, get=compatible_get, maximum_per_host=maximum)
+    offsets = Counter()
+    for turn in range(maximum):
+        active = [kind for kind in kinds if offsets[kind] < len(candidates[kind])]
+        if not active:
+            break
+        kind = active[turn % len(active)]
+        row = candidates[kind][offsets[kind]]
+        offsets[kind] += 1
+        html, reason, _ = reader._read_document(row['url'], EPEY)
+        row['lastLeadAttemptAt'] = now
+        if html is None:
+            row['leadStatus'] = reason
+            if reason in STOP_SOURCE:
+                break
+        else:
+            row['retailerLeads'] = epey_retailer_leads(html)
+            row['leadStatus'] = 'direct_retailer_links' if row['retailerLeads'] else 'direct_retailer_links_missing'
+
+
+def write_json(path, payload):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pending = path.with_suffix(path.suffix + '.tmp')
+    pending.write_text(json.dumps(payload, ensure_ascii=False, separators=(',', ':')) + '\n', encoding='utf-8')
+    pending.replace(path)
 
 
 def main():
@@ -176,31 +294,47 @@ def main():
     parser.add_argument('--phone-sitemap', required=True, type=Path)
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('--category', action='append', choices=CATEGORIES)
+    parser.add_argument('--source', action='append', choices=SOURCES)
+    parser.add_argument('--state', type=Path, help='Resume category cursors and retain deduplicated candidate IDs')
     parser.add_argument('--start-page', type=int, default=1)
     parser.add_argument('--pages', type=int, default=2)
+    parser.add_argument('--lead-limit', type=int, default=0, help='Maximum Epey detail pages for direct retailer URLs')
     args = parser.parse_args()
     kinds = list(dict.fromkeys(args.category or CATEGORIES))
     if args.start_page < 1 or args.pages < 1 or len(kinds) * args.pages > 40:
         parser.error('Select a positive page number and up to 40 category requests per source')
+    if not 0 <= args.lead_limit <= 40:
+        parser.error('Select up to 40 Epey detail pages per run')
     inventory = load_inventory(args.site_data, args.phone_sitemap)
     indexes = {kind: identity_index(inventory[kind]) for kind in kinds}
-    with ThreadPoolExecutor(2) as pool:
-        tasks = [pool.submit(scan_source, host, kinds, indexes, args.start_page, args.pages)
-                 for host in (AKAKCE, CIMRI)]
+    state = read_state(args.state)
+    hosts = list(dict.fromkeys(args.source or SOURCES))
+    with ThreadPoolExecutor(max_workers=len(hosts)) as pool:
+        tasks = [pool.submit(scan_source, host, kinds, indexes, args.start_page, args.pages, state['sources'])
+                 for host in hosts]
         batches = [task.result() for task in tasks]
     sources = [row for reports, _ in batches for row in reports]
-    candidates = [row for _, rows in batches for row in rows]
-    report = {'checkedAt': datetime.now(timezone.utc).isoformat(),
-              'inventory': {kind: len(inventory[kind]) for kind in kinds},
+    observed = [row for _, rows in batches for row in rows]
+    now = datetime.now(timezone.utc).isoformat()
+    merge_state(state, sources, observed, indexes, now)
+    if EPEY in hosts:
+        scan_retailer_leads(state, kinds, args.lead_limit, now)
+    if args.state is not None:
+        write_json(args.state, state)
+    candidates = [row for row in state['products'].values() if row['catalogSlug'] is None]
+    report = {'checkedAt': now, 'inventory': {kind: len(inventory[kind]) for kind in kinds},
               'sources': sources, 'candidates': candidates}
-    args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+    write_json(args.output, report)
     print(json.dumps({
         'pages': sum(row.get('pages', 0) for row in sources),
         'cards': sum(row.get('cards', 0) for row in sources),
         'matched': sum(row.get('matched', 0) for row in sources),
+        'uniqueSourceProducts': len({(r['source'], r['id']) for r in state['products'].values()}),
         'candidateRows': len(candidates),
+        'candidateRowsWithRetailerLinks': sum(bool(row.get('retailerLeads')) for row in candidates),
         'output': str(args.output),
     }, ensure_ascii=False))
+
 
 
 if __name__ == '__main__':

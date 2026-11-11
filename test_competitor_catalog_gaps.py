@@ -1,16 +1,20 @@
 import unittest
 
-from competitor_catalog_gaps import AKAKCE, CIMRI, catalog_match, comparison_cards, identity_index, in_scope
+from competitor_catalog_gaps import (AKAKCE, CIMRI, EPEY, catalog_match, category_url, comparison_cards, epey_retailer_leads,
+                                     identity_index, in_scope, merge_state, read_state)
 
 
 class CompetitorCatalogGapsTest(unittest.TestCase):
     def test_akakce_deduplicates_product_ids_and_keeps_native_pagination(self):
         url = 'https://' + AKAKCE + '/ssd.html'
         html = '''
-            <a href="/ssd/en-ucuz-example-fiyati%2C123456.html?ref=list" title="Example SSD">₺500</a>
-            <a href="/ssd/en-ucuz-example-fiyati,123456.html" title="Example SSD">₺510</a>
-            <a href="https://other.example/ssd/en-ucuz-other-fiyati,987654.html" title="Other SSD">Other</a>
-            <a href="/ssd,2.html">Next</a>
+            <ul id="CPL">
+            <a class="iC" href="/ssd/en-ucuz-example-fiyati%2C123456.html?ref=list" title="Example SSD">₺500</a>
+            <a class="iC" href="/ssd/en-ucuz-example-fiyati,123456.html" title="Example SSD">₺510</a>
+            <a class="iC" href="https://other.example/ssd/en-ucuz-other-fiyati,987654.html" title="Other SSD">Other</a>
+            </ul>
+            <footer><a href="/ssd/en-ucuz-other-fiyati,123457.html" title="Unrelated">Footer</a></footer>
+            <link rel="next" href="/ssd,2.html">
         '''
         cards, links = comparison_cards(html, AKAKCE, url)
         self.assertEqual(list(cards), [{'id': '123456', 'title': 'Example SSD',
@@ -22,10 +26,51 @@ class CompetitorCatalogGapsTest(unittest.TestCase):
         html = '''
             <a href="/islemci/en-ucuz-amd-islemci-fiyatlari" title="AMD İşlemci">AMD</a>
             <a href="/islemci/en-ucuz-amd-example-fiyatlari,123456" title="AMD Example"><h3>AMD Example</h3></a>
+            <a href="/islemci/en-ucuz-intel-example-fiyatlari%2Ca345678" title="Intel Example"><h3>Intel Example</h3></a>
             <a href="/islemci/en-ucuz-intel-example-fiyatlari,987654" title="Intel Example">Footer</a>
         '''
         cards, _ = comparison_cards(html, CIMRI, url)
-        self.assertEqual([r['id'] for r in cards], ['123456'])
+        self.assertEqual([r['id'] for r in cards], ['123456', 'a345678'])
+
+    def test_epey_deduplicates_native_rows_and_ignores_recommendations(self):
+        url = category_url(EPEY, '/kulaklik/', 1)
+        html = '''
+          <div id="listele">
+            <ul class="metin row" id="765432"><li><a class="urunadi" href="/kulaklik/example.html"
+              title="Example (Model A) Tam Kablosuz Kulaklık">Example</a></li></ul>
+            <ul class="metin row" id="765432"><li><a class="urunadi" href="/kulaklik/example.html"
+              title="Example (Model A) Tam Kablosuz Kulaklık">Example</a></li></ul>
+          </div>
+          <a class="urunadi" href="/kulaklik/other.html" title="Other">Related</a>
+          <a href="/kulaklik/2/">İleri</a>
+        '''
+        cards, links = comparison_cards(html, EPEY, url)
+        self.assertEqual([r['id'] for r in cards], ['765432'])
+        self.assertIn(category_url(EPEY, '/kulaklik/', 2), links)
+
+    def test_epey_direct_leads_drop_tracking_and_ignore_displayed_prices(self):
+        html = '''
+          <a class="git" data-link="https%3A%2F%2Fwww.teknosa.com%2Fornek-p-100000063496">
+            <span class="urun_adi">Model</span><span class="urun_fiyat">999 TL</span></a>
+          <a class="git" data-link="https://www.epey.com/yonlendir/123"><span class="urun_adi">Model</span></a>
+          <a class="git" data-link="https://www.teknosa.com.evil.example/ornek-p-100000063496">
+            <span class="urun_adi">Model</span></a>
+        '''
+        self.assertEqual(epey_retailer_leads(html), ['https://www.teknosa.com/ornek-p-100000063496'])
+
+    def test_resume_keeps_earlier_rows_and_reconciles_against_current_catalog(self):
+        state = read_state(None)
+        card = {'id': '765432', 'source': EPEY, 'category': 'tws', 'title': 'Example', 'url': 'url'}
+        report = {'source': EPEY, 'category': 'tws', 'nextPage': 3, 'status': 'page_limit'}
+        indexes = {'tws': identity_index([])}
+        merge_state(state, [report], [card], indexes, 'first')
+        self.assertEqual(state['sources'][EPEY + '/tws']['nextPage'], 3)
+        indexes['tws'] = identity_index([{'name': 'Example', 'slug': 'example'}])
+        merge_state(state, [{**report, 'nextPage': None, 'status': 'no_next_page_link'}], [], indexes, 'second')
+        self.assertEqual(state['sources'][EPEY + '/tws']['completedPasses'], 1)
+        self.assertEqual(list(state['products'].values()), [
+            {**card, 'firstSeenAt': 'first', 'lastSeenAt': 'first', 'catalogSlug': 'example'},
+        ])
 
     def test_requires_whole_and_unambiguous_manufacturer_code(self):
         parts = [

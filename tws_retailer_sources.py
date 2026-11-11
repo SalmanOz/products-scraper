@@ -12,7 +12,7 @@ from bs4 import BeautifulSoup
 from n11_catalog_source import _parse_selected_listing, discover_product_sellers, public_search_card_document
 from retailer_barcode import retailer_gtin13
 from retailer_offer_refresh import _is_conditional_price, _schema_nodes, _type_is
-from teknosa_reviewed_source import _amount, _cash_price
+from teknosa_reviewed_source import _amount, _cash_price, parse_exact_first_party_offer
 from tr_price_scraper import TRPriceScraper
 from vatan_category_source import BOT, VatanCategorySource
 
@@ -62,6 +62,25 @@ def selected_n11_tws(html, url, name, model_name):
         return matches, {'model': name, '_image': photo, '_legal_name': _words(seller.get('companyName')),
                          '_tax_key': tax if isinstance(tax, str) and re.fullmatch(r'\d{10,11}', tax) else ''}
     return _parse_selected_listing(html, url, name, {}, verify_tws=verify_product)
+
+
+def selected_teknosa_tws(html, url, name, model_name):
+    def verify(cart, title, product):
+        brand = product.get('brand')
+        brand = brand.get('name') if isinstance(brand, dict) else brand
+        if (not _words(brand) or _words(brand) != _words(cart.get('data-product-brand'))
+                or model_name(title, brand) != name
+                or _words(cart.get('data-product-category')) != 'bluetooth kulaklik'):
+            return None
+        images = product.get('image')
+        if isinstance(images, str):
+            images = [images]
+        hosts = {'img-teknosa-sap.mncdn.com', 'reimg-teknosa-cloud-prod.mncdn.com'}
+        photo = next((value for image in images or [] if (value := selected_photo(image, hosts))), None)
+        return {'platform': 'Teknosa', 'model': name, 'condition': 'new', '_image': photo,
+                '_legal_name': 'teknosa ic ve dis ticaret anonim sirketi'}
+
+    return parse_exact_first_party_offer(html, url, verify_product=verify)
 
 
 def selected_hepsiburada_tws(html, url, name, model_name):

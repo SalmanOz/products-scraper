@@ -51,20 +51,22 @@ def _cash_price(text):
     return _amount(match[1].replace('.', '').replace(',', '.')) if match else None
 
 
-def parse_exact_first_party_offer(html: str, final_url: str = URL, catalog_profile=None):
+def parse_exact_first_party_offer(html: str, final_url: str = URL, catalog_profile=None, *, verify_product=None):
     """Return an offer only when the selected first-party buy box is provable."""
-    generic = catalog_profile is not None
+    generic = catalog_profile is not None or verify_product is not None
     name, specs, product_id = NAME, SPECS, PRODUCT_ID
     if generic:
         from priority_retailer_transport import product_host
-        if (not isinstance(catalog_profile, dict)
-                or product_host(final_url) != 'www.teknosa.com'):
+        if product_host(final_url) != 'www.teknosa.com' or urlparse(final_url).query:
             return None, 'wrong_or_oversized_pdp'
-        name, specs = catalog_profile.get('name'), catalog_profile.get('specs')
-        if (not isinstance(name, str) or not isinstance(specs, dict)
-                or not TRPriceScraper._spec_int(specs.get('ram_gb'))
-                or not TRPriceScraper._spec_int(specs.get('storage_gb'))):
-            return None, 'catalog_variant_missing'
+        if verify_product is None:
+            if not isinstance(catalog_profile, dict):
+                return None, 'wrong_or_oversized_pdp'
+            name, specs = catalog_profile.get('name'), catalog_profile.get('specs')
+            if (not isinstance(name, str) or not isinstance(specs, dict)
+                    or not TRPriceScraper._spec_int(specs.get('ram_gb'))
+                    or not TRPriceScraper._spec_int(specs.get('storage_gb'))):
+                return None, 'catalog_variant_missing'
         product_id = final_url.rsplit('-p-', 1)[1]
     if ((not generic and final_url != URL) or not isinstance(html, str)
             or len(html.encode('utf-8')) > MAX_HTML_BYTES):
@@ -88,7 +90,7 @@ def parse_exact_first_party_offer(html: str, final_url: str = URL, catalog_profi
         if len(selected_carts) == 1 and selected_carts[0].get('data-product-name') in observed_titles:
             title = selected_carts[0]['data-product-name']
     matcher = TRPriceScraper()
-    if (not matcher.is_strict_match(name, title, specs)
+    if (verify_product is None and not matcher.is_strict_match(name, title, specs)
             or not generic and not re.search(r'\bBeyaz\b', title, re.I)
             or re.search(r'outlet|teşhir|teshir|yenilen|ikinci el', title, re.I)):
         return None, 'selected_variant_mismatch'
@@ -121,7 +123,7 @@ def parse_exact_first_party_offer(html: str, final_url: str = URL, catalog_profi
     schema_title = re.sub(r'(?<=\d)/(?=\d)', ' ', str(product.get('name') or ''))
     selected_title = re.sub(r'(?<=\d)/(?=\d)', ' ', title)
     if ((schema_title != selected_title if generic else product.get('name') != title)
-            or not matcher.is_strict_match(name, str(product.get('name') or ''), specs)):
+            or verify_product is None and not matcher.is_strict_match(name, str(product.get('name') or ''), specs)):
         return None, 'schema_variant_mismatch'
     offer = product.get('offers')
     seller = offer.get('seller') if isinstance(offer, dict) else None
@@ -183,7 +185,12 @@ def parse_exact_first_party_offer(html: str, final_url: str = URL, catalog_profi
                       selected_teknosa_first_party_verified=True, merchant_id='1001',
                       sku=product_id, listing_id=product_id,
                       source_render_state='pending_selected_cart' if pending_cart else 'enabled_selected_cart')
-    if not matcher.has_observed_offer_evidence(name, result, specs):
+    if verify_product is not None:
+        identity = verify_product(cart, title, product)
+        if identity is None:
+            return None, 'catalog_variant_mismatch'
+        result.update(identity)
+    elif not matcher.has_observed_offer_evidence(name, result, specs):
         return None, 'catalog_variant_mismatch'
     return result, 'observed_exact_first_party_cash_offer'
 
