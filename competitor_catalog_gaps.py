@@ -315,6 +315,8 @@ def scan_source(host, kinds, indexes, start_page, pages, cursors=None, *, collec
     if host == URUNAI:
         return scan_urunai(reader, kinds, indexes)
     stopped = None
+    if host == CIMRI and cimri_sitemap:
+        reports, observations = scan_cimri_sitemap(kinds, indexes, cursors or {}, reader=reader)
     if host in (KARSILASTIRICI, PAHALIMI) and 'phone' in kinds:
         state, observations = known_phones_from_sitemap(reader, host, indexes['phone'])
         reports.append({'source': host, 'category': 'phone_sitemap', 'status': state,
@@ -372,10 +374,6 @@ def scan_source(host, kinds, indexes, start_page, pages, cursors=None, *, collec
                 next_page = None
                 break
         reports.append({'source': host, 'category': kind, 'status': state, 'nextPage': next_page, **stats})
-    if host == CIMRI and cimri_sitemap and not stopped:
-        sitemap_reports, sitemap_rows = scan_cimri_sitemap(kinds, indexes, cursors or {}, reader=reader)
-        reports.extend(sitemap_reports)
-        observations = sitemap_rows + observations
     return reports, observations
 
 

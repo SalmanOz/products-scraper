@@ -1,7 +1,7 @@
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
-from competitor_catalog_gaps import (AKAKCE, CIMRI, EPEY, KARSILASTIRICI, PAHALIMI, URUNAI, candidate_family, cimri_sitemap_cards, scan_cimri_sitemap, urunai_market_slugs, urunai_sitemap_cards, catalog_match, category_url, comparison_cards, comparison_retailer_leads,
+from competitor_catalog_gaps import (AKAKCE, CIMRI, EPEY, KARSILASTIRICI, PAHALIMI, URUNAI, candidate_family, cimri_sitemap_cards, scan_cimri_sitemap, scan_source, urunai_market_slugs, urunai_sitemap_cards, catalog_match, category_url, comparison_cards, comparison_retailer_leads,
                                      identity_index, in_scope, merge_state, read_state)
 
 
@@ -187,3 +187,14 @@ class CompetitorCatalogGapsTest(unittest.TestCase):
         rows, _ = scan_cimri_sitemap(['phone'], {'phone': identity_index([])},
                                      {f'{CIMRI}/product_sitemap': {'nextPage': 3}}, reader=reader)
         self.assertEqual((rows[0]['shard'], rows[0]['nextPage'], rows[0]['status']), (3, 3, 'http_429'))
+
+    def test_cimri_sitemap_is_read_before_a_category_denial(self):
+        index = '<sitemapindex><sitemap><loc>https://www.cimri.com/sitemaps/product_8.xml</loc></sitemap></sitemapindex>'
+        xml = '<urlset><url><loc>https://www.cimri.com/cep-telefonlari/en-ucuz-example-fiyatlari,123456</loc></url></urlset>'
+        reader = Mock()
+        reader._read_document.side_effect = [(index, 'document_read', 200), (xml, 'document_read', 200),
+                                             (None, 'http_403', 403)]
+        with patch('competitor_catalog_gaps.comparison_reader', return_value=reader):
+            reports, candidates = scan_source(CIMRI, ['phone'], {'phone': identity_index([])}, 1, 1, cimri_sitemap=True)
+        self.assertEqual([r['status'] for r in reports], ['sitemap_read', 'http_403'])
+        self.assertEqual([r['id'] for r in candidates], ['123456'])
