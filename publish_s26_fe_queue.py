@@ -130,7 +130,7 @@ def main():
     publish_verified(CANDIDATE, sourced_specifications(), rows, photo)
 
 
-def publish_verified(candidate, sources, rows, photo):
+def publish_verified(candidate, sources, rows, photo, *, publish=True):
     slug = candidate['slug']
     client = SourceIngestionClient.from_env()
     capability = client._json_body(client._request_with_retry('GET',
@@ -149,6 +149,8 @@ def publish_verified(candidate, sources, rows, photo):
     validation = submit(client, payload)
     if validation.get('eligible') is not True:
         raise ValueError('catalog_validation_rejected')
+    if not publish:
+        return validation
     image = R2ProductImageStore(required=True).upload(photo, slug, 1)
     if image != image_url:
         raise ValueError('catalog_image_destination_changed')
@@ -156,6 +158,7 @@ def publish_verified(candidate, sources, rows, photo):
     if result.get('committed') is not True or result.get('slug') != slug:
         raise ValueError('catalog_publication_unconfirmed')
     print(json.dumps(result), flush=True)
+    return result
 
 
 if __name__ == '__main__':

@@ -115,7 +115,7 @@ PAIR_REQUIRED_MODEL_NAMES = (
     'Samsung Galaxy Buds FE', 'Samsung Galaxy Buds3', 'Samsung Galaxy Buds4',
     'Anker Soundcore Liberty 4 NC', 'Anker Soundcore R50i NC', 'Samsung Galaxy Buds3 FE',
     'JBL Tour Pro 3', 'Sony WF-1000XM5',
-    'JBL Live Beam 3', 'Anker Soundcore Sport X20',
+    'JBL Live Beam 3', 'Anker Soundcore Sport X20', 'JBL Live Buds 3', 'JBL Endurance Race 2',
 )
 PILOT_MODEL_NAMES = tuple(f'{brand} {name}' for brand, name, _ in COHORT)
 MODEL_NAMES = (*PILOT_MODEL_NAMES, *(f'{brand} {name}' for brand, name, _ in EXPANSION_COHORT),
@@ -385,6 +385,10 @@ def select_sku_offers(observations):
 
 
 HEPSIBURADA_TWS_TARGETS = {
+    'JBL Endurance Race 2': (
+        'https://www.hepsiburada.com/jbl-endurance-race2-tws-kulaklik-ie-siyah-p-HBCV000095WJQ4',
+        '1200130014291'),
+
     'Anker Soundcore Sport X20': (
         'https://www.hepsiburada.com/anker-soundcore-sport-x20-kablosuz-egzersiz-kulakligi-'
         'gurultu-engelleme-siyah-a3968-p-HBCV0000735D89', '0194644187019'),

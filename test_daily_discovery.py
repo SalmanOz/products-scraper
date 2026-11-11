@@ -165,6 +165,17 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual([payload['mode'] for method, payload in fixture[3] if method == 'POST'], ['validate'])
         self.assertEqual(report['created'], 0)
 
+    def test_exact_queue_failure_never_falls_through_to_single_offer_discovery(self):
+        fixture = self.fixture((56, 57))
+        candidate = {'name': 'Samsung Galaxy A56', 'slug': 'samsung-galaxy-a56',
+                     'evidenceUrl': 'https://www.samsung.com/tr/smartphones/galaxy-a/galaxy-a56/'}
+        unavailable = Mock(side_effect=ValueError('exact_seller_changed'))
+        report = self.run_fixture(fixture, publish=True, reviewed=((candidate, Mock(), unavailable),))
+        self.assertEqual([(row['slug'], row['status']) for row in report['candidates']],
+                         [('samsung-galaxy-a56', 'held'), ('samsung-galaxy-a57', 'created')])
+        self.assertEqual({payload['candidate']['slug'] for method, payload in fixture[3] if method == 'POST'},
+                         {'samsung-galaxy-a57'})
+
     def test_missing_image_does_not_discard_valid_technical_facts(self):
         fixture = self.fixture()
         original = fixture[2].scrape_product_details.side_effect

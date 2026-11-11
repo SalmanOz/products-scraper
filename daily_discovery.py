@@ -295,7 +295,7 @@ def submit(client, payload):
 
 
 def run_discovery(*, client, reader, specs, price_scraper, refresher, publish=False,
-                  previous=None, report=None, checkpoint=None):
+                  previous=None, report=None, checkpoint=None, reviewed=()):
     report = report if report is not None else {}
     report.update({'contract': CONTRACT, 'started_at': utc_now(), 'publish_enabled': publish,
                    'sources': [], 'candidates': [], 'created': 0})
@@ -307,14 +307,50 @@ def run_discovery(*, client, reader, specs, price_scraper, refresher, publish=Fa
     identities = {model_key(product.name) for product in catalog}
     existing_names = [product.name for product in catalog]
     slugs = {product.slug for product in catalog}
+    for candidate, specifications, prepare in reviewed:
+        slug = candidate['slug']
+        if (report['created'] >= MAX_PUBLICATIONS or slug in slugs
+                or any(may_duplicate(candidate['name'], name) for name in existing_names)):
+            continue
+        from publish_s26_fe_queue import publish_verified
+        result = {'slug': slug, 'name': candidate['name'], 'evidence_url': candidate['evidenceUrl']}
+        report['candidates'].append(result)
+        try:
+            rows, photo = prepare()
+            publication = publish_verified(candidate, specifications(), rows, photo, publish=publish)
+            status = publication.get('outcome', 'ready_not_published')
+            result.update(status=status, merchants=len(rows))
+            if status == 'created':
+                report['created'] += 1
+            if status in ('created', 'existing'):
+                slugs.add(slug)
+                existing_names.append(candidate['name'])
+        except SourceIngestionError as error:
+            body = error.response_body
+            if body.get('committed') is True:
+                result.update(status='committed_needs_attention', reasons=['post_commit_scoring_failed'])
+                if body.get('outcome') == 'created':
+                    report['created'] += 1
+                slugs.add(slug)
+                existing_names.append(candidate['name'])
+            else:
+                result.update(status='held', reasons=body.get('issues', [f'server_http_{error.status_code}']))
+        except (ValueError, requests.RequestException) as error:
+            result.update(status='held', reasons=[type(error).__name__])
+        finally:
+            if checkpoint:
+                checkpoint(report)
+    reviewed_names = [candidate['name'] for candidate, *_ in reviewed]
+    reviewed_slugs = {candidate['slug'] for candidate, *_ in reviewed}
     candidates = {}
     for brand, url in LISTINGS.items():
         try:
             found = discover_candidates(brand, reader.read(url), url)
             report['sources'].append({'brand': brand, 'status': 'ok' if found else 'no_phone_links', 'discovered': len(found)})
             for item in found:
-                if (item['slug'] not in slugs and model_key(item['name']) not in identities and
-                        not any(may_duplicate(item['name'], name) for name in existing_names)):
+                if (item['slug'] not in slugs and item['slug'] not in reviewed_slugs
+                        and model_key(item['name']) not in identities
+                        and not any(may_duplicate(item['name'], name) for name in (*existing_names, *reviewed_names))):
                     candidates.setdefault(item['slug'], item)
         except Exception as error:
             # Exception messages may contain request diagnostics; reports keep only type/reason.
@@ -440,9 +476,10 @@ def main():
             image_store=DiscoveryImageStore(required=True))
         state_path = Path(args.state)
         previous = load_previous_state(state_path)
+        from publish_redmi_note_17_pro_max_queue import CANDIDATE, specifications, prepare
         run_discovery(client=client, reader=reader, specs=specs, price_scraper=TRPriceScraper(),
                       refresher=RetailerOfferRefresher(), publish=args.publish, previous=previous, report=report,
-                      checkpoint=checkpoint)
+                      checkpoint=checkpoint, reviewed=((CANDIDATE, specifications, prepare),))
     except Exception as error:
         report['fatal'] = type(error).__name__
         code = 1

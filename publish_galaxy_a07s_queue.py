@@ -58,12 +58,13 @@ def specifications():
             for key, value, origin, url in sources]
 
 
-def ozgur_offer(html, legal_html):
+def ozgur_offer(html, legal_html, *, url=OZGUR, name=NAME, specs=SPECS, mpn=MPN,
+                gtin=GTIN, brand='Samsung'):
     soup = BeautifulSoup(html, 'html.parser')
     canonical = soup.select_one('link[rel="canonical"]')
     roots = soup.select('.oi-product-detail[data-product-id][data-oi-view-variant]')
-    products = [item for item in _schema_nodes(soup, OZGUR) if item.get('@type') == 'Product']
-    if not canonical or canonical.get('href') != OZGUR or len(products) != 1 or len(roots) != 1:
+    products = [item for item in _schema_nodes(soup, url) if item.get('@type') == 'Product']
+    if not canonical or canonical.get('href') != url or len(products) != 1 or len(roots) != 1:
         raise ValueError('ozgur_selected_page_unverified')
     product, root = products[0], roots[0]
     offer = product.get('offers') or {}
@@ -81,11 +82,11 @@ def ozgur_offer(html, legal_html):
     legal = BeautifulSoup(legal_html, 'html.parser').get_text(' ', strip=True)
     company = re.search(r'Satıcı:\s*(.+?)\s+Vergi dairesi:', legal)
     price = _amount(offer.get('price'))
-    if (not company or not title or product.get('name') != title or product.get('url') != OZGUR
-            or not TRPriceScraper().is_strict_match(NAME, title, SPECS) or product.get('mpn') != MPN
-            or not model or model.get_text(strip=True) != MPN or product.get('gtin13') != GTIN
-            or (product.get('brand') or {}).get('name') != 'Samsung' or not photo_url
-            or photo_url not in product.get('image', []) or offer.get('url') != OZGUR
+    if (not company or not title or product.get('name') != title or product.get('url') != url
+            or not TRPriceScraper().is_strict_match(name, title, specs) or product.get('mpn') != mpn
+            or not model or model.get_text(strip=True) != mpn or product.get('gtin13') != gtin
+            or (product.get('brand') or {}).get('name') != brand or not photo_url
+            or photo_url not in product.get('image', []) or offer.get('url') != url
             or (offer.get('seller') or {}).get('name') != 'Özgür İletişim'
             or offer.get('availability') != 'https://schema.org/InStock'
             or offer.get('itemCondition') != 'https://schema.org/NewCondition' or offer.get('priceCurrency') != 'TRY'
@@ -97,10 +98,10 @@ def ozgur_offer(html, legal_html):
     merchant = 'Özgür İletişim'
     proof = {'version': 'selected-retailer-sku-v1', 'platform': merchant, 'merchant_id': 'ozgur-iletisim',
              'merchant_name': merchant, 'product_id': root['data-product-id'], 'listing_id': root['data-oi-view-variant'],
-             'sku': product['sku'], 'gtin13': GTIN, **SPECS}
+             'sku': product['sku'], 'gtin13': gtin, **specs}
     return {'merchant': merchant, 'platform': merchant, '_legal_name': TRPriceScraper._normalize_words(company[1]),
-            'price': float(price), 'currency': 'TRY', 'availability': 'in_stock', 'gtin13': GTIN,
-            'source_title': title, 'url': OZGUR, 'observed_at': datetime.now(timezone.utc).isoformat(),
+            'price': float(price), 'currency': 'TRY', 'availability': 'in_stock', 'gtin13': gtin,
+            'source_title': title, 'url': url, 'observed_at': datetime.now(timezone.utc).isoformat(),
             'source_variant_evidence': proof}, photo_url
 
 

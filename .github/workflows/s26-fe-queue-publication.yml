@@ -13,6 +13,7 @@ on:
           - redmi-note-17-5g
           - galaxy-a07s
           - redmi-note-17-pro-5g
+          - redmi-note-17-pro-max-5g
       publish:
         description: Publish the selected model after live validation
         required: true
@@ -69,5 +70,11 @@ jobs:
             redmi-note-17-5g) python publish_redmi_note_17_queue.py "${args[@]}" ;;
             galaxy-a07s) python publish_galaxy_a07s_queue.py "${args[@]}" ;;
             redmi-note-17-pro-5g) python publish_redmi_note_17_pro_queue.py "${args[@]}" ;;
+            redmi-note-17-pro-max-5g)
+              if [[ "$PUBLISH" == "true" ]]; then
+                python publish_redmi_note_17_pro_max_queue.py --publish
+              else
+                python publish_redmi_note_17_pro_max_queue.py --validate
+              fi ;;
             *) exit 2 ;;
           esac

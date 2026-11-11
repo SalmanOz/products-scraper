@@ -65,7 +65,7 @@ def selected_n11_tws(html, url, name, model_name):
 
 
 def selected_hepsiburada_tws(html, url, name, model_name):
-    """Read an exact first-party earbud SKU from Hepsiburada's public buy box."""
+    """Read an exact earbud SKU from Hepsiburada's public buy box."""
     from audit_hepsiburada_iphone16pm_readonly import parse_exact_buy_box, _nodes
     from hepsiburada_catalog_source import _identity
 
@@ -82,21 +82,31 @@ def selected_hepsiburada_tws(html, url, name, model_name):
     except (TypeError, KeyError, ValueError, AttributeError):
         return None, 'selected_earbud_state_missing'
     brand = product.get('brand')
+    seller_name, seller_slug = seller.get('name'), seller.get('urlPostfix')
+    first_party = (seller_name, seller_slug) == ('Hepsiburada', 'hepsiburada')
+    # Exact reviewed marketplace listing. The legal seller is corroborated by
+    # Türkiye's ETBİS business register and the matching public store profile.
+    reviewed_seller = (
+        name == 'JBL Endurance Race 2' and sku == 'HBCV000095WJQ4'
+        and (seller_name, seller_slug, seller.get('id')) ==
+        ('Umut İnternet', 'umut-internet', '2e6b5bf8-196f-4afb-aa57-4af8dc8c0f6b')
+    )
     if (not _identity(url, product_id, sku) or not urlsplit(url).path.endswith('-p-' + sku)
             or product.get('isBundle') is not False or '16218' not in category_ids or len(variants) != 1
-            or not isinstance(brand, str) or seller.get('name') != 'Hepsiburada' or seller.get('urlPostfix') != 'hepsiburada'):
+            or not isinstance(brand, str) or not (first_party or reviewed_seller)):
         return None, 'selected_earbud_variant_mismatch'
     selected = variants[0]
     gtin = retailer_gtin13(selected.get('barcode'))
     barcodes = {retailer_gtin13(value) for value in selected.get('barcodes', [])}
     schemas = [node for node in _nodes(soup) if node.get('@type') == 'Product' and node.get('sku') == sku]
     if (selected.get('sku') != sku or selected.get('isInStock') is not True or selected.get('isPreOrder') is not False
-            or not gtin or barcodes != {gtin} or len(schemas) != 1 or retailer_gtin13(schemas[0].get('gtin')) != gtin):
+            or not gtin or barcodes != {gtin} or len(schemas) != 1 or retailer_gtin13(schemas[0].get('gtin')) != gtin
+            or reviewed_seller and gtin != '1200130014291'):
         return None, 'selected_earbud_gtin_or_stock_unverified'
     schema = schemas[0]
     scope = {'URL': url, 'SCHEMA_URL': url, 'PRODUCT_ID': product_id, 'SKU': sku, 'LISTING_ID': listing_id,
-             'MERCHANT_ID': seller['id'], 'MERCHANT_POSTFIX': 'hepsiburada', 'SELLER': 'Hepsiburada',
-             'SELLER_URL': 'https://www.hepsiburada.com/magaza/hepsiburada', 'GTIN13': gtin, 'generic_catalog': True}
+             'MERCHANT_ID': seller['id'], 'MERCHANT_POSTFIX': seller_slug, 'SELLER': seller_name,
+             'SELLER_URL': 'https://www.hepsiburada.com/magaza/' + seller_slug, 'GTIN13': gtin, 'generic_catalog': True}
 
     def verify(_soup, _product, title):
         return selected if all(model_name(text, brand) == name for text in (title, selected.get('name'), schema.get('name'))) else None
@@ -105,7 +115,9 @@ def selected_hepsiburada_tws(html, url, name, model_name):
     if offer:
         photo = next((photo for raw in schema.get('image', [])
                       if (photo := selected_photo(raw, {'productimages.hepsiburada.net'}))), None)
-        offer.update(platform='Hepsiburada', model=name, _image=photo, _legal_name='d market elektronik hizmetler ve ticaret anonim sirketi')
+        company = ('umut internet hizmetleri sanayi ve ticaret limited sirketi' if reviewed_seller
+                   else 'd market elektronik hizmetler ve ticaret anonim sirketi')
+        offer.update(platform='Hepsiburada', model=name, _image=photo, _legal_name=company)
     return offer, reason
 
 

@@ -53,16 +53,10 @@ def specifications():
             for key, value, origin, url in sources]
 
 
-def prepare():
-    official = compatible_get(MANUFACTURER, timeout=15, allow_redirects=False)
-    if (official.status_code != 200 or len(official.content) > MAX_BODY
-            or 'text/html' not in official.headers.get('Content-Type', '')
-            or not any(model_key(name) == model_key(NAME) for name in product_names(official.text, MANUFACTURER))):
-        raise ValueError('manufacturer_model_unverified')
-
+def redmi_mediamarkt_offer(url, sku, gtin, specs, expected_title):
     def verify(product, title, brand):
-        if (str(product.get('sku')) != '1256448' or product.get('gtin13') != GTIN or brand.casefold() != 'xiaomi'
-                or TRPriceScraper._normalize_words(title) != 'xiaomi note 17 pro 5g 8 256g akilli telefon gok mavisi'):
+        if (str(product.get('sku')) != sku or product.get('gtin13') != gtin or brand.casefold() != 'xiaomi'
+                or TRPriceScraper._normalize_words(title) != expected_title):
             return None
         images = product.get('image') or []
         photo = next((photo for url in images if (photo := selected_photo(url, {'assets.mmsrg.com'}))), None)
@@ -70,13 +64,26 @@ def prepare():
             return None
         merchant = 'MediaMarkt'
         proof = {'version': 'selected-retailer-sku-v1', 'platform': merchant, 'merchant_id': 'mediamarkt',
-                 'merchant_name': merchant, 'product_id': '1256448', 'sku': '1256448', 'gtin13': GTIN, **SPECS}
-        return {'gtin13': GTIN, 'platform': merchant, '_legal_name': 'media markt turkey ticaret limited sirketi',
+                 'merchant_name': merchant, 'product_id': sku, 'sku': sku, 'gtin13': gtin, **specs}
+        return {'gtin13': gtin, 'platform': merchant, '_legal_name': 'media markt turkey ticaret limited sirketi',
                 'source_variant_evidence': proof, 'photo': photo}
 
-    first = _selected_offer(read_mediamarkt_exact(MEDIAMARKT), MEDIAMARKT, verify_product=verify)
+    first = _selected_offer(read_mediamarkt_exact(url), url, verify_product=verify)
     if not first or first['availability'] != 'in_stock' or first['currency'] != 'TRY':
         raise ValueError('mediamarkt_exact_in_stock_offer_unverified')
+
+    return first
+
+
+def prepare():
+    official = compatible_get(MANUFACTURER, timeout=15, allow_redirects=False)
+    if (official.status_code != 200 or len(official.content) > MAX_BODY
+            or 'text/html' not in official.headers.get('Content-Type', '')
+            or not any(model_key(name) == model_key(NAME) for name in product_names(official.text, MANUFACTURER))):
+        raise ValueError('manufacturer_model_unverified')
+
+    first = redmi_mediamarkt_offer(MEDIAMARKT, '1256448', GTIN, SPECS,
+                                  'xiaomi note 17 pro 5g 8 256g akilli telefon gok mavisi')
 
     transport = PriorityRetailerTransport(maximum_per_host=4, browser_fallback=False, get=compatible_get)
     html, reason, _ = transport.read_document(TRENDYOL)
