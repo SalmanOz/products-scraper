@@ -147,12 +147,14 @@ def validated_n11_redirect_diagnostic(value):
 
 class PriorityRetailerTransport:
     def __init__(self, *, get=None, post=None, sleep=time.sleep, clock=time.monotonic,
-                 maximum_per_host=2, n11_collector=None, browser_fallback=True):
+                 maximum_per_host=2, n11_collector=None, browser_fallback=True,
+                 unavailable_robots_hosts=()):
         if type(maximum_per_host) is not int or not 1 <= maximum_per_host <= 400:
             raise ValueError('Invalid priority retailer request budget')
         self._get, self._post = get or compatible_get, post
         self._n11_collector = n11_collector
         self._browser_fallback = browser_fallback
+        self._unavailable_robots_hosts = frozenset(unavailable_robots_hosts)
         self._sleep, self._clock = sleep, clock
         self._maximum = maximum_per_host
         self._states = {}
@@ -358,7 +360,13 @@ class PriorityRetailerTransport:
                                                      64 * 1024, 'text/plain', state)
                     state['robots'] = reason
                     text = HepsiburadaS25FeSource._robots_text(raw) if raw is not None else ''
-                    if reason != 'ready' or not re.search(r'^\s*User-agent\s*:', text, re.I | re.M):
+                    if status == 403 and reason == 'http_403' and host in self._unavailable_robots_hosts:
+                        # RFC 9309 §2.3.1.3 permits public requests when the
+                        # robots file itself is unavailable. A PDP denial
+                        # still opens the source circuit below.
+                        state['robots'] = 'unavailable_http_403'
+                        text = 'User-agent: *\nDisallow:'
+                    elif reason != 'ready' or not re.search(r'^\s*User-agent\s*:', text, re.I | re.M):
                         state['blocked'] = True
                         return None, 'robots_' + (reason if reason != 'ready' else 'invalid'), status
                     rules = RobotFileParser()

@@ -301,7 +301,8 @@ def run(state, slugs, client=None, *, publish=False, maximum=24, products=None):
     results = []
     transport = PriorityRetailerTransport(maximum_per_host=maximum, browser_fallback=False,
                                           get=catalog_document_reader('phone'),
-                                          n11_collector=client.n11_document_get if client else None)
+                                          n11_collector=client.n11_document_get if client else None,
+                                          unavailable_robots_hosts=('www.teknosa.com', 'www.pazarama.com'))
     documents = {}
     for slug in slugs:
         product = products[slug]

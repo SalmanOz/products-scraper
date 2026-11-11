@@ -16,6 +16,21 @@ URLS = (
 
 
 class PriorityRetailerTests(unittest.TestCase):
+    def test_unavailable_robots_policy_can_allow_a_public_pdp_but_never_retry_a_denial(self):
+        url = URLS[3]
+        host = 'www.teknosa.com'
+        for rules, first, second in (
+            ((None, 'http_403', 403), 'http_403', 'source_circuit_open'),
+            ((None, 'http_429', 429), 'robots_http_429', 'source_circuit_open'),
+            ((b'User-agent: *\nDisallow: /samsung-', 'ready', 200), 'robots_disallowed', 'robots_disallowed'),
+        ):
+            source = PriorityRetailerTransport(sleep=lambda _: None, browser_fallback=False,
+                                               unavailable_robots_hosts=(host,))
+            with patch.object(source, '_read', side_effect=[rules, (None, 'http_403', 403)]) as read:
+                self.assertEqual(source.read_document(url)[1], first)
+                self.assertEqual(source.read_fresh_document(url)[1], second)
+                self.assertEqual(read.call_count, 2 if first == 'http_403' else 1)
+
     def test_cooldown_readiness_cannot_bypass_failed_sku_seen_documents_robots_or_shared_budget(self):
         for budget in (1, 2):
             now, calls = [1000], []
