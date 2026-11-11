@@ -163,7 +163,7 @@ def selected_vatan_tws(html, url, name, model_name):
             or cart[0].has_attr('disabled') or 'disabled' in cart[0].get('class', [])
             or cart[0].get('aria-disabled') == 'true' or cart[0].get_text(' ', strip=True) != 'Sepete Ekle'):
         return None
-    title = heading[0].get_text(' ', strip=True)
+    title = ' '.join(heading[0].get_text(' ', strip=True).split())
     if (' '.join(unescape(str(product.get('name') or '')).split()) != title
             or model_name(f"{title} {product['mpn']}", brand) != name):
         return None

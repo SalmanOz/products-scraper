@@ -122,24 +122,32 @@ def main():
                       for row in rows], 'photo': photo}, ensure_ascii=False), flush=True)
     if not args.publish:
         return
+    publish_verified(CANDIDATE, sourced_specifications(), rows, photo)
+
+
+def publish_verified(candidate, sources, rows, photo):
+    slug = candidate['slug']
     client = SourceIngestionClient.from_env()
     capability = client._json_body(client._request_with_retry('GET',
         f'{client.base_url}/api/ingestion/catalog-discovery', authenticated=True))
     if capability.get('contract') != CONTRACT:
         raise ValueError('production_catalog_contract_unavailable')
-    if any(item.slug == SLUG for item in client.fetch_catalog()):
+    if any(item.slug == slug for item in client.fetch_catalog()):
         raise ValueError('model_already_published')
-    image = R2ProductImageStore(required=True).upload(photo, SLUG, 1)
     offers = [{'merchant_name': row['merchant'], 'price': row['price'], 'currency': 'TRY',
                'availability': 'in_stock', 'source_url': row['url'], 'source_title': row['source_title'],
                'observed_at': row['observed_at'], 'checked_at': row['observed_at']} for row in rows]
-    payload = {'mode': 'validate', 'candidate': CANDIDATE, 'sources': sourced_specifications(),
-               'images': [image], 'offers': offers}
+    image_url = f'https://cdn.teknoskor.com/products/{slug}/{slug}-1.webp'
+    payload = {'mode': 'validate', 'candidate': candidate, 'sources': sources,
+               'images': [image_url], 'offers': offers}
     validation = submit(client, payload)
     if validation.get('eligible') is not True:
         raise ValueError('catalog_validation_rejected')
+    image = R2ProductImageStore(required=True).upload(photo, slug, 1)
+    if image != image_url:
+        raise ValueError('catalog_image_destination_changed')
     result = submit(client, {**payload, 'mode': 'publish'})
-    if result.get('committed') is not True or result.get('slug') != SLUG:
+    if result.get('committed') is not True or result.get('slug') != slug:
         raise ValueError('catalog_publication_unconfirmed')
     print(json.dumps(result), flush=True)
 
