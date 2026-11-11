@@ -478,10 +478,11 @@ def main():
         previous = load_previous_state(state_path)
         import publish_redmi_note_17_pro_max_queue as pro_max
         import publish_redmi_17_5g_queue as redmi_17
+        import publish_galaxy_a18_queue as galaxy_a18
         run_discovery(client=client, reader=reader, specs=specs, price_scraper=TRPriceScraper(),
                       refresher=RetailerOfferRefresher(), publish=args.publish, previous=previous, report=report,
                       checkpoint=checkpoint, reviewed=tuple((entry.CANDIDATE, entry.specifications, entry.prepare)
-                          for entry in (pro_max, redmi_17)))
+                          for entry in (pro_max, redmi_17, galaxy_a18)))
     except Exception as error:
         report['fatal'] = type(error).__name__
         code = 1

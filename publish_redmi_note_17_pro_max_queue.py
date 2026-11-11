@@ -8,7 +8,7 @@ from urllib.robotparser import RobotFileParser
 from daily_discovery import MAX_BODY, PublicReader, model_key, product_names
 from priority_retailer_transport import compatible_get
 from publish_galaxy_a07s_queue import OZGUR_BASE, OZGUR_TERMS, ozgur_offer
-from publish_redmi_note_17_pro_queue import redmi_mediamarkt_offer
+from publish_redmi_note_17_pro_queue import selected_mediamarkt_phone_offer
 from publish_s26_fe_queue import publish_verified
 from source_ingestion import SourceIngestionClient
 from tws_offer_pilot import independent_sellers
@@ -64,7 +64,7 @@ def prepare():
     direct, _ = ozgur_offer(reader.read(OZGUR), reader.read(OZGUR_TERMS), url=OZGUR, name=NAME,
                                specs=SPECS, mpn='REDMI-NOTE-17-PRO-MAX-5G-SIYAH-256GB',
                                gtin=GTIN, brand='Xiaomi')
-    primary = redmi_mediamarkt_offer(MEDIAMARKT, '1256421', GTIN, SPECS,
+    primary = selected_mediamarkt_phone_offer(MEDIAMARKT, '1256421', GTIN, SPECS,
                                     'xiaomi note 17 pro max 5g 8 256g akilli telefon siyah')
     if not independent_sellers(primary, direct):
         raise ValueError('two_independent_in_stock_offers_required')

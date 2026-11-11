@@ -7,7 +7,7 @@ import json
 from daily_discovery import MAX_BODY, model_key, product_names
 from laptop_discovery import Reader
 from priority_retailer_transport import compatible_get
-from publish_redmi_note_17_pro_queue import redmi_mediamarkt_offer
+from publish_redmi_note_17_pro_queue import selected_mediamarkt_phone_offer
 from publish_s26_fe_queue import publish_verified
 from tr_price_scraper import TRPriceScraper
 from tws_offer_pilot import independent_sellers
@@ -81,7 +81,7 @@ def prepare():
         'merchant_name': vatan['merchant'], **SPECS,
     }
 
-    media = redmi_mediamarkt_offer(MEDIAMARKT, '1257671', GTIN, SPECS,
+    media = selected_mediamarkt_phone_offer(MEDIAMARKT, '1257671', GTIN, SPECS,
                                   'xiaomi redmi 17 5g 4 256gb akilli telefon siyah')
     if not independent_sellers(vatan, media):
         raise ValueError('two_independent_in_stock_offers_required')

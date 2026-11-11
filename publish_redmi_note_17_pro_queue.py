@@ -53,9 +53,9 @@ def specifications():
             for key, value, origin, url in sources]
 
 
-def redmi_mediamarkt_offer(url, sku, gtin, specs, expected_title):
+def selected_mediamarkt_phone_offer(url, sku, gtin, specs, expected_title, *, expected_brand="xiaomi"):
     def verify(product, title, brand):
-        if (str(product.get('sku')) != sku or product.get('gtin13') != gtin or brand.casefold() != 'xiaomi'
+        if (str(product.get('sku')) != sku or product.get('gtin13') != gtin or brand.casefold() != expected_brand
                 or TRPriceScraper._normalize_words(title) != expected_title):
             return None
         images = product.get('image') or []
@@ -82,7 +82,7 @@ def prepare():
             or not any(model_key(name) == model_key(NAME) for name in product_names(official.text, MANUFACTURER))):
         raise ValueError('manufacturer_model_unverified')
 
-    first = redmi_mediamarkt_offer(MEDIAMARKT, '1256448', GTIN, SPECS,
+    first = selected_mediamarkt_phone_offer(MEDIAMARKT, '1256448', GTIN, SPECS,
                                   'xiaomi note 17 pro 5g 8 256g akilli telefon gok mavisi')
 
     transport = PriorityRetailerTransport(maximum_per_host=4, browser_fallback=False, get=compatible_get)

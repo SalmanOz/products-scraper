@@ -12,6 +12,7 @@ on:
           - galaxy-s26-fe
           - redmi-note-17-5g
           - galaxy-a07s
+          - galaxy-a18
           - redmi-note-17-pro-5g
           - redmi-note-17-pro-max-5g
           - redmi-17-5g
@@ -82,6 +83,12 @@ jobs:
                 python publish_redmi_17_5g_queue.py --publish
               else
                 python publish_redmi_17_5g_queue.py --validate
+              fi ;;
+            galaxy-a18)
+              if [[ "$PUBLISH" == "true" ]]; then
+                python publish_galaxy_a18_queue.py --publish
+              else
+                python publish_galaxy_a18_queue.py --validate
               fi ;;
             *) exit 2 ;;
           esac

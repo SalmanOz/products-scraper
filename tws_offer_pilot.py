@@ -90,6 +90,7 @@ NEW_MODELS = (
     ('Sony', 'WF-C710N', r'wf ?c710n'),
     ('Sony', 'WF-1000XM5', r'wf ?1000xm5'),
     ('Sony', 'WF-1000XM6', r'wf ?1000xm6'),
+    ('Sony', 'LinkBuds Clip', r'linkbuds clip|wf ?lc900b?(?: ce7)?'),
     ('Sony', 'LinkBuds Fit', r'linkbuds fit|wf ?ls910n'),
     ('JBL', 'Wave Beam', r'wave beam(?! ?2| pro| plus)'),
     ('JBL', 'Tune Beam', r'tune beam(?! ?2| pro| plus)'),
@@ -104,6 +105,7 @@ NEW_MODELS = (
     ('Anker', 'Soundcore C30i', r'(?:soundcore )?c30i'),
     ('Anker', 'Soundcore AeroFit 2', r'(?:soundcore )?aerofit ?2(?! pro)'),
     ('Anker', 'Soundcore Sport X20', r'(?:soundcore )?sport x20'),
+    ('QCY', 'T13 ANC', r't13 anc(?! ?2| pro| plus)'),
     ('QCY', 'T13 ANC 2', r't13 anc ?2'),
     ('QCY', 'T17', r't17(?! ?s| pro| plus)'),
     ('QCY', 'AilyBuds Pro+', r'ailybuds pro plus'),
@@ -116,7 +118,7 @@ PAIR_REQUIRED_MODEL_NAMES = (
     'Anker Soundcore Liberty 4 NC', 'Anker Soundcore R50i NC', 'Samsung Galaxy Buds3 FE',
     'JBL Tour Pro 3', 'Sony WF-1000XM5',
     'JBL Live Beam 3', 'Anker Soundcore Sport X20', 'JBL Live Buds 3', 'JBL Endurance Race 2',
-    'Sony WF-C510', 'Sony WF-C710N',
+    'Sony WF-C510', 'Sony WF-C710N', 'Sony LinkBuds Clip', 'QCY T13 ANC',
 )
 PILOT_MODEL_NAMES = tuple(f'{brand} {name}' for brand, name, _ in COHORT)
 MODEL_NAMES = (*PILOT_MODEL_NAMES, *(f'{brand} {name}' for brand, name, _ in EXPANSION_COHORT),
@@ -388,6 +390,10 @@ def select_sku_offers(observations, *, min_price_ratio=0):
 
 
 HEPSIBURADA_TWS_TARGETS = (
+    ('QCY T13 ANC',
+     'https://www.hepsiburada.com/qcy-t13-anc-4-mikrofon-bluetooth-5-3-kablosuz-kulaklik-'
+     'aktif-gurultu-engelleme-siyah-p-HBCV000047WC98',
+     '6957141407882'),
     ('JBL Endurance Race 2',
      'https://www.hepsiburada.com/jbl-endurance-race2-tws-kulaklik-ie-siyah-p-HBCV000095WJQ4',
      '1200130014291'),
