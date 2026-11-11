@@ -7,18 +7,20 @@ import json
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from laptop_pilot import _hepsiburada_public_get
 from priority_retailer_transport import PriorityRetailerTransport
 from retailer_barcode import retailer_gtin13
 from tws_offer_pilot import (
     MODEL_NAMES, PAIR_REQUIRED_MODEL_NAMES, PILOT_MODEL_NAMES, model_name, select_sku_offers, selected_tws_offer,
 )
-from tws_retailer_sources import selected_n11_tws
+from tws_retailer_sources import selected_hepsiburada_tws, selected_n11_tws
 
 PLATFORMS = {
     'Trendyol': 'www.trendyol.com',
     'n11': 'www.n11.com',
     'MediaMarkt': 'www.mediamarkt.com.tr',
     'Vatan Bilgisayar': 'www.vatanbilgisayar.com',
+    'Hepsiburada': 'www.hepsiburada.com',
 }
 
 
@@ -45,6 +47,11 @@ def selected_marketplace_offer(transport, name, offer):
     if platform == 'Trendyol':
         current, reason = selected_tws_offer(html, resolved, name)
         selector = 'merchantId'
+    elif platform == 'Hepsiburada':
+        if resolved != url:
+            return None, 'snapshot_hepsiburada_sku_changed'
+        current, reason = selected_hepsiburada_tws(html, resolved, name, model_name)
+        selector = 'magaza'
     else:
         current, reason = selected_n11_tws(html, resolved, name, model_name)
         selector = 'magaza'
@@ -103,15 +110,17 @@ def public_snapshot(report, catalog_names=MODEL_NAMES):
                 seen.add(key)
                 queue[platform].append((name, offer))
 
-    platforms = ('Trendyol', 'n11')
+    platforms = ('Trendyol', 'n11', 'Hepsiburada')
     transports = {platform: PriorityRetailerTransport(maximum_per_host=135) for platform in platforms}
+    transports['Hepsiburada'] = PriorityRetailerTransport(maximum_per_host=12, get=_hepsiburada_public_get,
+                                                         browser_fallback=False)
 
     def reread(platform, rows):
         transport = transports[platform]
         return [(name, *selected_marketplace_offer(transport, name, offer)) for name, offer in rows]
 
     def verify(queue, needed):
-        with ThreadPoolExecutor(max_workers=2) as pool:
+        with ThreadPoolExecutor(max_workers=len(platforms)) as pool:
             jobs = [pool.submit(reread, platform, [(name, offer) for name, offer in queue[platform]
                                                    if name in needed]) for platform in platforms]
             for job in jobs:

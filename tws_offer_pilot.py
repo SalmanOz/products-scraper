@@ -27,7 +27,7 @@ from priority_retailer_transport import (
 from retailer_barcode import retailer_gtin13
 from tr_price_scraper import TRPriceScraper
 from trendyol_catalog_source import _parse_selected_listing, _selected_group_root
-from tws_retailer_sources import n11_offers, selected_photo, vatan_offers
+from tws_retailer_sources import n11_offers, selected_hepsiburada_tws, selected_photo, vatan_offers
 from vatan_category_source import VatanCategorySource
 
 # Match variant words explicitly when retail titles share the same base name.
@@ -115,6 +115,7 @@ PAIR_REQUIRED_MODEL_NAMES = (
     'Samsung Galaxy Buds FE', 'Samsung Galaxy Buds3', 'Samsung Galaxy Buds4',
     'Anker Soundcore Liberty 4 NC', 'Anker Soundcore R50i NC', 'Samsung Galaxy Buds3 FE',
     'JBL Tour Pro 3', 'Sony WF-1000XM5',
+    'JBL Live Beam 3', 'Anker Soundcore Sport X20',
 )
 PILOT_MODEL_NAMES = tuple(f'{brand} {name}' for brand, name, _ in COHORT)
 MODEL_NAMES = (*PILOT_MODEL_NAMES, *(f'{brand} {name}' for brand, name, _ in EXPANSION_COHORT),
@@ -383,18 +384,41 @@ def select_sku_offers(observations):
     return [min(observations, key=lambda o: (o['price'], o['url']))] if observations else []
 
 
-def audit(transport, mediamarkt=None, *, n11=None, vatan=None):
+HEPSIBURADA_TWS_TARGETS = {
+    'Anker Soundcore Sport X20': (
+        'https://www.hepsiburada.com/anker-soundcore-sport-x20-kablosuz-egzersiz-kulakligi-'
+        'gurultu-engelleme-siyah-a3968-p-HBCV0000735D89', '0194644187019'),
+}
+
+
+def _hepsiburada_offers(transport, failures):
+    results = defaultdict(list)
+    for name, (url, gtin) in HEPSIBURADA_TWS_TARGETS.items():
+        html, reason, _ = transport.read_document(url)
+        if html and transport.resolved_url(url) == url:
+            offer, reason = selected_hepsiburada_tws(html, url, name, model_name)
+            if offer and offer['gtin13'] == gtin:
+                results[name].append(offer)
+                continue
+        failures['hepsiburada_' + reason] += 1
+    return results
+
+
+def audit(transport, mediamarkt=None, *, n11=None, vatan=None, hepsiburada=None):
     failures, n11_failures, vatan_failures, mm_failures = Counter(), Counter(), Counter(), Counter()
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    hb_failures = Counter()
+    with ThreadPoolExecutor(max_workers=5) as pool:
         trendyol = pool.submit(_trendyol_offers, transport, failures)
         mm = pool.submit(_mediamarkt_offers, mediamarkt, mm_failures) if mediamarkt is not None else None
         n11_task = pool.submit(n11_offers, n11, MODEL_NAMES, model_name, n11_failures) if n11 is not None else None
         vatan_task = pool.submit(vatan_offers, vatan, MODEL_NAMES, model_name, vatan_failures) if vatan is not None else None
+        hb = pool.submit(_hepsiburada_offers, hepsiburada, hb_failures) if hepsiburada is not None else None
         observations, candidates = trendyol.result()
-        all_sources = [observations, *(task.result() for task in (mm, n11_task, vatan_task) if task is not None)]
+        all_sources = [observations, *(task.result() for task in (mm, n11_task, vatan_task, hb) if task is not None)]
     failures.update(mm_failures)
     failures.update(n11_failures)
     failures.update(vatan_failures)
+    failures.update(hb_failures)
     observed = {name: [offer for source in all_sources for offer in source.get(name, [])]
                 for name in MODEL_NAMES}
     owners = defaultdict(set)
@@ -431,11 +455,14 @@ def audit(transport, mediamarkt=None, *, n11=None, vatan=None):
 
 
 def main():
+    from laptop_pilot import _hepsiburada_public_get
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     report = audit(PriorityRetailerTransport(maximum_per_host=250), MediaMarktSource(get=compatible_get),
-                   n11=PriorityRetailerTransport(maximum_per_host=260), vatan=VatanCategorySource())
+                   n11=PriorityRetailerTransport(maximum_per_host=260), vatan=VatanCategorySource(),
+                   hepsiburada=PriorityRetailerTransport(maximum_per_host=12, get=_hepsiburada_public_get,
+                                                         browser_fallback=False))
     args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     print(json.dumps({key: value for key, value in report.items() if key != 'models'}, ensure_ascii=False))
 

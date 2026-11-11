@@ -2,6 +2,7 @@
 from collections import defaultdict
 from datetime import datetime, timezone
 from html import unescape
+import json
 import re
 import time
 from urllib.parse import urljoin, urlsplit
@@ -61,6 +62,51 @@ def selected_n11_tws(html, url, name, model_name):
         return matches, {'model': name, '_image': photo, '_legal_name': _words(seller.get('companyName')),
                          '_tax_key': tax if isinstance(tax, str) and re.fullmatch(r'\d{10,11}', tax) else ''}
     return _parse_selected_listing(html, url, name, {}, verify_tws=verify_product)
+
+
+def selected_hepsiburada_tws(html, url, name, model_name):
+    """Read an exact first-party earbud SKU from Hepsiburada's public buy box."""
+    from audit_hepsiburada_iphone16pm_readonly import parse_exact_buy_box, _nodes
+    from hepsiburada_catalog_source import _identity
+
+    soup = BeautifulSoup(html, 'html.parser')
+    scripts = soup.select('script#reduxStore')
+    if len(scripts) != 1 or urlsplit(url).query:
+        return None, 'selected_earbud_state_missing'
+    try:
+        product = json.loads(scripts[0].get_text())['productState']['product']
+        sku, product_id, listing_id = (product[key] for key in ('sku', 'productId', 'listingId'))
+        seller = product['merchant']
+        variants = [row for row in product['variants'] if row.get('isDefault') is True]
+        category_ids = {row.get('categoryId') for row in product['categories']}
+    except (TypeError, KeyError, ValueError, AttributeError):
+        return None, 'selected_earbud_state_missing'
+    brand = product.get('brand')
+    if (not _identity(url, product_id, sku) or not urlsplit(url).path.endswith('-p-' + sku)
+            or product.get('isBundle') is not False or '16218' not in category_ids or len(variants) != 1
+            or not isinstance(brand, str) or seller.get('name') != 'Hepsiburada' or seller.get('urlPostfix') != 'hepsiburada'):
+        return None, 'selected_earbud_variant_mismatch'
+    selected = variants[0]
+    gtin = retailer_gtin13(selected.get('barcode'))
+    barcodes = {retailer_gtin13(value) for value in selected.get('barcodes', [])}
+    schemas = [node for node in _nodes(soup) if node.get('@type') == 'Product' and node.get('sku') == sku]
+    if (selected.get('sku') != sku or selected.get('isInStock') is not True or selected.get('isPreOrder') is not False
+            or not gtin or barcodes != {gtin} or len(schemas) != 1 or retailer_gtin13(schemas[0].get('gtin')) != gtin):
+        return None, 'selected_earbud_gtin_or_stock_unverified'
+    schema = schemas[0]
+    scope = {'URL': url, 'SCHEMA_URL': url, 'PRODUCT_ID': product_id, 'SKU': sku, 'LISTING_ID': listing_id,
+             'MERCHANT_ID': seller['id'], 'MERCHANT_POSTFIX': 'hepsiburada', 'SELLER': 'Hepsiburada',
+             'SELLER_URL': 'https://www.hepsiburada.com/magaza/hepsiburada', 'GTIN13': gtin, 'generic_catalog': True}
+
+    def verify(_soup, _product, title):
+        return selected if all(model_name(text, brand) == name for text in (title, selected.get('name'), schema.get('name'))) else None
+
+    offer, reason = parse_exact_buy_box(html, url, scope=scope, verify_laptop=verify)
+    if offer:
+        photo = next((photo for raw in schema.get('image', [])
+                      if (photo := selected_photo(raw, {'productimages.hepsiburada.net'}))), None)
+        offer.update(platform='Hepsiburada', model=name, _image=photo, _legal_name='d market elektronik hizmetler ve ticaret anonim sirketi')
+    return offer, reason
 
 
 def n11_offers(transport, models, model_name, failures):

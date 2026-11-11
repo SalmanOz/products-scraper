@@ -11,6 +11,8 @@ on:
         options:
           - galaxy-s26-fe
           - redmi-note-17-5g
+          - galaxy-a07s
+          - redmi-note-17-pro-5g
       publish:
         description: Publish the selected model after live validation
         required: true
@@ -40,6 +42,7 @@ jobs:
           cache: pip
       - run: python -m pip install -r requirements.txt
       - name: Start bounded browser GET service
+        if: inputs.model != 'galaxy-a07s'
         run: |
           docker run -d --name=s26-queue-browser -p 8191:8191 -e LOG_LEVEL=info ghcr.io/flaresolverr/flaresolverr:latest
           for attempt in {1..25}; do
@@ -64,5 +67,7 @@ jobs:
           case "$MODEL" in
             galaxy-s26-fe) python publish_s26_fe_queue.py "${args[@]}" ;;
             redmi-note-17-5g) python publish_redmi_note_17_queue.py "${args[@]}" ;;
+            galaxy-a07s) python publish_galaxy_a07s_queue.py "${args[@]}" ;;
+            redmi-note-17-pro-5g) python publish_redmi_note_17_pro_queue.py "${args[@]}" ;;
             *) exit 2 ;;
           esac

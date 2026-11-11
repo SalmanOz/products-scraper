@@ -55,18 +55,23 @@ def sourced_specifications():
              'confidence': 'medium', 'value': value} for key, value in facts.items()]
 
 
-def mediamarkt_offer():
+def read_mediamarkt_exact(url):
     source = MediaMarktSource(get=compatible_get)
     source._load_robots()
-    if source._rules is None or not source._rules.can_fetch('TeknoskorPriceBot', MEDIAMARKT):
+    if source._rules is None or not source._rules.can_fetch('TeknoskorPriceBot', url):
         raise ValueError('mediamarkt_document_unavailable')
-    body, reason, _ = source._direct(MEDIAMARKT, 5 * 1024 * 1024, 'text/html')
+    body, reason, _ = source._direct(url, 5 * 1024 * 1024, 'text/html')
     if reason == 'http_403':
-        body, resolved, reason = source._browser_get(MEDIAMARKT)
-        if reason == 'ready' and resolved != MEDIAMARKT:
+        body, resolved, reason = source._browser_get(url)
+        if reason == 'ready' and resolved != url:
             raise ValueError('mediamarkt_selected_url_changed')
     if reason != 'ready' or not body:
         raise ValueError('mediamarkt_' + reason)
+    return body
+
+
+def mediamarkt_offer():
+    body = read_mediamarkt_exact(MEDIAMARKT)
 
     def verify(product, title, brand):
         if (product.get('gtin13') != GTIN or brand.casefold() != 'samsung'

@@ -12,16 +12,17 @@ from urllib.parse import urlsplit
 from requests import RequestException
 from curl_cffi.requests import RequestsError
 
-from laptop_pilot import _image, _public_offers
+from laptop_pilot import _hepsiburada_public_get, _image, _public_offers
 from mediamarkt_source import MediaMarktSource, _selected_offer
 from priority_retailer_transport import PriorityRetailerTransport, compatible_get, product_host
 from retailer_barcode import retailer_gtin13
 from tws_offer_pilot import NEW_MODEL_NAMES, _mediamarkt_tws_url, independent_sellers, model_name, selected_tws_offer
-from tws_retailer_sources import BOT, STOP_REASONS, _vatan_url, selected_n11_tws, selected_photo, selected_vatan_tws
+from tws_retailer_sources import (BOT, STOP_REASONS, _vatan_url, selected_hepsiburada_tws,
+                                  selected_n11_tws, selected_photo, selected_vatan_tws)
 from tr_price_scraper import TRPriceScraper
 from vatan_category_source import VatanCategorySource
 
-MARKETPLACES = {'www.n11.com', 'www.trendyol.com'}
+MARKETPLACES = {'www.n11.com', 'www.trendyol.com', 'www.hepsiburada.com'}
 STORES = {'www.vatanbilgisayar.com', 'www.mediamarkt.com.tr'}
 
 
@@ -57,7 +58,10 @@ def verify_media(html, url, name):
 
 def reread(host, rows):
     observations, failures = defaultdict(list), Counter()
-    transport = PriorityRetailerTransport(maximum_per_host=min(260, len(rows))) if host in MARKETPLACES else None
+    transport = None
+    if host in MARKETPLACES:
+        options = {'get': _hepsiburada_public_get, 'browser_fallback': False} if host == 'www.hepsiburada.com' else {}
+        transport = PriorityRetailerTransport(maximum_per_host=min(260, len(rows)), **options)
     source = None
     if host in STORES:
         source = VatanCategorySource() if host.startswith('www.vatan') else MediaMarktSource(get=compatible_get)
@@ -91,6 +95,8 @@ def reread(host, rows):
                 current, reason = selected_n11_tws(html, final, name, model_name)
             elif host == 'www.trendyol.com':
                 current, reason = selected_tws_offer(html, final, name)
+            elif host == 'www.hepsiburada.com':
+                current, reason = selected_hepsiburada_tws(html, final, name, model_name)
             else:
                 current = (selected_vatan_tws(html, final, name, model_name)
                            if host == 'www.vatanbilgisayar.com' else verify_media(html, final, name))
