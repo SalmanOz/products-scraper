@@ -337,7 +337,7 @@ class PriorityRetailerTransport:
             return None, 'invalid_tws_category', None
         return self._read_document(url, 'www.trendyol.com', category=True)
 
-    def _read_document(self, url, host, category=False, fresh=False, classification=False, sitemap=False):
+    def _read_document(self, url, host, category=False, fresh=False, classification=False, sitemap=False, sitemap_limit=8 * 1024 * 1024):
         with self._lock:
             state = self._states.setdefault(host, {'rules': None, 'robots': 'not_loaded',
                 'pdp_requests': 0, 'search_requests': 0, 'browser_requests': 0,
@@ -397,7 +397,7 @@ class PriorityRetailerTransport:
                     state['classification_requests'] = state.get('classification_requests', 0) + 1
                 if urlparse(url).path in ('/ara', '/arama', N11_PHONE_SEARCH_PATH):
                     state['search_requests'] += 1
-                maximum = 8 * 1024 * 1024 if sitemap else 64 * 1024 if classification else MAX_HTML_BYTES
+                maximum = sitemap_limit if sitemap else 64 * 1024 if classification else MAX_HTML_BYTES
                 accept = 'application/xml' if sitemap else 'application/json' if classification else 'text/html'
                 raw, reason, status = self._read(url, maximum, accept, state)
                 if reason != 'ready':

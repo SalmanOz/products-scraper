@@ -45,6 +45,9 @@ ADDITIONAL_RETAILER_PATHS = {
     'www.a101.com.tr': r'/elektronik/[a-z0-9-]+_p-[1-9]\d{5,11}',
     'www.gurgencler.com.tr': r'/iphone-[a-z0-9-]+',
 }
+CIMRI_SITEMAP_INDEX = f'https://{CIMRI}/sitemaps/product.xml'
+CIMRI_SITEMAP_PATH = re.compile(r'/sitemaps/product_([1-9]\d{0,3})\.xml')
+CIMRI_SITEMAP_LIMIT = 50 * 1024 * 1024
 PHONE_MEMORY = re.compile(r'(?: [1-9]\d? gb)? (?:[1-9]\d{1,3} gb|[1-9] tb)$')
 CATEGORIES = {
     'phone': ('/cep-telefonu.html', '/cep-telefonlari', '/akilli-telefonlar/'),
@@ -294,13 +297,14 @@ def in_scope(kind, title):
     return True
 
 
-def comparison_reader(host, **options):
-    gateway = catalog_document_reader('competitor') if host in (CIMRI, EPEY) else None
+def comparison_reader(host, *, collection='runner', **options):
+    gateway = catalog_document_reader('competitor') if collection == 'site' and host in (CIMRI, EPEY) else None
     return PriorityRetailerTransport(browser_fallback=False, get=gateway or compatible_get, **options)
 
 
-def scan_source(host, kinds, indexes, start_page, pages, cursors=None):
-    reader = comparison_reader(host)
+def scan_source(host, kinds, indexes, start_page, pages, cursors=None, *, collection='runner',
+                cimri_sitemap=False):
+    reader = comparison_reader(host, collection=collection)
     reports, observations = [], []
     if host == URUNAI:
         return scan_urunai(reader, kinds, indexes)
@@ -362,7 +366,81 @@ def scan_source(host, kinds, indexes, start_page, pages, cursors=None):
                 next_page = None
                 break
         reports.append({'source': host, 'category': kind, 'status': state, 'nextPage': next_page, **stats})
+    if host == CIMRI and cimri_sitemap and not stopped:
+        sitemap_reports, sitemap_rows = scan_cimri_sitemap(kinds, indexes, cursors or {}, reader=reader)
+        reports.extend(sitemap_reports)
+        observations = sitemap_rows + observations
     return reports, observations
+
+
+def sitemap_locations(xml, expected):
+    root = ElementTree.fromstring(xml)
+    if root.tag.rsplit('}', 1)[-1] != expected:
+        raise ValueError('Unexpected sitemap root')
+    namespace = root.tag.removesuffix(expected)
+    entry_tag = namespace + ('url' if expected == 'urlset' else 'sitemap')
+    for entry in root:
+        if entry.tag == entry_tag:
+            location = entry.findtext(namespace + 'loc', '').strip()
+            if location:
+                yield location
+
+
+def cimri_sitemap_cards(xml, kinds, indexes):
+    categories = {paths[1].strip('/').rsplit('/', 1)[-1]: kind for kind, paths in CATEGORIES.items()}
+    categories['bluetooth-kulaklik'] = 'tws'
+    cards = {}
+    for url in sitemap_locations(xml, 'urlset'):
+        if not url.startswith(f'https://{CIMRI}/'):
+            continue
+        route = urlsplit(url)
+        path = unquote(route.path)
+        match = CARD[CIMRI].fullmatch(path)
+        if not match or route.query or route.fragment:
+            continue
+        category, product = path.split('/')[1:]
+        kind = categories.get(category)
+        if kind not in kinds:
+            continue
+        title = product.split('-fiyatlari,', 1)[0].removeprefix('en-ucuz-').replace('-', ' ')
+        if kind == 'tws' and not re.search(r'\b(?:tws|kulak ici|tam kablosuz|airpods|freebuds|galaxy buds|aerofit|wf \w+)\b', title):
+            continue
+        if not in_scope(kind, title):
+            continue
+        cards.setdefault((kind, match[1]), {'id': match[1], 'title': title, 'url': route._replace(path=path).geturl(),
+            'source': CIMRI, 'category': kind, 'catalogSlug': catalog_match(title, indexes[kind]),
+            'hasMarketPage': True, 'titleFromSitemap': True})
+    return list(cards.values())
+
+
+def scan_cimri_sitemap(kinds, indexes, cursors, *, reader=None):
+    reader = reader or comparison_reader(CIMRI)
+    previous = cursors.get(f'{CIMRI}/product_sitemap', {})
+    report = {'source': CIMRI, 'category': 'product_sitemap', 'pages': 0, 'nextPage': previous.get('nextPage')}
+    index, reason, _ = reader._read_document(CIMRI_SITEMAP_INDEX, CIMRI, category=True, sitemap=True)
+    if not index:
+        return [{**report, 'status': reason}], []
+    try:
+        shards = sorted({int(match[1]) for url in sitemap_locations(index, 'sitemapindex')
+                         if url.startswith(f'https://{CIMRI}') and
+                         (match := CIMRI_SITEMAP_PATH.fullmatch(url.removeprefix(f'https://{CIMRI}')))}, reverse=True)
+    except (ValueError, ElementTree.ParseError):
+        return [{**report, 'status': 'invalid_product_sitemap_index'}], []
+    if not shards:
+        return [{**report, 'status': 'product_sitemap_shards_missing'}], []
+    shard = report['nextPage'] if report['nextPage'] in shards else shards[0]
+    report['nextPage'] = shard
+    url = f'https://{CIMRI}/sitemaps/product_{shard}.xml'
+    xml, reason, _ = reader._read_document(url, CIMRI, category=True, sitemap=True, sitemap_limit=CIMRI_SITEMAP_LIMIT)
+    if not xml:
+        return [{**report, 'status': reason, 'shard': shard}], []
+    try:
+        rows = cimri_sitemap_cards(xml, kinds, indexes)
+    except (ValueError, ElementTree.ParseError):
+        return [{**report, 'status': 'invalid_product_sitemap', 'shard': shard}], []
+    index = shards.index(shard) + 1
+    return [{**report, 'status': 'sitemap_read', 'pages': 2, 'cards': len(rows), 'shard': shard,
+             'nextPage': shards[index] if index < len(shards) else None}], rows
 
 
 def read_state(path):
@@ -381,13 +459,19 @@ def merge_state(state, reports, observations, indexes, now):
         state['sources'][key] = {
             **row,
             'lastAttemptAt': now,
-            'completedPasses': previous.get('completedPasses', 0) + (row['nextPage'] is None),
+            'completedPasses': previous.get('completedPasses', 0) + (
+                row['nextPage'] is None and row['status'] in ('sitemap_read', 'no_next_page_link')),
         }
     for row in observations:
         key = f"{row['source']}/{row['category']}/{row['id']}"
         previous = state['products'].get(key, {})
-        state['products'][key] = {**previous, **row, 'firstSeenAt': previous.get('firstSeenAt', now),
-                                  'lastSeenAt': now}
+        product = {**previous, **row, 'firstSeenAt': previous.get('firstSeenAt', now), 'lastSeenAt': now}
+        if row.get('titleFromSitemap') and previous and not previous.get('titleFromSitemap'):
+            product['title'] = previous['title']
+            product.pop('titleFromSitemap')
+        elif not row.get('titleFromSitemap'):
+            product.pop('titleFromSitemap', None)
+        state['products'][key] = product
     for row in state['products'].values():
         if row['category'] in indexes:
             kind = row['category']
@@ -460,7 +544,7 @@ def comparison_retailer_leads(html, host, source_url):
     return sorted({url for raw in raw_links if (url := retailer_destination(raw))})
 
 
-def scan_retailer_leads(state, host, kinds, maximum, now, priority=(), pinned=()):
+def scan_retailer_leads(state, host, kinds, maximum, now, priority=(), pinned=(), *, collection='runner'):
     candidates = defaultdict(list)
     for row in state['products'].values():
         if row['source'] != host or row['category'] not in kinds:
@@ -478,7 +562,7 @@ def scan_retailer_leads(state, host, kinds, maximum, now, priority=(), pinned=()
         gaps = (row for row in others if row.get('catalogFamily') in priority)
         rest = (row for row in others if row.get('catalogFamily') not in priority)
         candidates[kind] = first + [row for pair in zip_longest(gaps, rest) for row in pair if row is not None]
-    reader = comparison_reader(host, maximum_per_host=maximum)
+    reader = comparison_reader(host, collection=collection, maximum_per_host=maximum)
     offsets = Counter()
     for turn in range(maximum):
         active = [kind for kind in kinds if offsets[kind] < len(candidates[kind])]
@@ -532,6 +616,8 @@ def main():
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('--category', action='append', choices=CATEGORIES)
     parser.add_argument('--source', action='append', choices=SOURCES)
+    parser.add_argument('--collection', choices=('runner', 'site'), default='runner')
+    parser.add_argument('--cimri-sitemap', action='store_true', help='Read one bounded Cimri product sitemap shard')
     parser.add_argument('--state', type=Path, help='Resume category cursors and retain deduplicated candidate IDs')
     parser.add_argument('--prioritize-model', action='append', default=[])
     parser.add_argument('--start-page', type=int, default=1)
@@ -554,8 +640,9 @@ def main():
                         if row.get('fresh_offer_count') in (0, '0'))
     hosts = list(dict.fromkeys(args.source or SOURCES))
     with ThreadPoolExecutor(max_workers=len(hosts)) as pool:
-        tasks = [pool.submit(scan_source, host, kinds, indexes, args.start_page, args.pages, state['sources'])
-                 for host in hosts]
+        tasks = [pool.submit(scan_source, host, kinds, indexes, args.start_page, args.pages, state['sources'],
+                             collection=args.collection,
+                             cimri_sitemap=args.cimri_sitemap and args.collection == 'runner') for host in hosts]
         batches = [task.result() for task in tasks]
     sources = [row for reports, _ in batches for row in reports]
     observed = [row for _, rows in batches for row in rows]
@@ -565,7 +652,7 @@ def main():
         stopped = {row['source'] for row in sources if row['status'] in STOP_SOURCE}
         with ThreadPoolExecutor(max_workers=len(hosts)) as pool:
             jobs = [pool.submit(scan_retailer_leads, state, host, kinds, args.lead_limit, now,
-                                priority, set(args.prioritize_model))
+                                priority, set(args.prioritize_model), collection=args.collection)
                     for host in hosts if host not in stopped]
             for job in jobs:
                 job.result()

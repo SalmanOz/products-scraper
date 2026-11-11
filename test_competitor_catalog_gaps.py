@@ -1,6 +1,7 @@
 import unittest
+from unittest.mock import Mock
 
-from competitor_catalog_gaps import (AKAKCE, CIMRI, EPEY, KARSILASTIRICI, PAHALIMI, URUNAI, candidate_family, urunai_market_slugs, urunai_sitemap_cards, catalog_match, category_url, comparison_cards, comparison_retailer_leads,
+from competitor_catalog_gaps import (AKAKCE, CIMRI, EPEY, KARSILASTIRICI, PAHALIMI, URUNAI, candidate_family, cimri_sitemap_cards, scan_cimri_sitemap, urunai_market_slugs, urunai_sitemap_cards, catalog_match, category_url, comparison_cards, comparison_retailer_leads,
                                      identity_index, in_scope, merge_state, read_state)
 
 
@@ -149,3 +150,33 @@ class CompetitorCatalogGapsTest(unittest.TestCase):
           <url><loc>https://urunai.com/telefon/apple/iphone-18</loc></url>
         </urlset>"""
         self.assertEqual(urunai_market_slugs(xml), {'apple-iphone-16-plus'})
+
+    def test_cimri_sitemap_routes_only_native_product_rows(self):
+        xml = """<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+            xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
+          <url><loc>https://www.cimri.com/cep-telefonlari/en-ucuz-apple-iphone-16-fiyatlari%2Ca12345</loc>
+            <image:image><image:loc>https://www.cimri.com/cep-telefonlari/en-ucuz-other-fiyatlari,a23456</image:loc></image:image></url>
+          <url><loc>https://other.example/cep-telefonlari/en-ucuz-apple-iphone-16-fiyatlari,a12345</loc></url>
+          <url><loc>https://www.cimri.com/bluetooth-kulaklik/en-ucuz-sony-wf-1000xm6-fiyatlari,a34567</loc></url>
+          <url><loc>https://www.cimri.com/bluetooth-kulaklik/en-ucuz-sony-kulak-ustu-kulaklik-fiyatlari,a45678</loc></url>
+        </urlset>"""
+        indexes = {'phone': identity_index([{'name': 'Apple iPhone 16', 'slug': 'apple-iphone-16'}]),
+                   'tws': identity_index([])}
+        cards = cimri_sitemap_cards(xml, indexes, indexes)
+        self.assertEqual([(row['category'], row['id'], row['catalogSlug']) for row in cards],
+                         [('phone', 'a12345', 'apple-iphone-16'), ('tws', 'a34567', None)])
+
+    def test_cimri_sitemap_cursor_rotates_only_after_successful_read(self):
+        index = """<sitemapindex>
+          <sitemap><loc>https://www.cimri.com/sitemaps/product_8.xml</loc></sitemap>
+          <sitemap><loc>https://www.cimri.com/sitemaps/product_3.xml</loc></sitemap>
+          <sitemap><loc>https://other.example/sitemaps/product_20.xml</loc></sitemap>
+        </sitemapindex>"""
+        reader = Mock()
+        reader._read_document.side_effect = [(index, 'document_read', 200), ('<urlset/>', 'document_read', 200)]
+        rows, _ = scan_cimri_sitemap(['phone'], {'phone': identity_index([])}, {}, reader=reader)
+        self.assertEqual((rows[0]['shard'], rows[0]['nextPage']), (8, 3))
+        reader._read_document.side_effect = [(index, 'document_read', 200), (None, 'http_429', 429)]
+        rows, _ = scan_cimri_sitemap(['phone'], {'phone': identity_index([])},
+                                     {f'{CIMRI}/product_sitemap': {'nextPage': 3}}, reader=reader)
+        self.assertEqual((rows[0]['shard'], rows[0]['nextPage'], rows[0]['status']), (3, 3, 'http_429'))
