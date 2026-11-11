@@ -45,9 +45,8 @@ ADDITIONAL_RETAILER_PATHS = {
     'www.a101.com.tr': r'/elektronik/[a-z0-9-]+_p-[1-9]\d{5,11}',
     'www.gurgencler.com.tr': r'/iphone-[a-z0-9-]+',
 }
-CIMRI_SITEMAP_INDEX = f'https://{CIMRI}/sitemaps/product.xml'
-CIMRI_SITEMAP_PATH = re.compile(r'/sitemaps/product_([1-9]\d{0,3})\.xml')
-CIMRI_SITEMAP_LIMIT = 50 * 1024 * 1024
+PRODUCT_SITEMAPS = {CIMRI: '/sitemaps/product', EPEY: '/sitemap/urun'}
+PRODUCT_SITEMAP_LIMIT = 50 * 1024 * 1024
 PHONE_MEMORY = re.compile(r'(?: [1-9]\d? gb)? (?:[1-9]\d{1,3} gb|[1-9] tb)$')
 PHONE_COLOR_AFTER_MEMORY = re.compile(
     r'( [1-9]\d{0,3} (?:gb(?: ram)?|tb)) (?:[a-z]{2,16} ){0,2}'
@@ -305,20 +304,22 @@ def in_scope(kind, title):
 
 def comparison_reader(host, *, collection='runner', **options):
     gateway = catalog_document_reader('competitor') if collection == 'site' and host in (CIMRI, EPEY) else None
-    return PriorityRetailerTransport(browser_fallback=False, get=gateway or compatible_get, **options)
+    unavailable = (EPEY,) if host == EPEY and collection == 'runner' else ()
+    return PriorityRetailerTransport(browser_fallback=False, get=gateway or compatible_get,
+                                     unavailable_robots_hosts=unavailable, **options)
 
 
 def scan_source(host, kinds, indexes, start_page, pages, cursors=None, *, collection='runner',
-                cimri_sitemap=False, cimri_sitemap_only=0):
+                cimri_sitemap=False, sitemap_only=0):
     reader = comparison_reader(host, collection=collection)
     reports, observations = [], []
     if host == URUNAI:
         return scan_urunai(reader, kinds, indexes)
     stopped = None
-    if host == CIMRI and cimri_sitemap_only:
-        return scan_cimri_sitemap(kinds, indexes, cursors or {}, reader=reader, maximum=cimri_sitemap_only)
+    if host in PRODUCT_SITEMAPS and sitemap_only:
+        return scan_product_sitemap(host, kinds, indexes, cursors or {}, reader=reader, maximum=sitemap_only)
     if host == CIMRI and cimri_sitemap:
-        reports, observations = scan_cimri_sitemap(kinds, indexes, cursors or {}, reader=reader)
+        reports, observations = scan_product_sitemap(host, kinds, indexes, cursors or {}, reader=reader)
     if host in (KARSILASTIRICI, PAHALIMI) and 'phone' in kinds:
         state, observations = known_phones_from_sitemap(reader, host, indexes['phone'])
         reports.append({'source': host, 'category': 'phone_sitemap', 'status': state,
@@ -419,34 +420,55 @@ def cimri_sitemap_cards(xml, kinds, indexes):
     return list(cards.values())
 
 
-def scan_cimri_sitemap(kinds, indexes, cursors, *, reader=None, maximum=1):
-    reader = reader or comparison_reader(CIMRI)
-    previous = cursors.get(f'{CIMRI}/product_sitemap', {})
-    report = {'source': CIMRI, 'category': 'product_sitemap', 'pages': 0, 'nextPage': previous.get('nextPage')}
-    index, reason, _ = reader._read_document(CIMRI_SITEMAP_INDEX, CIMRI, category=True, sitemap=True)
+def epey_sitemap_cards(xml, kinds, indexes):
+    categories = {paths[2].strip('/'): kind for kind, paths in CATEGORIES.items()}
+    cards = {}
+    for url in sitemap_locations(xml, 'urlset'):
+        if not url.startswith(f'https://{EPEY}/'):
+            continue
+        route = urlsplit(url)
+        if not CARD[EPEY].fullmatch(route.path) or route.query or route.fragment:
+            continue
+        category, slug = route.path.removesuffix('.html').split('/')[1:]
+        kind = categories.get(category)
+        title = slug.replace('-', ' ')
+        if kind not in kinds or not in_scope(kind, title):
+            continue
+        cards.setdefault((kind, slug), {'id': slug, 'title': title, 'url': url, 'source': EPEY,
+            'category': kind, 'catalogSlug': catalog_match(title, indexes[kind]), 'titleFromSitemap': True})
+    return list(cards.values())
+
+
+def scan_product_sitemap(host, kinds, indexes, cursors, *, reader=None, maximum=1):
+    reader = reader or comparison_reader(host)
+    stem = f'https://{host}{PRODUCT_SITEMAPS[host]}'
+    shard_url = re.compile(re.escape(stem) + r'_([1-9]\d{0,3})\.xml')
+    previous = cursors.get(f'{host}/product_sitemap', {})
+    report = {'source': host, 'category': 'product_sitemap', 'pages': 0, 'nextPage': previous.get('nextPage')}
+    index, reason, _ = reader._read_document(stem + '.xml', host, category=True, sitemap=True)
     if not index:
         return [{**report, 'status': reason}], []
     try:
         shards = sorted({int(match[1]) for url in sitemap_locations(index, 'sitemapindex')
-                         if url.startswith(f'https://{CIMRI}') and
-                         (match := CIMRI_SITEMAP_PATH.fullmatch(url.removeprefix(f'https://{CIMRI}')))}, reverse=True)
+                         if (match := shard_url.fullmatch(url))}, reverse=host == CIMRI)
     except (ValueError, ElementTree.ParseError):
         return [{**report, 'status': 'invalid_product_sitemap_index'}], []
     if not shards:
         return [{**report, 'status': 'product_sitemap_shards_missing'}], []
     start = shards.index(report['nextPage']) if report['nextPage'] in shards else 0
+    parse_cards = cimri_sitemap_cards if host == CIMRI else epey_sitemap_cards
     rows = {}
     report.update(status='sitemap_read', pages=1, shardsRead=[])
     for offset in range(start, min(len(shards), start + maximum)):
         shard = shards[offset]
         report.update(shard=shard, nextPage=shard)
-        url = f'https://{CIMRI}/sitemaps/product_{shard}.xml'
-        xml, reason, _ = reader._read_document(url, CIMRI, category=True, sitemap=True, sitemap_limit=CIMRI_SITEMAP_LIMIT)
+        url = f'{stem}_{shard}.xml'
+        xml, reason, _ = reader._read_document(url, host, category=True, sitemap=True, sitemap_limit=PRODUCT_SITEMAP_LIMIT)
         if not xml:
             report['status'] = reason
             break
         try:
-            cards = cimri_sitemap_cards(xml, kinds, indexes)
+            cards = parse_cards(xml, kinds, indexes)
         except (ValueError, ElementTree.ParseError):
             report['status'] = 'invalid_product_sitemap'
             break
@@ -464,7 +486,13 @@ def read_state(path):
     data = json.loads(path.read_text(encoding='utf-8'))
     if data.get('version') != 1 or not isinstance(data.get('sources'), dict) or not isinstance(data.get('products'), dict):
         raise ValueError('Unsupported competitor discovery state')
+    data['products'] = {product_state_key(row): row for row in data['products'].values()}
     return data
+
+
+def product_state_key(row):
+    identity = row['url'] if row['source'] == EPEY else row['id']
+    return f"{row['source']}/{row['category']}/{identity}"
 
 
 def merge_state(state, reports, observations, indexes, now):
@@ -478,7 +506,7 @@ def merge_state(state, reports, observations, indexes, now):
                 row['nextPage'] is None and row['status'] in ('sitemap_read', 'no_next_page_link')),
         }
     for row in observations:
-        key = f"{row['source']}/{row['category']}/{row['id']}"
+        key = product_state_key(row)
         previous = state['products'].get(key, {})
         product = {**previous, **row, 'firstSeenAt': previous.get('firstSeenAt', now), 'lastSeenAt': now}
         if row.get('titleFromSitemap') and previous and not previous.get('titleFromSitemap'):
@@ -559,6 +587,19 @@ def comparison_retailer_leads(html, host, source_url):
     return sorted({url for raw in raw_links if (url := retailer_destination(raw))})
 
 
+def epey_earbud_title(html, url):
+    soup = BeautifulSoup(html, 'html.parser')
+    canonical = [node.get('href') for node in soup.select('link[rel=canonical]')]
+    titles = [node.get_text(' ', strip=True) for node in soup.select('h1 > a[href]') if node['href'] == url]
+    if canonical != [url] or len(titles) != 1:
+        return None, 'epey_product_identity_unverified'
+    filter_url = f'https://{EPEY}/kulaklik/baglanti-tipi/tam-kablosuz/'
+    if ('tam kablosuz' in WORDS(titles[0]) and
+            any(node['href'] == filter_url for node in soup.select('#oncelikli a[href]'))):
+        return titles[0], None
+    return None, 'epey_tws_category_unverified'
+
+
 def scan_retailer_leads(state, host, kinds, maximum, now, priority=(), pinned=(), *, collection='runner'):
     candidates = defaultdict(list)
     for row in state['products'].values():
@@ -599,6 +640,13 @@ def scan_retailer_leads(state, host, kinds, maximum, now, priority=(), pinned=()
             if reason in STOP_SOURCE or reason.startswith('robots_') and reason != 'robots_disallowed':
                 break
         else:
+            if host == EPEY and kind == 'tws' and row.get('titleFromSitemap'):
+                title, reason = epey_earbud_title(html, row['url'])
+                if not title:
+                    row['leadStatus'] = reason
+                    continue
+                row['title'] = title
+                row.pop('titleFromSitemap')
             row['retailerLeads'] = comparison_retailer_leads(html, host, row['url'])
             row['leadStatus'] = 'direct_retailer_links' if row['retailerLeads'] else 'direct_retailer_links_missing'
 
@@ -642,6 +690,8 @@ def main():
     cimri.add_argument('--cimri-sitemap', action='store_true', help='Read one Cimri sitemap shard before the categories')
     cimri.add_argument('--cimri-sitemap-only', type=int, choices=range(1, 9), default=0,
                        metavar='SHARDS', help='Resume up to eight Cimri sitemap shards and skip category pages')
+    parser.add_argument('--epey-sitemap-only', type=int, choices=range(1, 9), default=0,
+                        metavar='SHARDS', help='Resume up to eight Epey sitemap shards and skip category pages')
     parser.add_argument('--state', type=Path, help='Resume category cursors and retain deduplicated candidate IDs')
     parser.add_argument('--prioritize-model', action='append', default=[])
     parser.add_argument('--start-page', type=int, default=1)
@@ -655,8 +705,9 @@ def main():
         parser.error('Select a positive page number and up to 40 category requests per source')
     if not 0 <= args.lead_limit <= 40:
         parser.error('Select up to 40 detail pages per source')
-    if args.cimri_sitemap_only and args.collection != 'runner':
-        parser.error('Cimri sitemap-only discovery requires direct collection')
+    sitemap_limits = {CIMRI: args.cimri_sitemap_only, EPEY: args.epey_sitemap_only}
+    if any(sitemap_limits.values()) and args.collection != 'runner':
+        parser.error('Sitemap-only discovery requires direct collection')
     inventory = load_inventory(args.site_data, args.phone_sitemap)
     indexes = {kind: identity_index(inventory[kind]) for kind in kinds}
     state = read_state(args.state)
@@ -669,7 +720,7 @@ def main():
         tasks = [pool.submit(scan_source, host, kinds, indexes, args.start_page, args.pages, state['sources'],
                              collection=args.collection,
                              cimri_sitemap=args.cimri_sitemap and args.collection == 'runner',
-                             cimri_sitemap_only=args.cimri_sitemap_only) for host in hosts]
+                             sitemap_only=sitemap_limits.get(host, 0)) for host in hosts]
         batches = [task.result() for task in tasks]
     sources = [row for reports, _ in batches for row in reports]
     observed = [row for _, rows in batches for row in rows]

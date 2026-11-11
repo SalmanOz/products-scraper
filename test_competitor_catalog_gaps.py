@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import Mock, patch
 
-from competitor_catalog_gaps import (AKAKCE, CIMRI, EPEY, KARSILASTIRICI, PAHALIMI, URUNAI, candidate_family, cimri_sitemap_cards, scan_cimri_sitemap, scan_source, urunai_market_slugs, urunai_sitemap_cards, catalog_match, category_url, comparison_cards, comparison_retailer_leads,
+from competitor_catalog_gaps import (AKAKCE, CIMRI, EPEY, KARSILASTIRICI, PAHALIMI, URUNAI, candidate_family, cimri_sitemap_cards, epey_earbud_title, epey_sitemap_cards, scan_product_sitemap, scan_source, urunai_market_slugs, urunai_sitemap_cards, catalog_match, category_url, comparison_cards, comparison_retailer_leads,
                                      identity_index, in_scope, merge_state, read_state)
 
 
@@ -181,10 +181,10 @@ class CompetitorCatalogGapsTest(unittest.TestCase):
         </sitemapindex>"""
         reader = Mock()
         reader._read_document.side_effect = [(index, 'document_read', 200), ('<urlset/>', 'document_read', 200)]
-        rows, _ = scan_cimri_sitemap(['phone'], {'phone': identity_index([])}, {}, reader=reader)
+        rows, _ = scan_product_sitemap(CIMRI, ['phone'], {'phone': identity_index([])}, {}, reader=reader)
         self.assertEqual((rows[0]['shard'], rows[0]['nextPage']), (8, 3))
         reader._read_document.side_effect = [(index, 'document_read', 200), (None, 'http_429', 429)]
-        rows, _ = scan_cimri_sitemap(['phone'], {'phone': identity_index([])},
+        rows, _ = scan_product_sitemap(CIMRI, ['phone'], {'phone': identity_index([])},
                                      {f'{CIMRI}/product_sitemap': {'nextPage': 3}}, reader=reader)
         self.assertEqual((rows[0]['shard'], rows[0]['nextPage'], rows[0]['status']), (3, 3, 'http_429'))
 
@@ -207,8 +207,23 @@ class CompetitorCatalogGapsTest(unittest.TestCase):
         reader._read_document.side_effect = [(index, 'document_read', 200), (xml, 'document_read', 200),
                                              (None, 'http_429', 429)]
         with patch('competitor_catalog_gaps.comparison_reader', return_value=reader):
-            reports, candidates = scan_source(CIMRI, ['phone'], {'phone': identity_index([])}, 1, 1,
-                                              cimri_sitemap_only=4)
+            reports, candidates = scan_source(CIMRI, ['phone'], {'phone': identity_index([])}, 1, 1, sitemap_only=4)
         self.assertEqual((reports[0]['shardsRead'], reports[0]['nextPage'], reports[0]['status']), ([8], 3, 'http_429'))
         self.assertEqual([r['id'] for r in candidates], ['123456'])
         self.assertEqual(reader._read_document.call_count, 3)
+
+    def test_epey_sitemap_and_category_cards_share_one_product_identity(self):
+        url = f'https://{EPEY}/kulaklik/sony-wf-1000xm6.html'
+        xml = f'<urlset><url><loc>{url}</loc></url><url><loc>https://other.example/kulaklik/other.html</loc></url></urlset>'
+        indexes = {'tws': identity_index([])}
+        rows = epey_sitemap_cards(xml, indexes, indexes)
+        self.assertEqual([r['url'] for r in rows], [url])
+        card = {**rows[0], 'id': '765432', 'title': 'Sony WF-1000XM6 Tam Kablosuz Kulaklık'}
+        del card['titleFromSitemap']
+        state = read_state(None)
+        merge_state(state, [], [card, *rows], indexes, 'first')
+        self.assertEqual([r['title'] for r in state['products'].values()], [card['title']])
+        html = (f'<link rel="canonical" href="{url}"><h1><a href="{url}">{card["title"]}</a></h1>'
+                f'<div id="oncelikli"><a href="https://{EPEY}/kulaklik/baglanti-tipi/tam-kablosuz/">Tam Kablosuz</a></div>')
+        self.assertEqual(epey_earbud_title(html, url), (card['title'], None))
+        self.assertEqual(epey_earbud_title(html.replace('id="oncelikli"', ''), url)[0], None)
