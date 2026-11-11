@@ -326,15 +326,21 @@ def test_invalid_merchant_count_does_not_suppress_fallback_or_correct_same_selle
            for merchant in ['Teknosa', 'n11', 'Trendyol', 'MediaMarkt']]
     correct = {'merchant': 'Teknosa', 'price': 12999, 'url': 'https://www.teknosa.com/correct',
                'source_title': 'Samsung Galaxy A16 4G 4/128GB'}
-    async def no_offer(*args, **kwargs):
-        return None
+    live = {**correct, 'price': 13999, 'currency': 'TRY', 'availability': 'in_stock'}
+
+    class Refresher:
+        def refresh_existing_offer_targets(self, name, targets, expected):
+            return [live] if any(target['source_url'] == correct['url'] for target in targets) else []
+
+    scraper.retailer_offer_refresher = Refresher()
     with patch.object(scraper, 'get_google_shopping_price', return_value=bad), \
          patch.object(scraper, 'get_epey_price', return_value=None) as epey, \
          patch.object(scraper, 'get_akakce_price', return_value=[correct]) as akakce, \
-         patch.object(scraper, 'scrape_site_async', new=no_offer):
+         patch.object(scraper, 'scrape_site_async', return_value=None):
         rows = asyncio.run(scraper.get_best_prices('Samsung Galaxy A16 4G', specs))
-    epey.assert_called_once(); akakce.assert_called_once()
-    assert rows == [correct]
+    epey.assert_called_once()
+    akakce.assert_called_once()
+    assert rows == [live]
 
 
 def test_multiple_phone_models_are_not_verified_by_one_matching_model_token():
@@ -518,7 +524,7 @@ def test_epey_parent_heading_or_old_aggregate_price_never_becomes_pdp_evidence()
         assert not asyncio.run(scraper.get_best_prices('Samsung Galaxy S25', {'ram_gb': 12, 'storage_gb': 128}))
 
 
-def test_epey_pdp_stock_overrides_same_url_search_and_preserves_other_available_listing():
+def test_google_prices_require_live_retailer_confirmation_and_keep_independent_listings():
     scraper = TRPriceScraper()
     title = 'Samsung Galaxy S25 12GB RAM 128GB'
     source = {'merchant': 'Teknosa', 'price': 10000, 'source_title': title,
@@ -526,15 +532,20 @@ def test_epey_pdp_stock_overrides_same_url_search_and_preserves_other_available_
               'url': 'https://www.teknosa.com/phone-one'}
     other = {**source, 'price': 30000, 'url': 'https://www.teknosa.com/phone-two'}
     class StockEvidence:
+        def __init__(self):
+            self.calls = []
+
         def refresh_existing_offer_targets(self, name, targets, expected):
-            return [{**source, 'availability': 'out_of_stock'}]
+            self.calls.append([target['source_url'] for target in targets])
+            return [{**source, 'availability': 'out_of_stock'}, {**other, 'price': 31000}]
     scraper.retailer_offer_refresher = StockEvidence()
     with patch.object(scraper, 'get_google_shopping_price', return_value=[source, other]), \
          patch.object(scraper, 'get_epey_price', return_value=[source]), \
          patch.object(scraper, 'get_akakce_price', return_value=None), \
          patch.object(scraper, 'scrape_site_async', return_value=None):
         result = asyncio.run(scraper.get_best_prices('Samsung Galaxy S25', {'ram_gb': 12, 'storage_gb': 128}))
-    assert len(result) == 1 and result[0]['url'] == other['url']
+    assert len(result) == 1 and result[0]['url'] == other['url'] and result[0]['price'] == 31000
+    assert scraper.retailer_offer_refresher.calls == [[source['url'], other['url']]]
 
 
 def test_compact_unit_labelled_storage_and_ram_are_real_capacity_evidence():

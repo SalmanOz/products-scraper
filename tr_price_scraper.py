@@ -1519,11 +1519,30 @@ class TRPriceScraper:
     async def get_best_prices(self, product_name, expected_specs=None):
         results = []
         retailer_observations = []
-        # /about claims broad coverage (Hepsiburada, Trendyol, Amazon TR, n11 and more).
-        # Stopping at the first source that returns anything left products with only
-        # 1-2 offers whenever Google Shopping alone was thin — keep pulling from
-        # additional aggregators until we hit a reasonable number of distinct merchants.
+        checked_destinations = set()
         TARGET_MERCHANT_COUNT = 4
+
+        async def verify_destinations(source, rows):
+            targets = []
+            for row in rows or ():
+                url = row.get('url')
+                if url and url not in checked_destinations:
+                    checked_destinations.add(url)
+                    targets.append({'merchant_name': row['merchant'], 'source_url': url})
+                if len(targets) == 12:
+                    break
+            if not targets:
+                return
+            try:
+                refresher = getattr(self, 'retailer_offer_refresher', None)
+                if refresher is None:
+                    from retailer_offer_refresh import RetailerOfferRefresher
+                    refresher = self.retailer_offer_refresher = RetailerOfferRefresher()
+                verified = await asyncio.to_thread(
+                    refresher.refresh_existing_offer_targets, product_name, targets, expected_specs)
+                retailer_observations.extend(verified)
+            except Exception as error:
+                logging.warning('%s retailer destination verification failed (%s)', source, type(error).__name__)
 
         def observed_listings():
             by_listing = {}
@@ -1539,44 +1558,11 @@ class TRPriceScraper:
             return len({row['merchant'] for row in observed_listings()
                         if row.get('availability') in {'in_stock', 'limited'}})
 
-        # 1. Try Google Shopping (no Cloudflare, most reliable from CI)
-        gs_results = self.get_google_shopping_price(product_name, expected_specs)
-        if gs_results:
-            results.extend(gs_results)
-            logging.info(f"  ✨ Found {len(gs_results)} offers on Google Shopping")
-
-        # 2. Try Epey.com to add more merchants if coverage is still thin
+        await verify_destinations('Google Shopping', self.get_google_shopping_price(product_name, expected_specs))
         if merchant_count() < TARGET_MERCHANT_COUNT:
-            logging.info(f"  🔄 {merchant_count()} merchant(s) so far, trying Epey for more coverage...")
-            epey_results = self.get_epey_price(product_name, expected_specs)
-            if epey_results:
-                logging.info(f"  🔎 Epey discovered {len(epey_results)} retailer destinations")
-                try:
-                    refresher = getattr(self, 'retailer_offer_refresher', None)
-                    if refresher is None:
-                        # Late import avoids the PDP module's matcher import
-                        # cycle. Reuse the instance/cache/breaker for this run.
-                        from retailer_offer_refresh import RetailerOfferRefresher
-                        refresher = self.retailer_offer_refresher = RetailerOfferRefresher()
-                    refreshed = await asyncio.to_thread(
-                        refresher.refresh_existing_offer_targets,
-                        product_name,
-                        [{'merchant_name': row['merchant'], 'source_url': row['url']}
-                         for row in epey_results[:12]],
-                        expected_specs,
-                    )
-                    retailer_observations.extend(refreshed)
-                except Exception as error:
-                    logging.warning('  ⚠️ Epey PDP evidence unavailable (%s); trying other sources',
-                                    type(error).__name__)
-
-        # 3. Try Akakçe to add more merchants if coverage is still thin
+            await verify_destinations('Epey', self.get_epey_price(product_name, expected_specs))
         if merchant_count() < TARGET_MERCHANT_COUNT:
-            logging.info(f"  🔄 {merchant_count()} merchant(s) so far, trying Akakçe...")
-            akakce_results = self.get_akakce_price(product_name, expected_specs)
-            if akakce_results:
-                results.extend(akakce_results)
-                logging.info(f"  ✨ Found {len(akakce_results)} offers on Akakçe")
+            await verify_destinations('Akakçe', self.get_akakce_price(product_name, expected_specs))
 
         # 4. Fill thin aggregator coverage from direct retailer searches. Keep this
         # list to sites that currently return useful HTML from GitHub-hosted runners;
