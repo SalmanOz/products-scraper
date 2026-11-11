@@ -45,7 +45,7 @@ jobs:
         continue-on-error: true
         run: |
           pending=0
-          for slug in xiaomi-redmi-note-17-pro-max-5g xiaomi-redmi-17-5g samsung-galaxy-a18; do
+          for slug in xiaomi-redmi-note-17-pro-max-5g xiaomi-redmi-17-5g samsung-galaxy-a18 samsung-galaxy-a08 xiaomi-redmi-17-4g; do
             code=$(curl --silent --max-time 12 --output /dev/null --write-out '%{http_code}' \
               "https://teknoskor.com/product/$slug") || code=000
             if [[ "$code" != "200" ]]; then pending=1; fi
