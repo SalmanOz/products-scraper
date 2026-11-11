@@ -57,7 +57,7 @@ def verify_media(html, url, name):
     return _selected_offer(html, url, allowed_url=_mediamarkt_tws_url, verify_product=variant)
 
 
-def reread(host, rows, statuses=None, document_reader=None):
+def reread(host, rows, statuses=None, document_reader=None, *, discover=False):
     observations, failures = defaultdict(list), Counter()
     transport = None
     if host in MARKETPLACES:
@@ -66,6 +66,8 @@ def reread(host, rows, statuses=None, document_reader=None):
             options.update(get=document_reader, browser_fallback=False)
         elif host == 'www.hepsiburada.com':
             options.update(get=_hepsiburada_public_get, browser_fallback=False)
+        elif discover:
+            options['browser_fallback'] = False
         transport = PriorityRetailerTransport(maximum_per_host=min(260, len(rows)), **options)
     source = None
     if host in STORES:
@@ -119,10 +121,12 @@ def reread(host, rows, statuses=None, document_reader=None):
         except (TypeError, ValueError):
             failures['invalid_page'] += 1
             continue
-        if (current and current['gtin13'] == target['gtin13']
+        matches_selection = bool(current and (
+            (discover and retailer_gtin13(current.get('gtin13')) and current.get('_legal_name'))
+            or (not discover and current['gtin13'] == target['gtin13']
                 and ('merchant_id' not in target or current.get('merchant_id') == target['merchant_id'])
-                and current['merchant'] == target['merchant']
-                and current['availability'] == 'in_stock' and current['condition'] == 'new'
+                and current['merchant'] == target['merchant'])))
+        if (matches_selection and current['availability'] == 'in_stock' and current['condition'] == 'new'
                 and current['currency'] == 'TRY' and 100 <= current['price'] <= 150_000):
             if statuses is not None:
                 statuses[url] = 'verified'
