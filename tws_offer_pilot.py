@@ -76,6 +76,7 @@ EXPANSION_COHORT = (
     ('Philips', 'TAT3509', r'tat ?3509(?:bk|wt|gy)?'),
 )
 NEW_MODELS = (
+    ('Apple', 'AirPods 5', r'airpods 5(?! .*\b(?:mkft4tu|kablosuz sarj kutusu|magsafe)\b)'),
     ('Xiaomi', 'Redmi Buds 6', r'redmi buds 6(?! play| active| lite| pro| plus)'),
     ('Xiaomi', 'Buds 5', r'xiaomi buds 5(?! pro| lite| plus)'),
     ('Xiaomi', 'Buds 5 Pro', r'xiaomi buds 5 pro(?! wi fi)'),
@@ -120,7 +121,7 @@ PAIR_REQUIRED_MODEL_NAMES = (
     'JBL Tour Pro 3', 'Sony WF-1000XM5',
     'JBL Live Beam 3', 'Anker Soundcore Sport X20', 'JBL Live Buds 3', 'JBL Endurance Race 2',
     'Sony WF-C510', 'Sony WF-C710N', 'Sony LinkBuds Clip', 'QCY T13 ANC', 'Huawei FreeBuds 6',
-    'Anker Soundcore AeroFit 2',
+    'Anker Soundcore AeroFit 2', 'Apple AirPods 5',
 )
 PILOT_MODEL_NAMES = tuple(f'{brand} {name}' for brand, name, _ in COHORT)
 MODEL_NAMES = (*PILOT_MODEL_NAMES, *(f'{brand} {name}' for brand, name, _ in EXPANSION_COHORT),

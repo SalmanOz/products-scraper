@@ -57,7 +57,7 @@ def verify_media(html, url, name):
     return _selected_offer(html, url, allowed_url=_mediamarkt_tws_url, verify_product=variant)
 
 
-def reread(host, rows):
+def reread(host, rows, statuses=None):
     observations, failures = defaultdict(list), Counter()
     transport = None
     if host in MARKETPLACES:
@@ -71,6 +71,8 @@ def reread(host, rows):
         source._load_robots()
     for name, target in rows:
         url = target['url']
+        if statuses is not None:
+            statuses[url] = 'unavailable'
         try:
             if transport:
                 html, reason, _ = transport.read_fresh_document(url)
@@ -92,6 +94,8 @@ def reread(host, rows):
                 if reason in STOP_REASONS:
                     break
                 continue
+            if statuses is not None:
+                statuses[url] = 'unverified'
             if host == 'www.n11.com':
                 current, reason = selected_n11_tws(html, final, name, model_name)
             elif host == 'www.trendyol.com':
@@ -111,10 +115,12 @@ def reread(host, rows):
             failures['invalid_page'] += 1
             continue
         if (current and current['gtin13'] == target['gtin13']
-                and current.get('merchant_id') == target.get('merchant_id')
+                and ('merchant_id' not in target or current.get('merchant_id') == target['merchant_id'])
                 and current['merchant'] == target['merchant']
                 and current['availability'] == 'in_stock' and current['condition'] == 'new'
                 and current['currency'] == 'TRY' and 100 <= current['price'] <= 150_000):
+            if statuses is not None:
+                statuses[url] = 'verified'
             observations[name].append(current)
         else:
             failures[reason if not current else 'selected_seller_or_gtin_changed'] += 1
@@ -183,7 +189,7 @@ def stage(catalog, snapshot, specs, candidates, output):
         (output / 'earbuds' / f'{slug}.webp').write_bytes(image)
     for filename, payload in (
         ('twsProductCatalog.json', {'reviewedAt': now, 'models': [*catalog['models'], *products]}),
-        ('twsOfferSnapshot.json', {'checked_at': now, 'models': [*snapshot['models'], *prices]}),
+        ('twsOfferSnapshot.json', {**snapshot, 'checked_at': now, 'models': [*snapshot['models'], *prices]}),
     ):
         (output / filename).write_text(json.dumps(payload, ensure_ascii=False, indent=2) + '\n')
 
