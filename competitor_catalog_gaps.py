@@ -309,12 +309,14 @@ def comparison_reader(host, *, collection='runner', **options):
 
 
 def scan_source(host, kinds, indexes, start_page, pages, cursors=None, *, collection='runner',
-                cimri_sitemap=False):
+                cimri_sitemap=False, cimri_sitemap_only=0):
     reader = comparison_reader(host, collection=collection)
     reports, observations = [], []
     if host == URUNAI:
         return scan_urunai(reader, kinds, indexes)
     stopped = None
+    if host == CIMRI and cimri_sitemap_only:
+        return scan_cimri_sitemap(kinds, indexes, cursors or {}, reader=reader, maximum=cimri_sitemap_only)
     if host == CIMRI and cimri_sitemap:
         reports, observations = scan_cimri_sitemap(kinds, indexes, cursors or {}, reader=reader)
     if host in (KARSILASTIRICI, PAHALIMI) and 'phone' in kinds:
@@ -417,7 +419,7 @@ def cimri_sitemap_cards(xml, kinds, indexes):
     return list(cards.values())
 
 
-def scan_cimri_sitemap(kinds, indexes, cursors, *, reader=None):
+def scan_cimri_sitemap(kinds, indexes, cursors, *, reader=None, maximum=1):
     reader = reader or comparison_reader(CIMRI)
     previous = cursors.get(f'{CIMRI}/product_sitemap', {})
     report = {'source': CIMRI, 'category': 'product_sitemap', 'pages': 0, 'nextPage': previous.get('nextPage')}
@@ -432,19 +434,28 @@ def scan_cimri_sitemap(kinds, indexes, cursors, *, reader=None):
         return [{**report, 'status': 'invalid_product_sitemap_index'}], []
     if not shards:
         return [{**report, 'status': 'product_sitemap_shards_missing'}], []
-    shard = report['nextPage'] if report['nextPage'] in shards else shards[0]
-    report['nextPage'] = shard
-    url = f'https://{CIMRI}/sitemaps/product_{shard}.xml'
-    xml, reason, _ = reader._read_document(url, CIMRI, category=True, sitemap=True, sitemap_limit=CIMRI_SITEMAP_LIMIT)
-    if not xml:
-        return [{**report, 'status': reason, 'shard': shard}], []
-    try:
-        rows = cimri_sitemap_cards(xml, kinds, indexes)
-    except (ValueError, ElementTree.ParseError):
-        return [{**report, 'status': 'invalid_product_sitemap', 'shard': shard}], []
-    index = shards.index(shard) + 1
-    return [{**report, 'status': 'sitemap_read', 'pages': 2, 'cards': len(rows), 'shard': shard,
-             'nextPage': shards[index] if index < len(shards) else None}], rows
+    start = shards.index(report['nextPage']) if report['nextPage'] in shards else 0
+    rows = {}
+    report.update(status='sitemap_read', pages=1, shardsRead=[])
+    for offset in range(start, min(len(shards), start + maximum)):
+        shard = shards[offset]
+        report.update(shard=shard, nextPage=shard)
+        url = f'https://{CIMRI}/sitemaps/product_{shard}.xml'
+        xml, reason, _ = reader._read_document(url, CIMRI, category=True, sitemap=True, sitemap_limit=CIMRI_SITEMAP_LIMIT)
+        if not xml:
+            report['status'] = reason
+            break
+        try:
+            cards = cimri_sitemap_cards(xml, kinds, indexes)
+        except (ValueError, ElementTree.ParseError):
+            report['status'] = 'invalid_product_sitemap'
+            break
+        rows.update({(card['category'], card['id']): card for card in cards})
+        report['pages'] += 1
+        report['shardsRead'].append(shard)
+        report['nextPage'] = shards[offset + 1] if offset + 1 < len(shards) else None
+    report['cards'] = len(rows)
+    return [report], list(rows.values())
 
 
 def read_state(path):
@@ -568,11 +579,17 @@ def scan_retailer_leads(state, host, kinds, maximum, now, priority=(), pinned=()
         candidates[kind] = first + [row for pair in zip_longest(gaps, rest) for row in pair if row is not None]
     reader = comparison_reader(host, collection=collection, maximum_per_host=maximum)
     offsets = Counter()
-    for turn in range(maximum):
-        active = [kind for kind in kinds if offsets[kind] < len(candidates[kind])]
-        if not active:
-            break
-        kind = active[turn % len(active)]
+    # Give priority to the phone and earbud queues after every category has
+    # had one turn. Repeated cycles still service the other catalog sections.
+    slots = [*kinds, *(kind for _ in range(3) for kind in kinds if kind in ('phone', 'tws'))]
+    turn = 0
+    while sum(offsets.values()) < maximum and slots:
+        position = turn % len(slots)
+        kind = slots[position]
+        if offsets[kind] >= len(candidates[kind]):
+            slots.pop(position)
+            continue
+        turn += 1
         row = candidates[kind][offsets[kind]]
         offsets[kind] += 1
         html, reason, _ = reader._read_document(row['url'], host)
@@ -621,7 +638,10 @@ def main():
     parser.add_argument('--category', action='append', choices=CATEGORIES)
     parser.add_argument('--source', action='append', choices=SOURCES)
     parser.add_argument('--collection', choices=('runner', 'site'), default='runner')
-    parser.add_argument('--cimri-sitemap', action='store_true', help='Read one bounded Cimri product sitemap shard')
+    cimri = parser.add_mutually_exclusive_group()
+    cimri.add_argument('--cimri-sitemap', action='store_true', help='Read one Cimri sitemap shard before the categories')
+    cimri.add_argument('--cimri-sitemap-only', type=int, choices=range(1, 9), default=0,
+                       metavar='SHARDS', help='Resume up to eight Cimri sitemap shards and skip category pages')
     parser.add_argument('--state', type=Path, help='Resume category cursors and retain deduplicated candidate IDs')
     parser.add_argument('--prioritize-model', action='append', default=[])
     parser.add_argument('--start-page', type=int, default=1)
@@ -635,6 +655,8 @@ def main():
         parser.error('Select a positive page number and up to 40 category requests per source')
     if not 0 <= args.lead_limit <= 40:
         parser.error('Select up to 40 detail pages per source')
+    if args.cimri_sitemap_only and args.collection != 'runner':
+        parser.error('Cimri sitemap-only discovery requires direct collection')
     inventory = load_inventory(args.site_data, args.phone_sitemap)
     indexes = {kind: identity_index(inventory[kind]) for kind in kinds}
     state = read_state(args.state)
@@ -646,7 +668,8 @@ def main():
     with ThreadPoolExecutor(max_workers=len(hosts)) as pool:
         tasks = [pool.submit(scan_source, host, kinds, indexes, args.start_page, args.pages, state['sources'],
                              collection=args.collection,
-                             cimri_sitemap=args.cimri_sitemap and args.collection == 'runner') for host in hosts]
+                             cimri_sitemap=args.cimri_sitemap and args.collection == 'runner',
+                             cimri_sitemap_only=args.cimri_sitemap_only) for host in hosts]
         batches = [task.result() for task in tasks]
     sources = [row for reports, _ in batches for row in reports]
     observed = [row for _, rows in batches for row in rows]

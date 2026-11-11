@@ -198,3 +198,17 @@ class CompetitorCatalogGapsTest(unittest.TestCase):
             reports, candidates = scan_source(CIMRI, ['phone'], {'phone': identity_index([])}, 1, 1, cimri_sitemap=True)
         self.assertEqual([r['status'] for r in reports], ['sitemap_read', 'http_403'])
         self.assertEqual([r['id'] for r in candidates], ['123456'])
+
+    def test_cimri_sitemap_only_preserves_candidates_and_retries_the_failed_shard(self):
+        index = ('<sitemapindex>' + ''.join(f'<sitemap><loc>https://{CIMRI}/sitemaps/product_{i}.xml</loc></sitemap>'
+                                         for i in (8, 3, 1)) + '</sitemapindex>')
+        xml = f'<urlset><url><loc>https://{CIMRI}/cep-telefonlari/en-ucuz-example-fiyatlari,123456</loc></url></urlset>'
+        reader = Mock()
+        reader._read_document.side_effect = [(index, 'document_read', 200), (xml, 'document_read', 200),
+                                             (None, 'http_429', 429)]
+        with patch('competitor_catalog_gaps.comparison_reader', return_value=reader):
+            reports, candidates = scan_source(CIMRI, ['phone'], {'phone': identity_index([])}, 1, 1,
+                                              cimri_sitemap_only=4)
+        self.assertEqual((reports[0]['shardsRead'], reports[0]['nextPage'], reports[0]['status']), ([8], 3, 'http_429'))
+        self.assertEqual([r['id'] for r in candidates], ['123456'])
+        self.assertEqual(reader._read_document.call_count, 3)

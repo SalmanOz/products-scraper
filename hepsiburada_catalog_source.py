@@ -144,7 +144,8 @@ def parse_catalog_buy_box(html, url, name, specs):
     offer, reason = parse_exact_buy_box(html, url, scope=scope)
     if offer is not None:
         offer.update(platform='Hepsiburada', selected_hb_variant_verified=True,
-                     selected_hb_seller=seller, selected_hb_merchant_id=merchant_id, **physical)
+                     selected_hb_seller=seller, selected_hb_merchant_id=merchant_id,
+                     seller_url=scope['SELLER_URL'], **physical)
     return offer, reason
 
 

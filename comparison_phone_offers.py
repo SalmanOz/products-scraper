@@ -1,7 +1,7 @@
 """Verify retailer leads for existing phones using two independent sellers of one GTIN."""
 
 import argparse
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -13,6 +13,8 @@ from bs4 import BeautifulSoup
 from catalog_source_collector import catalog_document_reader
 
 from competitor_catalog_gaps import public_phone_catalog, read_state, retailer_destination, write_json
+from hepsiburada_catalog_source import parse_catalog_buy_box
+from laptop_pilot import _hepsiburada_public_get, verify_seller
 from laptop_retailer_sources import marketplace_seller_identity
 from mediamarkt_marketplace_audit import selected_marketplace_offer
 from mediamarkt_source import product_url as mediamarkt_url
@@ -25,6 +27,7 @@ from teknosa_marketplace_source import parse_selected_marketplace
 from tr_price_scraper import TRPriceScraper
 from trendyol_catalog_source import parse_catalog_listing as trendyol_listing, selected_product_state
 from tws_offer_pilot import independent_sellers
+from tws_retailer_sources import selected_vatan_tws
 from update_prices import PriceUpdater
 from retailer_barcode import retailer_gtin13
 
@@ -139,14 +142,17 @@ def seller_identity(html, offer):
     return NORMALIZE(json.loads(name)), mersis[1:11]
 
 
-def checked_offers(urls, name, specs, transport, documents=None):
+def checked_offers(urls, name, specs, transport, documents=None, *, direct=None, seller_cache=None):
     observed, rejects = [], []
     documents = {} if documents is None else documents
+    direct = direct or {}
+    seller_cache = {} if seller_cache is None else seller_cache
     matcher = TRPriceScraper()
     for url in urls:
         host = urlsplit(url).netloc
+        reader = direct.get(host, transport)
         if url not in documents:
-            documents[url] = transport._read_document(url, host)
+            documents[url] = reader._read_document(url, host)
         html, reason, _ = documents[url]
         offer = None
         rejected = 'selected_offer_unverified'
@@ -163,7 +169,15 @@ def checked_offers(urls, name, specs, transport, documents=None):
             elif host == 'www.n11.com':
                 resolved = transport.resolved_url(url)
                 offer, rejected = n11_listing(html, resolved, name, specs, include_legal_identity=True)
-        if (not offer or offer.get('price_kind') == 'basket' or
+            elif host == 'www.hepsiburada.com' and host in direct:
+                offer, rejected = parse_catalog_buy_box(html, url, name, specs)
+                if offer and not verify_seller(offer, None, reader, seller_cache):
+                    offer, rejected = None, 'seller_identity_unverified'
+            elif host == 'www.vatanbilgisayar.com' and host in direct:
+                offer = selected_vatan_tws(html, url, name,
+                    lambda title, _brand: name if matcher.is_strict_match(name, title, specs) else None)
+        if (not offer or not retailer_gtin13(offer.get('gtin13')) or offer.get('price_kind') == 'basket' or
+                offer.get('availability') != 'in_stock' or offer.get('currency') != 'TRY' or
                 not matcher.has_observed_offer_evidence(name, offer, specs)):
             rejects.append({'url': url, 'reason': rejected if html and offer is None else
                             'catalog_variant_or_cash_mismatch' if html else reason})
@@ -215,22 +229,26 @@ def category_leads(slug, name, specs, transport, documents):
     return sorted(leads)
 
 
-def supported_phone_url(url):
+def supported_phone_url(url, *, expanded=False):
     route = urlsplit(url)
     if route.netloc in ('www.n11.com', 'www.trendyol.com'):
         return product_host(url) == route.netloc
+    if expanded and route.netloc == 'www.hepsiburada.com':
+        return product_host(url) == route.netloc and 'yenilenmis' not in route.path
     if route.query:
         return False
     if route.netloc == 'www.mediamarkt.com.tr':
         return mediamarkt_url(url) and 'akilli-telefon' in route.path
     if not any(token in route.path for token in ('iphone', 'akilli-telefon', 'cep-telefonu')):
         return False
+    if expanded and route.netloc == 'www.vatanbilgisayar.com':
+        return bool(re.fullmatch(r'/[a-z0-9-]+\.html', route.path))
     if route.netloc == 'www.teknosa.com':
         return product_host(url) == route.netloc
     return pazarama_product_url(url) and bool(re.fullmatch(r'/[a-z0-9-]+-p-\d{12,13}', route.path))
 
 
-def candidate_urls(state, slug):
+def candidate_urls(state, slug, *, expanded=False):
     variants = []
     family = product_family(slug)
     for row in state['products'].values():
@@ -238,10 +256,10 @@ def candidate_urls(state, slug):
             continue
         variants.extend(row.get('retailerLeads', ()))
     return list(dict.fromkeys(url for raw in variants if (url := retailer_destination(raw))
-                              and supported_phone_url(url)))
+                              and supported_phone_url(url, expanded=expanded)))
 
 
-def audit_queue(state, products, maximum=4):
+def audit_queue(state, products, maximum=8):
     audited = state.get('phoneOfferAudits', {})
     candidates = []
     by_family = defaultdict(set)
@@ -250,7 +268,7 @@ def audit_queue(state, products, maximum=4):
             continue
         for raw in row.get('retailerLeads', ()):
             if url := retailer_destination(raw):
-                if supported_phone_url(url):
+                if supported_phone_url(url, expanded=True):
                     by_family[row['catalogFamily']].add(urlsplit(url).netloc)
     for product in products:
         slug = product['slug']
@@ -292,7 +310,9 @@ def report_offer(row):
     return {key: row[key] for key in ('url', 'platform', 'merchant', 'price', 'gtin13')}
 
 
-def run(state, slugs, client=None, *, publish=False, maximum=24, products=None):
+def run(state, slugs, client=None, *, publish=False, maximum=24, products=None, public_audit=False):
+    if publish and public_audit:
+        raise ValueError('Public queue verification is read-only')
     if publish and client is None:
         raise ValueError('Publication requires the authenticated catalog')
     if products is None:
@@ -303,16 +323,34 @@ def run(state, slugs, client=None, *, publish=False, maximum=24, products=None):
                                           get=catalog_document_reader('phone'),
                                           n11_collector=client.n11_document_get if client else None,
                                           unavailable_robots_hosts=('www.teknosa.com', 'www.pazarama.com'))
+    direct = {}
+    if public_audit:
+        direct = {
+            'www.hepsiburada.com': PriorityRetailerTransport(maximum_per_host=maximum, browser_fallback=False,
+                                                            get=_hepsiburada_public_get),
+            'www.vatanbilgisayar.com': PriorityRetailerTransport(maximum_per_host=maximum, browser_fallback=False),
+        }
     documents = {}
+    seller_cache = {}
     for slug in slugs:
         product = products[slug]
         specs = PriceUpdater.get_expected_specs(product.get('attributes'))
         urls = list(dict.fromkeys(category_leads(slug, product['name'], specs, transport, documents)
-                                 + candidate_urls(state, slug)))
+                                 + candidate_urls(state, slug, expanded=public_audit)))
         # Spend each store's budget on the capacity being audited first.
         capacity = re.compile(r'-' + str(specs.get('storage_gb')) + '-?gb(?:-|_)')
         urls.sort(key=lambda url: not bool(capacity.search(urlsplit(url).path)))
-        pair, observations, rejects = checked_offers(urls, product['name'], specs, transport, documents)
+        if public_audit:
+            per_host = Counter()
+            limited_urls = []
+            for url in urls:
+                host = urlsplit(url).netloc
+                if per_host[host] < 4:
+                    limited_urls.append(url)
+                    per_host[host] += 1
+            urls = limited_urls
+        pair, observations, rejects = checked_offers(urls, product['name'], specs, transport, documents,
+                                                    direct=direct, seller_cache=seller_cache)
         result = {'slug': slug, 'sameGtin': pair[0]['gtin13'] if pair else None,
                   'selectedPair': [report_offer(row) for row in pair],
                   'offers': [report_offer(row) for row in observations], 'rejections': rejects}
@@ -363,7 +401,7 @@ def main():
             parser.error('The scheduled public audit is read-only')
         public = public_phone_catalog()
         queue = audit_queue(state, public)
-        rows = run(state, [row['slug'] for row in queue], products=queue)
+        rows = run(state, [row['slug'] for row in queue], maximum=40, products=queue, public_audit=True)
         now = datetime.now(timezone.utc).isoformat()
         state.setdefault('phoneOfferAudits', {}).update({row['slug']: now for row in rows})
         write_json(args.state, state)

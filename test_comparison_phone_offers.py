@@ -1,11 +1,13 @@
 import unittest
 from unittest.mock import Mock, patch
 
-from comparison_phone_offers import candidate_urls, checked_offers, publishable_pair
+from comparison_phone_offers import audit_queue, candidate_urls, checked_offers, publishable_pair
 
 
 MM = 'https://www.mediamarkt.com.tr/tr/product/_apple-iphone-16-plus-128-gb-akilli-telefon-mavi-146562812.html'
 PZ = 'https://www.pazarama.com/apple-iphone-16-plus-128-gb-ultramarine-p-195949722813'
+HB = 'https://www.hepsiburada.com/apple-iphone-16-plus-128-gb-mavi-p-HBCV00007ABC1'
+VATAN = 'https://www.vatanbilgisayar.com/apple-iphone-16-plus-128gb-akilli-telefon.html'
 NAME = 'Apple iPhone 16 Plus'
 TITLE = NAME + ' 8 GB 128 GB 5G'
 SPECS = {'ram_gb': 8, 'storage_gb': 128}
@@ -17,6 +19,29 @@ class ComparisonPhoneOffersTest(unittest.TestCase):
         state = {'products': {'x': {'catalogFamily': 'apple-iphone-16-plus', 'category': 'phone',
                                    'retailerLeads': ['https://urunai.com/telefon/apple/iphone-16-plus', MM, PZ, PZ]}}}
         self.assertEqual(candidate_urls(state, 'apple-iphone-16-plus-8gb-256gb'), [MM, PZ])
+
+    def test_public_queue_admits_new_direct_sources_and_requires_their_exact_barcodes(self):
+        slug = 'apple-iphone-16-plus'
+        product = {'slug': slug, 'name': NAME, 'attributes': {}}
+        state = {'products': {'x': {'catalogFamily': slug, 'category': 'phone', 'retailerLeads': [HB, VATAN]}}}
+        self.assertEqual(audit_queue(state, [product]), [product])
+        self.assertEqual(candidate_urls(state, slug), [])
+        self.assertEqual(candidate_urls(state, slug, expanded=True), [HB, VATAN])
+        reader = Mock()
+        reader._read_document.return_value = 'document', 'document_read', 200
+        direct = {'www.hepsiburada.com': reader, 'www.vatanbilgisayar.com': reader}
+        base = {'price': 89599, 'availability': 'in_stock', 'currency': 'TRY', 'source_title': TITLE}
+        vatan = {**base, 'gtin13': GTIN, 'url': VATAN, 'platform': 'Vatan Bilgisayar',
+                 'merchant': 'Vatan Bilgisayar', '_legal_name': 'vatan bilgisayar sanayi ve ticaret anonim sirketi'}
+        hb = {**base, 'url': HB, 'platform': 'Hepsiburada', 'merchant': 'Hepsiburada',
+              '_legal_name': 'd market elektronik hizmetler ve ticaret anonim sirketi'}
+        with patch('comparison_phone_offers.parse_catalog_buy_box') as parse, \
+             patch('comparison_phone_offers.selected_vatan_tws', return_value=vatan), \
+             patch('comparison_phone_offers.verify_seller', return_value=True):
+            parse.return_value = ({**hb, 'gtin13': None}, 'observed')
+            self.assertEqual(checked_offers([HB, VATAN], NAME, SPECS, Mock(), direct=direct)[0], [])
+            parse.return_value = ({**hb, 'gtin13': GTIN}, 'observed')
+            self.assertEqual(len(checked_offers([HB, VATAN], NAME, SPECS, Mock(), direct=direct)[0]), 2)
 
     def test_two_stores_must_show_the_same_barcode_and_different_companies(self):
         base = {'price': 89599, 'availability': 'in_stock', 'currency': 'TRY', 'source_title': TITLE,
