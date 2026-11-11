@@ -1,8 +1,10 @@
 import json
+from copy import deepcopy
 import unittest
 
 from pc_parts_multistore import (company_key, hepsiburada_pc_seller_identity, hepsiburada_pc_seller_targets,
-                                 independent_offers, processor_packaging, trendyol_pc_seller_targets)
+                                 independent_offers, processor_packaging, trendyol_pc_offer,
+                                 trendyol_pc_seller_targets)
 
 
 class PcSellerIndependenceTest(unittest.TestCase):
@@ -82,6 +84,51 @@ class PcSellerIndependenceTest(unittest.TestCase):
         self.assertEqual(hepsiburada_pc_seller_targets(document({**listing, 'isSalable': False}), url, gtin), [])
         self.assertEqual(hepsiburada_pc_seller_targets(document({**listing, 'merchantInfo': {**merchant, 'id': 'other'}}),
                                                        url, gtin), [])
+
+    def test_scoped_trendyol_offer_requires_a_matching_canonical_seller_witness(self):
+        base = 'https://www.trendyol.com/amd/ryzen-5-5600-mpk-p-123456'
+        url = base + '?boutiqueId=61&merchantId=2&sav=true'
+        title = 'AMD Ryzen 5 5600 MPK'
+        base_variant = {'itemNumber': 100, 'inStock': True, 'isSelected': True,
+                        'barcode': '8592978371814', 'price': {'value': 6900}}
+        seller = {'id': 2, 'name': 'Örnek Satıcı', 'officialName': 'Örnek Ticaret Limited Şirketi'}
+        selected = {'listingId': '0' * 32, 'itemNumber': 100, 'barcode': '8592978402266',
+                    'sellable': True, 'inStock': True, 'stockStatus': 1, 'maxSaleLimit': 5,
+                    'price': {'currency': 'TRY', 'sellingPrice': {'value': 8500}}}
+        default = {'id': 123456, 'productGroupId': 23456, 'name': title.removeprefix('AMD '),
+                   'brand': {'name': 'AMD'}, 'category': {'hierarchy': 'Bilgisayar/Bileşenler/İşlemciler'},
+                   'inStock': True, 'variants': [base_variant], 'merchantListing': {
+                       'merchant': {'id': 1, 'name': 'Varsayılan'},
+                       'winnerVariant': base_variant,
+                       'otherMerchants': [{'id': 2, 'name': seller['name'], 'url': url, 'variants': [selected]}],
+                   }}
+        scoped = {**default, 'merchantListing': {'merchant': seller, 'winnerVariant': selected,
+                                                'variants': [{**base_variant, 'barcode': None}]}}
+        schema = {'@type': 'Product', '@id': base, 'sku': '123456', 'name': title, 'offers': {
+            '@type': 'Offer', 'url': base, 'priceCurrency': 'TRY', 'price': '6900',
+            'itemCondition': 'https://schema.org/NewCondition', 'availability': 'https://schema.org/InStock',
+        }}
+
+        def document(product, price):
+            state = json.dumps({'product': product})
+            return f'''<link rel="canonical" href="{base}">
+                <script>window["__envoy__SHARED_PROPS"] = {state};</script>
+                <script type="application/ld+json">{json.dumps(schema)}</script>
+                <h1 data-testid="product-title">{title}</h1>
+                <div data-testid="normal-price"><span class="discounted">{price}</span></div>
+                <button data-testid="buy-now-button">Şimdi Al</button>'''
+
+        html = document(scoped, '8.500 TL')
+        witness = document(default, '6.900 TL')
+        self.assertIsNone(trendyol_pc_offer(html, url)[0])
+        offer, _ = trendyol_pc_offer(html, url, default_html=witness)
+        self.assertEqual((offer['merchant'], offer['gtin13'], offer['price']), ('Örnek Satıcı', '8592978402266', 8500))
+        for key, value in [('inStock', False), ('barcode', '8592978371814'), ('listingId', '1' * 32),
+                           ('price', {'currency': 'TRY', 'sellingPrice': {'value': 8501}})]:
+            different = deepcopy(default)
+            different['merchantListing']['otherMerchants'][0]['variants'][0][key] = value
+            self.assertIsNone(trendyol_pc_offer(html, url, default_html=document(different, '6.900 TL'))[0])
+        self.assertIsNone(trendyol_pc_offer(document(scoped, '8.501 TL'), url, default_html=witness)[0])
 
     def test_processor_packaging_distinguishes_same_barcode_tray_and_box(self):
         self.assertEqual(processor_packaging('AMD Ryzen 5600X (Kutusuz Fansız)'), 'tray')

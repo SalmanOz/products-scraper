@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 import json
 import re
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
@@ -195,7 +195,58 @@ def selected_product_state(soup):
     return states[0].get('product'), None
 
 
-def _parse_selected_listing(html, url, read_variant, check_group):
+def _scoped_seller_witness(default_html, soup, url, product, merchant, winner, variant, schema):
+    """Check the alternate listing against a fresh canonical product document."""
+    if not default_html or not parse_qs(urlparse(url).query).get('merchantId'):
+        return False
+    canonical_url = catalog_request_url(url)
+    default_soup = BeautifulSoup(default_html, 'html.parser')
+    if any([n.get('href') for n in page.select('link[rel="canonical"]')] != [canonical_url]
+           for page in (soup, default_soup)):
+        return False
+    default, _ = selected_product_state(default_soup)
+    if (not isinstance(default, dict) or any(default.get(key) != product.get(key)
+            for key in ('id', 'productGroupId', 'name', 'brand', 'category'))):
+        return False
+    listing = default.get('merchantListing')
+    if not isinstance(listing, dict):
+        return False
+    default_merchant, default_winner = listing.get('merchant'), listing.get('winnerVariant')
+    default_variant = _selected(default.get('variants'))
+    if (not isinstance(default_merchant, dict) or default_merchant.get('id') == merchant['id']
+            or not isinstance(default_winner, dict) or default_variant is None
+            or any(variant.get(key) != default_variant.get(key) for key in ('itemNumber', 'barcode', 'price'))
+            or any(default_variant.get(key) != default_winner.get(key) for key in ('itemNumber', 'barcode'))):
+        return False
+    # Product JSON-LD remains the canonical seller's metadata on this template.
+    defaults = [node for node in _nodes(default_soup) if node.get('@type') in ('Product', 'ProductGroup')]
+    default_offer = schema.get('offers')
+    default_price = _amount(default_offer.get('price')) if isinstance(default_offer, dict) else None
+    if (len(defaults) != 1 or not isinstance(default_offer, dict) or defaults[0].get('offers') != default_offer
+            or default_price is None or not isinstance(default_variant.get('price'), dict)
+            or default_price != _amount(default_variant['price'].get('value'))):
+        return False
+    sellers = listing.get('otherMerchants')
+    if not isinstance(sellers, list) or len(sellers) > 100:
+        return False
+    matched = [row for row in sellers if isinstance(row, dict) and row.get('id') == merchant['id']]
+    if (len(matched) != 1 or matched[0].get('name') != merchant['name']
+            or not isinstance(matched[0].get('url'), str)
+            or urljoin(canonical_url, matched[0]['url']) != url):
+        return False
+    variants = matched[0].get('variants')
+    fields = ('listingId', 'itemNumber', 'barcode', 'price', 'inStock', 'sellable', 'stockStatus', 'maxSaleLimit')
+    return (retailer_gtin13(winner.get('barcode')) is not None
+            and type(winner.get('maxSaleLimit')) is int and winner['maxSaleLimit'] > 0
+            and isinstance(variants, list) and len([
+                row for row in variants if isinstance(row, dict)
+                and row.get('inStock') is True and row.get('sellable') is True
+                and type(row.get('stockStatus')) is int and type(row.get('maxSaleLimit')) is int
+                and all(row.get(key) == winner.get(key) for key in fields)
+            ]) == 1)
+
+
+def _parse_selected_listing(html, url, read_variant, check_group, *, default_html=None):
     """Cross-check shared selected listing, SKU, merchant, cart and price."""
     identity = _product_id(url)
     if identity is None or not isinstance(html, str) or len(html.encode()) > 5 * 1024 * 1024:
@@ -239,8 +290,12 @@ def _parse_selected_listing(html, url, read_variant, check_group):
     if (variant is None or merchant_variant is None
             or any(v.get('itemNumber') != winner['itemNumber'] or v.get('inStock') is not True
                    for v in (variant, merchant_variant))
-            or variant.get('barcode') != winner['barcode']
             or merchant_variant.get('barcode') not in (None, winner['barcode'])):
+        return None, 'selected_variant_mismatch'
+    schemas = [node for node in _nodes(soup) if node.get('@type') in ('Product', 'ProductGroup')]
+    schema = schemas[0] if len(schemas) == 1 else {}
+    scoped = _scoped_seller_witness(default_html, soup, url, product, merchant, winner, variant, schema)
+    if variant.get('barcode') != winner['barcode'] and not scoped:
         return None, 'selected_variant_mismatch'
     price_data = winner.get('price')
     if not isinstance(price_data, dict) or price_data.get('currency') != 'TRY':
@@ -254,7 +309,8 @@ def _parse_selected_listing(html, url, read_variant, check_group):
         if basket is None:
             return None, 'public_basket_promotion_mismatch'
         price = _amount(basket['price'])
-    if price is None or not isinstance(variant.get('price'), dict) or _amount(variant['price'].get('value')) != price:
+    if price is None or not scoped and (not isinstance(variant.get('price'), dict)
+                                        or _amount(variant['price'].get('value')) != price):
         return None, 'selected_price_mismatch'
     # A coupon/member price cannot silently become the unconditional price.
     for key in ('discountedPrice', 'couponApplicablePrice', 'tyPlusCouponApplicablePrice',
@@ -262,8 +318,6 @@ def _parse_selected_listing(html, url, read_variant, check_group):
         value = price_data.get(key)
         if value is not None and (not isinstance(value, dict) or _amount(value.get('value')) != price):
             return None, 'conditional_price'
-    schemas = [node for node in _nodes(soup) if node.get('@type') in ('Product', 'ProductGroup')]
-    schema = schemas[0] if len(schemas) == 1 else {}
     if schema.get('@type') == 'ProductGroup' and not check_group(schema, identity, url, physical, brand):
         return None, 'schema_selected_group_mismatch'
     offer = schema.get('offers')
@@ -271,7 +325,7 @@ def _parse_selected_listing(html, url, read_variant, check_group):
             or matcher._normalize_words(str(schema.get('name') or '')) != matcher._normalize_words(title)
             or not isinstance(offer, dict) or offer.get('@type') != 'Offer'
             or _product_id(offer.get('url')) != identity
-            or offer.get('priceCurrency') != 'TRY' or _amount(offer.get('price')) != price
+            or offer.get('priceCurrency') != 'TRY' or not scoped and _amount(offer.get('price')) != price
             or offer.get('itemCondition') != 'https://schema.org/NewCondition'
             or offer.get('availability') != 'https://schema.org/InStock'):
         return None, 'schema_selected_offer_mismatch'

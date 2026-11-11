@@ -99,7 +99,14 @@ def independent_offers(offers):
 
 
 
-def trendyol_pc_offer(html, url):
+def _trendyol_pc_public_get(url, **kwargs):
+    # The selected merchant route uses the storefront's standard browser response.
+    if _product_id(url) and 'merchantId' in parse_qs(urlsplit(url).query):
+        kwargs['headers'] = {'Accept': kwargs['headers']['Accept']}
+    return compatible_get(url, **kwargs)
+
+
+def trendyol_pc_offer(html, url, *, default_html=None):
     def variant(product, title, brand):
         category = product.get('category')
         hierarchy = category.get('hierarchy', '') if isinstance(category, dict) else ''
@@ -112,6 +119,7 @@ def trendyol_pc_offer(html, url):
     return _parse_selected_listing(
         html, url, variant,
         lambda schema, identity, source, _physical, brand: _selected_group_root(schema, identity, source, brand),
+        default_html=default_html,
     )
 
 
@@ -311,14 +319,15 @@ def hepsiburada_pc_seller_identity(html, offer):
 class PcRetailer:
     def __init__(self, host, budget=150):
         self.host = host
+        get = {HEPSIBURADA: _hepsiburada_public_get, TRENDYOL: _trendyol_pc_public_get}.get(host, compatible_get)
         self.transport = PriorityRetailerTransport(
-            maximum_per_host=budget, browser_fallback=False,
-            get=_hepsiburada_public_get if host == HEPSIBURADA else compatible_get,
+            maximum_per_host=budget, browser_fallback=False, get=get,
         )
         self.identities = {}
         self.stop = False
         self.rejected = Counter()
         self.seller_targets = {}
+        self.trendyol_default_document = (None, None)
 
     def read(self, url, part, *, discover_sellers=False):
         if offer_host(url) != self.host or self.stop:
@@ -337,10 +346,11 @@ class PcRetailer:
             if self.host == TRENDYOL:
                 self.seller_targets.update((target, part) for target in trendyol_pc_seller_targets(
                     html, final, part['gtin']))
-            elif self.host == HEPSIBURADA and raw and raw['gtin13'] == part['gtin']:
+            elif self.host == HEPSIBURADA:
                 self.seller_targets.update((target, part) for target in hepsiburada_pc_seller_targets(
                     html, final, part['gtin']))
-                self.seller_targets.update((row['source_url'], part) for row in discover_product_sellers(html, final))
+                if raw and raw['gtin13'] == part['gtin']:
+                    self.seller_targets.update((row['source_url'], part) for row in discover_product_sellers(html, final))
         if raw is None:
             self.rejected[reason] += 1
             return None
@@ -391,7 +401,19 @@ class PcRetailer:
                     'platform': offer['platform'], 'merchant': offer['seller'], 'merchant_id': GAMING,
                     'observed_at': offer['checkedAt'], 'seller_url': ROOT + legal_path}, 'verified'
         if self.host == TRENDYOL:
-            return trendyol_pc_offer(html, url)
+            row, reason = trendyol_pc_offer(html, url)
+            route = urlsplit(url)
+            if (reason in {'selected_variant_mismatch', 'selected_price_mismatch', 'schema_selected_offer_mismatch'}
+                    and 'merchantId' in parse_qs(route.query)):
+                canonical = route._replace(query='').geturl()
+                if self.trendyol_default_document[0] != canonical:
+                    default, _, _ = self.transport._read_document(canonical, self.host, fresh=True)
+                    if self.transport.resolved_url(canonical) != canonical:
+                        default = None
+                    self.trendyol_default_document = (canonical, default)
+                if self.trendyol_default_document[1]:
+                    return trendyol_pc_offer(html, url, default_html=self.trendyol_default_document[1])
+            return row, reason
         if self.host == HEPSIBURADA:
             return hepsiburada_pc_offer(html, url)
         if self.host == N11:
