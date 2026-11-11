@@ -6,6 +6,7 @@ import json
 
 from bs4 import BeautifulSoup
 
+from automatic_memory_variants import variant_selected_evidence
 from daily_discovery import MAX_BODY, model_key, product_names
 from laptop_discovery import Reader
 from priority_retailer_transport import PriorityRetailerTransport, compatible_get
@@ -98,6 +99,14 @@ def prepare():
     offers = [vatan, trendyol]
     if not independent_sellers(*offers) or any(row['availability'] != 'in_stock' or row['currency'] != 'TRY' for row in offers):
         raise ValueError('two_independent_in_stock_offers_required')
+    trendyol['source_variant_evidence'] = variant_selected_evidence(trendyol, NAME, SPECS)
+    if not trendyol['source_variant_evidence']:
+        raise ValueError('trendyol_selected_sku_evidence_missing')
+    vatan['source_variant_evidence'] = {
+        'version': 'selected-retailer-sku-v1', 'platform': vatan['platform'], 'gtin13': vatan['gtin13'],
+        'product_id': vatan['sku'], 'sku': vatan['sku'], 'merchant_id': 'vatan-bilgisayar',
+        'merchant_name': vatan['merchant'], **SPECS,
+    }
     return offers, photo
 
 

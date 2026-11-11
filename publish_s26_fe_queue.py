@@ -136,6 +136,7 @@ def publish_verified(candidate, sources, rows, photo):
         raise ValueError('model_already_published')
     offers = [{'merchant_name': row['merchant'], 'price': row['price'], 'currency': 'TRY',
                'availability': 'in_stock', 'source_url': row['url'], 'source_title': row['source_title'],
+               **({'source_variant_evidence': row['source_variant_evidence']} if 'source_variant_evidence' in row else {}),
                'observed_at': row['observed_at'], 'checked_at': row['observed_at']} for row in rows]
     image_url = f'https://cdn.teknoskor.com/products/{slug}/{slug}-1.webp'
     payload = {'mode': 'validate', 'candidate': candidate, 'sources': sources,
