@@ -71,6 +71,25 @@ class TwsStageUpdatesTest(unittest.TestCase):
         refreshed, _ = merge_snapshot(updated, self.catalog, {MODEL: all_offers}, {}, 'later')
         self.assertEqual(len(refreshed['models'][0]['offers']), 4)
 
+    def test_distinct_legal_sellers_can_share_a_marketplace(self):
+        other_n11 = N11.replace('gelalbe', 'distinct')
+        self.snapshot['models'][0]['offers'] = [{'url': N11, 'merchant': 'gelalbe'}]
+        self.snapshot['sourceTargets'][MODEL] = [{'url': N11, 'merchant': 'gelalbe'}]
+        report = {'verified': [{'name': MODEL, 'observations': [
+            {'url': other_n11, 'merchant': 'distinct', 'gtin13': BLACK},
+        ]}]}
+
+        def collect(host, targets, *, document_reader=None):
+            offers, failures = read(host, targets)
+            for offer in offers[MODEL]:
+                offer['_legal_name'] = offer['merchant']
+                offer['merchant_id'] = offer['merchant']
+            return offers, failures
+
+        with patch('tws_stage_updates.reread', side_effect=collect):
+            updated, _ = stage(self.snapshot, self.catalog, report)
+        self.assertEqual(len(updated['models'][0]['offers']), 2)
+
     def test_shared_barcode_or_stale_second_seller_cannot_supply_a_pair(self):
         report = {'verified': [{'name': MODEL, 'observations': [
             {'url': TY, 'merchant': 'Trendyol', 'gtin13': BLACK},
@@ -78,7 +97,7 @@ class TwsStageUpdatesTest(unittest.TestCase):
         with patch('tws_stage_updates.reread', return_value=({}, {})):
             updated, result = stage(self.snapshot, self.catalog, report)
         self.assertIs(updated, self.snapshot)
-        self.assertEqual(result['rejections'], {'independent_platform_pair_missing': 1})
+        self.assertEqual(result['rejections'], {'independent_pair_missing': 1})
         self.snapshot['models'].append({'name': 'Other Model', 'gtin': BLACK, 'offers': []})
         with patch('tws_stage_updates.reread') as fetch:
             updated, result = stage(self.snapshot, self.catalog, report)

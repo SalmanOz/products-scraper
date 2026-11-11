@@ -4,6 +4,7 @@ import argparse
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
+from hashlib import sha256
 import json
 from pathlib import Path
 
@@ -104,8 +105,8 @@ def stage(snapshot, catalog, report, selected_models=()):
     for name, gtin in attempted:
         key = (name, gtin)
         offers = exact_tws_sellers(observed[key], maximum=MAX_CURRENT_OFFERS)
-        if len({o['platform'] for o in offers}) < 2:
-            reasons['independent_platform_pair_missing'] += 1
+        if len(offers) < 2:
+            reasons['independent_pair_missing'] += 1
             continue
         previous = rows.get(key, {}).get('offers', [])
         if not ({o['url'] for o in offers} - {o['url'] for o in previous}):
@@ -146,11 +147,14 @@ def main():
     args = parser.parse_args()
     if args.output.resolve() in {path.resolve() for path in (args.catalog, args.snapshot, args.audit)}:
         parser.error('Use a separate output path for the staged snapshot')
-    catalog, snapshot, report = (json.loads(path.read_text(encoding='utf-8'))
-                                 for path in (args.catalog, args.snapshot, args.audit))
+    original = args.snapshot.read_bytes()
+    snapshot = json.loads(original)
+    catalog, report = (json.loads(path.read_text(encoding='utf-8')) for path in (args.catalog, args.audit))
     updated, results = stage(snapshot, catalog, report, args.model)
+    payload = (json.dumps(updated, ensure_ascii=False, indent=2) + '\n').encode('utf-8')
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(updated, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+    args.output.write_bytes(payload)
+    results.update(baseSnapshotSha256=sha256(original).hexdigest(), stagedSnapshotSha256=sha256(payload).hexdigest())
     print(json.dumps(results, ensure_ascii=False))
 
 
