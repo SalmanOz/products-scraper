@@ -57,6 +57,8 @@ def product_host(url):
             if parsed.netloc == 'www.trendyol.com':
                 if key == 'v' and value == 'tek-ebat':
                     continue
+                if key == 'sav' and value == 'true' and 'merchantId' in dict(pairs):
+                    continue
                 if key not in {'merchantId', 'boutiqueId'} or not re.fullmatch(r'[1-9]\d{0,11}', value):
                     return None
             elif parsed.netloc in {'www.hepsiburada.com', 'www.n11.com'}:

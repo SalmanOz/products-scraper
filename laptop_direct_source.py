@@ -19,6 +19,13 @@ DIRECT_STORES = {
         'Sner Teknoloji', '.productDetails .product-price-sale .price',
         '.productDetails a.product-cart-add.add-to-cart-btn',
         '/mesafeli-satis-sozlesmesi', 'ENSAR BİLİŞİM VE TEKNOLOJİ ÜRÜNLERİ TİC. LTD. ŞTİ.'),
+    'www.lowell.com.tr': (
+        'Lowell', '.productDetails .product-price-sale .price',
+        '.product-button-container a.product-cart-add.add-to-cart-btn[data-productid]',
+        '/mesafeli-satis-sozlesmesi', 'LOWELL TEKNOLOJİ BİLİŞİM SANAYİ TİCARET LİMİTED ŞİRKETİ'),
+    'www.uzmanlarpc.com': (
+        'UzmanlarPC', 'div:has(> .pPriceTitle:-soup-contains("Kredi Kartı Fiyatı")) > .pPriceDeger[name="tryPrice"].d-block',
+        'button.wc-buy-cart', '/sartlar-kosullar', 'Uzmanlar oto gıda bilgisayar inş san tic ltd şti'),
     'pitrap.com': (
         'Pitrap', '.pdp .buybox .prices > .price',
         '.pdp .buybox form[method="post"][action^="/sepet/ekle/"] button',
@@ -74,6 +81,8 @@ def selected_direct_laptop(html, url, *, read_facts=None):
         headings = soup.select('.product-right h1')
         item = _teknostim_microdata(soup, url)
         products = [item] if item else []
+    elif host == 'www.uzmanlarpc.com':
+        headings = soup.select('h1.wc-pd-title')
     if len(products) != 1:
         return None, 'direct_selected_product_missing'
     product = products[0]
@@ -92,6 +101,11 @@ def selected_direct_laptop(html, url, *, read_facts=None):
     gtin = retailer_gtin13(product.get('gtin13') or product.get('gtin'))
     if host == 'tasozbilgisayar.com':
         gtin = _tasoz_gtin(soup, gtin)
+    elif host == 'www.uzmanlarpc.com':
+        barcodes = [retailer_gtin13(node.get_text(' ', strip=True))
+                    for node in soup.select('span.bid:-soup-contains("Barkod:") > span.pDeger')]
+        if barcodes != [gtin]:
+            return None, 'direct_selected_identity_missing'
     if not facts or not gtin:
         return None, 'direct_selected_identity_missing'
 
@@ -100,6 +114,9 @@ def selected_direct_laptop(html, url, *, read_facts=None):
         offer = offer[0]
     if not isinstance(offer, dict) or offer.get('@type') != 'Offer':
         return None, 'direct_selected_offer_missing'
+    if host == 'www.uzmanlarpc.com' and offer.get('seller') != {
+            '@type': 'Organization', '@id': 'https://www.uzmanlarpc.com/#organization', 'name': 'UzmanlarPC'}:
+        return None, 'direct_selected_seller_mismatch'
     stock_label = soup.select_one('.summary.entry-summary .bss-avail')
     # The new-product WooCommerce template omits itemCondition in JSON-LD.
     # Require its own stock promise, HP model/barkod and a normal one-unit sale.
@@ -123,6 +140,9 @@ def selected_direct_laptop(html, url, *, read_facts=None):
         product_id = urlparse(url).path.rstrip('/').rsplit('-', 1)[-1]
         if (cart['data-sepete-ekle'] != product_id or WORDS(cart.get('data-urun-ad')) != WORDS(title)
                 or amount(str(cart.get('data-urun-fiyat', '')).replace('.', '').replace(',', '.')) != price):
+            return None, 'direct_selected_cart_mismatch'
+    if host == 'www.lowell.com.tr' and len(carts) == 1:
+        if WORDS(carts[0].get('data-productname')) != WORDS(title):
             return None, 'direct_selected_cart_mismatch'
     if not price:
         return None, 'direct_visible_price_mismatch'

@@ -7,51 +7,77 @@ import hashlib
 import json
 from pathlib import Path
 import re
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, urljoin, urlsplit
 
 from bs4 import BeautifulSoup
 
 from audit_hepsiburada_iphone16pm_readonly import parse_exact_buy_box
+from hepsiburada_catalog_discovery import discover_product_sellers
 from hepsiburada_catalog_source import _identity
 from hepsiburada_s25_fe_source import _nodes
 from laptop_direct_source import DIRECT_STORES, selected_direct_laptop
 from laptop_pilot import _hepsiburada_public_get, verify_seller
 from laptop_retailer_sources import WORDS, _legal
+from n11_catalog_source import _parse_selected_listing as n11_selected_listing
 from pc_parts import ROOT, parse_part
 from priority_retailer_transport import PriorityRetailerTransport, compatible_get, product_host
 from retailer_barcode import retailer_gtin13
-from trendyol_catalog_source import _parse_selected_listing, _selected_group_root
+from teknosa_marketplace_source import _selected_marketplace_commerce
+from trendyol_catalog_source import _parse_selected_listing, _product_id, _selected_group_root, selected_product_state
 
 GAMING = urlsplit(ROOT).netloc
 INCEHESAP = 'www.incehesap.com'
 HEPSIBURADA = 'www.hepsiburada.com'
 TRENDYOL = 'www.trendyol.com'
-DIRECT = {GAMING, INCEHESAP}
-HOSTS = DIRECT | {HEPSIBURADA, TRENDYOL}
+N11 = 'www.n11.com'
+TEKNOSA = 'www.teknosa.com'
+DIRECT_PATHS = {
+    GAMING: r'/urun/\d+/[a-z0-9-]+/',
+    INCEHESAP: r'/[a-z0-9-]+-fiyati-\d+/',
+    'pitrap.com': r'/urun/[a-z0-9-]+',
+    'www.netsiparis.com': r'/[a-z0-9-]+',
+    'www.uzmanlarpc.com': r'/urun/[a-z0-9-]+',
+    'www.lowell.com.tr': r'/[a-z0-9-]+-\d+',
+    'www.teknostim.com': r'/urun/[a-z0-9-]+',
+}
+HOSTS = DIRECT_PATHS.keys() | {HEPSIBURADA, TRENDYOL, N11, TEKNOSA}
 STOP = {'source_circuit_open', 'challenge_page', 'http_403', 'http_429', 'transport_error'}
 
 
 def offer_host(url):
-    if not isinstance(url, str):
+    if not isinstance(url, str) or len(url) > 1000 or re.search(r'[\x00-\x20\\]', url):
         return None
-    parsed = urlsplit(url)
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return None
     if parsed.scheme != 'https' or parsed.netloc not in HOSTS or parsed.fragment:
         return None
     host = parsed.netloc
-    if host not in DIRECT:
+    if host not in DIRECT_PATHS:
         return product_host(url)
-    if parsed.query:
-        return None
-    if host == GAMING:
-        return host if re.fullmatch(r'/urun/\d+/[a-z0-9-]+/', parsed.path) else None
-    return host if re.fullmatch(r'/[a-z0-9-]+-fiyati-\d+/', parsed.path) else None
+    return host if not parsed.query and re.fullmatch(DIRECT_PATHS[host], parsed.path) else None
 
 
 def company_key(name):
     # Company suffixes vary across public seller profiles. Do not compare
     # marketplace nicknames when determining independence.
     name = re.sub(r' (?:anonim sirketi|limited sirketi|ltd sti|a s|as)$', '', WORDS(name))
+    if name == 'beta plus teknoloji hizmetleri sanayi ticaret':
+        # The public contact pages identify the same premises at Malazgirt Cad. 32/A.
+        name = 'beta oyun teknoloji'
     return hashlib.sha256(name.replace(' ', '').encode()).hexdigest() if name else None
+
+
+def processor_packaging(title):
+    title = WORDS(title)
+    for packaging, pattern in (
+        ('mpk', r'\bmpk\b'), ('box', r'\b(?:box|kutulu)\b'),
+        ('tray', r'\b(?:tray|kutusuz)\b'),
+    ):
+        if re.search(pattern, title):
+            return packaging
+    return None
 
 
 def independent_offers(offers):
@@ -86,6 +112,63 @@ def trendyol_pc_offer(html, url):
         html, url, variant,
         lambda schema, identity, source, _physical, brand: _selected_group_root(schema, identity, source, brand),
     )
+
+
+def trendyol_pc_seller_targets(html, url, gtin):
+    """Discover public alternate seller links, with no price carried over."""
+    identity = _product_id(url)
+    if not identity:
+        return []
+    product, _ = selected_product_state(BeautifulSoup(html, 'html.parser'))
+    if not isinstance(product, dict) or str(product.get('id')) != identity:
+        return []
+    listing = product.get('merchantListing')
+    others = listing.get('otherMerchants') if isinstance(listing, dict) else None
+    if not isinstance(others, list) or len(others) > 100:
+        return []
+    targets = []
+    for other in others:
+        if not isinstance(other, dict) or type(other.get('id')) is not int:
+            continue
+        variants = other.get('variants')
+        if not isinstance(variants, list) or not any(
+                isinstance(row, dict) and row.get('sellable') is True and row.get('inStock') is True
+                and retailer_gtin13(row.get('barcode')) == gtin for row in variants):
+            continue
+        href = other.get('url')
+        if not isinstance(href, str) or len(href) > 1000:
+            continue
+        try:
+            target = urljoin(url, href)
+            if (_product_id(target) == identity
+                    and parse_qs(urlsplit(target).query).get('merchantId') == [str(other['id'])]):
+                targets.append(target)
+        except ValueError:
+            continue
+    return list(dict.fromkeys(targets))
+
+
+def n11_pc_offer(html, url):
+    def selected(product):
+        category = product.get('category')
+        path = category.get('seoUrl', '') if isinstance(category, dict) else ''
+        title = WORDS(product.get('title'))
+        return (lambda value: path.startswith('/bilgisayar/bilgisayar-bilesenleri/')
+                and WORDS(value.removesuffix(' Fiyatları ve Özellikleri')) == title
+                and not re.search(r'\b(?:yenilenmis|ikinci el|teshir)\b', title)), {
+                    'brand': product.get('productBrand'), **_legal(product.get('seller'), 'companyName')}
+    return n11_selected_listing(html, url, '', {}, verify_laptop=selected)
+
+
+def teknosa_pc_offer(html, url):
+    def selected(cart, title, product):
+        brand = product.get('brand')
+        brand = brand.get('name') if isinstance(brand, dict) else brand
+        if WORDS(brand) != WORDS(cart.get('data-product-brand')) or re.search(
+                r'\b(?:yenilenmis|ikinci el|teshir)\b', WORDS(title)):
+            return None
+        return {'brand': brand}
+    return _selected_marketplace_commerce(html, url, verify_product=selected)
 
 
 def hepsiburada_pc_offer(html, url):
@@ -144,6 +227,50 @@ def hepsiburada_pc_offer(html, url):
     return offer, reason
 
 
+def hepsiburada_pc_seller_identity(html, offer):
+    """Bind the public seller profile's trade name to the selected merchant."""
+    soup = BeautifulSoup(html, 'html.parser')
+    url = offer['seller_url']
+    slug = urlsplit(url).path.rsplit('/', 1)[-1]
+    canonical = [node.get('href') for node in soup.select('link[rel="canonical"]')]
+    profiles = soup.select('div.MerchantProfile[id^="MerchantProfile_"]')
+    scripts = soup.select('script#reduxStore')
+    if canonical != [url] or len(profiles) != 1 or len(scripts) != 1:
+        return None
+    profile = profiles[0]
+    script = profile.find_previous_sibling('script')
+    if script is None:
+        return None
+    component = profile['id'].removeprefix('MerchantProfile_')
+    match = re.search(
+        r"window\.MCONTENT\.MERCHANTPROFILE\s*=\s*Object\.assign\("
+        r"window\.MCONTENT\.MERCHANTPROFILE\s*\|\|\s*\{\},\s*\{\s*'"
+        + re.escape(component) + r"':\s*\{\s*'STATE':\s*", script.get_text(),
+    )
+    if match is None:
+        return None
+    try:
+        selected = json.loads(scripts[0].get_text())['merchantState']['merchantDetail']
+        detail = json.JSONDecoder().raw_decode(script.get_text()[match.end():])[0]['data']['merchantDetail']
+        if any(row['id'] != offer['merchant_id'] or row['urlPostfix'] != slug
+               for row in (selected, detail)) or selected['name'] != offer['merchant']:
+            return None
+        properties = detail['properties']
+        fields = {}
+        for row in properties:
+            key = WORDS(row['key'])
+            if key in fields:
+                return None
+            fields[key] = row['val']
+        name = fields.get('ticaret unvani')
+        tax = fields.get('vkn')
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return None
+    if not isinstance(name, str) or len(WORDS(name).split()) < 2 or len(name) > 240:
+        return None
+    return {'_legal_name': name, '_tax_key': tax if isinstance(tax, str) and re.fullmatch(r'\d{10,11}', tax) else ''}
+
+
 class PcRetailer:
     def __init__(self, host, budget=150):
         self.host = host
@@ -154,8 +281,9 @@ class PcRetailer:
         self.identities = {}
         self.stop = False
         self.rejected = Counter()
+        self.seller_targets = {}
 
-    def read(self, url, part):
+    def read(self, url, part, *, discover_sellers=False):
         if offer_host(url) != self.host or self.stop:
             return None
         html, reason, _ = self.transport._read_document(url, self.host)
@@ -168,6 +296,12 @@ class PcRetailer:
             raw, reason = self.parse(html, final, part)
         except (KeyError, ValueError, TypeError, AttributeError):
             raw, reason = None, 'invalid_source_data'
+        if discover_sellers and not urlsplit(final).query:
+            if self.host == TRENDYOL:
+                self.seller_targets.update((target, part) for target in trendyol_pc_seller_targets(
+                    html, final, part['gtin']))
+            elif self.host == HEPSIBURADA and raw and raw['gtin13'] == part['gtin']:
+                self.seller_targets.update((row['source_url'], part) for row in discover_product_sellers(html, final))
         if raw is None:
             self.rejected[reason] += 1
             return None
@@ -175,7 +309,12 @@ class PcRetailer:
                 or raw.get('price_kind') == 'basket'):
             self.rejected['gtin_brand_or_cash_mismatch'] += 1
             return None
-        if not verify_seller(raw, None, self.transport, self.identities):
+        if self.host != GAMING and part['kind'] == 'cpu':
+            expected = processor_packaging(part['name'])
+            if expected and processor_packaging(raw.get('source_title')) != expected:
+                self.rejected['processor_packaging_mismatch'] += 1
+                return None
+        if not self.verify_seller(raw):
             self.rejected['seller_company_unverified'] += 1
             return None
         key = company_key(raw.get('_legal_name'))
@@ -188,6 +327,19 @@ class PcRetailer:
         if raw.get('_tax_key'):
             row['taxKey'] = hashlib.sha256(raw['_tax_key'].encode()).hexdigest()
         return row
+
+    def verify_seller(self, raw):
+        if self.host != HEPSIBURADA or raw['merchant'] == 'Hepsiburada':
+            return verify_seller(raw, None, self.transport, self.identities)
+        url = raw['seller_url']
+        key = (url, raw['merchant_id'], raw['merchant'])
+        if key not in self.identities:
+            html, _, _ = self.transport._read_document(url + '?tab=profile', HEPSIBURADA, category=True)
+            self.identities[key] = hepsiburada_pc_seller_identity(html, raw) if html else None
+        identity = self.identities[key]
+        if identity:
+            raw.update(identity)
+        return bool(identity)
 
     def parse(self, html, url, part):
         if self.host == GAMING:
@@ -203,13 +355,17 @@ class PcRetailer:
             return trendyol_pc_offer(html, url)
         if self.host == HEPSIBURADA:
             return hepsiburada_pc_offer(html, url)
+        if self.host == N11:
+            return n11_pc_offer(html, url)
+        if self.host == TEKNOSA:
+            return teknosa_pc_offer(html, url)
         offer, reason = selected_direct_laptop(html, url, read_facts=lambda _title, brand: {'brand': brand})
         if offer:
             offer['brand'] = offer['facts']['brand']
         return offer, reason
 
 
-def collect_targets(targets):
+def collect_targets(targets, *, discover_sellers=False):
     by_host = {}
     for url, part in targets:
         if host := offer_host(url):
@@ -221,7 +377,13 @@ def collect_targets(targets):
         for url, part in rows:
             if reader.stop:
                 break
-            if offer := reader.read(url, part):
+            if offer := reader.read(url, part, discover_sellers=discover_sellers):
+                results.append(offer)
+        visited = {url for url, _ in rows}
+        for url, part in reader.seller_targets.items():
+            if reader.stop:
+                break
+            if url not in visited and (offer := reader.read(url, part)):
                 results.append(offer)
         print(json.dumps({'host': host, 'verified': len(results), 'rejected': dict(reader.rejected)},
                          ensure_ascii=False), flush=True)
@@ -232,20 +394,31 @@ def collect_targets(targets):
         return [offer for job in jobs for offer in job.result()]
 
 
-def refresh(snapshot, output):
+def refresh(snapshot, output, *, discovery=None):
     targets = []
     for part in snapshot['parts']:
         saved = part.get('offerTargets') or [offer['url'] for offer in part.get('offers', [part['offer']])]
         targets.extend((url, part) for url in dict.fromkeys([part['sourceUrl'], *saved]))
-    targets = list({url: (url, part) for url, part in targets}.values())
-    verified = collect_targets(targets)
+    targets = {url: part for url, part in targets}
+    if discovery is not None:
+        parts = {part['gtin']: part for part in snapshot['parts']}
+        for gtin, urls in discovery:
+            if gtin in parts:
+                for url in urls:
+                    if offer_host(url):
+                        targets.setdefault(url, parts[gtin])
+    verified = collect_targets(targets.items(), discover_sellers=discovery is not None)
     now = datetime.now(timezone.utc)
     # A failed reader does not create a new observation or advance a timestamp.
     # Unconfirmed prices are omitted until the source can verify them again.
     if not verified:
         raise SystemExit('No component prices verified')
     for part in snapshot['parts']:
-        offers = independent_offers(row for row in verified if row['gtin'] == part['gtin'])
+        observations = [row for row in verified if row['gtin'] == part['gtin']]
+        if discovery is not None:
+            existing = part.get('offerTargets') or [part['sourceUrl'], *(row['url'] for row in part.get('offers', []))]
+            part['offerTargets'] = list(dict.fromkeys([*existing, *(row['url'] for row in observations)]))
+        offers = independent_offers(observations)
         part['offers'] = offers
         if offers:
             part['offer'] = offers[0]
@@ -259,8 +432,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--refresh', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--discover-from', type=Path, help='JSON pairs of catalog GTIN and candidate product URLs')
     args = parser.parse_args()
-    refresh(json.loads(args.refresh.read_text()), args.output)
+    refresh(json.loads(args.refresh.read_text()), args.output,
+            discovery=json.loads(args.discover_from.read_text()) if args.discover_from else None)
 
 
 if __name__ == '__main__':

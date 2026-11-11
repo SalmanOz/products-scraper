@@ -177,12 +177,7 @@ def parse_catalog_listing(html, url, name, specs):
         _selected_group_schema)
 
 
-def _parse_selected_listing(html, url, read_variant, check_group):
-    """Cross-check shared selected listing, SKU, merchant, cart and price."""
-    identity = _product_id(url)
-    if identity is None or not isinstance(html, str) or len(html.encode()) > 5 * 1024 * 1024:
-        return None, 'invalid_catalog_pdp'
-    soup = BeautifulSoup(html, 'html.parser')
+def selected_product_state(soup):
     states = []
     for script in soup.select('script'):
         body = script.get_text()
@@ -197,7 +192,18 @@ def _parse_selected_listing(html, url, read_variant, check_group):
                 return None, 'selected_state_invalid'
     if len(states) != 1 or not isinstance(states[0], dict):
         return None, 'selected_state_missing'
-    product = states[0].get('product')
+    return states[0].get('product'), None
+
+
+def _parse_selected_listing(html, url, read_variant, check_group):
+    """Cross-check shared selected listing, SKU, merchant, cart and price."""
+    identity = _product_id(url)
+    if identity is None or not isinstance(html, str) or len(html.encode()) > 5 * 1024 * 1024:
+        return None, 'invalid_catalog_pdp'
+    soup = BeautifulSoup(html, 'html.parser')
+    product, reason = selected_product_state(soup)
+    if reason:
+        return None, reason
     if not isinstance(product, dict) or str(product.get('id')) != identity or product.get('inStock') is not True:
         return None, 'selected_product_mismatch'
     headings = soup.select('h1[data-testid="product-title"]')
