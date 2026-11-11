@@ -13,7 +13,7 @@ N11 = 'https://www.n11.com/urun/huawei-freebuds-se-2-43816686?magaza=gelalbe&ren
 HB = 'https://www.hepsiburada.com/huawei-freebuds-se-2-p-HBCV00007I7MLV'
 
 
-def read(host, targets):
+def read(host, targets, *, document_reader=None):
     results = []
     for _, target in targets:
         results.append({**target, 'platform': host, '_legal_name': host, 'price': 1300.0,
@@ -60,7 +60,7 @@ class TwsStageUpdatesTest(unittest.TestCase):
         self.catalog['models'][0]['requiresIndependentPair'] = True
         all_offers = []
 
-        def collect(host, targets):
+        def collect(host, targets, *, document_reader=None):
             result, failures = read(host, targets)
             all_offers.extend(result[MODEL])
             return result, failures

@@ -1,7 +1,9 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 
-from competitor_catalog_gaps import (AKAKCE, CIMRI, EPEY, KARSILASTIRICI, PAHALIMI, URUNAI, akakce_limits, candidate_family, cimri_sitemap_cards, epey_earbud_title, epey_sitemap_cards, scan_product_sitemap, scan_source, urunai_market_slugs, urunai_sitemap_cards, catalog_match, category_url, comparison_cards, comparison_retailer_leads,
+from competitor_catalog_gaps import (AKAKCE, CIMRI, EPEY, KARSILASTIRICI, PAHALIMI, URUNAI, akakce_limits, candidate_family, cimri_sitemap_cards, epey_earbud_title, epey_sitemap_cards, export_epey_snapshot, import_epey_snapshot, product_state_key, scan_product_sitemap, scan_source, urunai_market_slugs, urunai_sitemap_cards, catalog_match, category_url, comparison_cards, comparison_retailer_leads,
                                      identity_index, in_scope, merge_state, read_state)
 
 
@@ -9,6 +11,28 @@ class CompetitorCatalogGapsTest(unittest.TestCase):
     def test_akakce_budget_keeps_every_category_and_reserves_product_reads(self):
         self.assertEqual(akakce_limits(26, 12, 3, 36), (1, 14))
         self.assertEqual(akakce_limits(24, 12, 3, 0), (2, 0))
+
+    def test_epey_snapshot_import_keeps_usable_links_without_prices_or_false_freshness(self):
+        old, new = '2026-11-11T18:00:00+00:00', '2026-11-11T20:00:00+00:00'
+        retailer = 'https://www.n11.com/urun/sony-wf-1000xm6-12345678'
+        product = {'source': EPEY, 'category': 'tws', 'title': 'Sony WF-1000XM6 Tam Kablosuz Kulaklık',
+                   'url': f'https://{EPEY}/kulaklik/sony-wf-1000xm6.html', 'id': '12345',
+                   'firstSeenAt': old, 'lastSeenAt': old, 'lastLeadAttemptAt': old,
+                   'retailerLeads': [retailer, 'https://evil.example/sony'], 'price': 1}
+        key = product_state_key(product)
+        live = {k: v for k, v in product.items() if k not in ('retailerLeads', 'price')}
+        live.update(lastSeenAt=new, lastLeadAttemptAt=new, leadStatus='http_403')
+        state = {'products': {key: live}}
+        with TemporaryDirectory() as tmp:
+            snapshot = Path(tmp) / 'epey.json.gz'
+            self.assertEqual(export_epey_snapshot(snapshot, {'products': {key: product}}), 1)
+            report = import_epey_snapshot(snapshot, state)
+            self.assertEqual(import_epey_snapshot(snapshot, state), report)
+        self.assertEqual(report['withRetailerLinks'], 1)
+        self.assertEqual(state['products'][key]['retailerLeads'], [retailer])
+        self.assertEqual(state['products'][key]['lastLeadAttemptAt'], new)
+        self.assertEqual(state['products'][key]['leadStatus'], 'http_403')
+        self.assertNotIn('price', state['products'][key])
 
     def test_akakce_deduplicates_product_ids_and_keeps_native_pagination(self):
         url = 'https://' + AKAKCE + '/ssd.html'

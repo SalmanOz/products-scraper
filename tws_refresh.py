@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 
 from catalog_source_collector import catalog_document_reader
 from laptop_pilot import _public_offers
-from priority_retailer_transport import product_host
+from priority_retailer_transport import n11_product_selectors, product_host
 from retailer_barcode import retailer_gtin13
 from tws_catalog_expansion import MARKETPLACES, exact_tws_sellers, reread
 from tws_offer_pilot import _mediamarkt_tws_url, select_sku_offers
@@ -26,6 +26,9 @@ MAX_CURRENT_OFFERS = 4
 
 def selected_host(url):
     host = urlsplit(url).netloc
+    if host == 'www.n11.com':
+        selectors = n11_product_selectors(url)
+        return host if len(url) <= 500 and selectors is not None and 'dahili-hafiza' not in selectors else None
     if host in MARKETPLACES and product_host(url) == host:
         return host
     if host == 'www.mediamarkt.com.tr' and _mediamarkt_tws_url(url):

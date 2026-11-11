@@ -7,6 +7,7 @@ from copy import deepcopy
 import json
 from pathlib import Path
 
+from catalog_source_collector import catalog_document_reader
 from competitor_catalog_gaps import retailer_destination
 from laptop_pilot import _public_offers
 from retailer_barcode import retailer_gtin13
@@ -85,8 +86,11 @@ def stage(snapshot, catalog, report, selected_models=()):
             groups[selected_host(url)].append((name, {'url': url, 'merchant': merchant, 'gtin13': gtin}))
 
     observed = defaultdict(list)
+    n11_reader = catalog_document_reader('earbud-discovery')
     with ThreadPoolExecutor(max_workers=6) as pool:
-        jobs = {host: pool.submit(reread, host, targets) for host, targets in groups.items()}
+        jobs = {host: pool.submit(reread, host, targets,
+                                  document_reader=n11_reader if host == 'www.n11.com' else None)
+                for host, targets in groups.items()}
         for host, job in jobs.items():
             values, rejected = job.result()
             reasons.update({f'{host}:{reason}': count for reason, count in rejected.items()})

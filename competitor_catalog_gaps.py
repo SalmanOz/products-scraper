@@ -4,6 +4,7 @@ import argparse
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+import gzip
 import json
 from itertools import zip_longest
 from pathlib import Path
@@ -67,6 +68,7 @@ CATEGORIES = {
     'psu': ('/power-supply.html', '/power-supply', '/power-supply-psu/'),
     'cooler': ('/islemci-sogutucu.html', '/islemci-sogutucu', '/islemci-sogutucu/'),
 }
+EPEY_CATEGORIES = {paths[2].strip('/'): kind for kind, paths in CATEGORIES.items()}
 CARD = {
     AKAKCE: re.compile(r'/[a-z0-9-]+/en-ucuz-[a-z0-9-]+-fiyati,(\d{4,12})\.html'),
     CIMRI: re.compile(r'/[a-z0-9-]+/en-ucuz-[a-z0-9-]+-fiyatlari,(a?\d{4,12})'),
@@ -421,7 +423,6 @@ def cimri_sitemap_cards(xml, kinds, indexes):
 
 
 def epey_sitemap_cards(xml, kinds, indexes):
-    categories = {paths[2].strip('/'): kind for kind, paths in CATEGORIES.items()}
     cards = {}
     for url in sitemap_locations(xml, 'urlset'):
         if not url.startswith(f'https://{EPEY}/'):
@@ -430,7 +431,7 @@ def epey_sitemap_cards(xml, kinds, indexes):
         if not CARD[EPEY].fullmatch(route.path) or route.query or route.fragment:
             continue
         category, slug = route.path.removesuffix('.html').split('/')[1:]
-        kind = categories.get(category)
+        kind = EPEY_CATEGORIES.get(category)
         title = slug.replace('-', ' ')
         if kind not in kinds or not in_scope(kind, title):
             continue
@@ -613,8 +614,8 @@ def scan_retailer_leads(state, host, kinds, maximum, now, priority=(), pinned=()
     for kind, rows in candidates.items():
         rows.sort(key=lambda row: (row.get('lastLeadAttemptAt', ''), not row.get('hasMarketPage'),
                                    row['firstSeenAt'], row['id']))
-        first = [row for row in rows if row.get('catalogFamily') in pinned]
-        others = [row for row in rows if row.get('catalogFamily') not in pinned]
+        first = [row for row in rows if row.get('catalogFamily') in pinned or row['id'] in pinned]
+        others = [row for row in rows if row.get('catalogFamily') not in pinned and row['id'] not in pinned]
         gaps = (row for row in others if row.get('catalogFamily') in priority)
         rest = (row for row in others if row.get('catalogFamily') not in priority)
         candidates[kind] = first + [row for pair in zip_longest(gaps, rest) for row in pair if row is not None]
@@ -663,6 +664,95 @@ def write_json(path, payload):
     pending.replace(path)
 
 
+def epey_snapshot_row(row):
+    if not isinstance(row, dict) or row.get('source') != EPEY or not isinstance(row.get('url'), str):
+        return None
+    url = row['url']
+    if not url.startswith(f'https://{EPEY}/') or len(url) > 400:
+        return None
+    route = urlsplit(url)
+    if not CARD[EPEY].fullmatch(route.path) or route.query or route.fragment:
+        return None
+    path_category, slug = route.path.removesuffix('.html').split('/')[1:]
+    kind = EPEY_CATEGORIES.get(path_category)
+    title = row.get('title')
+    if (not kind or row.get('category') != kind or not isinstance(title, str) or
+            not 3 <= len(title) <= 260 or not in_scope(kind, title)):
+        return None
+    try:
+        first = datetime.fromisoformat(row.get('firstSeenAt', ''))
+        last = datetime.fromisoformat(row.get('lastSeenAt', ''))
+        if first.tzinfo is None or last.tzinfo is None or first > last:
+            return None
+    except (TypeError, ValueError):
+        return None
+    result = {'source': EPEY, 'category': kind, 'id': slug, 'url': url, 'title': title,
+              'firstSeenAt': first.astimezone(timezone.utc).isoformat(),
+              'lastSeenAt': last.astimezone(timezone.utc).isoformat()}
+    if row.get('titleFromSitemap') is True:
+        result['titleFromSitemap'] = True
+    leads = row.get('retailerLeads')
+    if isinstance(leads, list):
+        links = sorted({url for raw in leads[:100] if (url := retailer_destination(raw))})
+        stamp = row.get('lastLeadAttemptAt', '')
+        try:
+            attempted = datetime.fromisoformat(stamp)
+        except (TypeError, ValueError):
+            return result
+        if links and attempted.tzinfo is not None:
+            result.update(retailerLeads=links, leadStatus='direct_retailer_links',
+                          lastLeadAttemptAt=attempted.astimezone(timezone.utc).isoformat())
+    return result
+
+
+def export_epey_snapshot(path, state):
+    rows = [clean for row in state['products'].values() if (clean := epey_snapshot_row(row))]
+    if not rows:
+        raise ValueError('No verified Epey discovery rows to export')
+    payload = json.dumps({'version': 1, 'source': EPEY, 'products': rows},
+                         ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pending = path.with_suffix(path.suffix + '.tmp')
+    pending.write_bytes(gzip.compress(payload, mtime=0))
+    pending.replace(path)
+    return len(rows)
+
+
+def import_epey_snapshot(path, state):
+    limit = 64 * 1024 * 1024
+    with gzip.open(path, 'rb') as source:
+        body = source.read(limit + 1)
+    if len(body) > limit:
+        raise ValueError('Epey snapshot exceeds the discovery input limit')
+    data = json.loads(body)
+    if (not isinstance(data, dict) or data.get('version') != 1 or data.get('source') != EPEY
+            or not isinstance(data.get('products'), list)):
+        raise ValueError('Invalid Epey discovery snapshot')
+    seen, linked = set(), 0
+    for record in data['products']:
+        row = epey_snapshot_row(record)
+        if not row:
+            continue
+        key = product_state_key(row)
+        if key in seen:
+            continue
+        seen.add(key)
+        linked += bool(row.get('retailerLeads'))
+        previous = state['products'].get(key)
+        if not previous:
+            state['products'][key] = row
+            continue
+        if previous.get('titleFromSitemap') and not row.get('titleFromSitemap'):
+            previous['title'] = row['title']
+            previous.pop('titleFromSitemap')
+        previous['lastSeenAt'] = max(previous['lastSeenAt'], row['lastSeenAt'])
+        if row.get('retailerLeads') and not previous.get('retailerLeads'):
+            previous['retailerLeads'] = row['retailerLeads']
+        if row.get('lastLeadAttemptAt', '') > previous.get('lastLeadAttemptAt', ''):
+            previous.update({k: row[k] for k in ('lastLeadAttemptAt', 'leadStatus', 'retailerLeads')})
+    return {'source': EPEY, 'status': 'imported', 'rows': len(seen), 'withRetailerLinks': linked}
+
+
 def public_phone_catalog():
     try:
         with requests.get('https://teknoskor.com/api/products', params={'limit': 1000},
@@ -705,6 +795,9 @@ def main():
                        metavar='SHARDS', help='Resume up to eight Cimri sitemap shards and skip category pages')
     parser.add_argument('--epey-sitemap-only', type=int, choices=range(1, 9), default=0,
                         metavar='SHARDS', help='Resume up to eight Epey sitemap shards and skip category pages')
+    parser.add_argument('--import-epey-snapshot', type=Path, help='Import Epey discovery links from a verified source run')
+    parser.add_argument('--export-epey-snapshot', type=Path, help='Export Epey discovery links without prices')
+    parser.add_argument('--lead-only', action='store_true', help='Continue retailer-link discovery from saved candidates')
     parser.add_argument('--state', type=Path, help='Resume category cursors and retain deduplicated candidate IDs')
     parser.add_argument('--prioritize-model', action='append', default=[])
     parser.add_argument('--start-page', type=int, default=1)
@@ -720,6 +813,8 @@ def main():
         parser.error('Select a positive page number and up to 40 category requests per source')
     if not 0 <= args.lead_limit <= 40:
         parser.error('Select up to 40 detail pages per source')
+    if args.lead_only and (not args.state or not args.state.is_file() or not args.lead_limit):
+        parser.error('Lead-only mode needs a saved state and a positive lead limit')
     if args.akakce_budget and not len(kinds) <= args.akakce_budget <= 40:
         parser.error('Akakçe budget must allow at least one page per category and no more than 40 requests')
     akakce_pages, akakce_leads = akakce_limits(args.akakce_budget, len(kinds), args.pages, args.lead_limit)
@@ -729,18 +824,26 @@ def main():
     inventory = load_inventory(args.site_data, args.phone_sitemap)
     indexes = {kind: identity_index(inventory[kind]) for kind in kinds}
     state = read_state(args.state)
+    source_snapshot = None
+    if args.import_epey_snapshot:
+        try:
+            source_snapshot = import_epey_snapshot(args.import_epey_snapshot, state)
+        except (EOFError, OSError, ValueError):
+            source_snapshot = {'source': EPEY, 'status': 'snapshot_unavailable_or_invalid'}
     priority = set(args.prioritize_model)
     if args.lead_limit and 'phone' in kinds:
         priority.update(row['slug'] for row in public_phone_catalog()
                         if row.get('fresh_offer_count') in (0, '0'))
     hosts = list(dict.fromkeys(args.source or SOURCES))
-    with ThreadPoolExecutor(max_workers=len(hosts)) as pool:
-        tasks = [pool.submit(scan_source, host, kinds, indexes, args.start_page,
-                             akakce_pages if host == AKAKCE else args.pages, state['sources'],
-                             collection=args.collection,
-                             cimri_sitemap=args.cimri_sitemap and args.collection == 'runner',
-                             sitemap_only=sitemap_limits.get(host, 0)) for host in hosts]
-        batches = [task.result() for task in tasks]
+    batches = []
+    if not args.lead_only:
+        with ThreadPoolExecutor(max_workers=len(hosts)) as pool:
+            tasks = [pool.submit(scan_source, host, kinds, indexes, args.start_page,
+                                 akakce_pages if host == AKAKCE else args.pages, state['sources'],
+                                 collection=args.collection,
+                                 cimri_sitemap=args.cimri_sitemap and args.collection == 'runner',
+                                 sitemap_only=sitemap_limits.get(host, 0)) for host in hosts]
+            batches = [task.result() for task in tasks]
     sources = [row for reports, _ in batches for row in reports]
     observed = [row for _, rows in batches for row in rows]
     now = datetime.now(timezone.utc).isoformat()
@@ -748,6 +851,8 @@ def main():
     lead_scans = []
     if args.lead_limit:
         stopped = {row['source'] for row in sources if row['status'] in STOP_SOURCE}
+        if args.lead_only and args.akakce_budget:
+            akakce_leads = min(args.lead_limit, args.akakce_budget)
         limits = {host: akakce_leads if host == AKAKCE else args.lead_limit for host in hosts}
         with ThreadPoolExecutor(max_workers=len(hosts)) as pool:
             jobs = [pool.submit(scan_retailer_leads, state, host, kinds, limits[host], now,
@@ -756,11 +861,13 @@ def main():
             lead_scans = [job.result() for job in jobs]
     if args.state is not None:
         write_json(args.state, state)
+    if args.export_epey_snapshot:
+        export_epey_snapshot(args.export_epey_snapshot, state)
     candidates = [row for row in state['products'].values() if row['catalogSlug'] is None]
     existing_with_leads = [row for row in state['products'].values()
                            if row.get('catalogFamily') and row.get('retailerLeads')]
     report = {'checkedAt': now, 'inventory': {kind: len(inventory[kind]) for kind in kinds},
-              'sources': sources, 'retailerLeadScans': lead_scans,
+              'sources': sources, 'sourceSnapshot': source_snapshot, 'retailerLeadScans': lead_scans,
               'candidates': candidates, 'existingWithRetailerLeads': existing_with_leads}
     write_json(args.output, report)
     print(json.dumps({
@@ -771,6 +878,7 @@ def main():
         'candidateRows': len(candidates),
         'candidateRowsWithRetailerLinks': sum(bool(row.get('retailerLeads')) for row in candidates),
         'existingRowsWithRetailerLinks': len(existing_with_leads),
+        'importedEpeyProductUrls': source_snapshot.get('rows', 0) if source_snapshot else 0,
         'output': str(args.output),
     }, ensure_ascii=False))
 

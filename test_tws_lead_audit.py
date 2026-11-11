@@ -26,7 +26,7 @@ class EarbudLeadAuditTest(unittest.TestCase):
         snapshot = {'models': [{'name': name, 'gtin': gtin, 'offers': [{'url': target, 'price': 10}]}]}
         state = {'products': {'x': {'title': name, 'category': 'tws', 'retailerLeads': [lead]}}}
 
-        def collect(host, rows, statuses, *, discover):
+        def collect(host, rows, statuses, *, discover, document_reader=None):
             url = rows[0][1]['url']
             statuses[url] = 'verified'
             return {name: [{'url': url, 'merchant': host, 'platform': host, 'gtin13': gtin,
