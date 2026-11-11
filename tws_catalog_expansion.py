@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 from requests import RequestException
 from curl_cffi.requests import RequestsError
 
-from laptop_pilot import _hepsiburada_public_get, _image, _public_offers
+from laptop_pilot import IMAGE_HOSTS, _hepsiburada_public_get, _image, _public_offers
 from mediamarkt_source import MediaMarktSource, _selected_offer
 from priority_retailer_transport import PriorityRetailerTransport, compatible_get, product_host
 from retailer_barcode import retailer_gtin13
@@ -24,6 +24,7 @@ from vatan_category_source import VatanCategorySource
 
 MARKETPLACES = {'www.n11.com', 'www.trendyol.com', 'www.hepsiburada.com'}
 STORES = {'www.vatanbilgisayar.com', 'www.mediamarkt.com.tr'}
+TWS_IMAGE_HOSTS = IMAGE_HOSTS | {'productimages.hepsiburada.net'}
 
 
 def exact_tws_sellers(offers):
@@ -161,7 +162,7 @@ def stage(catalog, snapshot, specs, candidates, output):
                 or urlsplit(spec['specSource']).scheme != 'https'):
             raise ValueError(f'Incomplete manufacturer specification for {name}')
         for offer in offers:
-            image = _image(offer['_image']) if offer.get('_image') else None
+            image = _image(offer['_image'], allowed_hosts=TWS_IMAGE_HOSTS) if offer.get('_image') else None
             if image:
                 photos[slug] = image
                 products.append({**spec, 'name': name, 'slug': slug, 'photoSource': offer['url'],

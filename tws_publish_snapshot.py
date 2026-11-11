@@ -11,7 +11,8 @@ from laptop_pilot import _hepsiburada_public_get
 from priority_retailer_transport import PriorityRetailerTransport
 from retailer_barcode import retailer_gtin13
 from tws_offer_pilot import (
-    MODEL_NAMES, PAIR_REQUIRED_MODEL_NAMES, PILOT_MODEL_NAMES, model_name, select_sku_offers, selected_tws_offer,
+    MODEL_NAMES, PAIR_REQUIRED_MODEL_NAMES, PILOT_MODEL_NAMES, TWS_PRICE_RATIO_BY_MODEL,
+    model_name, select_sku_offers, selected_tws_offer,
 )
 from tws_retailer_sources import selected_hepsiburada_tws, selected_n11_tws
 
@@ -136,11 +137,11 @@ def public_snapshot(report, catalog_names=MODEL_NAMES):
                     verified[name].append({**offer, '_legal_name': platform.lower()})
 
     verify(primary, published)
-    verify(backup, {name for name, offers in verified.items() if len(select_sku_offers(offers)) < 2})
+    verify(backup, {name for name, offers in verified.items() if len(select_sku_offers(offers, min_price_ratio=TWS_PRICE_RATIO_BY_MODEL.get(name, 0))) < 2})
 
     rows = []
     for name, observations in verified.items():
-        offers = select_sku_offers(observations)
+        offers = select_sku_offers(observations, min_price_ratio=TWS_PRICE_RATIO_BY_MODEL.get(name, 0))
         if name in PAIR_REQUIRED_MODEL_NAMES and len(offers) < 2:
             failures['snapshot_independent_pair_missing'] += 1
             continue

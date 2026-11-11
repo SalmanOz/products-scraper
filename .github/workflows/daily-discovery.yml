@@ -41,11 +41,16 @@ jobs:
           path: .discovery-state
           key: discovery-state-v1-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: discovery-state-v1-
-      - name: Start bounded browser reader while the exact Redmi is pending
+      - name: Start bounded browser reader while an exact Redmi is pending
         continue-on-error: true
         run: |
-          code=$(curl --silent --max-time 12 --output /dev/null --write-out '%{http_code}'             'https://teknoskor.com/product/xiaomi-redmi-note-17-pro-max-5g')
-          if [[ "$code" == "200" ]]; then exit 0; fi
+          pending=0
+          for slug in xiaomi-redmi-note-17-pro-max-5g xiaomi-redmi-17-5g; do
+            code=$(curl --silent --max-time 12 --output /dev/null --write-out '%{http_code}' \
+              "https://teknoskor.com/product/$slug") || code=000
+            if [[ "$code" != "200" ]]; then pending=1; fi
+          done
+          if [[ "$pending" == "0" ]]; then exit 0; fi
           docker run -d --name=exact-redmi-browser -p 127.0.0.1:8191:8191 -e LOG_LEVEL=info ghcr.io/flaresolverr/flaresolverr:latest
           for attempt in {1..25}; do
             if curl --fail --silent http://localhost:8191/ > /dev/null; then exit 0; fi

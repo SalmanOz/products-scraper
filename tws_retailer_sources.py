@@ -5,7 +5,7 @@ from html import unescape
 import json
 import re
 import time
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urlencode, urljoin, urlsplit, urlunsplit
 
 from bs4 import BeautifulSoup
 
@@ -71,7 +71,7 @@ def selected_hepsiburada_tws(html, url, name, model_name):
 
     soup = BeautifulSoup(html, 'html.parser')
     scripts = soup.select('script#reduxStore')
-    if len(scripts) != 1 or urlsplit(url).query:
+    if len(scripts) != 1:
         return None, 'selected_earbud_state_missing'
     try:
         product = json.loads(scripts[0].get_text())['productState']['product']
@@ -83,17 +83,22 @@ def selected_hepsiburada_tws(html, url, name, model_name):
         return None, 'selected_earbud_state_missing'
     brand = product.get('brand')
     seller_name, seller_slug = seller.get('name'), seller.get('urlPostfix')
-    first_party = (seller_name, seller_slug) == ('Hepsiburada', 'hepsiburada')
-    # Exact reviewed marketplace listing. The legal seller is corroborated by
-    # Türkiye's ETBİS business register and the matching public store profile.
-    reviewed_seller = (
-        name == 'JBL Endurance Race 2' and sku == 'HBCV000095WJQ4'
-        and (seller_name, seller_slug, seller.get('id')) ==
-        ('Umut İnternet', 'umut-internet', '2e6b5bf8-196f-4afb-aa57-4af8dc8c0f6b')
-    )
+    route = urlsplit(url)
+    first_party = not route.query and (seller_name, seller_slug) == ('Hepsiburada', 'hepsiburada')
+    # Seller names are bound to a selected native SKU and public marketplace
+    # account. Umut is registered in ETBİS; Burak's legal name is published in
+    # Trendyol's selected product state for merchant 1127616.
+    race_sellers = {
+        ('Umut İnternet', 'umut-internet', '2e6b5bf8-196f-4afb-aa57-4af8dc8c0f6b', ''):
+            'umut internet hizmetleri sanayi ve ticaret limited sirketi',
+        ('BURAK ONLİNE', 'burak-online', '016e8f81-cdf2-4554-b351-702961c80a59', urlencode({'magaza': 'BURAK ONLİNE'})):
+            'leyla aykut',
+    }
+    reviewed_company = (race_sellers.get((seller_name, seller_slug, seller.get('id'), route.query))
+                        if name == 'JBL Endurance Race 2' and sku == 'HBCV000095WJQ4' else None)
     if (not _identity(url, product_id, sku) or not urlsplit(url).path.endswith('-p-' + sku)
             or product.get('isBundle') is not False or '16218' not in category_ids or len(variants) != 1
-            or not isinstance(brand, str) or not (first_party or reviewed_seller)):
+            or not isinstance(brand, str) or not (first_party or reviewed_company)):
         return None, 'selected_earbud_variant_mismatch'
     selected = variants[0]
     gtin = retailer_gtin13(selected.get('barcode'))
@@ -101,10 +106,11 @@ def selected_hepsiburada_tws(html, url, name, model_name):
     schemas = [node for node in _nodes(soup) if node.get('@type') == 'Product' and node.get('sku') == sku]
     if (selected.get('sku') != sku or selected.get('isInStock') is not True or selected.get('isPreOrder') is not False
             or not gtin or barcodes != {gtin} or len(schemas) != 1 or retailer_gtin13(schemas[0].get('gtin')) != gtin
-            or reviewed_seller and gtin != '1200130014291'):
+            or reviewed_company and gtin != '1200130014291'):
         return None, 'selected_earbud_gtin_or_stock_unverified'
     schema = schemas[0]
-    scope = {'URL': url, 'SCHEMA_URL': url, 'PRODUCT_ID': product_id, 'SKU': sku, 'LISTING_ID': listing_id,
+    clean_url = urlunsplit(route._replace(query=''))
+    scope = {'URL': url, 'SCHEMA_URL': clean_url, 'PRODUCT_ID': product_id, 'SKU': sku, 'LISTING_ID': listing_id,
              'MERCHANT_ID': seller['id'], 'MERCHANT_POSTFIX': seller_slug, 'SELLER': seller_name,
              'SELLER_URL': 'https://www.hepsiburada.com/magaza/' + seller_slug, 'GTIN13': gtin, 'generic_catalog': True}
 
@@ -115,8 +121,7 @@ def selected_hepsiburada_tws(html, url, name, model_name):
     if offer:
         photo = next((photo for raw in schema.get('image', [])
                       if (photo := selected_photo(raw, {'productimages.hepsiburada.net'}))), None)
-        company = ('umut internet hizmetleri sanayi ve ticaret limited sirketi' if reviewed_seller
-                   else 'd market elektronik hizmetler ve ticaret anonim sirketi')
+        company = reviewed_company or 'd market elektronik hizmetler ve ticaret anonim sirketi'
         offer.update(platform='Hepsiburada', model=name, _image=photo, _legal_name=company)
     return offer, reason
 
@@ -225,9 +230,18 @@ def selected_vatan_tws(html, url, name, model_name):
     if (' '.join(unescape(str(product.get('name') or '')).split()) != title
             or model_name(f"{title} {product['mpn']}", brand) != name):
         return None
-    visible = soup.select('.product-detail .web-ozel-prod .web-ozel-fiyat') if soup.select('.product-detail .web-ozel-prod') else soup.select('.product-detail .product-detail-price')
+    visible = (soup.select('.product-detail .web-ozel-prod .web-ozel-fiyat')
+               if soup.select('.product-detail .web-ozel-prod')
+               else soup.select('.product-detail .product-detail-price'))
+    # A sale can also show the old price as a sibling of the current cash
+    # component. Ignore that old price, but still check the whole price region
+    # for coupons, cart-only language, and other restrictions.
+    current = visible[0].select('.product-detail-price-big') if len(visible) == 1 else []
+    if len(current) > 1:
+        return None
     gtin = retailer_gtin13(barcode[0]['ean'])
-    if (not gtin or len(visible) != 1 or _cash_price(visible[0].get_text(' ', strip=True)) != price
+    cash = current[0] if current else visible[0] if len(visible) == 1 else None
+    if (not gtin or cash is None or _cash_price(cash.get_text(' ', strip=True)) != price
             or _is_conditional_price(visible[0], offer, float(price))):
         return None
     photo = next((value for anchor in soup.select('.product-detail a[href*="/Upload/PRODUCT/"]')
