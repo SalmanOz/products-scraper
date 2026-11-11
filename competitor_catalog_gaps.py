@@ -12,6 +12,7 @@ from xml.etree import ElementTree
 
 from bs4 import BeautifulSoup
 
+from catalog_source_collector import catalog_document_reader
 from laptop_retailer_sources import WORDS
 from priority_retailer_transport import PriorityRetailerTransport, compatible_get, product_host
 
@@ -148,8 +149,13 @@ def in_scope(kind, title):
     return True
 
 
+def comparison_reader(host, **options):
+    gateway = catalog_document_reader('competitor') if host in (CIMRI, EPEY) else None
+    return PriorityRetailerTransport(browser_fallback=False, get=gateway or compatible_get, **options)
+
+
 def scan_source(host, kinds, indexes, start_page, pages, cursors=None):
-    reader = PriorityRetailerTransport(browser_fallback=False, get=compatible_get)
+    reader = comparison_reader(host)
     reports, observations = [], []
     stopped = None
     for kind in kinds:
@@ -286,7 +292,7 @@ def scan_retailer_leads(state, host, kinds, maximum, now):
             candidates[row['category']].append(row)
     for rows in candidates.values():
         rows.sort(key=lambda row: (row.get('lastLeadAttemptAt', ''), row['firstSeenAt'], row['id']))
-    reader = PriorityRetailerTransport(browser_fallback=False, get=compatible_get, maximum_per_host=maximum)
+    reader = comparison_reader(host, maximum_per_host=maximum)
     offsets = Counter()
     for turn in range(maximum):
         active = [kind for kind in kinds if offsets[kind] < len(candidates[kind])]

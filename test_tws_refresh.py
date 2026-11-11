@@ -17,7 +17,7 @@ class TwsRefreshTest(TestCase):
         catalog = {'models': [{'name': name, 'requiresIndependentPair': True}]}
         snapshot = {'checked_at': 'old', 'models': [{'name': name, 'gtin': gtin, 'offers': prior}]}
 
-        def collect(host, rows, statuses):
+        def collect(host, rows, statuses, document_reader=None):
             self.assertEqual(rows[0][0], name)
             target = rows[0][1]
             self.assertEqual(target['gtin13'], gtin)
@@ -30,7 +30,7 @@ class TwsRefreshTest(TestCase):
         self.assertFalse(updated['models'][0]['offers'])
         self.assertEqual([t['url'] for t in updated['sourceTargets'][name]], [vatan, teknosa])
 
-        def restored(host, rows, statuses):
+        def restored(host, rows, statuses, document_reader=None):
             url = rows[0][1]['url']
             statuses[url] = 'verified'
             offer = next(o for o in prior if o['url'] == url)

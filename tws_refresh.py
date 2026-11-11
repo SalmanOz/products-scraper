@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from catalog_source_collector import catalog_document_reader
 from laptop_pilot import _public_offers
 from priority_retailer_transport import product_host
 from retailer_barcode import retailer_gtin13
@@ -79,7 +80,11 @@ def refresh(snapshot, catalog):
 
     def collect(host, targets):
         states = {}
-        found, failures = reread(host, targets, states)
+        gateway = catalog_document_reader('earbud') if host in {
+            'www.n11.com', 'www.vatanbilgisayar.com', 'www.mediamarkt.com.tr',
+            'www.hepsiburada.com', 'www.teknosa.com',
+        } else None
+        found, failures = reread(host, targets, states, document_reader=gateway)
         return found, failures, states
 
     with ThreadPoolExecutor(max_workers=6) as pool:

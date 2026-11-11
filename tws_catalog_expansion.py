@@ -57,15 +57,20 @@ def verify_media(html, url, name):
     return _selected_offer(html, url, allowed_url=_mediamarkt_tws_url, verify_product=variant)
 
 
-def reread(host, rows, statuses=None):
+def reread(host, rows, statuses=None, document_reader=None):
     observations, failures = defaultdict(list), Counter()
     transport = None
     if host in MARKETPLACES:
-        options = {'get': _hepsiburada_public_get, 'browser_fallback': False} if host == 'www.hepsiburada.com' else {}
+        options = {}
+        if document_reader is not None:
+            options.update(get=document_reader, browser_fallback=False)
+        elif host == 'www.hepsiburada.com':
+            options.update(get=_hepsiburada_public_get, browser_fallback=False)
         transport = PriorityRetailerTransport(maximum_per_host=min(260, len(rows)), **options)
     source = None
     if host in STORES:
-        source = VatanCategorySource() if host.startswith('www.vatan') else MediaMarktSource(get=compatible_get)
+        source = (VatanCategorySource(fetch=document_reader) if host.startswith('www.vatan')
+                  else MediaMarktSource(get=document_reader or compatible_get))
         if isinstance(source, MediaMarktSource):
             source.configure_catalog_budget(len(rows))
         source._load_robots()
