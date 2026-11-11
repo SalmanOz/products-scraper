@@ -16,6 +16,12 @@ from tws_catalog_expansion import MARKETPLACES, exact_tws_sellers, reread
 from tws_offer_pilot import _mediamarkt_tws_url, select_sku_offers
 from tws_retailer_sources import _vatan_url
 
+SITE_DOCUMENT_HOSTS = {
+    'www.n11.com', 'www.vatanbilgisayar.com', 'www.mediamarkt.com.tr',
+    'www.hepsiburada.com', 'www.teknosa.com',
+}
+MIXED_SITE_DOCUMENT_HOSTS = {'www.n11.com', 'www.vatanbilgisayar.com'}
+
 
 def selected_host(url):
     host = urlsplit(url).netloc
@@ -81,13 +87,13 @@ def refresh(snapshot, catalog, *, collection='site'):
                 raise ValueError(f'Unrecognized public retailer URL: {url}')
             groups[host].append((name, {**offer, 'gtin13': gtin}))
     observations, statuses, rejected, source_coverage = defaultdict(list), {}, Counter(), {}
+    gateway_hosts = {
+        'site': SITE_DOCUMENT_HOSTS, 'mixed': MIXED_SITE_DOCUMENT_HOSTS, 'runner': set(),
+    }[collection]
 
     def collect(host, targets):
         states = {}
-        gateway = catalog_document_reader('earbud') if collection == 'site' and host in {
-            'www.n11.com', 'www.vatanbilgisayar.com', 'www.mediamarkt.com.tr',
-            'www.hepsiburada.com', 'www.teknosa.com',
-        } else None
+        gateway = catalog_document_reader('earbud') if host in gateway_hosts else None
         found, failures = reread(host, targets, states, document_reader=gateway)
         return found, failures, states
 
@@ -120,7 +126,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for arg in ('catalog', 'snapshot', 'output'):
         parser.add_argument(arg, type=Path)
-    parser.add_argument('--collection', choices=('site', 'runner'), default='site')
+    parser.add_argument('--collection', choices=('site', 'runner', 'mixed'), default='site')
     args = parser.parse_args()
     catalog = json.loads(args.catalog.read_text(encoding='utf-8'))
     snapshot = json.loads(args.snapshot.read_text(encoding='utf-8'))
