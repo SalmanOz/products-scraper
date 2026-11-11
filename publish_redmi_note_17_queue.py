@@ -14,13 +14,15 @@ from publish_s26_fe_queue import publish_verified
 from tr_price_scraper import TRPriceScraper
 from trendyol_catalog_source import parse_catalog_listing, selected_product_state
 from tws_offer_pilot import independent_sellers
-from tws_retailer_sources import selected_photo, selected_vatan_tws
+from tws_retailer_sources import selected_vatan_tws
 from vatan_reviewed_source import VatanReviewedSource
 
 NAME = 'Xiaomi Redmi Note 17 5G'
 SLUG = 'xiaomi-redmi-note-17-5g'
 GTIN = '6939093025178'
 MANUFACTURER = 'https://www.mi.com/tr/product/redmi-note-17-5g/'
+PHOTO = ('https://i02.appmifile.com/mi-com-product/fly-birds/redmi-note-17-5g/'
+         'pc/icon-screen05-slider-3.png')
 SPEC_DATABASE = 'https://www.kimovil.com/en/where-to-buy-xiaomi-redmi-note-17-6gb-256gb'
 VATAN = 'https://www.vatanbilgisayar.com/xiaomi-redmi-note-17-5g-6-256gb-mavi-akilli-telefon.html'
 TRENDYOL = ('https://www.trendyol.com/xiaomi/'
@@ -60,6 +62,8 @@ def prepare():
             or 'text/html' not in response.headers.get('Content-Type', '')
             or not any(model_key(name) == model_key(NAME) for name in product_names(response.text, MANUFACTURER))):
         raise ValueError('manufacturer_model_unverified')
+    if not BeautifulSoup(response.text, 'html.parser').select_one(f'img[data-src="{PHOTO}"]'):
+        raise ValueError('manufacturer_selected_teal_photo_unverified')
 
     matcher = TRPriceScraper()
 
@@ -81,13 +85,6 @@ def prepare():
     if (not vatan or vatan['gtin13'] != GTIN or vatan['sku'] != '159739'
             or vatan['retailer_model_code'] != 'MZB0Q4MTR'):
         raise ValueError('vatan_selected_variant_unverified')
-    gallery = BeautifulSoup(html, 'html.parser').select('.product-detail a[href*="/Upload/PRODUCT/"]')
-    photos = list(dict.fromkeys(url for anchor in gallery
-                  if (url := selected_photo(anchor['href'], {'cdn.vatanbilgisayar.com'}))
-                  and f"/{vatan['sku']}-" in url))
-    if len(photos) < 2:
-        raise ValueError('vatan_selected_photo_unverified')
-    photo = photos[1]  # The frontal image is a narrow thumbnail; the second shows the selected color and body.
 
     transport = PriorityRetailerTransport(maximum_per_host=4, browser_fallback=False, get=compatible_get)
     html, reason, _ = transport.read_document(TRENDYOL)
@@ -112,7 +109,7 @@ def prepare():
         'product_id': vatan['sku'], 'sku': vatan['sku'], 'merchant_id': 'vatan-bilgisayar',
         'merchant_name': vatan['merchant'], **SPECS,
     }
-    return offers, photo
+    return offers, PHOTO
 
 
 def main():
