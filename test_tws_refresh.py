@@ -1,10 +1,32 @@
 from unittest import TestCase
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
+from tws_catalog_expansion import reread
 from tws_refresh import refresh
 
 
 class TwsRefreshTest(TestCase):
+    def test_earbud_reader_resumes_a_target_deferred_by_source_cooldown(self):
+        name, gtin = 'Huawei FreeBuds 6i', '6942103123535'
+        host = 'www.n11.com'
+        first = f'https://{host}/urun/huawei-freebuds-6i-123456'
+        waiting = f'https://{host}/urun/huawei-freebuds-6i-123457'
+        transport = Mock()
+        transport.read_fresh_document.side_effect = [
+            (None, 'http_503', 503), (None, 'source_cooldown', None), ('page', 'document_read', 200),
+        ]
+        transport.resolved_url.side_effect = lambda url: url
+        transport.wait_for_cooldown.return_value = True
+        offer = {'gtin13': gtin, 'merchant': 'Mağaza', 'currency': 'TRY', 'price': 3000.0,
+                 'availability': 'in_stock', 'condition': 'new', 'url': waiting}
+        targets = [(name, {'url': url, 'gtin13': gtin, 'merchant': 'Mağaza'}) for url in (first, waiting)]
+        with patch('tws_catalog_expansion.PriorityRetailerTransport', return_value=transport), \
+             patch('tws_catalog_expansion.selected_n11_tws', return_value=(offer, 'observed')):
+            observations, failures = reread(host, targets)
+        transport.wait_for_cooldown.assert_called_once_with(waiting)
+        self.assertEqual(observations[name], [offer])
+        self.assertEqual(failures, {'http_503': 1})
+
     def test_color_variants_keep_separate_gtins_and_refresh_targets(self):
         name = 'Huawei FreeBuds 6i'
         white = '6942103123535'

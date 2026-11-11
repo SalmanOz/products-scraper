@@ -189,6 +189,27 @@ class PriorityRetailerTests(unittest.TestCase):
         self.assertEqual(source.read_document(URLS[0].replace('1234', '1237'))[1], 'http_503')
         self.assertEqual(source.read_document(URLS[0].replace('1234', '1238'))[1], 'source_circuit_open')
 
+    def test_wait_releases_unread_targets_after_the_existing_cooldown(self):
+        now = [1000.0]
+        failed = URLS[0]
+        waiting = failed.replace('1234', '1235')
+
+        def get(url, **_):
+            if url.endswith('/robots.txt'):
+                return Response(url, 'User-agent: *\nAllow: /\n')
+            return Response(url, '<h1>Product</h1>', status=503 if url == failed else 200)
+
+        def sleep(seconds):
+            now[0] += seconds
+
+        source = PriorityRetailerTransport(get=get, sleep=sleep, clock=lambda: now[0], maximum_per_host=2)
+        self.assertEqual(source.read_document(failed)[1], 'http_503')
+        self.assertFalse(source.wait_for_cooldown(failed))
+        self.assertEqual(source.read_fresh_document(waiting)[1], 'source_cooldown')
+        self.assertTrue(source.wait_for_cooldown(waiting))
+        self.assertEqual(source.read_fresh_document(waiting)[1], 'document_read')
+        self.assertEqual(source.read_document(waiting + '6')[1], 'pdp_budget_exhausted')
+
     def test_explicit_browser_denial_is_never_misclassified_as_a_retryable_service_500(self):
         def get(url, **_):
             return Response(url, 'User-agent: *\nAllow: /\n' if url.endswith('robots.txt') else 'denied',

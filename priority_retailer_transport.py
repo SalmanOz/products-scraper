@@ -260,6 +260,17 @@ class PriorityRetailerTransport:
                         and state['retry_after'] <= self._clock() and url not in state['seen']
                         and _hepsiburada_selected_sku_key(url) not in state['browser_timeout_skus'])
 
+    def wait_for_cooldown(self, url):
+        host = product_host(url)
+        with self._lock:
+            state = self._states.get(host)
+            if not state or state['blocked'] or url in state['seen']:
+                return False
+            remaining = state.get('retry_after', 0) - self._clock()
+        if remaining > 0:
+            self._sleep(remaining)
+        return self.can_resume_cooldown(url)
+
     def read_fresh_document(self, url):
         """Reverify a selected public PDP inside this run's existing circuit.
 

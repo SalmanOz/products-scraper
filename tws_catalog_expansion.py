@@ -83,6 +83,8 @@ def reread(host, rows, statuses=None, document_reader=None, *, discover=False):
         try:
             if transport:
                 html, reason, _ = transport.read_fresh_document(url)
+                if reason == 'source_cooldown' and transport.wait_for_cooldown(url):
+                    html, reason, _ = transport.read_fresh_document(url)
                 final = transport.resolved_url(url)
             elif source._rules and source._rules.can_fetch(BOT, url):
                 if isinstance(source, VatanCategorySource):
