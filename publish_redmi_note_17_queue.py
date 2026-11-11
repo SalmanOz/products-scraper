@@ -81,6 +81,13 @@ def prepare():
     if (not vatan or vatan['gtin13'] != GTIN or vatan['sku'] != '159739'
             or vatan['retailer_model_code'] != 'MZB0Q4MTR'):
         raise ValueError('vatan_selected_variant_unverified')
+    gallery = BeautifulSoup(html, 'html.parser').select('.product-detail a[href*="/Upload/PRODUCT/"]')
+    photos = list(dict.fromkeys(url for anchor in gallery
+                  if (url := selected_photo(anchor['href'], {'cdn.vatanbilgisayar.com'}))
+                  and f"/{vatan['sku']}-" in url))
+    if len(photos) < 2:
+        raise ValueError('vatan_selected_photo_unverified')
+    photo = photos[1]  # The frontal image is a narrow thumbnail; the second shows the selected color and body.
 
     transport = PriorityRetailerTransport(maximum_per_host=4, browser_fallback=False, get=compatible_get)
     html, reason, _ = transport.read_document(TRENDYOL)
@@ -90,11 +97,9 @@ def prepare():
     product, _ = selected_product_state(BeautifulSoup(html, 'html.parser'))
     seller = (product or {}).get('merchantListing', {}).get('merchant', {})
     company = matcher._normalize_words(seller.get('officialName'))
-    photo = next((image for url in (product or {}).get('images', [])
-                  if (image := selected_photo(url, {'cdn.dsmcdn.com'}))), None)
     if (not trendyol or trendyol['merchant'] != 'Trendyol' or trendyol['gtin13'] != GTIN
-            or str(trendyol['merchant_id']) != str(seller.get('id')) or not photo):
-        raise ValueError(f'trendyol_selected_variant_or_photo_unverified_{reason}')
+            or str(trendyol['merchant_id']) != str(seller.get('id'))):
+        raise ValueError(f'trendyol_selected_variant_unverified_{reason}')
     trendyol.update(platform='Trendyol', _legal_name=company)
     offers = [vatan, trendyol]
     if not independent_sellers(*offers) or any(row['availability'] != 'in_stock' or row['currency'] != 'TRY' for row in offers):
