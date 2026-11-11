@@ -1,6 +1,6 @@
 import unittest
 
-from competitor_catalog_gaps import (AKAKCE, CIMRI, EPEY, catalog_match, category_url, comparison_cards, epey_retailer_leads,
+from competitor_catalog_gaps import (AKAKCE, CIMRI, EPEY, catalog_match, category_url, comparison_cards, comparison_retailer_leads,
                                      identity_index, in_scope, merge_state, read_state)
 
 
@@ -56,7 +56,26 @@ class CompetitorCatalogGapsTest(unittest.TestCase):
           <a class="git" data-link="https://www.teknosa.com.evil.example/ornek-p-100000063496">
             <span class="urun_adi">Model</span></a>
         '''
-        self.assertEqual(epey_retailer_leads(html), ['https://www.teknosa.com/ornek-p-100000063496'])
+        self.assertEqual(comparison_retailer_leads(html, EPEY, 'https://www.epey.com/kulaklik/ornek.html'),
+                         ['https://www.teknosa.com/ornek-p-100000063496'])
+
+    def test_cimri_only_reads_direct_links_of_the_requested_product(self):
+        url = 'https://www.cimri.com/kulaklik/en-ucuz-example-fiyatlari,765432'
+        html = '''
+          <script type="application/ld+json">{
+            "@type":"Product","url":"https://www.cimri.com/kulaklik/en-ucuz-example-fiyatlari%2C765432",
+            "offers":{"@type":"AggregateOffer","offers":[
+              {"url":"https://www.cimri.com/offer/1","price":500},
+              {"url":"https://www.trendyol.com/apple/airpods-5-p-1198452610?merchantId=968&utm_source=cimri"}
+            ]}
+          }</script>
+          <script type="application/ld+json">{
+            "@type":"Product","url":"https://www.cimri.com/kulaklik/en-ucuz-example-fiyatlari,765433",
+            "offers":{"@type":"AggregateOffer","offers":[{"url":"https://www.teknosa.com/ornek-p-100000063496"}]}
+          }</script>
+        '''
+        self.assertEqual(comparison_retailer_leads(html, CIMRI, url),
+                         ['https://www.trendyol.com/apple/airpods-5-p-1198452610?merchantId=968'])
 
     def test_resume_keeps_earlier_rows_and_reconciles_against_current_catalog(self):
         state = read_state(None)

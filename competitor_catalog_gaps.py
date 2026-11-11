@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import re
-from urllib.parse import unquote, urljoin, urlsplit
+from urllib.parse import parse_qsl, unquote, urlencode, urljoin, urlsplit
 from xml.etree import ElementTree
 
 from bs4 import BeautifulSoup
@@ -229,35 +229,60 @@ def merge_state(state, reports, observations, indexes, now):
     return state
 
 
-def epey_retailer_leads(html):
-    soup = BeautifulSoup(html, 'html.parser')
-    leads = set()
-    for anchor in soup.select('a.git[data-link]:has(.urun_adi)'):
-        raw = unquote(anchor['data-link'])
-        if len(raw) > 1000 or re.search(r'[\x00-\x20\\]', raw):
-            continue
-        try:
-            route = urlsplit(raw)
-        except ValueError:
-            continue
+def retailer_destination(raw):
+    if not isinstance(raw, str) or len(raw) > 1000 or re.search(r'[\x00-\x20\\]', raw):
+        return None
+    try:
+        route = urlsplit(raw)
         if route.scheme != 'https' or route.fragment:
-            continue
-        first_party = (
-            route.netloc == 'www.vatanbilgisayar.com' and re.fullmatch(r'/[a-z0-9-]+\.html', route.path)
-            or route.netloc == 'www.mediamarkt.com.tr' and re.fullmatch(
-                r'/tr/product/_[a-z0-9-]+-[1-9]\d{5,11}\.html', route.path)
-        )
-        if product_host(raw) or first_party and not route.query:
-            leads.add(raw)
-    return sorted(leads)
+            return None
+        query = parse_qsl(route.query, keep_blank_values=True, max_num_fields=10)
+    except ValueError:
+        return None
+    selectors = [(key, value) for key, value in query if not key.startswith('utm_')]
+    if route.netloc == 'www.teknosa.com' and selectors == [('shopId', 'teknosa')]:
+        # This is a comparison-site marker. The canonical shop must be
+        # verified from the retailer's own selected listing.
+        selectors = []
+    url = route._replace(query=urlencode(selectors)).geturl()
+    first_party = (
+        route.netloc == 'www.vatanbilgisayar.com' and re.fullmatch(r'/[a-z0-9-]+\.html', route.path)
+        or route.netloc == 'www.mediamarkt.com.tr' and re.fullmatch(
+            r'/tr/product/_[a-z0-9-]+-[1-9]\d{5,11}\.html', route.path)
+    )
+    return url if product_host(url) or first_party and not selectors else None
 
 
-def scan_retailer_leads(state, kinds, maximum, now):
-    if maximum == 0:
-        return
+def comparison_retailer_leads(html, host, source_url):
+    soup = BeautifulSoup(html, 'html.parser')
+    if host == EPEY:
+        raw_links = [unquote(anchor['data-link']) for anchor in soup.select('a.git[data-link]:has(.urun_adi)')]
+    else:
+        raw_links = []
+        expected = unquote(source_url)
+        for node in soup.select('script[type="application/ld+json"]'):
+            try:
+                product = json.loads(node.get_text())
+            except ValueError:
+                continue
+            if not isinstance(product, dict) or product.get('@type') not in {'Product', 'ProductGroup'}:
+                continue
+            canonical = product.get('url') or product.get('@id')
+            if not isinstance(canonical, str) or unquote(canonical) != expected:
+                continue
+            aggregate = product.get('offers')
+            if not isinstance(aggregate, dict) or aggregate.get('@type') != 'AggregateOffer':
+                continue
+            listings = aggregate.get('offers')
+            if isinstance(listings, list):
+                raw_links.extend(offer.get('url') for offer in listings if isinstance(offer, dict))
+    return sorted({url for raw in raw_links if (url := retailer_destination(raw))})
+
+
+def scan_retailer_leads(state, host, kinds, maximum, now):
     candidates = defaultdict(list)
     for row in state['products'].values():
-        if row['source'] == EPEY and row['category'] in kinds and row['catalogSlug'] is None:
+        if row['source'] == host and row['category'] in kinds and row['catalogSlug'] is None:
             candidates[row['category']].append(row)
     for rows in candidates.values():
         rows.sort(key=lambda row: (row.get('lastLeadAttemptAt', ''), row['firstSeenAt'], row['id']))
@@ -270,14 +295,14 @@ def scan_retailer_leads(state, kinds, maximum, now):
         kind = active[turn % len(active)]
         row = candidates[kind][offsets[kind]]
         offsets[kind] += 1
-        html, reason, _ = reader._read_document(row['url'], EPEY)
+        html, reason, _ = reader._read_document(row['url'], host)
         row['lastLeadAttemptAt'] = now
         if html is None:
             row['leadStatus'] = reason
-            if reason in STOP_SOURCE:
+            if reason in STOP_SOURCE or reason.startswith('robots_') and reason != 'robots_disallowed':
                 break
         else:
-            row['retailerLeads'] = epey_retailer_leads(html)
+            row['retailerLeads'] = comparison_retailer_leads(html, host, row['url'])
             row['leadStatus'] = 'direct_retailer_links' if row['retailerLeads'] else 'direct_retailer_links_missing'
 
 
@@ -298,13 +323,13 @@ def main():
     parser.add_argument('--state', type=Path, help='Resume category cursors and retain deduplicated candidate IDs')
     parser.add_argument('--start-page', type=int, default=1)
     parser.add_argument('--pages', type=int, default=2)
-    parser.add_argument('--lead-limit', type=int, default=0, help='Maximum Epey detail pages for direct retailer URLs')
+    parser.add_argument('--lead-limit', type=int, default=0, help='Maximum detail pages per source for direct retailer URLs')
     args = parser.parse_args()
     kinds = list(dict.fromkeys(args.category or CATEGORIES))
     if args.start_page < 1 or args.pages < 1 or len(kinds) * args.pages > 40:
         parser.error('Select a positive page number and up to 40 category requests per source')
     if not 0 <= args.lead_limit <= 40:
-        parser.error('Select up to 40 Epey detail pages per run')
+        parser.error('Select up to 40 detail pages per source')
     inventory = load_inventory(args.site_data, args.phone_sitemap)
     indexes = {kind: identity_index(inventory[kind]) for kind in kinds}
     state = read_state(args.state)
@@ -317,8 +342,13 @@ def main():
     observed = [row for _, rows in batches for row in rows]
     now = datetime.now(timezone.utc).isoformat()
     merge_state(state, sources, observed, indexes, now)
-    if EPEY in hosts:
-        scan_retailer_leads(state, kinds, args.lead_limit, now)
+    if args.lead_limit:
+        stopped = {row['source'] for row in sources if row['status'] in STOP_SOURCE}
+        with ThreadPoolExecutor(max_workers=len(hosts)) as pool:
+            jobs = [pool.submit(scan_retailer_leads, state, host, kinds, args.lead_limit, now)
+                    for host in hosts if host not in stopped]
+            for job in jobs:
+                job.result()
     if args.state is not None:
         write_json(args.state, state)
     candidates = [row for row in state['products'].values() if row['catalogSlug'] is None]
