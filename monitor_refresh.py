@@ -62,9 +62,9 @@ def main():
     args = cli.parse_args()
     catalog = json.loads(args.catalog.read_text())
     gtins = {model['gtin'] for model in catalog['models']}
-    if (len(catalog['models']) != PILOT_SIZE or len(gtins) != PILOT_SIZE
+    if (len(gtins) < PILOT_SIZE or len(gtins) != len(catalog['models'])
             or any(retailer_gtin13(gtin) != gtin for gtin in gtins)):
-        raise ValueError('Expected the 25 published monitor GTINs')
+        raise ValueError('Expected unique, valid GTINs for the published monitor catalog')
     targets = [row for row in json.loads(args.targets.read_text()) if row['gtin'] in gtins]
     token = os.getenv('MONITOR_READER_OIDC')
     sessions = local()
