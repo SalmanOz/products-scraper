@@ -100,6 +100,7 @@ NEW_MODELS = (
     ('JBL', 'Endurance Race 2', r'endurance race ?2'),
     ('JBL', 'Tour Pro 3', r'tour pro ?3'),
     ('Anker', 'Soundcore Liberty 4 NC', r'(?:soundcore )?liberty 4 nc'),
+    ('Anker', 'Soundcore R50i NC', r'(?:soundcore )?r50i nc'),
     ('Anker', 'Soundcore C30i', r'(?:soundcore )?c30i'),
     ('Anker', 'Soundcore AeroFit 2', r'(?:soundcore )?aerofit ?2(?! pro)'),
     ('Anker', 'Soundcore Sport X20', r'(?:soundcore )?sport x20'),
@@ -112,6 +113,7 @@ NEW_MODEL_NAMES = tuple(f'{brand} {name}' for brand, name, _ in NEW_MODELS)
 PAIR_REQUIRED_MODEL_NAMES = (
     'Huawei FreeBuds Pro 5', 'Huawei FreeClip 2', 'JBL Live Flex 3', 'JBL Tune Buds 2',
     'Samsung Galaxy Buds FE', 'Samsung Galaxy Buds3', 'Samsung Galaxy Buds4',
+    'Anker Soundcore Liberty 4 NC', 'Anker Soundcore R50i NC', 'Samsung Galaxy Buds3 FE',
 )
 PILOT_MODEL_NAMES = tuple(f'{brand} {name}' for brand, name, _ in COHORT)
 MODEL_NAMES = (*PILOT_MODEL_NAMES, *(f'{brand} {name}' for brand, name, _ in EXPANSION_COHORT),
