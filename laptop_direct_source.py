@@ -26,6 +26,9 @@ DIRECT_STORES = {
     'www.uzmanlarpc.com': (
         'UzmanlarPC', 'div:has(> .pPriceTitle:-soup-contains("Kredi Kartı Fiyatı")) > .pPriceDeger[name="tryPrice"].d-block',
         'button.wc-buy-cart', '/sartlar-kosullar', 'Uzmanlar oto gıda bilgisayar inş san tic ltd şti'),
+    'www.sinerji.gen.tr': (
+        'Sinerji', '.productDetail .priceWrapper > .price', '.productDetail button.addToCart[type="submit"]',
+        '/degisim-iptal-ve-iade-politikasi-cp-480', 'Sinerji Bilgisayar Elektronik ve Sanal Mağazacılık Limited Şirketi'),
     'pitrap.com': (
         'Pitrap', '.pdp .buybox .prices > .price',
         '.pdp .buybox form[method="post"][action^="/sepet/ekle/"] button',
@@ -71,6 +74,11 @@ def selected_direct_laptop(html, url, *, read_facts=None):
             if '"@@type":"Product"' in body and '"@type"' not in body:
                 script.string.replace_with(type(script.string)(
                     body.replace('"@@type":', '"@type":').replace('"@@context":', '"@context":')))
+    if host == 'www.sinerji.gen.tr':
+        # Sinerji's selected product JSON-LD ends in a JavaScript semicolon.
+        for script in soup.select('script[type="application/ld+json"]'):
+            if script.string and script.string.strip().endswith(';'):
+                script.string.replace_with(type(script.string)(script.string.strip().removesuffix(';')))
     products = [node for node in _schema_nodes(soup, url) if node.get('@type') == 'Product']
     headings = soup.select('h1')
     if host == 'www.incehesap.com':
@@ -106,6 +114,14 @@ def selected_direct_laptop(html, url, *, read_facts=None):
                     for node in soup.select('span.bid:-soup-contains("Barkod:") > span.pDeger')]
         if barcodes != [gtin]:
             return None, 'direct_selected_identity_missing'
+    elif host == 'www.sinerji.gen.tr':
+        barcodes = []
+        for row in soup.select('#nav-technical-specs table tr'):
+            cells = row.find_all('td', recursive=False)
+            if len(cells) == 2 and WORDS(cells[0].get_text(' ', strip=True)) == 'barkod gtin':
+                barcodes.append(retailer_gtin13(cells[1].get_text(' ', strip=True)))
+        if barcodes != [gtin] or not product.get('mpn') or product['mpn'] != product.get('sku'):
+            return None, 'direct_selected_identity_missing'
     if not facts or not gtin:
         return None, 'direct_selected_identity_missing'
 
@@ -122,9 +138,11 @@ def selected_direct_laptop(html, url, *, read_facts=None):
     # Require its own stock promise, HP model/barkod and a normal one-unit sale.
     ordinary_woo = (host == 'www.gaming.gen.tr' and offer.get('itemCondition') is None
                     and stock_label and 'Stoktan gönderim' in stock_label.get_text(' ', strip=True))
+    is_new = (offer.get('itemCondition') == 'https://schema.org/NewCondition'
+              or host == 'www.sinerji.gen.tr' and offer.get('itemCondition') == 'http://schema.org/NewCondition')
     if (offer.get('url') != url or offer.get('priceCurrency') != 'TRY'
             or offer.get('availability') not in {'https://schema.org/InStock', 'http://schema.org/InStock'}
-            or (offer.get('itemCondition') != 'https://schema.org/NewCondition' and not ordinary_woo)
+            or not (is_new or ordinary_woo)
             or any(key in offer for key in ('validForMemberTier', 'eligibleCustomerType', 'eligibleTransactionVolume'))):
         return None, 'direct_new_cash_stock_unproven'
     prices = soup.select(cash_selector)
@@ -143,6 +161,10 @@ def selected_direct_laptop(html, url, *, read_facts=None):
             return None, 'direct_selected_cart_mismatch'
     if host == 'www.lowell.com.tr' and len(carts) == 1:
         if WORDS(carts[0].get('data-productname')) != WORDS(title):
+            return None, 'direct_selected_cart_mismatch'
+    if host == 'www.sinerji.gen.tr' and len(carts) == 1:
+        product_id = urlparse(url).path.rsplit('-p-', 1)[-1]
+        if carts[0].get('value') != product_id or not soup.body or soup.body.get('id') != 'P' + product_id:
             return None, 'direct_selected_cart_mismatch'
     if not price:
         return None, 'direct_visible_price_mismatch'

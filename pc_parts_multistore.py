@@ -39,6 +39,7 @@ DIRECT_PATHS = {
     'www.uzmanlarpc.com': r'/urun/[a-z0-9-]+',
     'www.lowell.com.tr': r'/[a-z0-9-]+-\d+',
     'www.teknostim.com': r'/urun/[a-z0-9-]+',
+    'www.sinerji.gen.tr': r'/[a-z0-9-]+-p-\d+',
 }
 HOSTS = DIRECT_PATHS.keys() | {HEPSIBURADA, TRENDYOL, N11, TEKNOSA}
 STOP = {'source_circuit_open', 'challenge_page', 'http_403', 'http_429', 'transport_error'}
