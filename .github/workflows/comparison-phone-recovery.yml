@@ -1,6 +1,8 @@
 name: Recover phone prices from comparison leads
 
 on:
+  schedule:
+    - cron: '17 5 * * *'
   workflow_dispatch:
     inputs:
       collection:
@@ -51,8 +53,8 @@ jobs:
         env:
           TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
           SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
-          PUBLISH: ${{ inputs.publish }}
-          COLLECTION: ${{ inputs.collection }}
+          PUBLISH: ${{ github.event_name == 'schedule' || inputs.publish }}
+          COLLECTION: ${{ github.event_name == 'schedule' && 'runner' || inputs.collection }}
         run: |
           set -euo pipefail
           if [[ "$COLLECTION" == site ]]; then
