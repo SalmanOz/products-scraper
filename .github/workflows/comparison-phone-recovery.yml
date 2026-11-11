@@ -3,6 +3,11 @@ name: Recover phone prices from comparison leads
 on:
   workflow_dispatch:
     inputs:
+      collection:
+        description: Network for the public retailer document reads
+        type: choice
+        options: [site, runner]
+        default: site
       publish:
         description: Publish both independently verified prices for each iPhone 16 Plus capacity
         type: boolean
@@ -22,6 +27,9 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 12
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -44,8 +52,18 @@ jobs:
           TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
           SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
           PUBLISH: ${{ inputs.publish }}
+          COLLECTION: ${{ inputs.collection }}
         run: |
           set -euo pipefail
+          if [[ "$COLLECTION" == site ]]; then
+            audience='https%3A%2F%2Fteknoskor.com%2Fapi%2Fingestion%2Fcatalog-source-document'
+            CATALOG_SOURCE_OIDC=$(curl -fsS --max-time 20 \
+              -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+              "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=$audience" | python -c 'import json,sys; print(json.load(sys.stdin)["value"])')
+            test -n "$CATALOG_SOURCE_OIDC"
+            echo "::add-mask::$CATALOG_SOURCE_OIDC"
+            export CATALOG_SOURCE_OIDC
+          fi
           args=()
           if [[ "$PUBLISH" == true ]]; then args+=(--publish); fi
           python comparison_phone_offers.py --state "$RUNNER_TEMP/comparison-state.json" \

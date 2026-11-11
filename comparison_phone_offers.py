@@ -10,6 +10,8 @@ from urllib.parse import urljoin, urlsplit
 
 from bs4 import BeautifulSoup
 
+from catalog_source_collector import catalog_document_reader
+
 from competitor_catalog_gaps import public_phone_catalog, read_state, retailer_destination, write_json
 from laptop_retailer_sources import marketplace_seller_identity
 from mediamarkt_marketplace_audit import selected_marketplace_offer
@@ -25,7 +27,6 @@ from update_prices import PriceUpdater
 from retailer_barcode import retailer_gtin13
 
 
-SUPPORTED = ('www.mediamarkt.com.tr', 'www.pazarama.com', 'www.teknosa.com')
 RETAILER_CATEGORIES = {'apple-iphone-16-plus': (
     'https://www.mediamarkt.com.tr/tr/category/iphone-16-plus-903529.html',
 )}
@@ -186,6 +187,19 @@ def category_leads(slug, name, specs, transport, documents):
     return sorted(leads)
 
 
+def supported_phone_url(url):
+    route = urlsplit(url)
+    if route.query:
+        return False
+    if route.netloc == 'www.mediamarkt.com.tr':
+        return mediamarkt_url(url) and 'akilli-telefon' in route.path
+    if not any(token in route.path for token in ('iphone', 'akilli-telefon', 'cep-telefonu')):
+        return False
+    if route.netloc == 'www.teknosa.com':
+        return product_host(url) == route.netloc
+    return pazarama_product_url(url) and bool(re.fullmatch(r'/[a-z0-9-]+-p-\d{12,13}', route.path))
+
+
 def candidate_urls(state, slug):
     variants = []
     family = product_family(slug)
@@ -194,7 +208,7 @@ def candidate_urls(state, slug):
             continue
         variants.extend(row.get('retailerLeads', ()))
     return list(dict.fromkeys(url for raw in variants if (url := retailer_destination(raw))
-                              and urlsplit(url).netloc in SUPPORTED))
+                              and supported_phone_url(url)))
 
 
 def audit_queue(state, products, maximum=4):
@@ -206,9 +220,8 @@ def audit_queue(state, products, maximum=4):
             continue
         for raw in row.get('retailerLeads', ()):
             if url := retailer_destination(raw):
-                host = urlsplit(url).netloc
-                if host in SUPPORTED:
-                    by_family[row['catalogFamily']].add(host)
+                if supported_phone_url(url):
+                    by_family[row['catalogFamily']].add(urlsplit(url).netloc)
     for product in products:
         slug = product['slug']
         if not product.get('name') or not isinstance(product.get('attributes'), dict):
@@ -256,7 +269,8 @@ def run(state, slugs, client=None, *, publish=False, maximum=24, products=None):
         products = client.get_published_products()
     products = {product['slug']: product for product in products}
     results = []
-    transport = PriorityRetailerTransport(maximum_per_host=maximum, browser_fallback=False)
+    transport = PriorityRetailerTransport(maximum_per_host=maximum, browser_fallback=False,
+                                          get=catalog_document_reader('phone'))
     documents = {}
     for slug in slugs:
         product = products[slug]
