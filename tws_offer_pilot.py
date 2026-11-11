@@ -81,6 +81,7 @@ NEW_MODELS = (
     ('Xiaomi', 'Buds 5 Pro', r'xiaomi buds 5 pro(?! wi fi)'),
     ('Huawei', 'FreeClip 2', r'freeclip ?2(?! pro| plus)'),
     ('Huawei', 'FreeBuds Pro 5', r'freebuds pro ?5'),
+    ('Huawei', 'FreeBuds 6', r'freebuds 6(?! ?[is]| pro| se)'),
     ('Samsung', 'Galaxy Buds FE', r'galaxy buds fe'),
     ('Samsung', 'Galaxy Buds3 FE', r'galaxy buds ?3 fe'),
     ('Samsung', 'Galaxy Buds3', r'galaxy buds ?3(?! fe| pro)'),
@@ -118,7 +119,7 @@ PAIR_REQUIRED_MODEL_NAMES = (
     'Anker Soundcore Liberty 4 NC', 'Anker Soundcore R50i NC', 'Samsung Galaxy Buds3 FE',
     'JBL Tour Pro 3', 'Sony WF-1000XM5',
     'JBL Live Beam 3', 'Anker Soundcore Sport X20', 'JBL Live Buds 3', 'JBL Endurance Race 2',
-    'Sony WF-C510', 'Sony WF-C710N', 'Sony LinkBuds Clip', 'QCY T13 ANC',
+    'Sony WF-C510', 'Sony WF-C710N', 'Sony LinkBuds Clip', 'QCY T13 ANC', 'Huawei FreeBuds 6',
 )
 PILOT_MODEL_NAMES = tuple(f'{brand} {name}' for brand, name, _ in COHORT)
 MODEL_NAMES = (*PILOT_MODEL_NAMES, *(f'{brand} {name}' for brand, name, _ in EXPANSION_COHORT),
