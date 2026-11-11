@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import Mock, patch
 
-from comparison_phone_offers import candidate_urls, checked_offers
+from comparison_phone_offers import candidate_urls, checked_offers, publishable_pair
 
 
 MM = 'https://www.mediamarkt.com.tr/tr/product/_apple-iphone-16-plus-128-gb-akilli-telefon-mavi-146562812.html'
@@ -38,3 +38,22 @@ class ComparisonPhoneOffersTest(unittest.TestCase):
             self.assertEqual(checked_offers([MM, PZ], NAME, SPECS, transport)[0], [])
             identity.side_effect = [('seller a', '1'), ('seller b', '2')]
             self.assertEqual(len(checked_offers([MM, PZ], NAME, SPECS, transport)[0]), 2)
+
+    def test_publisher_requires_collision_proof_or_all_old_urls_expired(self):
+        offers = [
+            {'price': 89599, 'url': MM, 'merchant': 'Seller A', 'platform': 'MediaMarkt',
+             'gtin13': GTIN, '_legal_name': 'seller a', '_tax_key': '1'},
+            {'price': 90699, 'url': PZ, 'merchant': 'Seller B', 'platform': 'Pazarama',
+             'gtin13': GTIN, '_legal_name': 'seller b', '_tax_key': '2'},
+        ]
+        clean = {'complete': True, 'blocked': False, 'reasons': []}
+        history = {'complete': True, 'blocked': True,
+                   'reasons': ['proposed_seller_on_other_url_or_platform'],
+                   'proposed_seller_other_url_rows': 2}
+        client = Mock()
+        client.get_raw_seller_collision_proof.side_effect = [
+            {**history, 'proposed_seller_historical_other_url_rows': 1}, clean]
+        self.assertEqual(publishable_pair(offers, client, {'id': 1})[0], [])
+        client.get_raw_seller_collision_proof.side_effect = [
+            {**history, 'proposed_seller_historical_other_url_rows': 2}, clean]
+        self.assertEqual(publishable_pair(offers, client, {'id': 1})[0], offers)

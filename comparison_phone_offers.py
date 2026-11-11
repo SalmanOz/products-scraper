@@ -221,19 +221,28 @@ def audit_queue(state, products, maximum=4):
 
 
 def publishable_pair(observations, client, product):
-    decisions = {}
+    decisions, diagnostics = {}, []
     for pair in ranked_pairs(observations):
         for offer in pair:
             key = offer['url'], offer['merchant']
             if key not in decisions:
                 try:
                     proof = client.get_raw_seller_collision_proof(product['id'], offer['merchant'], offer['url'])
-                    decisions[key] = proof.get('complete') is True and proof.get('blocked') is False
-                except IngestionClientError:
+                    other = proof.get('proposed_seller_other_url_rows')
+                    historical = proof.get('proposed_seller_historical_other_url_rows')
+                    expired_conflicts = (proof.get('reasons') == ['proposed_seller_on_other_url_or_platform']
+                                         and type(historical) is int and historical > 0 and other == historical)
+                    decisions[key] = proof.get('complete') is True and (proof.get('blocked') is False or expired_conflicts)
+                    diagnostics.append({'platform': offer['platform'], 'reasons': proof.get('reasons'),
+                                        'otherUrls': other, 'expiredOtherUrls': historical})
+                except IngestionClientError as error:
+                    match = re.match(r'HTTP ([45]\d{2})\b', str(error))
+                    diagnostics.append({'platform': offer['platform'], 'reasons': [
+                        'collision_proof_http_' + match[1] if match else 'collision_proof_contract_unavailable']})
                     decisions[key] = False
         if all(decisions[offer['url'], offer['merchant']] for offer in pair):
-            return pair
-    return []
+            return pair, diagnostics
+    return [], diagnostics
 
 
 def report_offer(row):
@@ -262,7 +271,7 @@ def run(state, slugs, client=None, *, publish=False, maximum=24, products=None):
                   'selectedPair': [report_offer(row) for row in pair],
                   'offers': [report_offer(row) for row in observations], 'rejections': rejects}
         if publish and pair:
-            pair = publishable_pair(observations, client, product)
+            pair, result['sellerChecks'] = publishable_pair(observations, client, product)
             if not pair:
                 result['publicationReason'] = 'existing_seller_collision_or_incomplete_proof'
                 results.append(result)
