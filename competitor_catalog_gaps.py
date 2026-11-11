@@ -5,6 +5,7 @@ from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import json
+from itertools import zip_longest
 from pathlib import Path
 import re
 from urllib.parse import parse_qsl, unquote, urlencode, urljoin, urlsplit
@@ -14,12 +15,37 @@ from bs4 import BeautifulSoup
 
 from catalog_source_collector import catalog_document_reader
 from laptop_retailer_sources import WORDS
+from pazarama_category_source import pazarama_product_url
+from public_retailer_sources import public_source
+import requests
 from priority_retailer_transport import PriorityRetailerTransport, compatible_get, product_host
 
 AKAKCE = 'www.akakce.com'
 CIMRI = 'www.cimri.com'
 EPEY = 'www.epey.com'
-SOURCES = (AKAKCE, CIMRI, EPEY)
+URUNAI = 'urunai.com'
+KARSILASTIRICI = 'karsilastirici.com'
+PAHALIMI = 'pahalimi.com'
+SOURCES = (AKAKCE, CIMRI, EPEY, URUNAI, KARSILASTIRICI, PAHALIMI)
+URUNAI_CATEGORIES = {
+    'telefon': 'phone', 'kulaklik': 'tws', 'laptop': 'laptop', 'monitor': 'monitor',
+    'islemci': 'cpu', 'anakart': 'motherboard', 'ram-bellek': 'ram', 'ekran-karti': 'gpu',
+    'ssd': 'ssd', 'bilgisayar-kasasi': 'case', 'guc-kaynagi': 'psu', 'sivi-sogutucu': 'cooler',
+}
+KARSILASTIRICI_CATEGORIES = {'phone': '/kategori/cep-telefonu', 'laptop': '/kategori/laptop'}
+URUNAI_PRODUCT = re.compile(r'/([a-z0-9-]+)/([a-z0-9-]+)/([a-z0-9-]{1,220})')
+KARSILASTIRICI_PRODUCT = re.compile(r'/urun/([a-z0-9-]{1,220})')
+PAHALIMI_CATEGORIES = {'phone': '/kategori/cep-telefonu', 'laptop': '/kategori/dizustu-bilgisayar',
+                       'monitor': '/kategori/monitor', 'tws': '/kategori/kulaklik'}
+PAHALIMI_PRODUCT = re.compile(r'/kategori/[a-z0-9-]+/[a-z0-9-]{1,220}-p-([a-f0-9]{8})')
+ADDITIONAL_RETAILER_PATHS = {
+    'www.idefix.com': r'/[a-z0-9-]+-p-[1-9]\d{4,11}',
+    'www.pttavm.com': r'/[a-z0-9-]+-p-[1-9]\d{5,11}',
+    'www.amazon.com.tr': r'/(?:[\w%-]+/)?(?:dp|gp/product)/[A-Z0-9]{10}',
+    'www.a101.com.tr': r'/elektronik/[a-z0-9-]+_p-[1-9]\d{5,11}',
+    'www.gurgencler.com.tr': r'/iphone-[a-z0-9-]+',
+}
+PHONE_MEMORY = re.compile(r'(?: [1-9]\d? gb)? (?:[1-9]\d{1,3} gb|[1-9] tb)$')
 CATEGORIES = {
     'phone': ('/cep-telefonu.html', '/cep-telefonlari', '/akilli-telefonlar/'),
     'tws': ('/bluetooth-kulaklik/tws.html', '/kulaklik/kulak-ici-bluetooth-kulaklik', '/kulaklik/'),
@@ -38,11 +64,15 @@ CARD = {
     AKAKCE: re.compile(r'/[a-z0-9-]+/en-ucuz-[a-z0-9-]+-fiyati,(\d{4,12})\.html'),
     CIMRI: re.compile(r'/[a-z0-9-]+/en-ucuz-[a-z0-9-]+-fiyatlari,(a?\d{4,12})'),
     EPEY: re.compile(r'/[a-z0-9-]+/[a-z0-9-]+\.html'),
+    KARSILASTIRICI: KARSILASTIRICI_PRODUCT,
+    PAHALIMI: PAHALIMI_PRODUCT,
 }
 CARD_SELECTOR = {
     AKAKCE: '#CPL a.iC[href][title]',
     CIMRI: 'a[href][title]:has(h3)',
     EPEY: '#listele ul.metin.row[id] a.urunadi[href][title]',
+    KARSILASTIRICI: 'a.product-card-link[href]:has(h3)',
+    PAHALIMI: 'a.kat-urun-ort[href]',
 }
 MODEL_TOKEN = re.compile(r'[a-zA-Z0-9]+(?:[-./_][a-zA-Z0-9]+)*')
 STOP_SOURCE = {'http_403', 'http_429', 'challenge_page', 'source_circuit_open',
@@ -56,6 +86,8 @@ def category_url(host, path, page):
         return f'https://{host}{path.removesuffix(".html")},{page}.html'
     if host == EPEY:
         return f'https://{host}{path}{page}/'
+    if host == PAHALIMI:
+        return f'https://{host}{path}?sayfa={page}'
     return f'https://{host}{path}?page={page}'
 
 
@@ -68,8 +100,9 @@ def comparison_cards(html, host, url):
             target = urlsplit(urljoin(url, anchor['href']))
         except ValueError:
             continue
-        if target.scheme == 'https' and target.netloc == host and not target.fragment:
-            links.add(unquote(target.geturl()))
+        if target.scheme == 'https' and target.netloc == host and (not target.fragment or
+                host == PAHALIMI and target.fragment == 'devam'):
+            links.add(unquote(target._replace(fragment='').geturl()))
     for anchor in soup.select(CARD_SELECTOR[host]):
         try:
             target = urlsplit(urljoin(url, anchor['href']))
@@ -87,7 +120,13 @@ def comparison_cards(html, host, url):
                 continue
         else:
             source_id = CARD[host].fullmatch(path)[1]
-        title = ' '.join(anchor['title'].split())
+        if host == KARSILASTIRICI:
+            title = anchor.select_one('h3').get_text(' ', strip=True)
+        elif host == PAHALIMI:
+            title = anchor.get_text(' ', strip=True)
+        else:
+            title = anchor['title']
+        title = ' '.join(title.split())
         if 3 <= len(title) <= 260:
             cards.setdefault(source_id, {
                 'id': source_id, 'title': title,
@@ -101,7 +140,7 @@ def load_inventory(data, phone_sitemap):
     for name, kind, key in (
         ('pcParts.json', None, 'parts'), ('laptopPilot.json', 'laptop', 'models'),
         ('monitorPilot.json', 'monitor', 'models'), ('twsProductCatalog.json', 'tws', 'models'),
-    ):
+    ) if data else ():
         for part in json.loads((data / name).read_text(encoding='utf-8'))[key]:
             inventory[kind or part['kind']].append(part)
     for node in ElementTree.parse(phone_sitemap).iter():
@@ -136,6 +175,87 @@ def catalog_match(title, index):
     return next(iter(matches)) if len(matches) == 1 else None
 
 
+def phone_family(title):
+    label = WORDS(re.sub(r'(\d+)(gb|tb)\b', r'\1 \2', title, flags=re.I))
+    label = re.sub(r' [1-9]\d? gb ram$', '', label)
+    return PHONE_MEMORY.sub('', label)
+
+
+def candidate_family(kind, title, index):
+    if kind != 'phone':
+        return None
+    family = phone_family(title)
+    return catalog_match(family, index) if family != WORDS(title) else None
+
+
+def urunai_sitemap_cards(xml, kinds, indexes):
+    # Sitemap names provide hints for retailer searches. Use no offer or
+    # specification data from the comparison site.
+    root = ElementTree.fromstring(xml)
+    if root.tag.rsplit('}', 1)[-1] != 'urlset':
+        raise ValueError('Expected product URL set')
+    for entry in root:
+        url = next((node.text for node in entry if node.tag.rsplit('}', 1)[-1] == 'loc'), None)
+        if not url or not url.startswith('https://' + URUNAI + '/'):
+            continue
+        route = urlsplit(url)
+        match = URUNAI_PRODUCT.fullmatch(route.path)
+        if not match or route.query or route.fragment:
+            continue
+        section, brand, model = match.groups()
+        kind = URUNAI_CATEGORIES.get(section)
+        title = model if model == brand or model.startswith(brand + '-') else f'{brand}-{model}'
+        title = title.replace('-', ' ')
+        if kind not in kinds or not in_scope(kind, title):
+            continue
+        yield {'id': f'{brand}/{model}', 'title': title, 'url': url, 'source': URUNAI,
+               'category': kind, 'catalogSlug': catalog_match(title, indexes[kind])}
+
+
+def scan_urunai(reader, kinds, indexes):
+    url = f'https://{URUNAI}/sitemap-products.xml'
+    body, reason, _ = reader._read_document(url, URUNAI, category=True, sitemap=True)
+    try:
+        rows = list(urunai_sitemap_cards(body, kinds, indexes)) if body is not None else []
+    except (ValueError, ElementTree.ParseError):
+        reason, rows = 'invalid_product_sitemap', []
+    counts = Counter(row['category'] for row in rows)
+    matched = Counter(row['category'] for row in rows if row['catalogSlug'])
+    return ([{'source': URUNAI, 'category': kind, 'status': 'sitemap_read' if counts[kind] else reason,
+              'nextPage': None, 'pages': int(bool(counts[kind])), 'cards': counts[kind],
+              'matched': matched[kind], 'unmatched': counts[kind] - matched[kind]} for kind in kinds], rows)
+
+
+def known_phones_from_sitemap(reader, host, index):
+    path = '/sitemap-products.xml' if host == KARSILASTIRICI else '/sitemap-urun-cep-telefonu.xml'
+    url = f'https://{host}{path}'
+    body, reason, _ = reader._read_document(url, host, category=True, sitemap=True)
+    if body is None:
+        return reason, []
+    try:
+        root = ElementTree.fromstring(body)
+    except ElementTree.ParseError:
+        return 'invalid_product_sitemap', []
+    if root.tag.rsplit('}', 1)[-1] != 'urlset':
+        return 'invalid_product_sitemap', []
+    rows = []
+    for entry in root:
+        url = next((node.text for node in entry if node.tag.rsplit('}', 1)[-1] == 'loc'), None)
+        if not url or not url.startswith(f'https://{host}/'):
+            continue
+        route = urlsplit(url)
+        match = CARD[host].fullmatch(route.path)
+        if not match or route.query or route.fragment:
+            continue
+        slug = match[1] if host == KARSILASTIRICI else route.path.rsplit('/', 1)[-1].rsplit('-p-', 1)[0]
+        title = slug.replace('-', ' ')
+        known = catalog_match(title, index)
+        if known or candidate_family('phone', title, index):
+            rows.append({'id': match[1], 'title': title, 'url': url, 'source': host,
+                         'category': 'phone', 'catalogSlug': known})
+    return 'sitemap_read', rows
+
+
 def in_scope(kind, title):
     title = WORDS(title)
     if re.search(r'\b(?:yenilenmis|ikinci el|teshir)\b', title):
@@ -157,9 +277,23 @@ def comparison_reader(host, **options):
 def scan_source(host, kinds, indexes, start_page, pages, cursors=None):
     reader = comparison_reader(host)
     reports, observations = [], []
+    if host == URUNAI:
+        return scan_urunai(reader, kinds, indexes)
     stopped = None
+    if host in (KARSILASTIRICI, PAHALIMI) and 'phone' in kinds:
+        state, observations = known_phones_from_sitemap(reader, host, indexes['phone'])
+        reports.append({'source': host, 'category': 'phone_sitemap', 'status': state,
+                        'nextPage': None, 'pages': int(state == 'sitemap_read'), 'cards': len(observations)})
+        if state in STOP_SOURCE or state.startswith('robots_') and state != 'robots_disallowed':
+            stopped = state
     for kind in kinds:
-        path = CATEGORIES[kind][SOURCES.index(host)]
+        if host in (KARSILASTIRICI, PAHALIMI):
+            paths = KARSILASTIRICI_CATEGORIES if host == KARSILASTIRICI else PAHALIMI_CATEGORIES
+            path = paths.get(kind)
+            if path is None:
+                continue
+        else:
+            path = CATEGORIES[kind][SOURCES.index(host)]
         previous = (cursors or {}).get(f'{host}/{kind}', {})
         first_page = previous.get('nextPage') or start_page
         stats = Counter()
@@ -231,7 +365,9 @@ def merge_state(state, reports, observations, indexes, now):
                                   'lastSeenAt': now}
     for row in state['products'].values():
         if row['category'] in indexes:
-            row['catalogSlug'] = catalog_match(row['title'], indexes[row['category']])
+            kind = row['category']
+            row['catalogSlug'] = catalog_match(row['title'], indexes[kind])
+            row['catalogFamily'] = row['catalogSlug'] or candidate_family(kind, row['title'], indexes[kind])
     return state
 
 
@@ -256,7 +392,16 @@ def retailer_destination(raw):
         or route.netloc == 'www.mediamarkt.com.tr' and re.fullmatch(
             r'/tr/product/_[a-z0-9-]+-[1-9]\d{5,11}\.html', route.path)
     )
-    return url if product_host(url) or first_party and not selectors else None
+    if product_host(url) or first_party and not selectors or pazarama_product_url(url):
+        return url
+    if public_source(url) and re.fullmatch(r'/[a-z0-9_-]+', route.path):
+        return url
+    pattern = ADDITIONAL_RETAILER_PATHS.get(route.netloc)
+    if not pattern or not re.fullmatch(pattern, route.path):
+        return None
+    if route.netloc == 'www.idefix.com' and len(selectors) == 1 and selectors[0][0] == 'vendorId':
+        return url if re.fullmatch(r'[1-9]\d{0,9}', selectors[0][1]) else None
+    return url if not selectors else None
 
 
 def comparison_retailer_leads(html, host, source_url):
@@ -264,7 +409,10 @@ def comparison_retailer_leads(html, host, source_url):
     if host == EPEY:
         raw_links = [unquote(anchor['data-link']) for anchor in soup.select('a.git[data-link]:has(.urun_adi)')]
     else:
-        raw_links = []
+        selectors = {URUNAI: 'a[rel~=sponsored][href]',
+                     KARSILASTIRICI: '#fiyatlar a.store-link[rel~=sponsored][href]',
+                     PAHALIMI: 'a.kat-teklif-satir[rel~=sponsored][href]'}
+        raw_links = [anchor['href'] for anchor in soup.select(selectors[host])] if host in selectors else []
         expected = unquote(source_url)
         for node in soup.select('script[type="application/ld+json"]'):
             try:
@@ -274,6 +422,8 @@ def comparison_retailer_leads(html, host, source_url):
             if not isinstance(product, dict) or product.get('@type') not in {'Product', 'ProductGroup'}:
                 continue
             canonical = product.get('url') or product.get('@id')
+            if isinstance(canonical, str):
+                canonical = canonical.removesuffix('#product')
             if not isinstance(canonical, str) or unquote(canonical) != expected:
                 continue
             aggregate = product.get('offers')
@@ -285,13 +435,23 @@ def comparison_retailer_leads(html, host, source_url):
     return sorted({url for raw in raw_links if (url := retailer_destination(raw))})
 
 
-def scan_retailer_leads(state, host, kinds, maximum, now):
+def scan_retailer_leads(state, host, kinds, maximum, now, priority=(), pinned=()):
     candidates = defaultdict(list)
     for row in state['products'].values():
-        if row['source'] == host and row['category'] in kinds and row['catalogSlug'] is None:
+        if row['source'] != host or row['category'] not in kinds:
+            continue
+        route = urlsplit(row['url'])
+        product_path = URUNAI_PRODUCT if host == URUNAI else CARD[host]
+        if (route.scheme == 'https' and route.netloc == host and not route.query and not route.fragment
+                and product_path.fullmatch(unquote(route.path))):
             candidates[row['category']].append(row)
-    for rows in candidates.values():
+    for kind, rows in candidates.items():
         rows.sort(key=lambda row: (row.get('lastLeadAttemptAt', ''), row['firstSeenAt'], row['id']))
+        first = [row for row in rows if row.get('catalogFamily') in pinned]
+        others = [row for row in rows if row.get('catalogFamily') not in pinned]
+        gaps = (row for row in others if row.get('catalogFamily') in priority)
+        rest = (row for row in others if row.get('catalogFamily') not in priority)
+        candidates[kind] = first + [row for pair in zip_longest(gaps, rest) for row in pair if row is not None]
     reader = comparison_reader(host, maximum_per_host=maximum)
     offsets = Counter()
     for turn in range(maximum):
@@ -319,19 +479,42 @@ def write_json(path, payload):
     pending.replace(path)
 
 
+def public_phone_price_gaps():
+    try:
+        with requests.get('https://teknoskor.com/api/products', params={'limit': 1000},
+                          timeout=(5, 10), allow_redirects=False, stream=True) as response:
+            if response.status_code != 200:
+                return set()
+            data = bytearray()
+            for chunk in response.iter_content(65536):
+                if len(data) + len(chunk) > 8 * 1024 * 1024:
+                    return set()
+                data.extend(chunk)
+        rows = json.loads(data)
+        if isinstance(rows, list) and len(rows) <= 1000:
+            return {row['slug'] for row in rows if isinstance(row, dict) and
+                    isinstance(row.get('slug'), str) and row.get('fresh_offer_count') in (0, '0')}
+    except (ValueError, requests.RequestException):
+        pass
+    return set()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--site-data', required=True, type=Path)
+    parser.add_argument('--site-data', type=Path)
     parser.add_argument('--phone-sitemap', required=True, type=Path)
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('--category', action='append', choices=CATEGORIES)
     parser.add_argument('--source', action='append', choices=SOURCES)
     parser.add_argument('--state', type=Path, help='Resume category cursors and retain deduplicated candidate IDs')
+    parser.add_argument('--prioritize-model', action='append', default=[])
     parser.add_argument('--start-page', type=int, default=1)
     parser.add_argument('--pages', type=int, default=2)
     parser.add_argument('--lead-limit', type=int, default=0, help='Maximum detail pages per source for direct retailer URLs')
     args = parser.parse_args()
     kinds = list(dict.fromkeys(args.category or CATEGORIES))
+    if args.site_data is None and kinds != ['phone']:
+        parser.error('--site-data is required when scanning categories beyond phones')
     if args.start_page < 1 or args.pages < 1 or len(kinds) * args.pages > 40:
         parser.error('Select a positive page number and up to 40 category requests per source')
     if not 0 <= args.lead_limit <= 40:
@@ -339,6 +522,9 @@ def main():
     inventory = load_inventory(args.site_data, args.phone_sitemap)
     indexes = {kind: identity_index(inventory[kind]) for kind in kinds}
     state = read_state(args.state)
+    priority = set(args.prioritize_model)
+    if args.lead_limit and 'phone' in kinds:
+        priority.update(public_phone_price_gaps())
     hosts = list(dict.fromkeys(args.source or SOURCES))
     with ThreadPoolExecutor(max_workers=len(hosts)) as pool:
         tasks = [pool.submit(scan_source, host, kinds, indexes, args.start_page, args.pages, state['sources'])
@@ -351,15 +537,18 @@ def main():
     if args.lead_limit:
         stopped = {row['source'] for row in sources if row['status'] in STOP_SOURCE}
         with ThreadPoolExecutor(max_workers=len(hosts)) as pool:
-            jobs = [pool.submit(scan_retailer_leads, state, host, kinds, args.lead_limit, now)
+            jobs = [pool.submit(scan_retailer_leads, state, host, kinds, args.lead_limit, now,
+                                priority, set(args.prioritize_model))
                     for host in hosts if host not in stopped]
             for job in jobs:
                 job.result()
     if args.state is not None:
         write_json(args.state, state)
     candidates = [row for row in state['products'].values() if row['catalogSlug'] is None]
+    existing_with_leads = [row for row in state['products'].values()
+                           if row.get('catalogFamily') and row.get('retailerLeads')]
     report = {'checkedAt': now, 'inventory': {kind: len(inventory[kind]) for kind in kinds},
-              'sources': sources, 'candidates': candidates}
+              'sources': sources, 'candidates': candidates, 'existingWithRetailerLeads': existing_with_leads}
     write_json(args.output, report)
     print(json.dumps({
         'pages': sum(row.get('pages', 0) for row in sources),
@@ -368,6 +557,7 @@ def main():
         'uniqueSourceProducts': len({(r['source'], r['id']) for r in state['products'].values()}),
         'candidateRows': len(candidates),
         'candidateRowsWithRetailerLinks': sum(bool(row.get('retailerLeads')) for row in candidates),
+        'existingRowsWithRetailerLinks': len(existing_with_leads),
         'output': str(args.output),
     }, ensure_ascii=False))
 

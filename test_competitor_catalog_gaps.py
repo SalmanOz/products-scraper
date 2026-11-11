@@ -1,6 +1,6 @@
 import unittest
 
-from competitor_catalog_gaps import (AKAKCE, CIMRI, EPEY, catalog_match, category_url, comparison_cards, comparison_retailer_leads,
+from competitor_catalog_gaps import (AKAKCE, CIMRI, EPEY, KARSILASTIRICI, PAHALIMI, URUNAI, candidate_family, urunai_sitemap_cards, catalog_match, category_url, comparison_cards, comparison_retailer_leads,
                                      identity_index, in_scope, merge_state, read_state)
 
 
@@ -88,7 +88,7 @@ class CompetitorCatalogGapsTest(unittest.TestCase):
         merge_state(state, [{**report, 'nextPage': None, 'status': 'no_next_page_link'}], [], indexes, 'second')
         self.assertEqual(state['sources'][EPEY + '/tws']['completedPasses'], 1)
         self.assertEqual(list(state['products'].values()), [
-            {**card, 'firstSeenAt': 'first', 'lastSeenAt': 'first', 'catalogSlug': 'example'},
+            {**card, 'firstSeenAt': 'first', 'lastSeenAt': 'first', 'catalogSlug': 'example', 'catalogFamily': 'example'},
         ])
 
     def test_requires_whole_and_unambiguous_manufacturer_code(self):
@@ -107,3 +107,35 @@ class CompetitorCatalogGapsTest(unittest.TestCase):
         self.assertFalse(in_scope('ram', 'Kingston 16 GB SO-DIMM'))
         self.assertFalse(in_scope('phone', 'Yenilenmiş Telefon'))
         self.assertTrue(in_scope('ssd', 'Lexar NM610PRO 500 GB SSD'))
+
+    def test_urunai_sitemap_stays_on_host_and_preserves_category(self):
+        index = identity_index([{'name': 'Apple iPhone 16 Plus', 'slug': 'apple-iphone-16-plus'}])
+        xml = """<urlset>
+          <url><loc>https://urunai.com/telefon/apple/iphone-16-plus</loc></url>
+          <url><loc>https://other.example/telefon/apple/iphone-16-plus</loc></url>
+          <url><loc>https://urunai.com/televizyon/samsung/foo</loc></url>
+          <url><loc>https://urunai.com/telefon/apple/iphone-16-plus?ignored=true</loc></url>
+        </urlset>"""
+        self.assertEqual(list(urunai_sitemap_cards(xml, ['phone'], {'phone': index})), [{
+            'id': 'apple/iphone-16-plus', 'title': 'apple iphone 16 plus',
+            'url': 'https://urunai.com/telefon/apple/iphone-16-plus', 'source': URUNAI,
+            'category': 'phone', 'catalogSlug': 'apple-iphone-16-plus',
+        }])
+
+    def test_comparison_sites_supply_product_destinations_only(self):
+        target = 'https://www.idefix.com/apple-iphone-16-plus-128-gb-p-3832277'
+        for host, html in (
+            (URUNAI, f'<a rel="sponsored" href="{target}?vendorId=220&amp;utm_source=example">1299 TL</a>'),
+            (KARSILASTIRICI, f'<section id="fiyatlar"><a class="store-link" rel="sponsored" href="{target}?vendorId=220">1299 TL</a></section>'),
+            (PAHALIMI, f'<a class="kat-teklif-satir" rel="sponsored" href="{target}?vendorId=220">1299 TL</a>'),
+        ):
+            html += '<a rel="sponsored" href="https://www.teknosa.com/sepet">Other</a>'
+            self.assertEqual(comparison_retailer_leads(html, host, f'https://{host}/urun/ornek'),
+                             [target + '?vendorId=220'])
+
+    def test_known_family_does_not_claim_variant_coverage(self):
+        index = identity_index([{'name': 'Apple iPhone 16 Plus', 'slug': 'apple-iphone-16-plus'}])
+        title = 'Apple iPhone 16 Plus (256 GB)'
+        self.assertIsNone(catalog_match(title, index))
+        self.assertEqual(candidate_family('phone', title, index), 'apple-iphone-16-plus')
+        self.assertIsNone(candidate_family('phone', 'Apple iPhone 16 Pro (256 GB)', index))

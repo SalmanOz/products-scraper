@@ -335,7 +335,7 @@ class PriorityRetailerTransport:
             return None, 'invalid_tws_category', None
         return self._read_document(url, 'www.trendyol.com', category=True)
 
-    def _read_document(self, url, host, category=False, fresh=False, classification=False):
+    def _read_document(self, url, host, category=False, fresh=False, classification=False, sitemap=False):
         with self._lock:
             state = self._states.setdefault(host, {'rules': None, 'robots': 'not_loaded',
                 'pdp_requests': 0, 'search_requests': 0, 'browser_requests': 0,
@@ -389,8 +389,9 @@ class PriorityRetailerTransport:
                     state['classification_requests'] = state.get('classification_requests', 0) + 1
                 if urlparse(url).path in ('/ara', '/arama', N11_PHONE_SEARCH_PATH):
                     state['search_requests'] += 1
-                raw, reason, status = self._read(url, 64 * 1024 if classification else MAX_HTML_BYTES,
-                                                 'application/json' if classification else 'text/html', state)
+                maximum = 8 * 1024 * 1024 if sitemap else 64 * 1024 if classification else MAX_HTML_BYTES
+                accept = 'application/xml' if sitemap else 'application/json' if classification else 'text/html'
+                raw, reason, status = self._read(url, maximum, accept, state)
                 if reason != 'ready':
                     if reason == 'browser_timeout' and status == 504 and timeout_sku:
                         state['browser_timeout_skus'].add(timeout_sku)
@@ -402,7 +403,7 @@ class PriorityRetailerTransport:
                         state['blocked'] = True
                     return None, reason, status
                 html = raw.decode('utf-8-sig', errors='strict')
-                if challenge_document(html):
+                if not sitemap and challenge_document(html):
                     state['blocked'] = True
                     return None, 'challenge_page', status
                 if (host == 'www.hepsiburada.com' and not category and timeout_sku
