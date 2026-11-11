@@ -58,7 +58,7 @@ def merge_snapshot(snapshot, catalog, observations, statuses, now):
     return ({**snapshot, 'checked_at': now, 'models': output} if changed else snapshot), counts
 
 
-def refresh(snapshot, catalog):
+def refresh(snapshot, catalog, *, collection='site'):
     groups = defaultdict(list)
     targets = {}
     previous_targets = dict(snapshot.get('sourceTargets', {}))
@@ -80,11 +80,11 @@ def refresh(snapshot, catalog):
             if host is None:
                 raise ValueError(f'Unrecognized public retailer URL: {url}')
             groups[host].append((name, {**offer, 'gtin13': gtin}))
-    observations, statuses, rejected = defaultdict(list), {}, Counter()
+    observations, statuses, rejected, source_coverage = defaultdict(list), {}, Counter(), {}
 
     def collect(host, targets):
         states = {}
-        gateway = catalog_document_reader('earbud') if host in {
+        gateway = catalog_document_reader('earbud') if collection == 'site' and host in {
             'www.n11.com', 'www.vatanbilgisayar.com', 'www.mediamarkt.com.tr',
             'www.hepsiburada.com', 'www.teknosa.com',
         } else None
@@ -92,18 +92,24 @@ def refresh(snapshot, catalog):
         return found, failures, states
 
     with ThreadPoolExecutor(max_workers=6) as pool:
-        jobs = [pool.submit(collect, host, rows) for host, rows in groups.items()]
-        for job in jobs:
+        jobs = {host: pool.submit(collect, host, rows) for host, rows in groups.items()}
+        for host, job in jobs.items():
             found, failures, states = job.result()
             rejected.update(failures)
             statuses.update(states)
+            source_coverage[host] = {
+                'configuredTargets': len(groups[host]),
+                'completedTargetReads': sum(status != 'unavailable' for status in states.values()),
+                'verifiedOffers': sum(map(len, found.values())),
+                'rejections': dict(failures),
+            }
             for name, offers in found.items():
                 observations[name].extend(offers)
     now = datetime.now(timezone.utc).isoformat()
     updated, counts = merge_snapshot(snapshot, catalog, observations, statuses, now)
     if targets != snapshot.get('sourceTargets', {}):
         updated = {**updated, 'sourceTargets': targets}
-    return updated, {**counts, 'rejections': dict(rejected),
+    return updated, {**counts, 'rejections': dict(rejected), 'sourceCoverage': source_coverage,
                      'verifiedOffers': sum(map(len, observations.values())),
                      'completedTargetReads': sum(status != 'unavailable' for status in statuses.values()),
                      'configuredTargets': sum(map(len, groups.values())),
@@ -114,10 +120,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for arg in ('catalog', 'snapshot', 'output'):
         parser.add_argument(arg, type=Path)
+    parser.add_argument('--collection', choices=('site', 'runner'), default='site')
     args = parser.parse_args()
     catalog = json.loads(args.catalog.read_text(encoding='utf-8'))
     snapshot = json.loads(args.snapshot.read_text(encoding='utf-8'))
-    updated, report = refresh(snapshot, catalog)
+    updated, report = refresh(snapshot, catalog, collection=args.collection)
     args.output.write_text(json.dumps(updated, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     print(json.dumps(report, ensure_ascii=False))
 

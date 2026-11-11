@@ -26,11 +26,12 @@ class TwsRefreshTest(TestCase):
                                 _legal_name=target['merchant']) for _, target in rows]}, {}
 
         with patch('tws_refresh.reread', side_effect=collect):
-            updated, _ = refresh(snapshot, catalog)
+            updated, report = refresh(snapshot, catalog)
             repeated, _ = refresh(updated, catalog)
         self.assertEqual([[o['url'] for o in row['offers']] for row in updated['models']], [urls[:1], urls[1:]])
         self.assertEqual(updated['sourceTargets'], repeated['sourceTargets'])
         self.assertEqual(set(updated['sourceTargets']), {f'{name}/{white}', f'{name}/{black}'})
+        self.assertEqual(report['sourceCoverage']['www.n11.com']['verifiedOffers'], 3)
 
     def test_unverified_offer_is_withdrawn_and_rechecked_on_next_run(self):
         name = 'Anker Soundcore AeroFit 2'
