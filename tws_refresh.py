@@ -21,6 +21,7 @@ SITE_DOCUMENT_HOSTS = {
     'www.hepsiburada.com', 'www.teknosa.com',
 }
 MIXED_SITE_DOCUMENT_HOSTS = {'www.n11.com', 'www.vatanbilgisayar.com'}
+MAX_CURRENT_OFFERS = 4
 
 
 def selected_host(url):
@@ -45,7 +46,8 @@ def merge_snapshot(snapshot, catalog, observations, statuses, now):
             raise ValueError(f'Missing detail page for {name}')
         current = [offer for offer in observations.get(name, []) if offer['gtin13'] == row['gtin']]
         required = row.get('requiresIndependentPair') is True or models[name].get('requiresIndependentPair') is True
-        fresh = exact_tws_sellers(current) if required else select_sku_offers(current)
+        fresh = (exact_tws_sellers(current, maximum=MAX_CURRENT_OFFERS) if required
+                 else select_sku_offers(current, maximum=MAX_CURRENT_OFFERS))
         if fresh:
             offers = _public_offers(fresh)
             counts['refreshed'] += 1

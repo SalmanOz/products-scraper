@@ -378,11 +378,11 @@ def _trendyol_offers(transport, failures, models=MODEL_NAMES):
     return results, candidates
 
 
-def select_sku_offers(observations, *, min_price_ratio=0):
+def select_sku_offers(observations, *, min_price_ratio=0, maximum=3):
     by_gtin = defaultdict(list)
     for offer in sorted(observations, key=lambda o: (o['price'], o['url'])):
         by_gtin[offer['gtin13']].append(offer)
-    for size in (3, 2):
+    for size in range(maximum, 1, -1):
         matches = (offers for group in by_gtin.values() for offers in combinations(group, size)
                    if all(independent_sellers(a, b) and min(a['price'], b['price']) >= min_price_ratio * max(a['price'], b['price'])
                           for a, b in combinations(offers, 2)))

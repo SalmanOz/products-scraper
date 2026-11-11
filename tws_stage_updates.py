@@ -1,0 +1,154 @@
+"""Stage verified retailer additions for published earbud models."""
+
+import argparse
+from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
+import json
+from pathlib import Path
+
+from competitor_catalog_gaps import retailer_destination
+from laptop_pilot import _public_offers
+from retailer_barcode import retailer_gtin13
+from tr_price_scraper import TRPriceScraper
+from tws_catalog_expansion import exact_tws_sellers, reread
+from tws_refresh import MAX_CURRENT_OFFERS, selected_host
+
+
+COLOR_NAMES = {
+    'beyaz': 'Beyaz', 'bej': 'Bej', 'gri': 'Gri', 'gumus': 'Gümüş', 'kirmizi': 'Kırmızı',
+    'mavi': 'Mavi', 'mor': 'Mor', 'pembe': 'Pembe', 'siyah': 'Siyah', 'yesil': 'Yeşil',
+}
+
+
+def common_color(offers):
+    colors = set()
+    for offer in offers:
+        title_words = TRPriceScraper._normalize_words(offer.get('source_title') or '').split()
+        title_colors = set(title_words).intersection(COLOR_NAMES)
+        selected = offer.get('selected_n11_color_slug', '').split('-')[-1]
+        if selected in COLOR_NAMES:
+            title_colors.add(selected)
+        if len(title_colors) != 1:
+            return None
+        colors.update(title_colors)
+    return COLOR_NAMES[next(iter(colors))] if len(colors) == 1 else None
+
+
+def stage(snapshot, catalog, report, selected_models=()):
+    model_names = {row['name'] for row in catalog['models']}
+    rows = {(row['name'], row['gtin']): row for row in snapshot['models']}
+    model_counts = Counter(name for name, _ in rows)
+    prior_targets = snapshot.get('sourceTargets', {})
+    observed_targets, current_targets, url_owners, gtin_owners = (defaultdict(dict), defaultdict(dict),
+                                                                defaultdict(set), defaultdict(set))
+    for key, row in rows.items():
+        name, gtin = key
+        gtin_owners[gtin].add(name)
+        target_key = f'{name}/{gtin}' if model_counts[name] > 1 else name
+        for target in (*prior_targets.get(target_key, []), *row['offers']):
+            url_owners[target['url']].add(key)
+            current_targets[key][target['url']] = target['merchant']
+
+    for record in report['verified']:
+        name = record['name']
+        if name not in model_names or (selected_models and name not in selected_models):
+            continue
+        for offer in record['observations']:
+            gtin = offer.get('gtin13')
+            url = retailer_destination(offer.get('url'))
+            merchant = offer.get('merchant')
+            if (not gtin or retailer_gtin13(gtin) != gtin or not url or not selected_host(url)
+                    or not isinstance(merchant, str) or not merchant.strip() or len(merchant) > 100):
+                continue
+            key = (name, gtin)
+            gtin_owners[gtin].add(name)
+            url_owners[url].add(key)
+            observed_targets[key][url] = merchant
+
+    groups, attempted, reasons = defaultdict(list), [], Counter()
+    for key, leads in observed_targets.items():
+        name, gtin = key
+        published = {o['url'] for o in rows.get(key, {}).get('offers', [])}
+        if not (leads.keys() - published):
+            continue
+        if gtin_owners[gtin] != {name}:
+            reasons['conflicting_barcode_owner'] += 1
+            continue
+        targets = {url: merchant for url, merchant in {**leads, **current_targets[key]}.items()
+                   if url_owners[url] == {key} and selected_host(url)}
+        if len(targets) < 2:
+            reasons['insufficient_retailer_urls'] += 1
+            continue
+        attempted.append(key)
+        for url, merchant in targets.items():
+            groups[selected_host(url)].append((name, {'url': url, 'merchant': merchant, 'gtin13': gtin}))
+
+    observed = defaultdict(list)
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        jobs = {host: pool.submit(reread, host, targets) for host, targets in groups.items()}
+        for host, job in jobs.items():
+            values, rejected = job.result()
+            reasons.update({f'{host}:{reason}': count for reason, count in rejected.items()})
+            for name, offers in values.items():
+                for offer in offers:
+                    observed[name, offer['gtin13']].append(offer)
+
+    updated = deepcopy(snapshot)
+    target_map = updated.setdefault('sourceTargets', {})
+    staged = []
+    for name, gtin in attempted:
+        key = (name, gtin)
+        offers = exact_tws_sellers(observed[key], maximum=MAX_CURRENT_OFFERS)
+        if len({o['platform'] for o in offers}) < 2:
+            reasons['independent_platform_pair_missing'] += 1
+            continue
+        previous = rows.get(key, {}).get('offers', [])
+        if not ({o['url'] for o in offers} - {o['url'] for o in previous}):
+            reasons['new_target_unverified'] += 1
+            continue
+        if len(offers) < len(previous):
+            reasons['current_offer_coverage_reduced'] += 1
+            continue
+        variants = [row for row in updated['models'] if row['name'] == name]
+        row = next((row for row in variants if row['gtin'] == gtin), None)
+        if row is None:
+            if len(variants) == 1 and variants[0]['gtin'] is None and not variants[0]['offers']:
+                row = variants[0]
+                row['gtin'] = gtin
+            else:
+                if len(variants) == 1 and name in target_map:
+                    target_map[f"{name}/{variants[0]['gtin']}"] = target_map.pop(name)
+                row = {'name': name, 'gtin': gtin, 'requiresIndependentPair': True}
+                updated['models'].append(row)
+                variants.append(row)
+        if len(variants) > 1 and 'variant' not in row and (color := common_color(offers)):
+            row['variant'] = color
+        row['offers'] = _public_offers(offers)
+        target_key = f'{name}/{gtin}' if len(variants) > 1 else name
+        targets = {o['url']: o for o in target_map.get(target_key, [])}
+        targets.update({o['url']: {k: o[k] for k in ('url', 'merchant')} for o in offers})
+        target_map[target_key] = list(targets.values())
+        updated['checked_at'] = max(updated['checked_at'], max(o['observed_at'] for o in offers))
+        staged.append({'name': name, 'gtin': gtin, 'offers': row['offers']})
+    return (updated if staged else snapshot), {'staged': staged, 'rejections': dict(reasons)}
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    for arg in ('catalog', 'snapshot', 'audit', 'output'):
+        parser.add_argument(arg, type=Path)
+    parser.add_argument('--model', action='append', default=[])
+    args = parser.parse_args()
+    if args.output.resolve() in {path.resolve() for path in (args.catalog, args.snapshot, args.audit)}:
+        parser.error('Use a separate output path for the staged snapshot')
+    catalog, snapshot, report = (json.loads(path.read_text(encoding='utf-8'))
+                                 for path in (args.catalog, args.snapshot, args.audit))
+    updated, results = stage(snapshot, catalog, report, args.model)
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(json.dumps(updated, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+    print(json.dumps(results, ensure_ascii=False))
+
+
+if __name__ == '__main__':
+    main()

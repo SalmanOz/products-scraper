@@ -620,6 +620,7 @@ def scan_retailer_leads(state, host, kinds, maximum, now, priority=(), pinned=()
         candidates[kind] = first + [row for pair in zip_longest(gaps, rest) for row in pair if row is not None]
     reader = comparison_reader(host, collection=collection, maximum_per_host=maximum)
     offsets = Counter()
+    outcomes = Counter()
     # Give priority to the phone and earbud queues after every category has
     # had one turn. Repeated cycles still service the other catalog sections.
     slots = [*kinds, *(kind for _ in range(3) for kind in kinds if kind in ('phone', 'tws'))]
@@ -637,6 +638,7 @@ def scan_retailer_leads(state, host, kinds, maximum, now, priority=(), pinned=()
         row['lastLeadAttemptAt'] = now
         if html is None:
             row['leadStatus'] = reason
+            outcomes[reason] += 1
             if reason in STOP_SOURCE or reason.startswith('robots_') and reason != 'robots_disallowed':
                 break
         else:
@@ -644,11 +646,14 @@ def scan_retailer_leads(state, host, kinds, maximum, now, priority=(), pinned=()
                 title, reason = epey_earbud_title(html, row['url'])
                 if not title:
                     row['leadStatus'] = reason
+                    outcomes[reason] += 1
                     continue
                 row['title'] = title
                 row.pop('titleFromSitemap')
             row['retailerLeads'] = comparison_retailer_leads(html, host, row['url'])
             row['leadStatus'] = 'direct_retailer_links' if row['retailerLeads'] else 'direct_retailer_links_missing'
+            outcomes[row['leadStatus']] += 1
+    return {'source': host, 'requests': sum(offsets.values()), 'outcomes': dict(outcomes)}
 
 
 def write_json(path, payload):
@@ -678,6 +683,14 @@ def public_phone_catalog():
     return []
 
 
+def akakce_limits(budget, category_count, pages, leads):
+    if not budget:
+        return pages, leads
+    category_budget = budget - min(leads, budget // 2)
+    pages = min(pages, max(1, category_budget // category_count))
+    return pages, min(leads, max(0, budget - pages * category_count))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--site-data', type=Path)
@@ -697,6 +710,8 @@ def main():
     parser.add_argument('--start-page', type=int, default=1)
     parser.add_argument('--pages', type=int, default=2)
     parser.add_argument('--lead-limit', type=int, default=0, help='Maximum detail pages per source for direct retailer URLs')
+    parser.add_argument('--akakce-budget', type=int, default=0,
+                        help='Share a request budget between Akakçe category pages and retailer-link discovery')
     args = parser.parse_args()
     kinds = list(dict.fromkeys(args.category or CATEGORIES))
     if args.site_data is None and kinds != ['phone']:
@@ -705,6 +720,9 @@ def main():
         parser.error('Select a positive page number and up to 40 category requests per source')
     if not 0 <= args.lead_limit <= 40:
         parser.error('Select up to 40 detail pages per source')
+    if args.akakce_budget and not len(kinds) <= args.akakce_budget <= 40:
+        parser.error('Akakçe budget must allow at least one page per category and no more than 40 requests')
+    akakce_pages, akakce_leads = akakce_limits(args.akakce_budget, len(kinds), args.pages, args.lead_limit)
     sitemap_limits = {CIMRI: args.cimri_sitemap_only, EPEY: args.epey_sitemap_only}
     if any(sitemap_limits.values()) and args.collection != 'runner':
         parser.error('Sitemap-only discovery requires direct collection')
@@ -717,7 +735,8 @@ def main():
                         if row.get('fresh_offer_count') in (0, '0'))
     hosts = list(dict.fromkeys(args.source or SOURCES))
     with ThreadPoolExecutor(max_workers=len(hosts)) as pool:
-        tasks = [pool.submit(scan_source, host, kinds, indexes, args.start_page, args.pages, state['sources'],
+        tasks = [pool.submit(scan_source, host, kinds, indexes, args.start_page,
+                             akakce_pages if host == AKAKCE else args.pages, state['sources'],
                              collection=args.collection,
                              cimri_sitemap=args.cimri_sitemap and args.collection == 'runner',
                              sitemap_only=sitemap_limits.get(host, 0)) for host in hosts]
@@ -726,21 +745,23 @@ def main():
     observed = [row for _, rows in batches for row in rows]
     now = datetime.now(timezone.utc).isoformat()
     merge_state(state, sources, observed, indexes, now)
+    lead_scans = []
     if args.lead_limit:
         stopped = {row['source'] for row in sources if row['status'] in STOP_SOURCE}
+        limits = {host: akakce_leads if host == AKAKCE else args.lead_limit for host in hosts}
         with ThreadPoolExecutor(max_workers=len(hosts)) as pool:
-            jobs = [pool.submit(scan_retailer_leads, state, host, kinds, args.lead_limit, now,
+            jobs = [pool.submit(scan_retailer_leads, state, host, kinds, limits[host], now,
                                 priority, set(args.prioritize_model), collection=args.collection)
-                    for host in hosts if host not in stopped]
-            for job in jobs:
-                job.result()
+                    for host in hosts if host not in stopped and limits[host]]
+            lead_scans = [job.result() for job in jobs]
     if args.state is not None:
         write_json(args.state, state)
     candidates = [row for row in state['products'].values() if row['catalogSlug'] is None]
     existing_with_leads = [row for row in state['products'].values()
                            if row.get('catalogFamily') and row.get('retailerLeads')]
     report = {'checkedAt': now, 'inventory': {kind: len(inventory[kind]) for kind in kinds},
-              'sources': sources, 'candidates': candidates, 'existingWithRetailerLeads': existing_with_leads}
+              'sources': sources, 'retailerLeadScans': lead_scans,
+              'candidates': candidates, 'existingWithRetailerLeads': existing_with_leads}
     write_json(args.output, report)
     print(json.dumps({
         'pages': sum(row.get('pages', 0) for row in sources),

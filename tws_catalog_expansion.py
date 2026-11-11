@@ -27,7 +27,7 @@ STORES = {'www.vatanbilgisayar.com', 'www.mediamarkt.com.tr'}
 TWS_IMAGE_HOSTS = IMAGE_HOSTS | {'productimages.hepsiburada.net', 'reimg-teknosa-cloud-prod.mncdn.com'}
 
 
-def exact_tws_sellers(offers):
+def exact_tws_sellers(offers, *, maximum=3):
     """Prefer different storefronts, counting each legal seller only once."""
     def distinct(a, b):
         return (a['gtin13'] == b['gtin13'] and a['url'] != b['url']
@@ -39,7 +39,7 @@ def exact_tws_sellers(offers):
     groups = defaultdict(list)
     for offer in offers:
         groups[offer['gtin13']].append(offer)
-    candidates = (rows for group in groups.values() for size in (2, 3)
+    candidates = (rows for group in groups.values() for size in range(2, maximum + 1)
                   for rows in combinations(group, size) if all(distinct(a, b) for a, b in combinations(rows, 2)))
     best = max(candidates, key=lambda rows: (len({row['platform'] for row in rows}), len(rows),
                -min(row['price'] for row in rows), tuple(row['url'] for row in rows)), default=())

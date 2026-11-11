@@ -1,11 +1,15 @@
 import unittest
 from unittest.mock import Mock, patch
 
-from competitor_catalog_gaps import (AKAKCE, CIMRI, EPEY, KARSILASTIRICI, PAHALIMI, URUNAI, candidate_family, cimri_sitemap_cards, epey_earbud_title, epey_sitemap_cards, scan_product_sitemap, scan_source, urunai_market_slugs, urunai_sitemap_cards, catalog_match, category_url, comparison_cards, comparison_retailer_leads,
+from competitor_catalog_gaps import (AKAKCE, CIMRI, EPEY, KARSILASTIRICI, PAHALIMI, URUNAI, akakce_limits, candidate_family, cimri_sitemap_cards, epey_earbud_title, epey_sitemap_cards, scan_product_sitemap, scan_source, urunai_market_slugs, urunai_sitemap_cards, catalog_match, category_url, comparison_cards, comparison_retailer_leads,
                                      identity_index, in_scope, merge_state, read_state)
 
 
 class CompetitorCatalogGapsTest(unittest.TestCase):
+    def test_akakce_budget_keeps_every_category_and_reserves_product_reads(self):
+        self.assertEqual(akakce_limits(26, 12, 3, 36), (1, 14))
+        self.assertEqual(akakce_limits(24, 12, 3, 0), (2, 0))
+
     def test_akakce_deduplicates_product_ids_and_keeps_native_pagination(self):
         url = 'https://' + AKAKCE + '/ssd.html'
         html = '''
