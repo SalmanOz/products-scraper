@@ -479,24 +479,24 @@ def write_json(path, payload):
     pending.replace(path)
 
 
-def public_phone_price_gaps():
+def public_phone_catalog():
     try:
         with requests.get('https://teknoskor.com/api/products', params={'limit': 1000},
                           timeout=(5, 10), allow_redirects=False, stream=True) as response:
             if response.status_code != 200:
-                return set()
+                return []
             data = bytearray()
             for chunk in response.iter_content(65536):
                 if len(data) + len(chunk) > 8 * 1024 * 1024:
-                    return set()
+                    return []
                 data.extend(chunk)
         rows = json.loads(data)
         if isinstance(rows, list) and len(rows) <= 1000:
-            return {row['slug'] for row in rows if isinstance(row, dict) and
-                    isinstance(row.get('slug'), str) and row.get('fresh_offer_count') in (0, '0')}
+            return [row for row in rows if isinstance(row, dict) and
+                    isinstance(row.get('slug'), str) and re.fullmatch(r'[a-z0-9-]{1,160}', row['slug'])]
     except (ValueError, requests.RequestException):
         pass
-    return set()
+    return []
 
 
 def main():
@@ -524,7 +524,8 @@ def main():
     state = read_state(args.state)
     priority = set(args.prioritize_model)
     if args.lead_limit and 'phone' in kinds:
-        priority.update(public_phone_price_gaps())
+        priority.update(row['slug'] for row in public_phone_catalog()
+                        if row.get('fresh_offer_count') in (0, '0'))
     hosts = list(dict.fromkeys(args.source or SOURCES))
     with ThreadPoolExecutor(max_workers=len(hosts)) as pool:
         tasks = [pool.submit(scan_source, host, kinds, indexes, args.start_page, args.pages, state['sources'])

@@ -6,24 +6,29 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import re
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 from bs4 import BeautifulSoup
 
-from competitor_catalog_gaps import read_state, retailer_destination
+from competitor_catalog_gaps import public_phone_catalog, read_state, retailer_destination, write_json
+from laptop_retailer_sources import marketplace_seller_identity
 from mediamarkt_marketplace_audit import selected_marketplace_offer
 from mediamarkt_source import product_url as mediamarkt_url
 from offer_ingestion_client import OfferIngestionClient
 from pazarama_category_source import pazarama_product_url
-from priority_retailer_transport import PriorityRetailerTransport
+from priority_retailer_transport import PriorityRetailerTransport, product_host
 from retailer_offer_refresh import _product_offer, _schema_nodes
+from teknosa_marketplace_source import parse_selected_marketplace
 from tr_price_scraper import TRPriceScraper
 from tws_offer_pilot import independent_sellers
 from update_prices import PriceUpdater
 from retailer_barcode import retailer_gtin13
 
 
-SUPPORTED = ('www.mediamarkt.com.tr', 'www.pazarama.com')
+SUPPORTED = ('www.mediamarkt.com.tr', 'www.pazarama.com', 'www.teknosa.com')
+RETAILER_CATEGORIES = {'apple-iphone-16-plus': (
+    'https://www.mediamarkt.com.tr/tr/category/iphone-16-plus-903529.html',
+)}
 MM_SELLERS = 'https://www.mediamarkt.com.tr/tr/marketplace/seller/'
 NORMALIZE = TRPriceScraper._normalize_words
 
@@ -82,22 +87,37 @@ def mediamarkt_selected(html, url):
     return None
 
 
+def teknosa_selected(html, url, name, specs):
+    offer, _ = parse_selected_marketplace(html, url, {'name': name, 'specs': specs})
+    if not offer:
+        return None
+    soup = BeautifulSoup(html, 'html.parser')
+    links = soup.select('.pdp-seller-info > a[href]')
+    if len(links) != 1 or not re.fullmatch(r'/magaza/[a-z0-9-]+', links[0]['href']):
+        return None
+    return {**offer, 'seller_url': urljoin(url, links[0]['href'])}
+
+
 def seller_identity(html, offer):
+    if offer['platform'] == 'Teknosa':
+        identity = marketplace_seller_identity(html, offer)
+        return (identity['_legal_name'], identity['_tax_key']) if identity else None
     soup = BeautifulSoup(html, 'html.parser')
     headers = soup.select('h1')
     if len(headers) != 1 or NORMALIZE(headers[0].get_text(' ', strip=True)) != NORMALIZE(offer['merchant']):
         return None
     if offer['platform'] == 'MediaMarkt':
         text = ' '.join(soup.get_text(' ', strip=True).split())
-        match = re.search(r'Firma adı:\s*(.{3,160}?)\s+Şehir:.*?MERSİS No:\s*([0-9]{15,16})\b', text)
-        return (NORMALIZE(match[1]), match[2].zfill(16)) if match else None
+        match = re.search(r'Firma adı:\s*(.{3,160}?)\s+Şehir:.*?MERSİS No:\s*([0-9]{15,16})\b'
+                          r'.*?Vergi No:\s*(\d{10,11})\b', text)
+        return (NORMALIZE(match[1]), match[3]) if match else None
     state = native_script(soup)
     matches = re.findall(r'sellerMersisNumber:"(\d{16})"[^{}]{0,1400}?'
                          r'sellerTradeName:("(?:[^"\\]|\\.)+")', state)
     if len(matches) != 1:
         return None
     mersis, name = matches[0]
-    return NORMALIZE(json.loads(name)), mersis
+    return NORMALIZE(json.loads(name)), mersis[1:11]
 
 
 def checked_offers(urls, name, specs, transport, documents=None):
@@ -106,13 +126,17 @@ def checked_offers(urls, name, specs, transport, documents=None):
     matcher = TRPriceScraper()
     for url in urls:
         host = urlsplit(url).netloc
-        reader = mediamarkt_selected if mediamarkt_url(url) else pazarama_selected if pazarama_product_url(url) else None
-        if not reader:
-            continue
         if url not in documents:
             documents[url] = transport._read_document(url, host)
         html, reason, _ = documents[url]
-        offer = reader(html, url) if html else None
+        offer = None
+        if html:
+            if mediamarkt_url(url):
+                offer = mediamarkt_selected(html, url)
+            elif pazarama_product_url(url):
+                offer = pazarama_selected(html, url)
+            elif product_host(url) == 'www.teknosa.com' and not urlsplit(url).query:
+                offer = teknosa_selected(html, url, name, specs)
         if not offer or not matcher.has_observed_offer_evidence(name, offer, specs):
             rejects.append({'url': url, 'reason': 'selected_offer_unverified' if html else reason})
             continue
@@ -129,14 +153,38 @@ def checked_offers(urls, name, specs, transport, documents=None):
     groups = defaultdict(list)
     for offer in sorted(observed, key=lambda row: (row['price'], row['url'])):
         groups[offer['gtin13']].append(offer)
-    pairs = [([a, b]) for group in groups.values() for i, a in enumerate(group) for b in group[i + 1:]
-             if a['platform'] != b['platform'] and independent_sellers(a, b) and a['price'] >= b['price'] * .60]
+    pairs = [[first, second] for group in groups.values()
+             for i, first in enumerate(group) for second in group[i + 1:]
+             if (first['platform'] != second['platform'] and independent_sellers(first, second)
+                 and first['price'] >= second['price'] * .60)]
     return min(pairs, key=lambda pair: (pair[0]['price'], pair[1]['price']), default=[]), observed, rejects
+
+
+def product_family(slug):
+    return re.sub(r'-[1-9]\d?gb-[1-9]\d{1,3}gb$', '', slug)
+
+
+def category_leads(slug, name, specs, transport, documents):
+    matcher = TRPriceScraper()
+    leads = set()
+    for category in RETAILER_CATEGORIES.get(product_family(slug), ()):
+        host = urlsplit(category).netloc
+        if category not in documents:
+            documents[category] = transport._read_document(category, host, category=True)
+        html, _, _ = documents[category]
+        if not html:
+            continue
+        soup = BeautifulSoup(html, 'html.parser')
+        for anchor in soup.select('a[href*="/tr/product/"]'):
+            url = retailer_destination(urljoin(category, anchor['href']))
+            if url and mediamarkt_url(url) and matcher.is_strict_match(name, anchor.get_text(' ', strip=True), specs):
+                leads.add(url)
+    return sorted(leads)
 
 
 def candidate_urls(state, slug):
     variants = []
-    family = re.sub(r'-[1-9]\d?gb-[1-9]\d{1,3}gb$', '', slug)
+    family = product_family(slug)
     for row in state['products'].values():
         if row.get('category') != 'phone' or family != row.get('catalogFamily') and slug != row.get('catalogSlug'):
             continue
@@ -145,15 +193,46 @@ def candidate_urls(state, slug):
                               and urlsplit(url).netloc in SUPPORTED))
 
 
-def run(state, slugs, client, *, publish=False, maximum=12):
-    products = {product['slug']: product for product in client.get_published_products()}
+def audit_queue(state, products, maximum=4):
+    audited = state.get('phoneOfferAudits', {})
+    candidates = []
+    by_family = defaultdict(set)
+    for row in state['products'].values():
+        if row.get('category') != 'phone' or not row.get('catalogFamily'):
+            continue
+        for raw in row.get('retailerLeads', ()):
+            if url := retailer_destination(raw):
+                host = urlsplit(url).netloc
+                if host in SUPPORTED:
+                    by_family[row['catalogFamily']].add(host)
+    for product in products:
+        slug = product['slug']
+        if not product.get('name') or not isinstance(product.get('attributes'), dict):
+            continue
+        family = product_family(slug)
+        if len(by_family[family]) >= 2:
+            candidates.append(product)
+    return sorted(candidates, key=lambda row: (
+        audited.get(row['slug'], ''), row.get('fresh_offer_count') not in (0, '0'), row['slug']))[:maximum]
+
+
+def run(state, slugs, client=None, *, publish=False, maximum=24, products=None):
+    if publish and client is None:
+        raise ValueError('Publication requires the authenticated catalog')
+    if products is None:
+        products = client.get_published_products()
+    products = {product['slug']: product for product in products}
     results = []
     transport = PriorityRetailerTransport(maximum_per_host=maximum, browser_fallback=False)
     documents = {}
     for slug in slugs:
         product = products[slug]
         specs = PriceUpdater.get_expected_specs(product.get('attributes'))
-        urls = candidate_urls(state, slug)
+        urls = list(dict.fromkeys(category_leads(slug, product['name'], specs, transport, documents)
+                                 + candidate_urls(state, slug)))
+        # Spend each store's budget on the capacity being audited first.
+        capacity = re.compile(r'-' + str(specs.get('storage_gb')) + '-?gb(?:-|_)')
+        urls.sort(key=lambda url: not bool(capacity.search(urlsplit(url).path)))
         pair, observations, rejects = checked_offers(urls, product['name'], specs, transport, documents)
         result = {'slug': slug, 'sameGtin': pair[0]['gtin13'] if pair else None,
                   'offers': [{key: row[key] for key in ('url', 'platform', 'merchant', 'price', 'gtin13')}
@@ -191,12 +270,29 @@ def run(state, slugs, client, *, publish=False, maximum=12):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--state', required=True, type=Path)
-    parser.add_argument('--slug', action='append', required=True)
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument('--slug', action='append')
+    mode.add_argument('--audit-queue', type=Path, metavar='REPORT')
     parser.add_argument('--publish', action='store_true')
     args = parser.parse_args()
-    if not args.state.is_file() or not 1 <= len(args.slug) <= 4 or len(set(args.slug)) != len(args.slug):
-        parser.error('Provide a discovery state and one to four distinct catalog slugs')
-    print(json.dumps(run(read_state(args.state), args.slug, OfferIngestionClient.from_env(),
+    if not args.state.is_file():
+        parser.error('Provide a saved discovery state')
+    state = read_state(args.state)
+    if args.audit_queue is not None:
+        if args.publish:
+            parser.error('The scheduled public audit is read-only')
+        public = public_phone_catalog()
+        queue = audit_queue(state, public)
+        rows = run(state, [row['slug'] for row in queue], products=queue)
+        now = datetime.now(timezone.utc).isoformat()
+        state.setdefault('phoneOfferAudits', {}).update({row['slug']: now for row in rows})
+        write_json(args.state, state)
+        write_json(args.audit_queue, {'checkedAt': now, 'catalogAvailable': bool(public), 'rows': rows})
+        print(json.dumps({'phonesAudited': len(rows), 'verifiedPairs': sum(bool(row['sameGtin']) for row in rows)}))
+        return
+    if not 1 <= len(args.slug) <= 4 or len(set(args.slug)) != len(args.slug):
+        parser.error('Provide one to four distinct catalog slugs')
+    print(json.dumps(run(state, args.slug, OfferIngestionClient.from_env(),
                          publish=args.publish), ensure_ascii=False, indent=2))
 
 
