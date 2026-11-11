@@ -216,11 +216,12 @@ def discover_product_sellers(html, observed_url, maximum=3):
     return rows
 
 
-def parse_catalog_listing(html, url, name, specs):
-    return _parse_selected_listing(html, url, name, specs)
+def parse_catalog_listing(html, url, name, specs, *, include_legal_identity=False):
+    return _parse_selected_listing(html, url, name, specs, include_legal_identity=include_legal_identity)
 
 
-def _parse_selected_listing(html, url, name, specs, *, verify_tws=None, verify_laptop=None):
+def _parse_selected_listing(html, url, name, specs, *, verify_tws=None, verify_laptop=None,
+                            include_legal_identity=False):
     requested, canonical = catalog_request_url(url), canonical_product_url(url)
     if requested is None or not isinstance(html, str) or len(html.encode()) > 5 * 1024 * 1024:
         return None, 'invalid_catalog_pdp'
@@ -433,6 +434,13 @@ def _parse_selected_listing(html, url, name, specs, *, verify_tws=None, verify_l
             'source_title': title, 'url': requested, 'price': float(price), 'currency': 'TRY',
             'condition': 'new', 'availability': 'in_stock',
             **physical, **selected_details, 'observed_at': datetime.now(timezone.utc).isoformat()}
+    if include_legal_identity:
+        legal = seller.get('companyName')
+        tax = seller.get('taxNumber')
+        if not isinstance(legal, str) or not matcher._normalize_words(legal):
+            return None, 'selected_legal_seller_identity_missing'
+        result['_legal_name'] = matcher._normalize_words(legal)
+        result['_tax_key'] = tax if isinstance(tax, str) and re.fullmatch(r'\d{10,11}', tax) else ''
     if basket:
         result.update(price_kind='basket', listed_price=float(listed))
     if 'Renk' in values:

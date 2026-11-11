@@ -6,7 +6,7 @@ on:
       collection:
         description: Network for the public retailer document reads
         type: choice
-        options: [site, runner]
+        options: [site, runner, macos]
         default: site
       publish:
         description: Publish both independently verified prices for each iPhone 16 Plus capacity
@@ -25,7 +25,7 @@ concurrency:
 jobs:
   verify:
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.collection == 'macos' && 'macos-latest' || 'ubuntu-latest' }}
     timeout-minutes: 12
     permissions:
       contents: read

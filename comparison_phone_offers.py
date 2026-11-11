@@ -16,12 +16,14 @@ from competitor_catalog_gaps import public_phone_catalog, read_state, retailer_d
 from laptop_retailer_sources import marketplace_seller_identity
 from mediamarkt_marketplace_audit import selected_marketplace_offer
 from mediamarkt_source import product_url as mediamarkt_url
+from n11_catalog_source import parse_catalog_listing as n11_listing
 from offer_ingestion_client import IngestionClientError, OfferIngestionClient
 from pazarama_category_source import pazarama_product_url
 from priority_retailer_transport import PriorityRetailerTransport, product_host
 from retailer_offer_refresh import _product_offer, _schema_nodes
 from teknosa_marketplace_source import parse_selected_marketplace
 from tr_price_scraper import TRPriceScraper
+from trendyol_catalog_source import parse_catalog_listing as trendyol_listing, selected_product_state
 from tws_offer_pilot import independent_sellers
 from update_prices import PriceUpdater
 from retailer_barcode import retailer_gtin13
@@ -99,6 +101,22 @@ def teknosa_selected(html, url, name, specs):
     return {**offer, 'seller_url': urljoin(url, links[0]['href'])}
 
 
+def trendyol_selected(html, url, name, specs):
+    offer, reason = trendyol_listing(html, url, name, specs)
+    if not offer:
+        return None, reason
+    if not offer.get('gtin13') or offer.get('price_kind') == 'basket':
+        return None, 'selected_gtin_or_cash_unverified'
+    state, _ = selected_product_state(BeautifulSoup(html, 'html.parser'))
+    seller = (state or {}).get('merchantListing', {}).get('merchant', {})
+    legal = seller.get('officialName')
+    tax = seller.get('taxNumber')
+    if not isinstance(legal, str) or not NORMALIZE(legal) or str(seller.get('id')) != str(offer.get('merchant_id')):
+        return None, 'selected_legal_seller_identity_missing'
+    return {**offer, '_legal_name': NORMALIZE(legal),
+            '_tax_key': tax if isinstance(tax, str) and re.fullmatch(r'\d{10,11}', tax) else ''}, reason
+
+
 def seller_identity(html, offer):
     if offer['platform'] == 'Teknosa':
         identity = marketplace_seller_identity(html, offer)
@@ -131,21 +149,31 @@ def checked_offers(urls, name, specs, transport, documents=None):
             documents[url] = transport._read_document(url, host)
         html, reason, _ = documents[url]
         offer = None
+        rejected = 'selected_offer_unverified'
         if html:
             if mediamarkt_url(url):
                 offer = mediamarkt_selected(html, url)
             elif pazarama_product_url(url):
                 offer = pazarama_selected(html, url)
-            elif product_host(url) == 'www.teknosa.com' and not urlsplit(url).query:
+            elif host == 'www.teknosa.com':
                 offer = teknosa_selected(html, url, name, specs)
-        if not offer or not matcher.has_observed_offer_evidence(name, offer, specs):
-            rejects.append({'url': url, 'reason': 'selected_offer_unverified' if html else reason})
+            elif host == 'www.trendyol.com':
+                resolved = transport.resolved_url(url)
+                offer, rejected = trendyol_selected(html, resolved, name, specs)
+            elif host == 'www.n11.com':
+                resolved = transport.resolved_url(url)
+                offer, rejected = n11_listing(html, resolved, name, specs, include_legal_identity=True)
+        if (not offer or offer.get('price_kind') == 'basket' or
+                not matcher.has_observed_offer_evidence(name, offer, specs)):
+            rejects.append({'url': url, 'reason': rejected if html and offer is None else
+                            'catalog_variant_or_cash_mismatch' if html else reason})
             continue
-        seller_url = offer['seller_url']
-        if seller_url not in documents:
-            documents[seller_url] = transport._read_document(seller_url, host)
-        seller_document, _, _ = documents[seller_url]
-        identity = seller_identity(seller_document, offer) if seller_document else None
+        identity = (offer['_legal_name'], offer.get('_tax_key', '')) if offer.get('_legal_name') else None
+        if not identity and (seller_url := offer.get('seller_url')):
+            if seller_url not in documents:
+                documents[seller_url] = transport._read_document(seller_url, host)
+            seller_document, _, _ = documents[seller_url]
+            identity = seller_identity(seller_document, offer) if seller_document else None
         if not identity or not identity[0]:
             rejects.append({'url': url, 'reason': 'seller_identity_unverified'})
             continue
@@ -189,6 +217,8 @@ def category_leads(slug, name, specs, transport, documents):
 
 def supported_phone_url(url):
     route = urlsplit(url)
+    if route.netloc in ('www.n11.com', 'www.trendyol.com'):
+        return product_host(url) == route.netloc
     if route.query:
         return False
     if route.netloc == 'www.mediamarkt.com.tr':
@@ -270,7 +300,8 @@ def run(state, slugs, client=None, *, publish=False, maximum=24, products=None):
     products = {product['slug']: product for product in products}
     results = []
     transport = PriorityRetailerTransport(maximum_per_host=maximum, browser_fallback=False,
-                                          get=catalog_document_reader('phone'))
+                                          get=catalog_document_reader('phone'),
+                                          n11_collector=client.n11_document_get if client else None)
     documents = {}
     for slug in slugs:
         product = products[slug]
