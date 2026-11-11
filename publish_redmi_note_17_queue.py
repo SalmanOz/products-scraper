@@ -14,6 +14,7 @@ from tr_price_scraper import TRPriceScraper
 from trendyol_catalog_source import parse_catalog_listing, selected_product_state
 from tws_offer_pilot import independent_sellers
 from tws_retailer_sources import selected_photo, selected_vatan_tws
+from vatan_reviewed_source import VatanReviewedSource
 
 NAME = 'Xiaomi Redmi Note 17 5G'
 SLUG = 'xiaomi-redmi-note-17-5g'
@@ -68,8 +69,13 @@ def prepare():
 
     vatan_reader = Reader('www.vatanbilgisayar.com', 2)
     html, final = vatan_reader.read(VATAN)
+    reason = vatan_reader.last_reason
+    if reason == 'http_403':
+        reviewed = VatanReviewedSource(additional_reviewed_urls=(VATAN,))
+        html, reason = reviewed.browser_get(VATAN)
+        final = VATAN if html else None
     if not html or final != VATAN:
-        raise ValueError(f'vatan_{vatan_reader.last_reason}')
+        raise ValueError(f'vatan_{reason}')
     vatan = selected_vatan_tws(html, final, NAME, match)
     if (not vatan or vatan['gtin13'] != GTIN or vatan['sku'] != '159739'
             or vatan['retailer_model_code'] != 'MZB0Q4MTR'):
