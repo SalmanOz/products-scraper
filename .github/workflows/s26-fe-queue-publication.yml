@@ -1,0 +1,47 @@
+name: Galaxy S26 FE queue publication
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the exact 8/256 model after live validation
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: teknoskor-daily-data-sync
+  queue: max
+  cancel-in-progress: false
+
+jobs:
+  verify-and-publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: python -m pip install -r requirements.txt
+      - name: Reverify the selected phone, photograph and two sellers
+        env:
+          PUBLISH: ${{ inputs.publish }}
+          TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
+          SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+          R2_PUBLIC_DOMAIN: ${{ secrets.R2_PUBLIC_DOMAIN }}
+        run: |
+          args=()
+          if [[ "$PUBLISH" == "true" ]]; then args+=(--publish); fi
+          python publish_s26_fe_queue.py "${args[@]}"
