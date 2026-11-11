@@ -1,8 +1,8 @@
 import json
 import unittest
 
-from pc_parts_multistore import (company_key, hepsiburada_pc_seller_identity, independent_offers,
-                                 processor_packaging, trendyol_pc_seller_targets)
+from pc_parts_multistore import (company_key, hepsiburada_pc_seller_identity, hepsiburada_pc_seller_targets,
+                                 independent_offers, processor_packaging, trendyol_pc_seller_targets)
 
 
 class PcSellerIndependenceTest(unittest.TestCase):
@@ -62,6 +62,26 @@ class PcSellerIndependenceTest(unittest.TestCase):
                          [seller['url']])
         self.assertEqual(trendyol_pc_seller_targets(document(seller), url, '4718017826396'), [])
         self.assertEqual(trendyol_pc_seller_targets(document({**seller, 'id': 456}), url, variant['barcode']), [])
+
+    def test_hepsiburada_group_inventory_can_discover_an_exact_seller_route(self):
+        url = 'https://www.hepsiburada.com/ram-pm-HBC000066SY76'
+        gtin = '0649528937810'
+        merchant_id = '11111111-1111-4111-8111-111111111111'
+        merchant = {'id': merchant_id, 'name': 'Örnek', 'urlPostfix': 'ornek'}
+        listing = {'merchantId': merchant_id, 'listingId': '22222222-2222-4222-8222-222222222222',
+                   'merchantName': 'Örnek', 'merchantInfo': merchant, 'isSalable': True, 'isBundle': False}
+
+        def document(row):
+            product = {'productId': 'HBC000066SY76', 'sku': 'HBCV000066SY77', 'barcode': gtin,
+                       'merchant': {'id': 'selected'}, 'isBundle': False, 'listings': [row]}
+            state = json.dumps({'productState': {'product': product}})
+            return f'<script id="reduxStore">{state}</script>'
+
+        self.assertEqual(hepsiburada_pc_seller_targets(document(listing), url, gtin), [url + '?magaza=%C3%96rnek'])
+        self.assertEqual(hepsiburada_pc_seller_targets(document(listing), url, '4718017826396'), [])
+        self.assertEqual(hepsiburada_pc_seller_targets(document({**listing, 'isSalable': False}), url, gtin), [])
+        self.assertEqual(hepsiburada_pc_seller_targets(document({**listing, 'merchantInfo': {**merchant, 'id': 'other'}}),
+                                                       url, gtin), [])
 
     def test_processor_packaging_distinguishes_same_barcode_tray_and_box(self):
         self.assertEqual(processor_packaging('AMD Ryzen 5600X (Kutusuz Fansız)'), 'tray')

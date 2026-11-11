@@ -7,7 +7,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
-from urllib.parse import parse_qs, urljoin, urlsplit
+from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
 
 from bs4 import BeautifulSoup
 
@@ -228,6 +228,42 @@ def hepsiburada_pc_offer(html, url):
     return offer, reason
 
 
+def hepsiburada_pc_seller_targets(html, url, gtin):
+    """Discover seller selections from public PDP inventory, including group URLs."""
+    if offer_host(url) != HEPSIBURADA or urlsplit(url).query:
+        return []
+    scripts = BeautifulSoup(html, 'html.parser').select('script#reduxStore')
+    if len(scripts) != 1:
+        return []
+    try:
+        product = json.loads(scripts[0].get_text())['productState']['product']
+        current = product['merchant']['id']
+        listings = product['listings']
+        if (not _identity(url, product['productId'], product['sku'])
+                or retailer_gtin13(product['barcode']) != gtin
+                or product.get('isBundle') is not False
+                or not isinstance(listings, list) or len(listings) > 50):
+            return []
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return []
+
+    targets = []
+    for listing in listings:
+        if not isinstance(listing, dict) or listing.get('isSalable') is not True or listing.get('isBundle') is not False:
+            continue
+        name, merchant = listing.get('merchantName'), listing.get('merchantInfo')
+        if (not isinstance(name, str) or not isinstance(merchant, dict)
+                or merchant.get('id') != listing.get('merchantId') or merchant.get('id') == current
+                or merchant.get('name') != name or not re.fullmatch(r'[a-z0-9-]{1,100}', str(merchant.get('urlPostfix')))
+                or not all(re.fullmatch(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}', str(listing.get(key)))
+                           for key in ('merchantId', 'listingId'))):
+            continue
+        target = url + '?' + urlencode({'magaza': name})
+        if offer_host(target) == HEPSIBURADA:
+            targets.append(target)
+    return list(dict.fromkeys(targets))
+
+
 def hepsiburada_pc_seller_identity(html, offer):
     """Bind the public seller profile's trade name to the selected merchant."""
     soup = BeautifulSoup(html, 'html.parser')
@@ -302,6 +338,8 @@ class PcRetailer:
                 self.seller_targets.update((target, part) for target in trendyol_pc_seller_targets(
                     html, final, part['gtin']))
             elif self.host == HEPSIBURADA and raw and raw['gtin13'] == part['gtin']:
+                self.seller_targets.update((target, part) for target in hepsiburada_pc_seller_targets(
+                    html, final, part['gtin']))
                 self.seller_targets.update((row['source_url'], part) for row in discover_product_sellers(html, final))
         if raw is None:
             self.rejected[reason] += 1
