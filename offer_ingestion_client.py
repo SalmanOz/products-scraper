@@ -186,7 +186,8 @@ class OfferIngestionClient:
                 return body
 
             message = body.get("error") if isinstance(body, dict) else None
-            if (method == "POST" and path == "/api/ingestion/listing-offers"
+            # A later rejection proves nothing about an earlier attempt's commit.
+            if (attempt == 1 and method == "POST" and path == "/api/ingestion/listing-offers"
                     and response.status_code == 409 and message == "require_all_accepted_rejected"
                     and body.get("committed") is False and body.get("index") == -1):
                 raise AtomicListingRejected(f"HTTP 409 from {path}: {message}")

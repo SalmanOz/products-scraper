@@ -1004,6 +1004,17 @@ def test_catalog_listing_rollback_isolated_by_product_and_later_flush_continues(
             raise AssertionError('An unresolved or scoped atomic rejection was swallowed')
         assert len(session.calls) == 1
 
+    session = FakeSession([requests.Timeout('unknown write outcome'), FakeResponse(409, rollback)])
+    updater.ingestion_client.session = session
+    updater.ingestion_client.sleep = lambda _: None
+    try:
+        updater.flush_offers([first, second], updater.empty_ingestion_result(), isolate_products=True)
+    except IngestionClientError as error:
+        assert type(error) is IngestionClientError
+    else:
+        raise AssertionError('A prior ambiguous write cannot be split after the retry rolls back')
+    assert len(session.calls) == 2
+
 
 if __name__ == "__main__":
     test_catalog_listing_rollback_isolated_by_product_and_later_flush_continues()
