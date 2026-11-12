@@ -1,15 +1,16 @@
 """Read original retailer listings discovered on comparison sites for known earbuds."""
 
 import argparse
-from collections import defaultdict
+from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from catalog_source_collector import catalog_document_reader
 from competitor_catalog_gaps import read_state, retailer_destination, write_json
+from retailer_barcode import retailer_gtin13
 from tr_price_scraper import TRPriceScraper
 from tws_catalog_expansion import exact_tws_sellers, reread
 from tws_offer_pilot import COHORT, EXPANSION_COHORT, NEW_MODELS, model_name
@@ -46,7 +47,25 @@ def collect_leads(state, models=(), maximum=16):
     return {host: rows[:maximum] for host, rows in groups.items()}
 
 
-def add_catalog_targets(groups, snapshot, maximum=8):
+def recent_observations(state, now):
+    observed = {}
+    for raw, row in state.get('earbudLeadObservations', {}).items():
+        url = retailer_destination(raw)
+        if not url or url != raw or not selected_host(url) or not isinstance(row, dict):
+            continue
+        name, gtin = row.get('name'), row.get('gtin13')
+        if not isinstance(name, str) or not isinstance(gtin, str) or retailer_gtin13(gtin) != gtin:
+            continue
+        try:
+            checked = datetime.fromisoformat(row.get('checkedAt', ''))
+            if checked.tzinfo is not None and now - timedelta(days=30) <= checked <= now:
+                observed[url] = {'name': name, 'gtin13': gtin, 'checkedAt': checked.isoformat()}
+        except (TypeError, ValueError):
+            continue
+    return observed
+
+
+def add_catalog_targets(groups, snapshot, observations, maximum=8):
     # Re-read current and withdrawn targets for the models selected by this
     # run. Snapshot prices cannot supply one side of a verified pair.
     names = {name for rows in groups.values() for name, _ in rows}
@@ -54,6 +73,10 @@ def add_catalog_targets(groups, snapshot, maximum=8):
     for rows in groups.values():
         for name, target in rows:
             owners[target['url']].add(name)
+    selected_gtins = defaultdict(set)
+    for url, row in observations.items():
+        if row['name'] in names and owners[url] == {row['name']}:
+            selected_gtins[row['name']].add(row['gtin13'])
     known = defaultdict(set)
     targets = snapshot.get('sourceTargets', {})
     for model in snapshot.get('models', []):
@@ -66,22 +89,36 @@ def add_catalog_targets(groups, snapshot, maximum=8):
             if url and selected_host(url):
                 known[name].add(url)
                 owners[url].add(name)
+    historical = defaultdict(set)
+    for url, row in observations.items():
+        name = row['name']
+        if name in names:
+            historical[name].add(url)
+            owners[url].add(name)
     for host, rows in groups.items():
         groups[host] = [(name, target) for name, target in rows if owners[target['url']] == {name}]
     existing = {target['url'] for rows in groups.values() for _, target in rows}
     extra = defaultdict(list)
-    for name, urls in sorted(known.items()):
-        for url in sorted(urls - existing):
+    for name in sorted(names):
+        for url in sorted((known[name] | historical[name]) - existing):
             if owners[url] == {name}:
-                extra[selected_host(url)].append((name, {'url': url}))
-    for host, rows in extra.items():
-        groups.setdefault(host, []).extend(rows[:maximum])
+                same_gtin = observations.get(url, {}).get('gtin13') in selected_gtins[name]
+                extra[selected_host(url)].append((not same_gtin, url not in known[name], name, url))
+    for host, candidates in extra.items():
+        by_model = Counter()
+        ranked = []
+        for same_gtin_missing, is_unpublished, name, url in sorted(candidates):
+            ranked.append((same_gtin_missing, by_model[name], is_unpublished, name, url))
+            by_model[name] += 1
+        groups.setdefault(host, []).extend((name, {'url': url}) for *_, name, url in sorted(ranked)[:maximum])
     return known
 
 
 def audit(state, models=(), snapshot=None):
+    started = datetime.now(timezone.utc)
+    history = recent_observations(state, started)
     groups = collect_leads(state, models)
-    known = add_catalog_targets(groups, snapshot or {})
+    known = add_catalog_targets(groups, snapshot or {}, history)
     observations, failures = defaultdict(list), {}
     statuses = {host: {} for host in groups}
     n11_reader = catalog_document_reader('earbud-discovery')
@@ -111,6 +148,10 @@ def audit(state, models=(), snapshot=None):
                          'verifiedPair': [{key: offer[key] for key in fields} for offer in pair],
                          'verifiedVariants': variants})
     now = datetime.now(timezone.utc).isoformat()
+    for name, offers in observations.items():
+        for offer in offers:
+            history[offer['url']] = {'name': name, 'gtin13': offer['gtin13'], 'checkedAt': now}
+    state['earbudLeadObservations'] = history
     state.setdefault('earbudLeadAudits', {}).update({url: now for rows in statuses.values() for url in rows})
     return {'sourceRequests': {host: len(rows) for host, rows in statuses.items()},
             'rejections': failures, 'verified': verified}

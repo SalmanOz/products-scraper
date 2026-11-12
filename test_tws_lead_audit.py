@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta, timezone
 import unittest
 from unittest.mock import patch
 
@@ -37,3 +38,29 @@ class EarbudLeadAuditTest(unittest.TestCase):
         self.assertEqual([r['gtin13'] for r in variants], [gtin])
         self.assertTrue(variants[0]['hasNewTarget'])
         self.assertEqual([o['price'] for o in variants[0]['offers']], [25499.0, 25499.0])
+
+    def test_prior_verified_links_are_reread_without_reusing_old_prices(self):
+        name, gtin = 'Sony WF-1000XM6', '4548736171770'
+        n11 = 'https://www.n11.com/urun/sony-wf-1000xm6-12345678'
+        mediamarkt = 'https://www.mediamarkt.com.tr/tr/product/_sony-wf-1000xm6-siyah-1256567.html'
+        vatan = 'https://www.vatanbilgisayar.com/sony-wf-1000xm6-siyah.html'
+        observed = {'name': name, 'gtin13': gtin, 'price': 1}
+        now = datetime.now(timezone.utc)
+        state = {
+            'products': {'p': {'title': name, 'category': 'tws', 'retailerLeads': [n11]}},
+            'earbudLeadObservations': {
+                mediamarkt: {**observed, 'checkedAt': (now - timedelta(days=1)).isoformat()},
+                vatan: {**observed, 'checkedAt': (now - timedelta(days=31)).isoformat()},
+            },
+        }
+
+        def collect(host, rows, statuses, *, discover, document_reader=None):
+            return ({name: [{'url': row['url'], 'merchant': host, 'platform': host, 'gtin13': gtin,
+                             'price': 25000.0, '_legal_name': host} for _, row in rows]}, {})
+
+        with patch('tws_lead_audit.reread', side_effect=collect) as read:
+            result = audit(state)
+        self.assertEqual({call.args[0] for call in read.call_args_list}, {'www.n11.com', 'www.mediamarkt.com.tr'})
+        self.assertEqual([row['price'] for row in result['verified'][0]['verifiedPair']], [25000.0, 25000.0])
+        self.assertNotIn('price', state['earbudLeadObservations'][mediamarkt])
+        self.assertNotIn(vatan, state['earbudLeadObservations'])
