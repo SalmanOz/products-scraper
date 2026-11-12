@@ -42,7 +42,14 @@ KARSILASTIRICI_CATEGORIES = {'phone': '/kategori/cep-telefonu', 'laptop': '/kate
 URUNAI_PRODUCT = re.compile(r'/([a-z0-9-]+)/([a-z0-9-]+)/([a-z0-9-]{1,220})')
 KARSILASTIRICI_PRODUCT = re.compile(r'/urun/([a-z0-9-]{1,220})')
 ADDITIONAL_COMPARISON_CATEGORIES = {
-    INDIRIMLI: {'phone': '/kategori/cep-telefonu', 'tws': '/kategori/bluetooth-kulaklik'},
+    INDIRIMLI: {
+        'phone': '/kategori/cep-telefonu', 'tws': '/kategori/bluetooth-kulaklik',
+        'laptop': '/kategori/laptop-notebook', 'monitor': '/kategori/monitor',
+        'cpu': '/kategori/islemci', 'motherboard': '/kategori/anakart',
+        'ram': '/kategori/ram', 'gpu': '/kategori/ekran-karti', 'ssd': '/kategori/ssd',
+        'case': '/kategori/bilgisayar-kasasi', 'psu': '/kategori/power-supply',
+        'cooler': '/kategori/islemci-sogutucu',
+    },
     TUBERKARAS: {'phone': '/kategori/telefon', 'tws': '/kategori/kulaklik'},
 }
 PAHALIMI_CATEGORIES = {'phone': '/kategori/cep-telefonu', 'laptop': '/kategori/dizustu-bilgisayar',
@@ -348,7 +355,7 @@ def additional_comparison_in_scope(kind, title):
     title = WORDS(title)
     if kind == 'phone':
         return not re.search(r'\b(?:uyumlu|dokunmatik ekran|ekran koruyucu|yedek parca|kapak|kilif|maket)\b', title)
-    return bool(re.search(r'\b(?:tws|kulak ici|airpods|tam kablosuz|acik kulak)\b', title))
+    return kind != 'tws' or bool(re.search(r'\b(?:tws|kulak ici|airpods|tam kablosuz|acik kulak)\b', title))
 
 
 def comparison_reader(host, *, collection='runner', **options):
