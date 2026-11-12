@@ -52,6 +52,32 @@ def document(changes=None):
 
 
 class TrendyolCatalogTests(unittest.TestCase):
+    def test_reviewed_iphone_gtin_can_prove_an_offer_without_inventing_radio(self):
+        name = 'Apple iPhone 16 Plus'
+        title = name + ' 128 GB Deniz Mavisi'
+        gtin = '0195949723001'
+        product = evidence()['state']['product']
+        product['name'] = title.removeprefix('Apple ')
+        product['brand'] = {'name': 'Apple'}
+        product['attributes'].pop()
+        for row in (product['variants'][0], product['merchantListing']['variants'][0],
+                    product['merchantListing']['winnerVariant']):
+            row['barcode'] = gtin
+        url = URL.split('?')[0].replace('/samsung/galaxy-a54-5g-128-gb-8-gb-ram-grafit',
+                                         '/apple/iphone-16-plus-128-gb-deniz-mavisi')
+        schema = {**evidence()['schema'], 'name': title, '@id': url}
+        schema['offers']['url'] = url
+        changes = {('title',): title, ('schema',): schema, ('state', 'product'): product}
+        html = document(changes)
+        self.assertIsNone(parse_catalog_listing(html, url, name, SPECS)[0])
+        offer, reason = parse_catalog_listing(html, url, name, SPECS, reviewed_gtin=gtin)
+        self.assertIsNotNone(offer, reason)
+        self.assertEqual(offer['gtin13'], gtin)
+        self.assertNotIn('network_generation', offer)
+        self.assertIsNone(parse_catalog_listing(html, url, name, SPECS, reviewed_gtin='0195949723193')[0])
+        product['attributes'].append({'key': {'name': 'Mobil Bağlantı Hızı'}, 'value': {'name': '4G'}})
+        self.assertIsNone(parse_catalog_listing(document(changes), url, name, SPECS, reviewed_gtin=gtin)[0])
+
     def test_canonical_cash_uses_selected_buy_box_only_when_schema_and_visible_price_agree(self):
         price = {'value': 34997, 'text': '34.997 TL'}
         changes = {

@@ -121,7 +121,7 @@ def _selected_group_schema(schema, identity, url, physical, brand):
             and ('5g' if radio == '5g' else '4g') == physical.get('network_generation'))
 
 
-def _phone_variant(product, title, brand, name, specs):
+def _phone_variant(product, title, brand, name, specs, *, allow_missing_radio=False):
     matcher = TRPriceScraper()
     expected_words = set(matcher._identity_words(name))
     expected_brands = {key for key, aliases in matcher.PHONE_BRAND_ALIASES.items()
@@ -162,6 +162,11 @@ def _phone_variant(product, title, brand, name, specs):
         physical[key] = actual
     radio = str(features.get('Mobil Bağlantı Hızı') or '').casefold()
     if radio not in {'5g', '4g', '4.5g', '4,5g'}:
+        if (allow_missing_radio and 'Mobil Bağlantı Hızı' not in features
+                and specs.get('network_generation') in (None, '5g')
+                and matcher._radio_generation(title) in (None, '5g')
+                and matcher.is_strict_match(name, title, specs)):
+            return physical, None
         return None, 'selected_radio_missing'
     physical['network_generation'] = '5g' if radio == '5g' else '4g'
     if not catalog_variant_matches({'source_title': title, **physical}, name, specs):
@@ -169,13 +174,23 @@ def _phone_variant(product, title, brand, name, specs):
     return physical, None
 
 
-def parse_catalog_listing(html, url, name, specs):
+def parse_catalog_listing(html, url, name, specs, *, reviewed_gtin=None):
     """Require the retailer's selected physical phone variant and commerce."""
     if not isinstance(specs, dict):
         return None, 'invalid_catalog_pdp'
-    return _parse_selected_listing(html, url,
-        lambda product, title, brand: _phone_variant(product, title, brand, name, specs),
+    # The iPhone 16 Plus has no 4G-only variant. A reviewed manufacturer
+    # barcode can anchor this exact Apple model when the retailer omits
+    # radio. Do not serialize a radio observation that the page did not make.
+    matcher = TRPriceScraper()
+    allow_missing_radio = (reviewed_gtin is not None and retailer_gtin13(reviewed_gtin) == reviewed_gtin
+        and matcher._normalize_words(matcher._catalog_model_name(name, specs)) == 'apple iphone 16 plus')
+    offer, reason = _parse_selected_listing(html, url,
+        lambda product, title, brand: _phone_variant(product, title, brand, name, specs,
+                                                     allow_missing_radio=allow_missing_radio),
         _selected_group_schema)
+    if offer and reviewed_gtin is not None and offer.get('gtin13') != reviewed_gtin:
+        return None, 'reviewed_gtin_mismatch'
+    return offer, reason
 
 
 def selected_product_state(soup):

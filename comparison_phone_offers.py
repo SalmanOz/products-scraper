@@ -118,8 +118,8 @@ def teknosa_selected(html, url, name, specs):
     return {**offer, 'seller_url': urljoin(url, links[0]['href'])}
 
 
-def trendyol_selected(html, url, name, specs):
-    offer, reason = trendyol_listing(html, url, name, specs)
+def trendyol_selected(html, url, name, specs, *, reviewed_gtin=None):
+    offer, reason = trendyol_listing(html, url, name, specs, reviewed_gtin=reviewed_gtin)
     if not offer:
         return None, reason
     if not offer.get('gtin13') or offer.get('price_kind') == 'basket':
@@ -156,7 +156,7 @@ def seller_identity(html, offer):
     return NORMALIZE(json.loads(name)), mersis[1:11]
 
 
-def checked_offers(urls, name, specs, transport, documents=None, *, direct=None, seller_cache=None):
+def checked_offers(urls, name, specs, transport, documents=None, *, direct=None, seller_cache=None, reviewed_gtin=None):
     observed, rejects = [], []
     documents = {} if documents is None else documents
     direct = direct or {}
@@ -182,7 +182,7 @@ def checked_offers(urls, name, specs, transport, documents=None, *, direct=None,
                 offer = teknosa_selected(html, url, name, specs)
             elif host == 'www.trendyol.com':
                 resolved = transport.resolved_url(url)
-                offer, rejected = trendyol_selected(html, resolved, name, specs)
+                offer, rejected = trendyol_selected(html, resolved, name, specs, reviewed_gtin=reviewed_gtin)
             elif host == 'www.n11.com':
                 resolved = transport.resolved_url(url)
                 offer, rejected = n11_listing(html, resolved, name, specs, include_legal_identity=True)
@@ -435,8 +435,9 @@ def run(state, slugs, client=None, *, publish=False, maximum=24, products=None, 
                     limited_urls.append(url)
                     per_host[host] += 1
             urls = limited_urls
-        pair, observations, rejects = checked_offers(urls, product['name'], specs, transport, documents,
-                                                    direct=direct, seller_cache=seller_cache)
+        pair, observations, rejects = checked_offers(
+            urls, product['name'], specs, transport, documents, direct=direct, seller_cache=seller_cache,
+            reviewed_gtin=profile['gtin'] if profile else None)
         if profile:
             observations = [row for row in observations if row['gtin13'] == profile['gtin']]
             pair = next(iter(ranked_pairs(observations)), [])
