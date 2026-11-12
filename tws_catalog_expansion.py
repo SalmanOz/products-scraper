@@ -122,7 +122,7 @@ def reread(host, rows, statuses=None, document_reader=None, *, discover=False):
             options.update(get=compatible_get, browser_fallback=False)
         elif discover:
             options['browser_fallback'] = False
-        if host in ('www.teknosa.com', PAZARAMA, PTTAVM):
+        if host in ('www.teknosa.com', PAZARAMA):
             options.update(browser_fallback=False, unavailable_robots_hosts=(host,))
         transport = PriorityRetailerTransport(maximum_per_host=min(260, len(rows) + seller_budget), **options)
     source = None

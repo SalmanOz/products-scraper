@@ -597,7 +597,7 @@ def run(state, slugs, client=None, *, publish=False, maximum=24, products=None, 
         direct[SERINAL_HOST] = PriorityRetailerTransport(maximum_per_host=min(maximum, 12),
             browser_fallback=False)
         direct[PTTAVM] = PriorityRetailerTransport(maximum_per_host=min(maximum, 16),
-            browser_fallback=False, get=phone_reader or compatible_get, unavailable_robots_hosts=(PTTAVM,))
+            browser_fallback=False, get=phone_reader or compatible_get)
         direct[BESKEN_HOST] = PriorityRetailerTransport(maximum_per_host=min(maximum, 12),
             browser_fallback=False, get=compatible_get)
     if public_audit:

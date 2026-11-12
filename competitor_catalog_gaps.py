@@ -424,7 +424,7 @@ def additional_comparison_in_scope(kind, title):
 def comparison_reader(host, *, collection='runner', **options):
     use_gateway = host == PTTAVM or collection == 'site' and host in (CIMRI, EPEY)
     gateway = catalog_document_reader('competitor') if use_gateway else None
-    unavailable = (host,) if host == PTTAVM or (host == EPEY and collection == 'runner') else ()
+    unavailable = (EPEY,) if host == EPEY and collection == 'runner' else ()
     return PriorityRetailerTransport(browser_fallback=False, get=gateway or compatible_get,
                                      unavailable_robots_hosts=unavailable, **options)
 
