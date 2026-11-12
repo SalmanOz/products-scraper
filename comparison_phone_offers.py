@@ -13,6 +13,7 @@ from bs4 import BeautifulSoup
 import requests
 
 from ayaz_phone_source import AYAZ_HOST, AYAZ_TERMS, ayaz_offer, ayaz_phone_url
+from besken_phone_source import BESKEN_HOST, BESKEN_TERMS, besken_offer, besken_phone_url
 from catalog_source_collector import catalog_document_reader
 
 from competitor_catalog_gaps import phone_catalog_family, public_phone_catalog, read_state, retailer_destination, write_json
@@ -28,7 +29,7 @@ from offer_ingestion_client import IngestionClientError, OfferIngestionClient
 from ozgur_phone_source import OZGUR_HOST, OZGUR_TERMS, ozgur_offer, ozgur_phone_url
 from pazarama_category_source import pazarama_product_url
 from pazarama_offer_source import native_script, pazarama_selected
-from priority_retailer_transport import PriorityRetailerTransport, product_host
+from priority_retailer_transport import PriorityRetailerTransport, compatible_get, product_host
 from selected_sku_evidence import selected_sku_evidence
 from serinal_phone_source import SERINAL_HOST, SERINAL_TERMS, serinal_offer, serinal_phone_url
 from teknosa_reviewed_source import parse_catalog_offer as parse_teknosa_offer
@@ -187,6 +188,15 @@ def checked_offers(urls, name, specs, transport, documents=None, *, direct=None,
                     rejected = 'serinal_selected_offer_or_seller_unverified'
                 else:
                     rejected = 'serinal_seller_identity_' + legal_reason
+            elif besken_phone_url(url) and host in direct:
+                if BESKEN_TERMS not in documents:
+                    documents[BESKEN_TERMS] = reader._read_document(BESKEN_TERMS, host, category=True)
+                terms, legal_reason, _ = documents[BESKEN_TERMS]
+                if terms:
+                    offer = besken_offer(html, terms, url=url)
+                    rejected = 'besken_selected_offer_or_seller_unverified'
+                else:
+                    rejected = 'besken_seller_identity_' + legal_reason
             elif vatan_phone_url(url):
                 offer = selected_vatan_tws(html, url, name,
                     lambda title, _brand: name if matcher.is_strict_match(name, title, specs) else None)
@@ -270,6 +280,8 @@ def supported_phone_url(url, *, expanded=False):
         return expanded and ozgur_phone_url(url)
     if route.netloc == AYAZ_HOST:
         return expanded and ayaz_phone_url(url)
+    if route.netloc == BESKEN_HOST:
+        return expanded and besken_phone_url(url)
     if route.netloc == SERINAL_HOST:
         return expanded and serinal_phone_url(url)
     if route.netloc in ('www.n11.com', 'www.trendyol.com'):
@@ -570,6 +582,8 @@ def run(state, slugs, client=None, *, publish=False, maximum=24, products=None, 
             browser_fallback=False, get=phone_reader)
         direct[SERINAL_HOST] = PriorityRetailerTransport(maximum_per_host=min(maximum, 12),
             browser_fallback=False)
+        direct[BESKEN_HOST] = PriorityRetailerTransport(maximum_per_host=min(maximum, 12),
+            browser_fallback=False, get=compatible_get)
     if public_audit:
         direct['www.vatanbilgisayar.com'] = PriorityRetailerTransport(maximum_per_host=maximum,
             browser_fallback=False)
