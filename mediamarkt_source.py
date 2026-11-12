@@ -17,6 +17,7 @@ from urllib.parse import unquote, urljoin, urlparse
 from urllib.robotparser import RobotFileParser
 
 from bs4 import BeautifulSoup
+from curl_cffi.requests import RequestsError
 import requests
 
 from vatan_sitemap_source import VatanSitemapSource
@@ -313,7 +314,7 @@ class MediaMarktSource:
                 self._rules = rules
                 self._delay = max(0.5, delay)
                 self._robots_status = 'ready'
-            except (requests.RequestException, ValueError, UnicodeError):
+            except (requests.RequestException, RequestsError, OSError, ValueError, UnicodeError):
                 self._robots_status = 'unavailable'
 
     def _load_sitemaps(self):
@@ -348,7 +349,7 @@ class MediaMarktSource:
                             urls.append(candidate)
                 self._urls = list(dict.fromkeys(urls))
                 self._sitemap_status = 'ready'
-            except (requests.RequestException, UnicodeError, ET.ParseError, ValueError) as error:
+            except (requests.RequestException, RequestsError, OSError, UnicodeError, ET.ParseError, ValueError) as error:
                 self._urls = []
                 self._sitemap_status = str(error) if isinstance(error, ValueError) else type(error).__name__
 
@@ -454,7 +455,7 @@ class MediaMarktSource:
                 return None, f'{error.transport}_budget_exhausted', None
             except SourceCircuitOpen:
                 return None, 'source_circuit_open', None
-            except (requests.RequestException, ValueError, TypeError, UnicodeError):
+            except (requests.RequestException, RequestsError, OSError, ValueError, TypeError, UnicodeError):
                 self._browser_failures += 1
                 if self._browser_failures >= 2:
                     self._blocked = True

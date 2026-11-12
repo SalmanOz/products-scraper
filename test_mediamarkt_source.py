@@ -3,6 +3,7 @@ import unittest
 from xml.sax.saxutils import escape
 
 import requests
+from curl_cffi.requests import RequestsError
 
 from mediamarkt_source import (
     MediaMarktSource, MAX_BROWSER_REQUESTS, MAX_DIRECT_REQUESTS,
@@ -77,6 +78,16 @@ class Fetch:
 
 
 class MediaMarktSourceTests(unittest.TestCase):
+    def test_compatible_client_dns_failure_is_reported_as_unavailable_robots(self):
+        def offline(url, **options):
+            self.assertEqual(url, ROBOTS_URL)
+            raise RequestsError('DNS unavailable')
+
+        source = MediaMarktSource(get=offline)
+        source._load_robots()
+        self.assertEqual(source.report()['robots_status'], 'unavailable')
+        self.assertIsNone(source._rules)
+
     def test_full_catalog_can_read_a_verified_offer_after_seed_batch_quota(self):
         fetch = Fetch({ROBOTS_URL: ROBOTS, URL: Response(URL, status=403)})
         calls = []
