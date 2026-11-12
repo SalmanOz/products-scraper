@@ -100,7 +100,8 @@ CATEGORIES = {
 EPEY_CATEGORIES = {paths[2].strip('/'): kind for kind, paths in CATEGORIES.items()}
 CIMRI_CATEGORIES = {paths[1].rsplit('/', 1)[-1]: kind for kind, paths in CATEGORIES.items()}
 CIMRI_CATEGORIES['bluetooth-kulaklik'] = 'tws'
-SNAPSHOT_CATEGORIES = {CIMRI: CIMRI_CATEGORIES, EPEY: EPEY_CATEGORIES}
+AKAKCE_CATEGORIES = {paths[0].split('/')[1].removesuffix('.html'): kind for kind, paths in CATEGORIES.items()}
+SNAPSHOT_CATEGORIES = {AKAKCE: AKAKCE_CATEGORIES, CIMRI: CIMRI_CATEGORIES, EPEY: EPEY_CATEGORIES}
 CARD = {
     AKAKCE: re.compile(r'/[a-z0-9-]+/en-ucuz-[a-z0-9-]+-fiyati,(\d{4,12})\.html'),
     CIMRI: re.compile(r'/[a-z0-9-]+/en-ucuz-[a-z0-9-]+-fiyatlari,(a?\d{4,12})'),
@@ -828,7 +829,7 @@ def source_snapshot_row(row, host):
         return None
     path_category, product = route.path.split('/')[1:]
     kind = SNAPSHOT_CATEGORIES[host].get(path_category)
-    identity = match[1] if host == CIMRI else product.removesuffix('.html')
+    identity = product.removesuffix('.html') if host == EPEY else match[1]
     title = row.get('title')
     if (not kind or row.get('category') != kind or not isinstance(title, str) or
             not 3 <= len(title) <= 260 or not in_scope(kind, title)):
@@ -951,10 +952,12 @@ def main():
                        metavar='SHARDS', help='Resume up to eight Cimri sitemap shards and skip category pages')
     parser.add_argument('--epey-sitemap-only', type=int, choices=range(1, 9), default=0,
                         metavar='SHARDS', help='Resume up to eight Epey sitemap shards and skip category pages')
+    parser.add_argument('--import-akakce-snapshot', type=Path, help='Import Akakçe discovery links from a verified source run')
     parser.add_argument('--import-epey-snapshot', type=Path, help='Import Epey discovery links from a verified source run')
     parser.add_argument('--export-epey-snapshot', type=Path, help='Export Epey discovery links without prices')
     parser.add_argument('--import-cimri-snapshot', type=Path, help='Import Cimri discovery links from a verified source run')
     parser.add_argument('--export-cimri-snapshot', type=Path, help='Export Cimri discovery links without prices')
+    parser.add_argument('--export-akakce-snapshot', type=Path, help='Export Akakçe discovery links without prices')
     parser.add_argument('--lead-only', action='store_true', help='Continue retailer-link discovery from saved candidates')
     parser.add_argument('--state', type=Path, help='Resume category cursors and retain deduplicated candidate IDs')
     parser.add_argument('--prioritize-model', action='append', default=[])
@@ -983,7 +986,8 @@ def main():
     indexes = {kind: identity_index(inventory[kind]) for kind in kinds}
     state = read_state(args.state)
     source_snapshots = {}
-    for host, path in ((EPEY, args.import_epey_snapshot), (CIMRI, args.import_cimri_snapshot)):
+    for host, path in ((AKAKCE, args.import_akakce_snapshot), (EPEY, args.import_epey_snapshot),
+                       (CIMRI, args.import_cimri_snapshot)):
         if path is None:
             continue
         try:
@@ -1024,7 +1028,8 @@ def main():
             lead_scans = [job.result() for job in jobs]
     if args.state is not None:
         write_json(args.state, state)
-    for host, path in ((EPEY, args.export_epey_snapshot), (CIMRI, args.export_cimri_snapshot)):
+    for host, path in ((AKAKCE, args.export_akakce_snapshot), (EPEY, args.export_epey_snapshot),
+                       (CIMRI, args.export_cimri_snapshot)):
         if path is not None:
             export_source_snapshot(path, state, host)
     candidates = [row for row in state['products'].values() if row['catalogSlug'] is None]

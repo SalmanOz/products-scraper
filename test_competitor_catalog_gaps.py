@@ -162,6 +162,22 @@ class CompetitorCatalogGapsTest(unittest.TestCase):
                                         'url': 'https://' + AKAKCE + '/ssd/en-ucuz-example-fiyati,123456.html'}])
         self.assertIn('https://' + AKAKCE + '/ssd,2.html', links)
 
+    def test_akakce_snapshot_import_preserves_only_native_product_links(self):
+        stamp = '2026-11-12T04:00:00+00:00'
+        store = 'https://www.n11.com/urun/sony-wf-1000xm6-12345678'
+        product = {'source': AKAKCE, 'category': 'tws', 'id': 'incorrect', 'title': 'Sony WF-1000XM6',
+                   'url': f'https://{AKAKCE}/bluetooth-kulaklik/en-ucuz-sony-wf-1000xm6-fiyati,12345.html',
+                   'firstSeenAt': stamp, 'lastSeenAt': stamp, 'lastLeadAttemptAt': stamp,
+                   'retailerLeads': [store, 'https://other.example/sony'], 'price': 1}
+        state = {'products': {}}
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'akakce.json.gz'
+            self.assertEqual(export_source_snapshot(path, {'products': {'a': product}}, AKAKCE), 1)
+            self.assertEqual(import_source_snapshot(path, state, AKAKCE)['withRetailerLinks'], 1)
+        record = state['products'][f'{AKAKCE}/tws/12345']
+        self.assertEqual(record['retailerLeads'], [store])
+        self.assertNotIn('price', record)
+
     def test_cimri_ignores_brand_navigation_and_non_card_links(self):
         url = 'https://' + CIMRI + '/islemci'
         html = '''

@@ -9,6 +9,19 @@ from tws_retailer_sources import selected_vatan_store_tws
 
 
 class TwsRefreshTest(TestCase):
+    def test_pazarama_uses_the_scoped_site_reader_in_mixed_refresh(self):
+        name, gtin = 'Anker Soundcore AeroFit 2', '0194644298876'
+        url = 'https://www.pazarama.com/anker-aerofit-2-siyah-p-0194644298876'
+        snapshot = {'checked_at': 'old', 'models': [{'name': name, 'gtin': gtin, 'offers': []}],
+                    'sourceTargets': {name: [{'url': url, 'merchant': 'Mağaza'}]}}
+        catalog = {'models': [{'name': name}]}
+        with patch('tws_refresh.catalog_document_reader') as gateway, \
+             patch('tws_refresh.reread', return_value=({}, {})) as reader:
+            refresh(snapshot, catalog, collection='mixed')
+        gateway.assert_called_once_with('earbud')
+        self.assertEqual(reader.call_args.args[0], 'www.pazarama.com')
+        self.assertIs(reader.call_args.kwargs['document_reader'], gateway.return_value)
+
     def test_teknosa_uses_the_existing_unavailable_robots_policy_for_exact_earbud_pages(self):
         host = 'www.teknosa.com'
         url = f'https://{host}/anker-aerofit-2-siyah-p-100000063496'
