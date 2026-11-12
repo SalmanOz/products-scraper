@@ -75,6 +75,8 @@ class Reader:
                 final = url
             else:
                 html, reason, _ = self.transport._read_document(url, self.host, category=category)
+                if not category and reason == 'source_cooldown' and self.transport.wait_for_cooldown(url):
+                    html, reason, _ = self.transport._read_document(url, self.host)
                 final = url if category else self.transport.resolved_url(url)
         except (SourceBudgetExhausted, SourceCircuitOpen):
             self.stop = True

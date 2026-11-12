@@ -205,3 +205,20 @@ class LaptopPilotTests(TestCase):
             found, rejections = read_retailer('www.n11.com', [target])
         self.assertFalse(found)
         self.assertEqual(rejections['selected_seller_route_changed'], 1)
+
+    def test_laptop_reader_resumes_targets_skipped_during_transient_cooldown(self):
+        html, shop = laptop_document()
+        first = URL + '?magaza=first'
+        waiting = URL + '?magaza=' + shop
+        targets = [{'url': url, 'mpn': '83K10016TR', 'gtin': EAN} for url in (first, waiting)]
+        with patch('laptop_pilot.PriorityRetailerTransport') as factory:
+            transport = factory.return_value
+            transport.read_fresh_document.side_effect = [
+                (None, 'http_503', 503), (None, 'source_cooldown', None), (html, 'document_read', 200),
+            ]
+            transport.resolved_url.side_effect = lambda url: url
+            transport.wait_for_cooldown.return_value = True
+            found, rejections = read_retailer('www.n11.com', targets)
+        transport.wait_for_cooldown.assert_called_once_with(waiting)
+        self.assertEqual([offer['url'] for offer in found], [waiting])
+        self.assertEqual(rejections, {'http_503': 1})

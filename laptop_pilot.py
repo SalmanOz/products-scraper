@@ -288,6 +288,8 @@ def read_retailer(host, rows, *, document_reader=None):
                 final = url if html else None
             else:
                 html, reason, _ = transport.read_fresh_document(url)
+                if reason == 'source_cooldown' and transport.wait_for_cooldown(url):
+                    html, reason, _ = transport.read_fresh_document(url)
                 final = transport.resolved_url(url)
             if not html or not final:
                 failures[reason] += 1
