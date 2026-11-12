@@ -34,13 +34,14 @@ CIMRI = 'www.cimri.com'
 EPEY = 'www.epey.com'
 URUNAI = 'urunai.com'
 KARSILASTIRICI = 'karsilastirici.com'
+KARSILASTIRMA_IO = 'karsilastirma.io'
 PAHALIMI = 'pahalimi.com'
 AMAHANGISI = 'amahangisi.com'
 INDIRIMLI = 'indirimli.com'
 TUBERKARAS = 'tuberkaras.com'
 UCUZYUM = 'www.ucuzyum.com'
 SOURCES = (AKAKCE, CIMRI, EPEY, URUNAI, KARSILASTIRICI, PAHALIMI, AMAHANGISI, INDIRIMLI,
-           TUBERKARAS, OZGUR_HOST, UCUZYUM, AYAZ_HOST, SERINAL_HOST, BESKEN_HOST, PTTAVM, NETHOUSE)
+           TUBERKARAS, OZGUR_HOST, UCUZYUM, AYAZ_HOST, SERINAL_HOST, BESKEN_HOST, PTTAVM, NETHOUSE, KARSILASTIRMA_IO)
 DIRECT_RETAILER_SOURCES = {OZGUR_HOST, AYAZ_HOST, SERINAL_HOST, BESKEN_HOST, PTTAVM, NETHOUSE}
 URUNAI_CATEGORIES = {
     'telefon': 'phone', 'kulaklik': 'tws', 'laptop': 'laptop', 'monitor': 'monitor',
@@ -50,6 +51,11 @@ URUNAI_CATEGORIES = {
 KARSILASTIRICI_CATEGORIES = {'phone': '/kategori/cep-telefonu', 'laptop': '/kategori/laptop'}
 URUNAI_PRODUCT = re.compile(r'/([a-z0-9-]+)/([a-z0-9-]+)/([a-z0-9-]{1,220})')
 KARSILASTIRICI_PRODUCT = re.compile(r'/urun/([a-z0-9-]{1,220})')
+KARSILASTIRMA_IO_CATEGORIES = {
+    'phone': 'akilli-telefon', 'tws': 'kulaklik', 'laptop': 'notebook', 'monitor': 'monitor',
+    'motherboard': 'anakart', 'case': 'bilgisayar-kasasi', 'psu': 'power-supply-psu',
+    'cooler': 'islemci-sogutucu',
+}
 ADDITIONAL_COMPARISON_CATEGORIES = {
     INDIRIMLI: {
         'phone': '/kategori/cep-telefonu', 'tws': '/kategori/bluetooth-kulaklik',
@@ -121,6 +127,7 @@ CARD = {
     CIMRI: re.compile(r'/[a-z0-9-]+/en-ucuz-[a-z0-9-]+-fiyatlari,(a?\d{4,12})'),
     EPEY: re.compile(r'/[a-z0-9-]+/[a-z0-9-]+\.html'),
     KARSILASTIRICI: KARSILASTIRICI_PRODUCT,
+    KARSILASTIRMA_IO: re.compile(r'/(' + '|'.join(KARSILASTIRMA_IO_CATEGORIES.values()) + r')/([a-z0-9-]{3,220})'),
     PAHALIMI: PAHALIMI_PRODUCT,
     AMAHANGISI: AMAHANGISI_PRODUCT,
     INDIRIMLI: KARSILASTIRICI_PRODUCT,
@@ -446,6 +453,8 @@ def scan_source(host, kinds, indexes, start_page, pages, cursors=None, *, collec
         return scan_ucuzyum(reader, indexes['phone']) if 'phone' in kinds else ([], [])
     if host == AMAHANGISI:
         return scan_product_sitemap(host, kinds, indexes, cursors or {}, reader=reader, maximum=pages)
+    if host == KARSILASTIRMA_IO:
+        return scan_karsilastirma_io(reader, kinds, indexes)
     stopped = None
     if host in PRODUCT_SITEMAPS and sitemap_only:
         return scan_product_sitemap(host, kinds, indexes, cursors or {}, reader=reader, maximum=sitemap_only)
@@ -516,17 +525,56 @@ def scan_source(host, kinds, indexes, start_page, pages, cursors=None, *, collec
     return reports, observations
 
 
-def sitemap_locations(xml, expected):
+def sitemap_locations(xml, expected, *, priority=None):
     root = ElementTree.fromstring(xml)
     if root.tag.rsplit('}', 1)[-1] != expected:
         raise ValueError('Unexpected sitemap root')
     namespace = root.tag.removesuffix(expected)
     entry_tag = namespace + ('url' if expected == 'urlset' else 'sitemap')
     for entry in root:
-        if entry.tag == entry_tag:
+        if entry.tag == entry_tag and (priority is None or entry.findtext(namespace + 'priority') == priority):
             location = entry.findtext(namespace + 'loc', '').strip()
             if location:
                 yield location
+
+
+def scan_karsilastirma_io(reader, kinds, indexes):
+    root = f'https://{KARSILASTIRMA_IO}'
+    reports, rows = [], []
+    for kind in kinds:
+        category = KARSILASTIRMA_IO_CATEGORIES.get(kind)
+        if category is None:
+            continue
+        xml, reason, _ = reader._read_document(f'{root}/{category}/sitemap.xml', KARSILASTIRMA_IO,
+                                              category=True, sitemap=True, sitemap_limit=PRODUCT_SITEMAP_LIMIT)
+        cards = {}
+        if xml:
+            try:
+                # This sitemap gives product entries priority 0.8 and brand/filter listings other values.
+                for url in sitemap_locations(xml, 'urlset', priority='0.8'):
+                    if not url.startswith(root + '/'):
+                        continue
+                    route = urlsplit(url)
+                    match = CARD[KARSILASTIRMA_IO].fullmatch(route.path)
+                    if not match or match[1] != category or route.query or route.fragment:
+                        continue
+                    slug = match[2]
+                    title = slug.replace('-', ' ')
+                    if in_scope(kind, title):
+                        cards.setdefault(slug, {'id': slug, 'title': title, 'url': url, 'source': KARSILASTIRMA_IO,
+                            'category': kind, 'catalogSlug': catalog_match(title, indexes[kind]), 'titleFromSitemap': True})
+                reason = 'sitemap_read'
+            except (ElementTree.ParseError, ValueError):
+                reason = 'invalid_product_sitemap'
+                cards.clear()
+        rows.extend(cards.values())
+        matched = sum(bool(row['catalogSlug']) for row in cards.values())
+        reports.append({'source': KARSILASTIRMA_IO, 'category': kind, 'status': reason,
+                        'pages': int(reason == 'sitemap_read'), 'nextPage': None, 'cards': len(cards),
+                        'matched': matched, 'unmatched': len(cards) - matched})
+        if reason in STOP_SOURCE:
+            break
+    return reports, rows
 
 
 def scan_ucuzyum(reader, index):
@@ -745,7 +793,7 @@ def comparison_retailer_leads(html, host, source_url):
     soup = BeautifulSoup(html, 'html.parser')
     if host == EPEY:
         raw_links = [unquote(anchor['data-link']) for anchor in soup.select('a.git[data-link]:has(.urun_adi)')]
-    elif host in (AMAHANGISI, INDIRIMLI, TUBERKARAS, UCUZYUM):
+    elif host in (AMAHANGISI, INDIRIMLI, TUBERKARAS, UCUZYUM, KARSILASTIRMA_IO):
         canonical = [node.get('href') for node in soup.select('link[rel=canonical]')]
         if canonical != [source_url]:
             return []
@@ -754,6 +802,8 @@ def comparison_retailer_leads(html, host, source_url):
                 'section#offers #price-panel-offers a[target="_blank"][rel~=noopener][href]')]
         elif host == UCUZYUM:
             raw_links = [anchor['href'] for anchor in soup.select('#t1List a[rel~=sponsored][href]')]
+        elif host == KARSILASTIRMA_IO:
+            raw_links = [anchor['href'] for anchor in soup.select('a.k-seller[rel~=sponsored][href]')]
         else:
             raw_links = [anchor['href'] for anchor in soup.select('a[rel~=sponsored][href]')]
             if host == INDIRIMLI:
@@ -1165,7 +1215,8 @@ def main():
         if args.lead_only and args.akakce_budget:
             akakce_leads = min(args.lead_limit, args.akakce_budget)
         limits = {host: akakce_leads if host == AKAKCE else min(args.lead_limit, 16)
-                  if host in ADDITIONAL_COMPARISON_CATEGORIES or host == UCUZYUM else args.lead_limit for host in hosts}
+                  if host in ADDITIONAL_COMPARISON_CATEGORIES or host in (UCUZYUM, KARSILASTIRMA_IO)
+                  else args.lead_limit for host in hosts}
         known_leads = lead_inventory(state)
         with ThreadPoolExecutor(max_workers=len(hosts)) as pool:
             jobs = [pool.submit(scan_source_leads, state, host, kinds, limits[host], now,

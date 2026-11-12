@@ -6,13 +6,35 @@ from unittest.mock import Mock, patch
 from ayaz_phone_source import AYAZ_BASE, AYAZ_HOST
 from competitor_catalog_gaps import (AKAKCE, CIMRI, EPEY, KARSILASTIRICI, PAHALIMI, URUNAI, akakce_limits, candidate_family, cimri_sitemap_cards, epey_earbud_title, epey_sitemap_cards, export_source_snapshot, import_source_snapshot, product_state_key, scan_product_sitemap, scan_source, urunai_market_slugs, urunai_sitemap_cards, catalog_match, category_url, comparison_cards, comparison_retailer_leads,
                                      identity_index, in_scope, merge_state, read_state)
-from competitor_catalog_gaps import (AMAHANGISI, INDIRIMLI, TUBERKARAS, UCUZYUM, comparison_lead_destination,
+from competitor_catalog_gaps import (AMAHANGISI, INDIRIMLI, KARSILASTIRMA_IO, TUBERKARAS, UCUZYUM, comparison_lead_destination,
                                      lead_inventory, phone_family, retailer_destination, scan_retailer_leads,
                                      scan_source_leads)
 from ozgur_phone_source import OZGUR_HOST
 
 
 class CompetitorCatalogGapsTest(unittest.TestCase):
+    def test_karsilastirma_io_category_sitemap_and_scoped_retailer_links(self):
+        url = 'https://karsilastirma.io/kulaklik/anker-soundcore-aerofit-2'
+        retailer = 'https://www.n11.com/urun/anker-soundcore-aerofit-2-123456?magaza=sample'
+        reader = Mock()
+        locations = [(url, '0.8'), (url, '0.8'), (url + '?unsafe=1', '0.8'),
+                     (url.replace('/kulaklik/', '/akilli-telefon/'), '0.8'),
+                     (url.replace('/anker-', '/marka/anker-'), '0.7'),
+                     (url.replace('karsilastirma.io', 'other.example'), '0.8')]
+        xml = '<urlset>' + ''.join(f'<url><loc>{page}</loc><priority>{rank}</priority></url>'
+                                  for page, rank in locations) + '</urlset>'
+        reader._read_document.return_value = (xml, 'document_read', 200)
+        with patch('competitor_catalog_gaps.comparison_reader', return_value=reader):
+            reports, rows = scan_source(KARSILASTIRMA_IO, ['tws'], {'tws': identity_index([])}, 1, 1)
+        self.assertEqual(reports[0]['cards'], 1)
+        self.assertEqual([(row['category'], row['url']) for row in rows], [('tws', url)])
+        self.assertNotIn('retailerLeads', rows[0])
+        html = f'''<link rel="canonical" href="{url}">
+          <a class="k-seller" rel="sponsored" href="{retailer}&amp;utm_source=example">9 TL</a>
+          <a rel="sponsored" href="https://www.n11.com/urun/other-item-123456">Related item</a>'''
+        self.assertEqual(comparison_retailer_leads(html, KARSILASTIRMA_IO, url), [retailer])
+        self.assertEqual(comparison_retailer_leads(html, KARSILASTIRMA_IO, url + '-other'), [])
+
     def test_ayaz_discovers_phone_routes_and_observed_category_pagination(self):
         url = AYAZ_BASE + '/urun/samsung-galaxy-a27-5g-8-gb-256-gb-siyah'
         title = 'Samsung Galaxy A27 5G 8 GB 256 GB (Samsung Türkiye Garantili) Siyah 256 GB'
