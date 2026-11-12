@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from bs4 import BeautifulSoup
 
-from audit_hepsiburada_iphone16pm_readonly import _first_party_laptop_cash, _ordinary_selected_cash
+from audit_hepsiburada_iphone16pm_readonly import _first_party_discounted_cash, _ordinary_selected_cash
 from laptop_direct_source import selected_direct_laptop
 from laptop_hepsiburada_source import hepsiburada_seller_profile_matches
 from laptop_pilot import build_model, compatible, read_retailer, select_offers, valid_pair
@@ -123,10 +123,10 @@ class LaptopPilotTests(TestCase):
             'prices': [{'value': 31499, 'discountRate': 0, 'currency': 0},
                        {'value': 30999, 'discountRate': 2, 'currency': 0}],
         }
-        self.assertTrue(_first_party_laptop_cash(state, 30999))
-        self.assertFalse(_first_party_laptop_cash(state, 31499))
-        self.assertFalse(_first_party_laptop_cash(state | {'campaignIds': ['coupon']}, 30999))
-        self.assertFalse(_first_party_laptop_cash(state | {'merchantName': 'Başka satıcı'}, 30999))
+        self.assertTrue(_first_party_discounted_cash(state, 30999))
+        self.assertFalse(_first_party_discounted_cash(state, 31499))
+        self.assertFalse(_first_party_discounted_cash(state | {'campaignIds': ['coupon']}, 30999))
+        self.assertFalse(_first_party_discounted_cash(state | {'merchantName': 'Başka satıcı'}, 30999))
 
     def test_hepsiburada_marketplace_cash_requires_one_ordinary_price(self):
         price = {'value': 86999, 'formattedPrice': '86.999,00', 'discountRate': 0, 'currency': 0}

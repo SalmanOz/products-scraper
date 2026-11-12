@@ -71,8 +71,8 @@ def _amount(value):
     return amount if amount.is_finite() and 0 < amount <= 5_000_000 else None
 
 
-def _first_party_laptop_cash(product, price):
-    """Cash for first-party laptop PDPs whose price component is client-rendered."""
+def _first_party_discounted_cash(product, price):
+    """An unconditional first-party discount on the selected cash price."""
     prices = product.get('prices')
     if (product.get('merchantId') != 'e750130c-d0ff-469f-8767-66a63af8ea0c'
             or product.get('merchantName') != 'Hepsiburada'
@@ -306,10 +306,10 @@ def parse_exact_buy_box(html: str, final_url: str = URL, *, scope=None, verify_l
             'button[aria-label^="Seçili SSD Kapasitesi "] [data-test-id="variant-box-price"]')
             if verify_laptop is not None else [])
         visible = selected_prices[0] if len(selected_prices) == 1 else None
+        has_price_skeleton = len(soup.select('[data-test-id="price-skeleton"]')) == 1
         client_rendered_cash = not selected_prices and (
-            (verify_laptop is not None and _first_party_laptop_cash(product, price))
-            or (len(soup.select('[data-test-id="price-skeleton"]')) == 1
-                and _ordinary_selected_cash(product, price, earbud_skeleton=earbud_skeleton)))
+            ((verify_laptop is not None or has_price_skeleton) and _first_party_discounted_cash(product, price))
+            or (has_price_skeleton and _ordinary_selected_cash(product, price, earbud_skeleton=earbud_skeleton)))
     else:
         return None, 'selected_price_region_missing'
     match = re.fullmatch(r'(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)\s*TL',

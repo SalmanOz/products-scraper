@@ -7,7 +7,7 @@ from bs4 import BeautifulSoup
 from hepsiburada_catalog_source import HepsiburadaCatalogSource, catalog_offer_matches, parse_catalog_buy_box
 from retailer_offer_refresh import RetailerOfferRefresher
 from test_hepsiburada_iphone16pm_readonly import (
-    COLOR, GTIN13, PRODUCT_ID, SCHEMA_URL, SKU, URL, fixture,
+    COLOR, GTIN13, MERCHANT_ID, PRODUCT_ID, SCHEMA_URL, SELLER, SKU, URL, fixture,
 )
 from update_prices import PriceUpdater
 from audit_hepsiburada_iphone16pm_readonly import _ordinary_selected_cash
@@ -61,6 +61,32 @@ class HepsiburadaCatalogTests(unittest.TestCase):
         for changed in (html.replace('price-skeleton', 'unrelated-region'),
                         html.replace('"campaignIds": []', '"campaignIds": ["coupon"]'),
                         html.replace(formatted, '1.234,00')):
+            self.assertIsNone(parse_catalog_buy_box(changed, TARGET, NAME, SPECS)[0])
+
+    def test_first_party_phone_price_skeleton_can_verify_unconditional_discount(self):
+        first_party = 'e750130c-d0ff-469f-8767-66a63af8ea0c'
+        soup = BeautifulSoup(document().replace(MERCHANT_ID, first_party).replace(SELLER, 'Hepsiburada')
+                             .replace('bsz-elektronik', 'hepsiburada'), 'html.parser')
+        redux = soup.select_one('script#reduxStore')
+        state = json.loads(redux.get_text())
+        product = state['productState']['product']
+        price = product['variants'][0]['price']
+        product.update(prices=[{'value': 139999, 'currency': 0, 'discountRate': 0},
+                               {'value': price, 'currency': 0, 'discountRate': 7}],
+                       campaignIds=[], campaignNote='', isCampaignParticipationClosed=True)
+        redux.string = json.dumps(state)
+        region = soup.select_one('[data-test-id="default-price"]')
+        region['data-test-id'] = 'price-skeleton'
+        region.clear()
+        html = str(soup)
+        offer, reason = parse_catalog_buy_box(html, TARGET, NAME, SPECS)
+        self.assertIsNotNone(offer, reason)
+        self.assertEqual((offer['merchant'], offer['price']), ('Hepsiburada', price))
+        for changed in (html.replace('price-skeleton', 'unrelated-region'),
+                        html.replace('"campaignIds": []', '"campaignIds": ["coupon"]'),
+                        html.replace('"isCampaignParticipationClosed": true', '"isCampaignParticipationClosed": false'),
+                        html.replace(first_party, MERCHANT_ID),
+                        html.replace('"price": "129999.00"', '"price": "129998.00"')):
             self.assertIsNone(parse_catalog_buy_box(changed, TARGET, NAME, SPECS)[0])
 
     def test_actual_selected_one_tb_label_control_and_technical_cell_agree_on_1024_gb(self):
