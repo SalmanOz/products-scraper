@@ -421,5 +421,133 @@
       "Ekran Kartı Bağlantısı": "1 × 12V-2x6 (600 W), 3 × 6+2 pin PCIe"
     },
     "sourceUrl": "https://www.sinerji.gen.tr/msi-1000w-pro-a1000pl-pcie5-80-platinum-tam-moduler-atx-31-pcie-gen-51-guc-kaynagi-p-58924"
+  },
+  "4711377345743": {
+    "kind": "cooler",
+    "brand": "MSI",
+    "mpn": "MAG COREFROZR AA13",
+    "name": "MSI MAG COREFROZR AA13",
+    "specSourceUrl": "https://www.msi.com/Air-Cooling/MAG-COREFROZR-AA13/Specification",
+    "sourceUrl": "https://www.sinerji.gen.tr/msi-mag-corefrozr-aa13-120-mm-intel-1700p1851p-amd-uyumlu-hava-sogutucu-p-56323",
+    "specs": {
+      "Uyumlu Soketler": "LGA1700, LGA1851, AM4, AM5",
+      "Soğutma Yöntemi": "Hava soğutma",
+      "Soğutucu Yüksekliği (Maks)": "152 mm",
+      "Fan": "1 × 120 mm PWM",
+      "Isı Boruları": "4 × 6 mm",
+      "Hava Akışı": "62,6 CFM",
+      "Aydınlatma": "ARGB Gen1"
+    }
+  },
+  "4711377273763": {
+    "kind": "cooler",
+    "brand": "MSI",
+    "mpn": "MAG CORELIQUID A13 240",
+    "name": "MSI MAG CORELIQUID A13 240 Siyah",
+    "specSourceUrl": "https://www.msi.com/Liquid-Cooling/MAG-CORELIQUID-A13-240/Specification",
+    "sourceUrl": "https://www.sinerji.gen.tr/msi-mag-coreliquid-a13-240-240mm-intel-1700p1851p-amd-uyumlu-sivi-sogutucu-p-53329",
+    "specs": {
+      "Uyumlu Soketler": "LGA1700, LGA1851, AM4, AM5",
+      "Soğutma Yöntemi": "Kapalı devre sıvı soğutma",
+      "Radyatör": "240 mm",
+      "Radyatör Boyutları": "277 × 119,6 × 27,2 mm",
+      "Fan": "2 × 120 mm PWM",
+      "Pompa Hızı": "3.800 dev/dk ± %10",
+      "Aydınlatma": "ARGB Gen2",
+      "Renk": "Siyah"
+    }
+  },
+  "4711377276672": {
+    "kind": "cooler",
+    "brand": "MSI",
+    "mpn": "MAG CORELIQUID A13 240 WHITE",
+    "name": "MSI MAG CORELIQUID A13 240 Beyaz",
+    "specSourceUrl": "https://www.msi.com/Liquid-Cooling/MAG-CORELIQUID-A13-240/Specification",
+    "sourceUrl": "https://www.sinerji.gen.tr/msi-mag-coreliquid-a13-240-beyaz-240-mm-intel-1700p1851p-amd-uyumlu-sivi-sogutucu-p-53509",
+    "specs": {
+      "Uyumlu Soketler": "LGA1700, LGA1851, AM4, AM5",
+      "Soğutma Yöntemi": "Kapalı devre sıvı soğutma",
+      "Radyatör": "240 mm",
+      "Radyatör Boyutları": "277 × 119,6 × 27,2 mm",
+      "Fan": "2 × 120 mm PWM",
+      "Pompa Hızı": "3.800 dev/dk ± %10",
+      "Aydınlatma": "ARGB Gen2",
+      "Renk": "Beyaz"
+    }
+  },
+  "4711377273770": {
+    "kind": "cooler",
+    "brand": "MSI",
+    "mpn": "MAG CORELIQUID A13 360",
+    "name": "MSI MAG CORELIQUID A13 360 Siyah",
+    "specSourceUrl": "https://www.msi.com/Liquid-Cooling/MAG-CORELIQUID-A13-360/Specification",
+    "sourceUrl": "https://www.sinerji.gen.tr/msi-mag-coreliquid-a13-360-360mm-intel-1700p1851p-amd-uyumlu-sivi-sogutucu-p-53328",
+    "specs": {
+      "Uyumlu Soketler": "LGA1700, LGA1851, AM4, AM5",
+      "Soğutma Yöntemi": "Kapalı devre sıvı soğutma",
+      "Radyatör": "360 mm",
+      "Radyatör Boyutları": "394 × 119,6 × 27,2 mm",
+      "Fan": "3 × 120 mm PWM",
+      "Pompa Hızı": "3.800 dev/dk ± %10",
+      "Aydınlatma": "ARGB Gen2",
+      "Renk": "Siyah"
+    }
+  },
+  "4711377275347": {
+    "kind": "ssd",
+    "brand": "MSI",
+    "mpn": "SPATIUM M560 PCIE 5.0 NVME M.2 1TB",
+    "name": "MSI SPATIUM M560 1 TB",
+    "specSourceUrl": "https://www.msi.com/Storage/SPATIUM-M560-PCIe-5.0-NVMe-M.2/Specification",
+    "sourceUrl": "https://www.sinerji.gen.tr/msi-1tb-spatium-m560-okuma-10200mb-yazma-8400mb-pcie-50-nvme-m2-ssd-p-55832",
+    "specs": {
+      "Depolama Tipi": "Dahili SSD",
+      "Depolama Biçimi": "M.2 2280",
+      "Depolama Kapasitesi": "1 TB",
+      "Bağlantı": "PCIe 5.0 ×4, NVMe 2.0",
+      "Sıralı Okuma": "10.200 MB/sn",
+      "Sıralı Yazma": "8.400 MB/sn",
+      "Yazma Dayanıklılığı": "600 TBW",
+      "Denetleyici": "Phison E31T",
+      "Boyutlar": "80 × 22 × 2,15 mm"
+    }
+  },
+  "4711377275354": {
+    "kind": "ssd",
+    "brand": "MSI",
+    "mpn": "SPATIUM M560 PCIE 5.0 NVME M.2 2TB",
+    "name": "MSI SPATIUM M560 2 TB",
+    "specSourceUrl": "https://www.msi.com/Storage/SPATIUM-M560-PCIe-5.0-NVMe-M.2/Specification",
+    "sourceUrl": "https://www.sinerji.gen.tr/msi-2tb-spatium-m560-okuma-10300mb-yazma-8700mb-pcie-50-nvme-m2-ssd-p-55682",
+    "specs": {
+      "Depolama Tipi": "Dahili SSD",
+      "Depolama Biçimi": "M.2 2280",
+      "Depolama Kapasitesi": "2 TB",
+      "Bağlantı": "PCIe 5.0 ×4, NVMe 2.0",
+      "Sıralı Okuma": "10.300 MB/sn",
+      "Sıralı Yazma": "8.700 MB/sn",
+      "Yazma Dayanıklılığı": "1.200 TBW",
+      "Denetleyici": "Phison E31T",
+      "Boyutlar": "80 × 22 × 2,15 mm"
+    }
+  },
+  "4711377420556": {
+    "kind": "ssd",
+    "brand": "MSI",
+    "mpn": "SPATIUM M571 DLP PCIE 5.0 NVME M.2 2TB",
+    "name": "MSI SPATIUM M571 DLP 2 TB",
+    "specSourceUrl": "https://www.msi.com/Storage/SPATIUM-M571-DLP-PCIe-5.0-NVMe-M.2/Specification",
+    "sourceUrl": "https://www.sinerji.gen.tr/msi-2tb-spatium-m571-dlp-okuma-14500mb-yazma-11000mb-pcie-50-nvme-m2-ssd-p-58151",
+    "specs": {
+      "Depolama Tipi": "Dahili SSD",
+      "Depolama Biçimi": "M.2 2280",
+      "Depolama Kapasitesi": "2 TB",
+      "Bağlantı": "PCIe 5.0 ×4, NVMe 2.0",
+      "Sıralı Okuma": "14.500 MB/sn",
+      "Sıralı Yazma": "11.000 MB/sn",
+      "Yazma Dayanıklılığı": "1.400 TBW",
+      "Denetleyici": "Phison E28",
+      "Boyutlar": "80 × 22 × 2,15 mm"
+    }
   }
 }
