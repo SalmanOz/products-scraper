@@ -188,7 +188,9 @@ def parse_manufacturer_specifications(html, source_url, candidate, observed_at):
     elif brand == 'apple':
         # Establish all column identities from actual capacity headings first.
         model_names = [tag.get_text(' ', strip=True) for tag in soup.select('.techspecs-column strong.techspecs-small-heading')]
-        names = official_model_names(soup) + model_names
+        headings = [re.sub(r'\s+Teknik\s+Özellikler$', '', name, flags=re.I)
+                    for name in official_model_names(soup)]
+        names = headings + model_names
         if not any(model_key(name) == model_key(candidate['name']) for name in names):
             raise ValueError('manufacturer_spec_identity_not_confirmed')
         groups = {'kapasite': 'Performance & Hardware', 'cip': 'Performance & Hardware',

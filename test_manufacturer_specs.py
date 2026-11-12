@@ -82,6 +82,17 @@ class ManufacturerSpecsTests(unittest.TestCase):
         values = {r['attribute_key']: r['value'] for r in parse_manufacturer_specifications(html, c['evidenceUrl'] + 'specs/', c, '2026-10-19T12:00:00Z')}
         self.assertEqual(values['screen_size_inch'], 6.9)
 
+    def test_apple_single_model_technical_heading_identifies_its_own_page(self):
+        page = 'https://www.apple.com/tr/iphone-duo/specs/'
+        candidate = {'name': 'Apple iPhone Duo', 'slug': 'apple-iphone-duo',
+                     'brandSlug': 'apple', 'evidenceUrl': page}
+        html = '<h1>iPhone\xa0Duo Teknik\xa0Özellikler</h1><div class="techspecs-row">' \
+            '<div class="techspecs-rowheader">Çip</div><div class="techspecs-column">A20 Pro</div></div>'
+        records = parse_manufacturer_specifications(html, page, candidate, '2026-11-12T20:17:00Z')
+        self.assertEqual(records[0]['value'], {'Çip': 'A20 Pro'})
+        with self.assertRaisesRegex(ValueError, 'identity_not_confirmed'):
+            parse_manufacturer_specifications(html.replace('Duo', 'Air'), page, candidate, '2026-11-12T20:17:00Z')
+
     def test_oppo_real_component_separates_video_from_camera_and_virtual_memory(self):
         c = {'name': 'OPPO Reno15 5G', 'slug': 'oppo-reno15-5g', 'brandSlug': 'oppo',
              'evidenceUrl': 'https://www.oppo.com/tr/smartphones/series-reno/reno15/'}
