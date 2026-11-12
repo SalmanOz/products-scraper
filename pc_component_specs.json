@@ -230,5 +230,196 @@
       "Takılı Fan Sayısı": "4 × 120 mm",
       "Radyatör Desteği": "Üst 360 mm"
     }
+  },
+  "4711387173244": {
+    "kind": "case",
+    "brand": "ASUS",
+    "name": "ASUS ROG Hyperion GR701 Beyaz",
+    "mpn": "90DC00F3-B39000",
+    "specSourceUrl": "https://rog.asus.com/us/cases/rog-hyperion-gr701-model/spec/",
+    "specs": {
+      "Kasa Tipi": "Full Tower",
+      "Anakart Desteği": "E-ATX, ATX, Micro-ATX, Mini-ITX",
+      "Renk": "Beyaz",
+      "Boyutlar": "268 × 639 × 659 mm",
+      "Ekran Kartı Uzunluğu (Maks)": "460 mm",
+      "Soğutucu Yüksekliği (Maks)": "190 mm",
+      "Güç Kaynağı Uzunluğu (Maks)": "240 mm",
+      "Takılı Fan Sayısı": "4 × 140 mm",
+      "Radyatör Desteği": "Ön 420 mm, üst 420 mm, arka 140 mm"
+    },
+    "sourceUrl": "https://www.sinerji.gen.tr/asus-rog-hyperion-gr701-tempered-glass-argb-beyaz-usb-32-e-atx-full-tower-kasa-p-48818"
+  },
+  "4719512162033": {
+    "kind": "case",
+    "brand": "Cooler Master",
+    "name": "Cooler Master Elite 600 Siyah",
+    "mpn": "E600-KGNN-S02",
+    "specSourceUrl": "https://sfcc.coolermaster.com/en-global/products/elite-600-with-argb-fan.html",
+    "specs": {
+      "Kasa Tipi": "Mid Tower",
+      "Anakart Desteği": "ATX, Micro-ATX, Mini-DTX, Mini-ITX",
+      "Renk": "Siyah",
+      "Boyutlar": "445 × 285 × 410 mm (çıkıntılar dâhil)",
+      "Ekran Kartı Uzunluğu (Maks)": "425 mm",
+      "Soğutucu Yüksekliği (Maks)": "160 mm",
+      "Güç Kaynağı Desteği": "ATX",
+      "Güç Kaynağı Uzunluğu (Maks)": "240 mm",
+      "Takılı Fan Sayısı": "7 × 120 mm ARGB",
+      "Radyatör Desteği": "Üst 360 mm, alt 360 mm, yan 280 mm, arka 120 mm"
+    },
+    "sourceUrl": "https://www.sinerji.gen.tr/cooler-master-elite-600-siyah-argb-curve-tempered-glass-usb-32-atx-mid-tower-kasa-p-57129"
+  },
+  "4711387453117": {
+    "kind": "cooler",
+    "brand": "ASUS",
+    "name": "ASUS ROG Strix LC III 240 ARGB Beyaz",
+    "mpn": "90RC00S2-M0UAY0",
+    "specSourceUrl": "https://rog.asus.com/cooling/cpu-liquid-coolers/rog-strix-lc/rog-strix-lc-iii-240-argb-white-edition/spec/",
+    "specs": {
+      "Uyumlu Soketler": "AM4, AM5, LGA115x, LGA1200, LGA1700, LGA1851",
+      "Soğutma Yöntemi": "Sıvı soğutma (AIO)",
+      "Radyatör Boyutu": "240 mm",
+      "Radyatör Ölçüleri": "272 × 121 × 27 mm",
+      "Fan Sayısı": "2 × 120 mm ARGB",
+      "Fan Hızı": "800–2.200 dev/dk (± %10)",
+      "Hortum Uzunluğu": "400 mm",
+      "Su Bloğu Tabanı": "Bakır"
+    },
+    "sourceUrl": "https://www.sinerji.gen.tr/asus-rog-strix-lc-iii-240-argb-white-240-mm-intel-1700p1851p-amd-uyumlu-sivi-sogutucu-p-50326"
+  },
+  "4711387929070": {
+    "kind": "cooler",
+    "brand": "ASUS",
+    "name": "ASUS TUF Gaming LC III 360 ARGB",
+    "mpn": "90RC0191-B0EAY0",
+    "specSourceUrl": "https://www.asus.com/tr/motherboards-components/cooling/tuf-gaming/tuf-gaming-lc-iii-360-argb/techspec/",
+    "specs": {
+      "Uyumlu Soketler": "AM4, AM5, LGA1200, LGA1700, LGA1851",
+      "Soğutma Yöntemi": "Sıvı soğutma (AIO)",
+      "Radyatör Boyutu": "360 mm",
+      "Radyatör Ölçüleri": "397 × 120 × 27 mm",
+      "Fan Sayısı": "3 × 120 mm ARGB",
+      "Fan Hızı": "650–2.600 dev/dk (± %10)",
+      "Hortum Uzunluğu": "400 mm",
+      "Su Bloğu Tabanı": "Bakır"
+    },
+    "sourceUrl": "https://www.sinerji.gen.tr/asus-tuf-gaming-lc-360-argb-360-mm-intel-1700p1851p-amd-uyumlu-sivi-sogutucu-p-57061"
+  },
+  "4711377379946": {
+    "kind": "gpu",
+    "brand": "MSI",
+    "name": "MSI GeForce RTX 5050 8G Gaming OC",
+    "mpn": "G5050-8GC",
+    "specSourceUrl": "https://www.msi.com/Graphics-Card/GeForce-RTX-5050-8G-GAMING-OC/Specification",
+    "specs": {
+      "Grafik İşlemci Modeli": "GeForce RTX 5050",
+      "Grafik Bellek": "8 GB GDDR6",
+      "Grafik Bellek Arayüzü": "128 bit",
+      "Grafik Bellek Hızı": "20 Gbps",
+      "Boost Frekansı": "2.632 MHz",
+      "Bağlantı Arayüzü": "PCIe 5.0 x16 (x8 hat)",
+      "Güç Tüketimi": "130 W",
+      "Güç Bağlantıları": "1 × 8 pin",
+      "Önerilen Güç Kaynağı": "550 W",
+      "Uzunluk": "202 mm",
+      "Boyutlar": "202 × 120 × 41 mm",
+      "Görüntü Çıkışları": "3 × DisplayPort 2.1b, 1 × HDMI 2.1b"
+    },
+    "sourceUrl": "https://www.sinerji.gen.tr/msi-geforce-rtx-5050-gaming-oc-8g-8gb-gddr6-128-bit-dlss-4-ekran-karti-p-56634"
+  },
+  "4711377342544": {
+    "kind": "gpu",
+    "brand": "MSI",
+    "name": "MSI GeForce RTX 5060 8G Gaming OC",
+    "mpn": "G5060-8GC",
+    "specSourceUrl": "https://www.msi.com/Graphics-Card/GeForce-RTX-5060-8G-GAMING-OC/Specification",
+    "specs": {
+      "Grafik İşlemci Modeli": "GeForce RTX 5060",
+      "Grafik Bellek": "8 GB GDDR7",
+      "Grafik Bellek Arayüzü": "128 bit",
+      "Grafik Bellek Hızı": "28 Gbps",
+      "Boost Frekansı": "2.625 MHz",
+      "Bağlantı Arayüzü": "PCIe 5.0 x16 (x8 hat)",
+      "Güç Tüketimi": "155 W",
+      "Güç Bağlantıları": "1 × 8 pin",
+      "Önerilen Güç Kaynağı": "550 W",
+      "Uzunluk": "248 mm",
+      "Boyutlar": "248 × 135 × 41 mm",
+      "Görüntü Çıkışları": "3 × DisplayPort 2.1b, 1 × HDMI 2.1b"
+    },
+    "sourceUrl": "https://www.sinerji.gen.tr/msi-geforce-rtx-5060-gaming-oc-8g-8gb-gddr7-128-bit-dlss-4-ekran-karti-p-55901"
+  },
+  "4711387259795": {
+    "kind": "motherboard",
+    "brand": "ASUS",
+    "name": "ASUS PRIME H610M-E-CSM DDR5",
+    "mpn": "90MB1G10-M0EAYC",
+    "specSourceUrl": "https://www.asus.com/motherboards-components/motherboards/csm/prime-h610m-e-csm/techspec/",
+    "specs": {
+      "Soket Tipi": "LGA1700",
+      "Yonga Seti": "Intel H610",
+      "RAM Tipi": "DDR5",
+      "RAM Desteği (Maks)": "96 GB",
+      "RAM Yuvası": "2 × DIMM",
+      "Form Faktörü": "Micro-ATX",
+      "Boyutlar": "244 × 211 mm",
+      "Depolama Bağlantıları": "2 × M.2, 4 × SATA 6 Gb/s",
+      "Ethernet": "1 GbE",
+      "Görüntü Çıkışları": "DisplayPort, HDMI, VGA (işlemciye bağlı)"
+    },
+    "sourceUrl": "https://www.sinerji.gen.tr/asus-prime-h610m-e-csm-5600mhz-oc-rgb-m2-1700p-matx-ddr5-anakart-p-47862"
+  },
+  "4711387336328": {
+    "kind": "motherboard",
+    "brand": "ASUS",
+    "name": "ASUS PRIME H610M-K DDR5",
+    "mpn": "90MB1GA0-M0EAY0",
+    "specSourceUrl": "https://www.asus.com/tr/motherboards-components/motherboards/prime/prime-h610m-k/techspec/",
+    "specs": {
+      "Soket Tipi": "LGA1700",
+      "Yonga Seti": "Intel H610",
+      "RAM Tipi": "DDR5",
+      "RAM Desteği (Maks)": "96 GB",
+      "RAM Yuvası": "2 × DIMM",
+      "Form Faktörü": "Micro-ATX",
+      "Boyutlar": "234 × 203 mm",
+      "Depolama Bağlantıları": "1 × M.2 (PCIe 3.0 x4), 4 × SATA 6 Gb/s",
+      "Ethernet": "1 GbE",
+      "Görüntü Çıkışları": "HDMI, VGA (işlemciye bağlı)"
+    },
+    "sourceUrl": "https://www.sinerji.gen.tr/asus-prime-h610m-k-5600mhz-oc-m2-1700p-ddr5-matx-anakart-p-48740"
+  },
+  "4713224529610": {
+    "kind": "psu",
+    "brand": "FSP",
+    "name": "FSP VITA GM 1000W Gold",
+    "mpn": "VITA-1000GM",
+    "specSourceUrl": "https://www.fsplifestyle.com/en/product/VITAGM1000W.html",
+    "specs": {
+      "Güç Kaynağı Değeri": "1000 W",
+      "Güç Kaynağı Tipi": "ATX 3.1, tam modüler",
+      "Verimlilik": "80 PLUS Gold",
+      "Boyutlar": "140 × 150 × 86 mm",
+      "Fan": "120 mm",
+      "Ekran Kartı Bağlantısı": "1 × 12V-2x6, 4 × 6+2 pin PCIe"
+    },
+    "sourceUrl": "https://www.sinerji.gen.tr/fsp-1000w-vita-gm-1000w-80-gold-tam-moduler-atx-31-pcie-gen-51-guc-kaynagi-p-57271"
+  },
+  "4711377383622": {
+    "kind": "psu",
+    "brand": "MSI",
+    "name": "MSI PRO A1000PL PCIE5 1000W Platinum",
+    "mpn": "PRO A1000PL PCIE5",
+    "specSourceUrl": "https://us.msi.com/Power-Supply/PRO-A1000PL-PCIE5/Specification",
+    "specs": {
+      "Güç Kaynağı Değeri": "1000 W",
+      "Güç Kaynağı Tipi": "ATX 3.1, tam modüler",
+      "Verimlilik": "80 PLUS Platinum",
+      "Boyutlar": "150 × 150 × 86 mm",
+      "Fan": "120 mm",
+      "Ekran Kartı Bağlantısı": "1 × 12V-2x6 (600 W), 3 × 6+2 pin PCIe"
+    },
+    "sourceUrl": "https://www.sinerji.gen.tr/msi-1000w-pro-a1000pl-pcie5-80-platinum-tam-moduler-atx-31-pcie-gen-51-guc-kaynagi-p-58924"
   }
 }

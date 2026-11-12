@@ -155,8 +155,9 @@ def stage(state, catalog, profiles, output, maximum):
             continue
         (photos / f'{gtin}.webp').write_bytes(asset)
         specs = {'Marka': part['brand'], 'Üretici Kodu': profile['mpn'], 'EAN': gtin, **profile['specs']}
-        slug = re.sub(r'[^a-z0-9]+', '-', part['name'].lower()).strip('-')[:100].rstrip('-')
-        staged.append({**part, 'id': gtin, 'slug': f'{slug}-{gtin}', 'mpn': profile['mpn'],
+        name = profile.get('name') or part['name']
+        slug = re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-')[:100].rstrip('-')
+        staged.append({**part, 'name': name, 'id': gtin, 'slug': f'{slug}-{gtin}', 'mpn': profile['mpn'],
                        'image': f'/media/pc-parts/{gtin}.webp', 'specs': specs,
                        'sourceUrl': url, 'specSourceUrl': profile['specSourceUrl'],
                        'offer': offers[0], 'offers': offers,
