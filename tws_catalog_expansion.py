@@ -16,6 +16,9 @@ from catalog_source_collector import catalog_document_reader
 from evofone_offer_source import (HOST as EVOFONE, IMAGE_HOST as EVOFONE_IMAGE, TERMS as EVOFONE_TERMS,
                                   product_url as evofone_product_url, selected_offer as evofone_offer,
                                   seller_identity as evofone_seller_identity)
+from firsatkurdu_offer_source import (HOST as FIRSATKURDU, TERMS as FIRSATKURDU_TERMS,
+                                    product_url as firsatkurdu_product_url, selected_offer as firsatkurdu_offer,
+                                    seller_identity as firsatkurdu_seller_identity)
 from hepsiburada_catalog_discovery import discover_product_sellers as hepsiburada_seller_targets
 from idefix_tws_source import (API_HOST as IDEFIX_API, HOST as IDEFIX, IMAGE_HOSTS as IDEFIX_IMAGES,
                                idefix_other_seller_urls, idefix_product_url, idefix_selected_seller,
@@ -40,7 +43,7 @@ from vatan_category_source import VatanCategorySource
 MARKETPLACES = {'www.n11.com', 'www.trendyol.com', 'www.hepsiburada.com', 'www.teknosa.com'}
 STORES = {'www.vatanbilgisayar.com', 'www.mediamarkt.com.tr'}
 TWS_IMAGE_HOSTS = IMAGE_HOSTS | IDEFIX_IMAGES | {'productimages.hepsiburada.net', 'reimg-teknosa-cloud-prod.mncdn.com',
-                               'img.pzrmcdn.com', 'cdn-s3.pttavm.com', NETHOUSE_IMAGE, OZGUR_HOST, EVOFONE_IMAGE}
+                               'img.pzrmcdn.com', 'cdn-s3.pttavm.com', NETHOUSE_IMAGE, OZGUR_HOST, EVOFONE_IMAGE, FIRSATKURDU}
 ALTERNATE_SELLER_BUDGET = 8
 COLOR_NAMES = {
     'beyaz': 'Beyaz', 'bej': 'Bej', 'gri': 'Gri', 'gumus': 'Gümüş', 'kirmizi': 'Kırmızı',
@@ -123,14 +126,14 @@ def reread(host, rows, statuses=None, document_reader=None, *, discover=False):
     transport = None
     direct_reader = {PAZARAMA: pazarama_product_url, PTTAVM: ptt_product_url,
                      NETHOUSE: nethouse_product_url, IDEFIX: idefix_product_url, OZGUR_HOST: ozgur_phone_url,
-                     EVOFONE: evofone_product_url}.get(host)
+                     EVOFONE: evofone_product_url, FIRSATKURDU: firsatkurdu_product_url}.get(host)
     if host in MARKETPLACES or direct_reader:
         options = {}
         if document_reader is not None:
             options.update(get=document_reader, browser_fallback=False)
         elif host == 'www.hepsiburada.com':
             options.update(get=_hepsiburada_public_get, browser_fallback=False)
-        elif host == PTTAVM:
+        elif host in (PTTAVM, FIRSATKURDU):
             options.update(get=compatible_get, browser_fallback=False)
         elif discover or host in (NETHOUSE, IDEFIX, OZGUR_HOST, EVOFONE):
             options['browser_fallback'] = False
@@ -155,16 +158,19 @@ def reread(host, rows, statuses=None, document_reader=None, *, discover=False):
         return source._read(url, 64 * 1024, 'application/json')
 
     legal_html = None
-    if host in (OZGUR_HOST, EVOFONE):
-        terms = OZGUR_TERMS if host == OZGUR_HOST else EVOFONE_TERMS
+    first_party_terms = {OZGUR_HOST: ('ozgur', OZGUR_TERMS), EVOFONE: ('evofone', EVOFONE_TERMS),
+                         FIRSATKURDU: ('firsatkurdu', FIRSATKURDU_TERMS)}
+    if host in first_party_terms:
+        source_name, terms = first_party_terms[host]
         legal_html, reason, _ = transport._read_document(terms, host, category=True)
         if not legal_html:
             if statuses is not None:
                 statuses.update({target['url']: 'unavailable' for _, target in pending})
-            failures[('ozgur' if host == OZGUR_HOST else 'evofone') + '_seller_identity_' + reason] = len(pending)
+            failures[source_name + '_seller_identity_' + reason] = len(pending)
             return observations, failures
 
-    company = evofone_seller_identity(legal_html) if host == EVOFONE else None
+    seller_parser = {EVOFONE: evofone_seller_identity, FIRSATKURDU: firsatkurdu_seller_identity}.get(host)
+    company = seller_parser(legal_html) if seller_parser else None
     while pending:
         name, target = pending.popleft()
         url = target['url']
@@ -212,10 +218,11 @@ def reread(host, rows, statuses=None, document_reader=None, *, discover=False):
                 current, reason = selected_teknosa_tws(html, final, name, model_name)
             elif host == NETHOUSE:
                 current, reason = selected_nethouse_offer(html, final, name, model_name)
-            elif host == EVOFONE:
-                current, reason = evofone_offer(html, final, company, kind='tws')
+            elif host in (EVOFONE, FIRSATKURDU):
+                parser = evofone_offer if host == EVOFONE else firsatkurdu_offer
+                current, reason = parser(html, final, company, kind='tws')
                 if current and model_name(current['source_title'], current['brand']) != name:
-                    current, reason = None, 'evofone_tws_model_mismatch'
+                    current, reason = None, source_name + '_tws_model_mismatch'
             elif host == OZGUR_HOST:
                 try:
                     current = ozgur_tws_offer(html, legal_html, url=final, name=name, model_name=model_name)
@@ -368,6 +375,7 @@ def stage(catalog, snapshot, specs, candidates, output, *, allow_empty=False):
                     or p.netloc == IDEFIX and idefix_product_url(url)
                     or p.netloc == OZGUR_HOST and ozgur_phone_url(url)
                     or p.netloc == EVOFONE and evofone_product_url(url)
+                    or p.netloc == FIRSATKURDU and firsatkurdu_product_url(url)
                     or p.netloc == 'www.vatanbilgisayar.com' and _vatan_url(url)
                     or p.netloc == 'www.mediamarkt.com.tr' and _mediamarkt_tws_url(url)):
                 sources[p.netloc].append((name, row))

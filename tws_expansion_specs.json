@@ -1,4 +1,49 @@
 {
+  "Tecno Buds 4 Air": {
+    "summary": "Tecno Buds 4 Air, telefon görüşmelerinde çevresel gürültü azaltma ve kutuyla 22 saate kadar dinleme sunuyor.",
+    "highlights": ["10 mm sürücü", "Bluetooth 5.4", "IPX4"],
+    "specSource": "https://turkiye.tecno-mobile.com/accessories/product-detail/product/buds-4-air/",
+    "specs": [
+      {"label": "Sürücü", "value": "10 mm"},
+      {"label": "Arama gürültü kontrolü", "value": "Yapay zekâ destekli ENC"},
+      {"label": "Bluetooth", "value": "5.4"},
+      {"label": "Tek şarjla müzik", "value": "5,5 saate kadar"},
+      {"label": "Kutuyla toplam müzik", "value": "22 saate kadar"},
+      {"label": "Dayanıklılık", "value": "IPX4"},
+      {"label": "Kulaklık ağırlığı", "value": "3,3 g (her biri)", "source": {"name": "TECNO teknik özellikleri", "url": "https://www.tecno-mobile.com/accessories/tech-specs/techspecs/buds-4-air/"}},
+      {"label": "Şarj", "value": "USB-C", "source": {"name": "TECNO teknik özellikleri", "url": "https://www.tecno-mobile.com/accessories/tech-specs/techspecs/buds-4-air/"}}
+    ]
+  },
+  "Tecno Buds 4": {
+    "summary": "Tecno Buds 4, 10 mm sürücüleri 25 dB’ye kadar aktif gürültü engellemeyle birleştiriyor. Şarj kutusuyla 28 saate kadar dinleme süresi sunuyor.",
+    "highlights": ["25 dB’ye kadar ANC", "10 mm sürücü", "Bluetooth 5.4"],
+    "specSource": "https://www.tecno-mobile.com/accessories/product-detail/product/buds-4/",
+    "specs": [
+      {"label": "Sürücü", "value": "10 mm"},
+      {"label": "Gürültü kontrolü", "value": "25 dB’ye kadar aktif gürültü engelleme"},
+      {"label": "Arama gürültü kontrolü", "value": "Çift mikrofonlu ENC"},
+      {"label": "Bluetooth", "value": "5.4"},
+      {"label": "Tek şarjla müzik", "value": "5 saate kadar"},
+      {"label": "Kutuyla toplam müzik", "value": "28 saate kadar"},
+      {"label": "Kontroller", "value": "Dokunmatik"}
+    ]
+  },
+  "Tecno Sonic 2": {
+    "summary": "Tecno Sonic 2, her kulaklıkta üç mikrofon ve 10 mm dinamik sürücü kullanıyor. Üretici, ANC kapalıyken kulaklıkta 6 saate kadar dinleme süresi belirtiyor.",
+    "highlights": ["Her kulaklıkta üç mikrofon", "Bluetooth 5.4", "USB-C"],
+    "specSource": "https://turkiye.tecno-mobile.com/accessories/tech-specs/techspecs/sonic-2/",
+    "specs": [
+      {"label": "Model kodu", "value": "SC02"},
+      {"label": "Sürücü", "value": "10 mm dinamik"},
+      {"label": "Mikrofon", "value": "Her kulaklıkta üç"},
+      {"label": "Bluetooth", "value": "5.4"},
+      {"label": "Tek şarjla müzik", "value": "6 saate kadar (ANC kapalı)"},
+      {"label": "Kutuyla toplam müzik", "value": "45 saate kadar"},
+      {"label": "Ses kodekleri", "value": "AAC, SBC"},
+      {"label": "Dayanıklılık", "value": "IPX4"},
+      {"label": "Şarj", "value": "USB-C"}
+    ]
+  },
   "Xiaomi Buds 5": {
     "summary": "Xiaomi Buds 5, yarı kulak içi tasarımı 11 mm sürücü ve aktif gürültü engellemeyle birleştiriyor. Şarj kutusuyla 39 saate kadar dinleme süresi sunuyor.",
     "highlights": ["11 mm dinamik sürücü", "Aktif gürültü engelleme", "Kulaklıklarda IP54"],

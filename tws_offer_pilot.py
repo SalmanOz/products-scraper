@@ -127,6 +127,9 @@ NEW_MODELS = (
     ('QCY', 'T17', r't17(?! ?s| pro| plus)'),
     ('QCY', 'AilyBuds Pro+', r'ailybuds pro plus'),
     ('realme', 'Buds Air 6 Pro', r'buds air 6 pro'),
+    ('Tecno', 'Buds 4 Air', r'buds 4 air(?! pro| plus)'),
+    ('Tecno', 'Buds 4', r'buds 4(?! air| pro| plus)'),
+    ('Tecno', 'Sonic 2', r'sonic 2(?! air| pro| plus)'),
 )
 NEW_MODEL_NAMES = tuple(f'{brand} {name}' for brand, name, _ in NEW_MODELS)
 PAIR_REQUIRED_MODEL_NAMES = (
