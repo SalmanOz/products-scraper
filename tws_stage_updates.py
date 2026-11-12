@@ -101,7 +101,7 @@ def stage(snapshot, catalog, report, selected_models=()):
 
     updated = deepcopy(snapshot)
     target_map = updated.setdefault('sourceTargets', {})
-    staged = []
+    staged, confirmed_colors = [], {}
     for name, gtin in attempted:
         key = (name, gtin)
         offers = exact_tws_sellers(observed[key], maximum=MAX_CURRENT_OFFERS)
@@ -127,8 +127,8 @@ def stage(snapshot, catalog, report, selected_models=()):
                 row = {'name': name, 'gtin': gtin, 'requiresIndependentPair': True}
                 updated['models'].append(row)
                 variants.append(row)
-        if len(variants) > 1 and 'variant' not in row and (color := common_color(offers)):
-            row['variant'] = color
+        if 'variant' not in row and (color := common_color(offers)):
+            confirmed_colors[key] = color
         row['offers'] = _public_offers(offers)
         target_key = f'{name}/{gtin}' if len(variants) > 1 else name
         targets = {o['url']: o for o in target_map.get(target_key, [])}
@@ -136,6 +136,11 @@ def stage(snapshot, catalog, report, selected_models=()):
         target_map[target_key] = list(targets.values())
         updated['checked_at'] = max(updated['checked_at'], max(o['observed_at'] for o in offers))
         staged.append({'name': name, 'gtin': gtin, 'offers': row['offers']})
+    variant_counts = Counter(row['name'] for row in updated['models'])
+    for row in updated['models']:
+        key = (row['name'], row['gtin'])
+        if variant_counts[row['name']] > 1 and key in confirmed_colors:
+            row['variant'] = confirmed_colors[key]
     return (updated if staged else snapshot), {'staged': staged, 'rejections': dict(reasons)}
 
 

@@ -51,6 +51,26 @@ class TwsStageUpdatesTest(unittest.TestCase):
         self.assertEqual(set(updated['sourceTargets']), {f'{MODEL}/{BLACK}', f'{MODEL}/{BLUE}'})
         self.assertEqual([r['gtin'] for r in result['staged']], [BLUE])
 
+    def test_new_colour_does_not_leave_a_reread_existing_variant_unnamed(self):
+        blue_ty = TY.replace('770699647', '770699648')
+        report = {'verified': [{'name': MODEL, 'observations': [
+            {'url': TY, 'merchant': 'Trendyol', 'gtin13': BLACK},
+            {'url': blue_ty, 'merchant': 'Trendyol', 'gtin13': BLUE},
+            {'url': N11, 'merchant': 'gelalbe', 'gtin13': BLUE},
+        ]}]}
+
+        def collect(host, targets, *, document_reader=None):
+            offers, failures = read(host, targets)
+            for offer in offers[MODEL]:
+                color = 'Siyah' if offer['gtin13'] == BLACK else 'Mavi'
+                offer['source_title'] = f'{MODEL} {color}'
+            return offers, failures
+
+        with patch('tws_stage_updates.reread', side_effect=collect):
+            updated, _ = stage(self.snapshot, self.catalog, report)
+        self.assertEqual({row['gtin']: row['variant'] for row in updated['models']},
+                         {BLACK: 'Siyah', BLUE: 'Mavi'})
+
     def test_four_verified_retailers_survive_staging_and_daily_refresh(self):
         vatan = 'https://www.vatanbilgisayar.com/huawei-freebuds-se-2-kulaklik-siyah.html'
         report = {'verified': [{'name': MODEL, 'observations': [
