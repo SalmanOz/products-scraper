@@ -75,6 +75,41 @@ def product_host(url):
         return None
 
 
+_CATALOG_ALIAS_PATHS = {
+    'www.mediamarkt.com.tr': re.compile(r'/tr/product/-([1-9]\d{5,11})\.html'),
+    'www.teknosa.com': re.compile(r'/-p-([1-9]\d{8,13})'),
+}
+
+
+def catalog_product_alias(url):
+    if not isinstance(url, str) or len(url) > 130:
+        return None
+    try:
+        route = urlparse(url)
+    except ValueError:
+        return None
+    pattern = _CATALOG_ALIAS_PATHS.get(route.netloc)
+    if pattern and (match := pattern.fullmatch(route.path)) and url == 'https://' + route.netloc + route.path:
+        return route.netloc, match[1]
+    return None
+
+
+def catalog_product_alias_redirect(alias, target):
+    identity = catalog_product_alias(alias)
+    if not identity or not isinstance(target, str) or len(target) > 500:
+        return None
+    host, product_id = identity
+    try:
+        route = urlparse(target)
+    except ValueError:
+        return None
+    if target != 'https://' + host + route.path:
+        return None
+    if host == 'www.mediamarkt.com.tr':
+        return target if re.fullmatch(r'/tr/product/_[a-z0-9-]+-' + product_id + r'\.html', route.path) else None
+    return target if product_host(target) == host and route.path.endswith('-p-' + product_id) else None
+
+
 def challenge_document(html):
     soup = BeautifulSoup(html, 'html.parser')
     title = ' '.join(n.get_text(' ', strip=True) for n in soup.select('title,h1'))
@@ -162,6 +197,7 @@ class PriorityRetailerTransport:
         self._resolved = {}
         self._redirect_diagnostics = {}
         self._category_redirects = {}
+        self._catalog_alias_redirects = {}
         self._lock = RLock()
 
     def configure_catalog_budget(self, count):
@@ -200,6 +236,11 @@ class PriorityRetailerTransport:
                 target = category_redirect_target(url, urljoin(url, location))
                 if target and state['rules'].can_fetch(BOT, target):
                     self._category_redirects[url] = target
+            if (accept == 'text/html' and result[2] in (301, 302, 307, 308)
+                    and isinstance(location, str) and len(location) <= 500 and catalog_product_alias(url)):
+                canonical = catalog_product_alias_redirect(url, urljoin(url, location))
+                if canonical and state['rules'].can_fetch(BOT, canonical):
+                    self._catalog_alias_redirects[url] = canonical
             if (allow_redirect and accept == 'text/html' and result[2] in (301, 302, 307, 308)
                     and isinstance(location, str) and len(location) <= 1000
                     and product_host(url) in ('www.trendyol.com', 'www.n11.com')):
@@ -238,6 +279,14 @@ class PriorityRetailerTransport:
 
     def redirect_diagnostic(self, url):
         return validated_n11_redirect_diagnostic(self._redirect_diagnostics.get(url))
+
+    def discover_canonical_product_url(self, alias):
+        identity = catalog_product_alias(alias)
+        if identity is None:
+            return None
+        if alias not in self._catalog_alias_redirects:
+            self._read_document(alias, identity[0])
+        return self._catalog_alias_redirects.get(alias)
 
     def category_redirect_url(self, url):
         return self._category_redirects.get(url)

@@ -18,6 +18,7 @@ from ayaz_phone_source import AYAZ_HOST, ayaz_phone_url
 from besken_phone_source import BESKEN_CATEGORY, BESKEN_HOST, BESKEN_PATH, besken_phone_url
 from catalog_source_collector import catalog_document_reader
 from laptop_retailer_sources import WORDS
+import onual_catalog_source as onual
 from ozgur_phone_source import OZGUR_HOST, ozgur_phone_url
 from pazarama_category_source import pazarama_product_url
 from pc_parts_multistore import DIRECT_PATHS, offer_host
@@ -41,7 +42,7 @@ INDIRIMLI = 'indirimli.com'
 TUBERKARAS = 'tuberkaras.com'
 UCUZYUM = 'www.ucuzyum.com'
 SOURCES = (AKAKCE, CIMRI, EPEY, URUNAI, KARSILASTIRICI, PAHALIMI, AMAHANGISI, INDIRIMLI,
-           TUBERKARAS, OZGUR_HOST, UCUZYUM, AYAZ_HOST, SERINAL_HOST, BESKEN_HOST, PTTAVM, NETHOUSE, KARSILASTIRMA_IO)
+           TUBERKARAS, OZGUR_HOST, UCUZYUM, AYAZ_HOST, SERINAL_HOST, BESKEN_HOST, PTTAVM, NETHOUSE, KARSILASTIRMA_IO, onual.HOST)
 DIRECT_RETAILER_SOURCES = {OZGUR_HOST, AYAZ_HOST, SERINAL_HOST, BESKEN_HOST, PTTAVM, NETHOUSE}
 URUNAI_CATEGORIES = {
     'telefon': 'phone', 'kulaklik': 'tws', 'laptop': 'laptop', 'monitor': 'monitor',
@@ -94,6 +95,7 @@ PRODUCT_SITEMAPS = {
     CIMRI: ('/sitemaps/product.xml', '/sitemaps/product_'),
     EPEY: ('/sitemap/urun.xml', '/sitemap/urun_'),
     AMAHANGISI: ('/sitemap.xml', '/sitemap/urunler-'),
+    onual.HOST: ('/sitemap.xml', '/sitemap/urunler-'),
 }
 PRODUCT_SITEMAP_LIMIT = 50 * 1024 * 1024
 PHONE_MEMORY = re.compile(r'(?: [1-9]\d? gb(?: ram)?)? (?:[1-9]\d{1,3} gb|[1-9] tb)$')
@@ -129,6 +131,7 @@ CARD = {
     KARSILASTIRICI: KARSILASTIRICI_PRODUCT,
     KARSILASTIRMA_IO: re.compile(r'/(' + '|'.join(KARSILASTIRMA_IO_CATEGORIES.values()) + r')/([a-z0-9-]{3,220})'),
     PAHALIMI: PAHALIMI_PRODUCT,
+    onual.HOST: onual.PRODUCT,
     AMAHANGISI: AMAHANGISI_PRODUCT,
     INDIRIMLI: KARSILASTIRICI_PRODUCT,
     TUBERKARAS: KARSILASTIRICI_PRODUCT,
@@ -451,7 +454,7 @@ def scan_source(host, kinds, indexes, start_page, pages, cursors=None, *, collec
         return scan_urunai(reader, kinds, indexes)
     if host == UCUZYUM:
         return scan_ucuzyum(reader, indexes['phone']) if 'phone' in kinds else ([], [])
-    if host == AMAHANGISI:
+    if host in (AMAHANGISI, onual.HOST):
         return scan_product_sitemap(host, kinds, indexes, cursors or {}, reader=reader, maximum=pages)
     if host == KARSILASTIRMA_IO:
         return scan_karsilastirma_io(reader, kinds, indexes)
@@ -665,6 +668,26 @@ def amahangisi_sitemap_cards(xml, kinds, indexes):
     return list(cards.values())
 
 
+def onual_sitemap_cards(xml, kinds, indexes):
+    cards = {}
+    for url in sitemap_locations(xml, 'urlset'):
+        if not url.startswith(onual.BASE + '/') or not (match := onual.PRODUCT.fullmatch(url.removeprefix(onual.BASE))):
+            continue
+        slug, product_id = match.groups()
+        title = slug.replace('-', ' ')
+        if not (kind := onual.category(title)) or kind not in kinds:
+            continue
+        if not in_scope(kind, title) or not additional_comparison_in_scope(kind, title):
+            continue
+        # Retailer warranty text otherwise obscures the catalog family.
+        if kind == 'phone':
+            title = re.sub(r'\b(?:[a-z0-9]+ )?turkiye garantili\b *', '', title).strip()
+        cards.setdefault((kind, product_id), {'id': product_id, 'title': title, 'url': url,
+            'source': onual.HOST, 'category': kind, 'catalogSlug': catalog_match(title, indexes[kind]),
+            'titleFromSitemap': True})
+    return list(cards.values())
+
+
 def scan_product_sitemap(host, kinds, indexes, cursors, *, reader=None, maximum=1):
     reader = reader or comparison_reader(host)
     index_path, shard_prefix = PRODUCT_SITEMAPS[host]
@@ -677,14 +700,14 @@ def scan_product_sitemap(host, kinds, indexes, cursors, *, reader=None, maximum=
         return [{**report, 'status': reason}], []
     try:
         shards = sorted({int(match[1]) for url in sitemap_locations(index, 'sitemapindex')
-                         if (match := shard_url.fullmatch(url))}, reverse=host == CIMRI)
+                         if (match := shard_url.fullmatch(url))}, reverse=host in (CIMRI, onual.HOST))
     except (ValueError, ElementTree.ParseError):
         return [{**report, 'status': 'invalid_product_sitemap_index'}], []
     if not shards:
         return [{**report, 'status': 'product_sitemap_shards_missing'}], []
     start = shards.index(report['nextPage']) if report['nextPage'] in shards else 0
     parse_cards = {CIMRI: cimri_sitemap_cards, EPEY: epey_sitemap_cards,
-                   AMAHANGISI: amahangisi_sitemap_cards}[host]
+                   AMAHANGISI: amahangisi_sitemap_cards, onual.HOST: onual_sitemap_cards}[host]
     rows = {}
     report.update(status='sitemap_read', pages=1, shardsRead=[])
     for offset in range(start, min(len(shards), start + maximum)):
@@ -939,6 +962,7 @@ def scan_retailer_leads(state, host, kinds, maximum, now, priority=(), pinned=()
         candidates[kind] = first + [row for cycle in zip_longest(gaps, complementary, rest)
                                     for row in cycle if row is not None]
     reader = comparison_reader(host, collection=collection, maximum_per_host=maximum)
+    resolve = onual.product_link_reader(maximum) if host == onual.HOST else None
     offsets = Counter()
     outcomes = Counter()
     # Give priority to the phone and earbud queues after every category has
@@ -970,7 +994,11 @@ def scan_retailer_leads(state, host, kinds, maximum, now, priority=(), pinned=()
                     continue
                 row['title'] = title
                 row.pop('titleFromSitemap')
-            leads = comparison_retailer_leads(html, host, row['url'])
+            if resolve:
+                leads = sorted({target for raw in onual.public_links(html, row['url'])
+                                for destination in resolve(raw) if (target := comparison_lead_destination(destination))})
+            else:
+                leads = comparison_retailer_leads(html, host, row['url'])
             if leads or host != TUBERKARAS:
                 row['retailerLeads'] = leads
             row['leadStatus'] = 'direct_retailer_links' if leads else 'direct_retailer_links_missing'
@@ -1214,9 +1242,10 @@ def main():
                    if row['status'] in STOP_SOURCE or row['status'] in SITE_LEAD_RETRY}
         if args.lead_only and args.akakce_budget:
             akakce_leads = min(args.lead_limit, args.akakce_budget)
-        limits = {host: akakce_leads if host == AKAKCE else min(args.lead_limit, 16)
-                  if host in ADDITIONAL_COMPARISON_CATEGORIES or host in (UCUZYUM, KARSILASTIRMA_IO)
-                  else args.lead_limit for host in hosts}
+        source_caps = {host: 16 for host in (*ADDITIONAL_COMPARISON_CATEGORIES, UCUZYUM, KARSILASTIRMA_IO)}
+        source_caps[onual.HOST] = 10
+        limits = {host: akakce_leads if host == AKAKCE else min(args.lead_limit, source_caps.get(host, args.lead_limit))
+                  for host in hosts}
         known_leads = lead_inventory(state)
         with ThreadPoolExecutor(max_workers=len(hosts)) as pool:
             jobs = [pool.submit(scan_source_leads, state, host, kinds, limits[host], now,

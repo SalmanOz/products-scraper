@@ -1,5 +1,6 @@
 import unittest
 from pathlib import Path
+from urllib.parse import urlencode
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 
@@ -10,9 +11,37 @@ from competitor_catalog_gaps import (AMAHANGISI, INDIRIMLI, KARSILASTIRMA_IO, TU
                                      lead_inventory, phone_family, retailer_destination, scan_retailer_leads,
                                      scan_source_leads)
 from ozgur_phone_source import OZGUR_HOST
+import onual_catalog_source as onual
 
 
 class CompetitorCatalogGapsTest(unittest.TestCase):
+    def test_onual_sitemap_keeps_only_in_scope_products_and_routes_merchant_aliases(self):
+        url = 'https://onual.com/urun/samsung-galaxy-a37-5g-6-gb-128-gb-siyah-p-42'
+        accessory = 'https://onual.com/urun/samsung-galaxy-a37-5g-uyumlu-kilif-p-43'
+        index = {'phone': identity_index([{'name': 'Samsung Galaxy A37 5G', 'slug': 'samsung-galaxy-a37-5g'}])}
+        reader = Mock()
+        reader._read_document.side_effect = [
+            ('<sitemapindex><sitemap><loc>https://onual.com/sitemap/urunler-1.xml</loc></sitemap>'
+             '<sitemap><loc>https://onual.com/sitemap/urunler-2.xml</loc></sitemap></sitemapindex>', 'document_read', 200),
+            (f'<urlset><url><loc>{url}</loc></url><url><loc>{accessory}</loc></url></urlset>', 'document_read', 200),
+        ]
+        with patch('competitor_catalog_gaps.comparison_reader', return_value=reader):
+            reports, rows = scan_source(onual.HOST, ['phone'], index, 1, 1)
+        self.assertEqual(reports[0]['shardsRead'], [2])
+        self.assertEqual(reports[0]['nextPage'], 1)
+        self.assertEqual([row['url'] for row in rows], [url])
+        self.assertEqual(candidate_family('phone', rows[0]['title'], index['phone']), 'samsung-galaxy-a37-5g')
+        self.assertNotIn('retailerLeads', rows[0])
+
+        alias = 'https://www.teknosa.com/-p-100000123456'
+        wrapper = 'https://zxro.com/u/?' + urlencode({'redirect': '1', 'url': alias}).replace('&', '&amp;')
+        html = f'''<link rel="canonical" href="{url}">
+          <a class="product-detail-btn" target="_blank" rel="noopener" href="{wrapper}">9 TL</a>
+          <a class="other-store-item" target="_blank" rel="noopener" href="{wrapper}&amp;redirect=1">duplicate</a>
+          <a rel="noopener" target="_blank" href="https://www.teknosa.com/other-p-100000123456">related</a>'''
+        self.assertEqual(onual.public_links(html, url), [alias])
+        self.assertEqual(onual.public_links(html, accessory), [])
+
     def test_karsilastirma_io_category_sitemap_and_scoped_retailer_links(self):
         url = 'https://karsilastirma.io/kulaklik/anker-soundcore-aerofit-2'
         retailer = 'https://www.n11.com/urun/anker-soundcore-aerofit-2-123456?magaza=sample'

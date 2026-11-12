@@ -16,6 +16,34 @@ URLS = (
 
 
 class PriorityRetailerTests(unittest.TestCase):
+    def test_discovery_alias_only_records_a_robots_allowed_redirect_to_the_same_product(self):
+        alias = 'https://www.teknosa.com/-p-100000123456'
+        canonical = URLS[3]
+        for destination, allowed, expected in (
+            (canonical, True, canonical),
+            (canonical, False, None),
+            (canonical.replace('123456', '123457'), True, None),
+            (canonical + '?shopId=123', True, None),
+            (canonical.replace('teknosa.com/', 'teknosa.com.example/'), True, None),
+        ):
+            with self.subTest(destination=destination, allowed=allowed):
+                calls = []
+
+                def get(url, **_):
+                    calls.append(url)
+                    if url.endswith('robots.txt'):
+                        path = canonical.removeprefix('https://www.teknosa.com')
+                        rules = 'Allow: /' if allowed else 'Disallow: ' + path
+                        return Response(url, 'User-agent: *\n' + rules + '\n')
+                    response = Response(url, '', status=301)
+                    response.headers['Location'] = destination
+                    return response
+
+                transport = PriorityRetailerTransport(get=get, sleep=lambda _: None, browser_fallback=False)
+                self.assertEqual(transport.discover_canonical_product_url(alias), expected)
+                self.assertEqual(calls, ['https://www.teknosa.com/robots.txt', alias])
+                self.assertEqual(transport.resolved_url(alias), alias)
+
     def test_unavailable_robots_policy_can_allow_a_public_pdp_but_never_retry_a_denial(self):
         url = URLS[3]
         host = 'www.teknosa.com'

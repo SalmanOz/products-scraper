@@ -202,23 +202,33 @@ def _product_cards(soup, *, include_promoted=True):
     return cards
 
 
-def public_model_search_cards(html, query):
-    """Route organic cards only when the visible search echoes the query."""
+def _organic_search_cards(html, query):
     if not isinstance(html, str) or len(html.encode()) > MAX_HTML_BYTES:
         return [], 'invalid_search_document'
     soup = BeautifulSoup(html, 'html.parser')
     headings = soup.select('h1')
     title = ' '.join(headings[0].stripped_strings) if len(headings) == 1 else ''
     echoed = re.fullmatch(r'"([^"]+)"\s+araması\s*\(\d+(?:\.\d{3})*\+? ürün\)', title, re.I)
-    # The public search can echo "note13" for "Note 13". Ignore spacing
-    # and case only, preserving every model qualifier and punctuation mark.
     if not echoed or re.sub(r'\s+', '', echoed[1].casefold()) != re.sub(r'\s+', '', query.casefold()):
         return [], 'search_query_identity_missing'
+    return _product_cards(soup, include_promoted=False), 'parsed'
+
+
+def public_model_search_cards(html, query):
+    """Route organic cards only when the visible search echoes the model."""
+    cards, reason = _organic_search_cards(html, query)
     matcher = TRPriceScraper()
-    cards = [card for card in _product_cards(soup, include_promoted=False)
-             if matcher.is_strict_match(query, card['discovery_title'], {})
-             and matcher.is_strict_match(query, urlparse(card['source_url']).path.replace('-', ' '), {})]
-    return cards, 'parsed'
+    return [card for card in cards if matcher.is_strict_match(query, card['discovery_title'], {})
+            and matcher.is_strict_match(query, urlparse(card['source_url']).path.replace('-', ' '), {})], reason
+
+
+def public_sku_search_urls(html, sku):
+    """Resolve a native Hepsiburada search link by its exact selected SKU."""
+    if not isinstance(sku, str) or not re.fullmatch(r'HBCV[A-Z0-9]{5,30}', sku):
+        return []
+    cards, _ = _organic_search_cards(html, sku)
+    return sorted({card['source_url'] for card in cards
+                   if urlparse(card['source_url']).path.endswith('-p-' + sku)})
 
 
 def parse_category_document(html, url, diagnostic=None):
