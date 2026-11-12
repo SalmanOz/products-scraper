@@ -469,8 +469,9 @@ def run(state, slugs, client=None, *, publish=False, maximum=24, products=None, 
         products = client.get_published_products()
     products = {product['slug']: product for product in products}
     results = []
+    phone_reader = catalog_document_reader('phone')
     transport = PriorityRetailerTransport(maximum_per_host=maximum, browser_fallback=False,
-                                          get=catalog_document_reader('phone'),
+                                          get=phone_reader,
                                           n11_collector=client.n11_document_get if client else None,
                                           unavailable_robots_hosts=('www.teknosa.com', 'www.pazarama.com'))
     direct = {}
@@ -478,7 +479,8 @@ def run(state, slugs, client=None, *, publish=False, maximum=24, products=None, 
         direct['www.hepsiburada.com'] = PriorityRetailerTransport(maximum_per_host=maximum,
             browser_fallback=False, get=_hepsiburada_public_get)
         direct[OZGUR_HOST] = PriorityRetailerTransport(maximum_per_host=maximum, browser_fallback=False)
-        direct[AYAZ_HOST] = PriorityRetailerTransport(maximum_per_host=min(maximum, 8), browser_fallback=False)
+        direct[AYAZ_HOST] = PriorityRetailerTransport(maximum_per_host=min(maximum, 8),
+            browser_fallback=False, get=phone_reader)
     if public_audit:
         direct['www.vatanbilgisayar.com'] = PriorityRetailerTransport(maximum_per_host=maximum,
             browser_fallback=False)
