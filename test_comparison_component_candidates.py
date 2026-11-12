@@ -47,7 +47,7 @@ class ComponentDiscoveryTest(unittest.TestCase):
                 patch('comparison_component_candidates.collect_targets', return_value=offers), \
                 patch('comparison_component_candidates._image', return_value=b'photo') as download:
             report = stage(state, {'parts': []}, profiles, Path(directory), 1)
-            self.assertEqual(report['primaryReader'], 'runner')
+            self.assertEqual(report['primaryReaders'], {INCEHESAP: 'runner', SINERJI: 'site'})
             self.assertEqual(report['rejections'], {'http_403': 1})
             part, = report['staged']
             self.assertEqual(part['sourceUrl'], SIBLING)

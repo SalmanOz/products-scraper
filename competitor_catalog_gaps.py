@@ -134,6 +134,7 @@ CARD_SELECTOR = {
 MODEL_TOKEN = re.compile(r'[a-zA-Z0-9]+(?:[-./_][a-zA-Z0-9]+)*')
 STOP_SOURCE = {'http_403', 'http_429', 'challenge_page', 'source_circuit_open',
                'source_cooldown', 'transport_error', 'category_budget_exhausted'}
+SITE_LEAD_RETRY = {'http_403', 'robots_http_403', 'challenge_page', 'transport_error'}
 
 
 def category_url(host, path, page):
@@ -875,7 +876,24 @@ def scan_retailer_leads(state, host, kinds, maximum, now, priority=(), pinned=()
                 row['retailerLeads'] = leads
             row['leadStatus'] = 'direct_retailer_links' if leads else 'direct_retailer_links_missing'
             outcomes[row['leadStatus']] += 1
-    return {'source': host, 'requests': sum(offsets.values()), 'outcomes': dict(outcomes)}
+    return {'source': host, 'collection': collection, 'requests': sum(offsets.values()), 'outcomes': dict(outcomes)}
+
+
+def scan_source_leads(state, host, kinds, maximum, now, priority, pinned, *,
+                      collection, known_leads, stopped_reason=None, site_fallback=False):
+    scans = []
+    if not stopped_reason:
+        scan = scan_retailer_leads(state, host, kinds, maximum, now, priority, pinned,
+                                   collection=collection, known_leads=known_leads)
+        scans.append(scan)
+        maximum -= scan['requests']
+        denied = scan['outcomes'].keys() & SITE_LEAD_RETRY
+    else:
+        denied = stopped_reason in SITE_LEAD_RETRY
+    if site_fallback and collection == 'runner' and host in (CIMRI, EPEY) and denied and maximum:
+        scans.append(scan_retailer_leads(state, host, kinds, maximum, now, priority, pinned,
+                                        collection='site', known_leads=known_leads))
+    return scans
 
 
 def write_json(path, payload):
@@ -1038,6 +1056,8 @@ def main():
     parser.add_argument('--start-page', type=int, default=1)
     parser.add_argument('--pages', type=int, default=2)
     parser.add_argument('--lead-limit', type=int, default=0, help='Maximum detail pages per source for direct retailer URLs')
+    parser.add_argument('--site-lead-fallback', action='store_true',
+                        help='Retry blocked Cimri and Epey detail reads through the scoped site collector')
     parser.add_argument('--akakce-budget', type=int, default=0,
                         help='Share a request budget between Akakçe category pages and retailer-link discovery')
     args = parser.parse_args()
@@ -1048,6 +1068,9 @@ def main():
         parser.error('Select a positive page number and up to 40 category requests per source')
     if not 0 <= args.lead_limit <= 40:
         parser.error('Select up to 40 detail pages per source')
+    if args.site_lead_fallback and (args.collection != 'runner' or not args.lead_limit or
+                                   catalog_document_reader('competitor') is None):
+        parser.error('Site lead fallback requires direct collection, a lead budget and catalog OIDC')
     if args.lead_only and (not args.state or not args.state.is_file() or not args.lead_limit):
         parser.error('Lead-only mode needs a saved state and a positive lead limit')
     if args.akakce_budget and not len(kinds) <= args.akakce_budget <= 40:
@@ -1088,18 +1111,20 @@ def main():
     merge_state(state, sources, observed, indexes, now)
     lead_scans = []
     if args.lead_limit:
-        stopped = {row['source'] for row in sources if row['status'] in STOP_SOURCE}
+        stopped = {row['source']: row['status'] for row in sources
+                   if row['status'] in STOP_SOURCE or row['status'] in SITE_LEAD_RETRY}
         if args.lead_only and args.akakce_budget:
             akakce_leads = min(args.lead_limit, args.akakce_budget)
         limits = {host: akakce_leads if host == AKAKCE else min(args.lead_limit, 16)
                   if host in ADDITIONAL_COMPARISON_CATEGORIES or host == UCUZYUM else args.lead_limit for host in hosts}
         known_leads = lead_inventory(state)
         with ThreadPoolExecutor(max_workers=len(hosts)) as pool:
-            jobs = [pool.submit(scan_retailer_leads, state, host, kinds, limits[host], now,
+            jobs = [pool.submit(scan_source_leads, state, host, kinds, limits[host], now,
                                 priority, set(args.prioritize_model), collection=args.collection,
-                                known_leads=known_leads)
-                    for host in hosts if host not in (OZGUR_HOST, AYAZ_HOST) and host not in stopped and limits[host]]
-            lead_scans = [job.result() for job in jobs]
+                                known_leads=known_leads, stopped_reason=stopped.get(host),
+                                site_fallback=args.site_lead_fallback)
+                    for host in hosts if host not in (OZGUR_HOST, AYAZ_HOST) and limits[host]]
+            lead_scans = [scan for job in jobs for scan in job.result()]
     if args.state is not None:
         write_json(args.state, state)
     for host, path in ((AKAKCE, args.export_akakce_snapshot), (EPEY, args.export_epey_snapshot),

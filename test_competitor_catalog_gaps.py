@@ -7,7 +7,8 @@ from ayaz_phone_source import AYAZ_BASE, AYAZ_HOST
 from competitor_catalog_gaps import (AKAKCE, CIMRI, EPEY, KARSILASTIRICI, PAHALIMI, URUNAI, akakce_limits, candidate_family, cimri_sitemap_cards, epey_earbud_title, epey_sitemap_cards, export_source_snapshot, import_source_snapshot, product_state_key, scan_product_sitemap, scan_source, urunai_market_slugs, urunai_sitemap_cards, catalog_match, category_url, comparison_cards, comparison_retailer_leads,
                                      identity_index, in_scope, merge_state, read_state)
 from competitor_catalog_gaps import (AMAHANGISI, INDIRIMLI, TUBERKARAS, UCUZYUM, comparison_lead_destination,
-                                     lead_inventory, phone_family, retailer_destination, scan_retailer_leads)
+                                     lead_inventory, phone_family, retailer_destination, scan_retailer_leads,
+                                     scan_source_leads)
 from ozgur_phone_source import OZGUR_HOST
 
 
@@ -136,6 +137,26 @@ class CompetitorCatalogGapsTest(unittest.TestCase):
                                 priority={'apple-iphone-16-plus'}, known_leads=lead_inventory(state))
         self.assertEqual([call.args[0] for call in reader._read_document.call_args_list],
                          [gap['url'], complement['url'], regular['url']])
+
+    def test_comparison_lead_fallback_preserves_budget_and_rate_limit(self):
+        state = {'products': {}}
+        with patch('competitor_catalog_gaps.scan_retailer_leads') as scan:
+            for host, reason, stopped, expected in (
+                    (CIMRI, 'http_403', None, [('runner', 4), ('site', 3)]),
+                    (EPEY, None, 'http_403', [('site', 4)]),
+                    (CIMRI, 'http_429', None, [('runner', 4)]),
+                    (CIMRI, None, 'category_budget_exhausted', []),
+                    (AKAKCE, 'http_403', None, [('runner', 4)])):
+                with self.subTest(host=host, reason=reason, stopped=stopped):
+                    scan.reset_mock()
+                    scan.side_effect = lambda *_args, collection, **_kwargs: {
+                        'collection': collection, 'requests': 1,
+                        'outcomes': {(reason or 'direct_retailer_links'): 1}}
+                    reports = scan_source_leads(state, host, ['phone'], 4, '2026-11-12', (), (),
+                                                collection='runner', known_leads={},
+                                                stopped_reason=stopped, site_fallback=True)
+                    self.assertEqual([report['collection'] for report in reports], [route for route, _ in expected])
+                    self.assertEqual([(call.kwargs['collection'], call.args[3]) for call in scan.call_args_list], expected)
 
     def test_amahangisi_discovers_only_native_sitemap_products_and_direct_offer_links(self):
         root = f'https://{AMAHANGISI}'
