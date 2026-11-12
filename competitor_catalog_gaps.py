@@ -23,6 +23,7 @@ from pc_parts_multistore import DIRECT_PATHS, offer_host
 from public_retailer_sources import public_source
 import requests
 from priority_retailer_transport import PriorityRetailerTransport, compatible_get, product_host
+from serinal_phone_source import SERINAL_CATEGORY, SERINAL_HOST, SERINAL_PATH, serinal_phone_url
 
 AKAKCE = 'www.akakce.com'
 CIMRI = 'www.cimri.com'
@@ -35,7 +36,8 @@ INDIRIMLI = 'indirimli.com'
 TUBERKARAS = 'tuberkaras.com'
 UCUZYUM = 'www.ucuzyum.com'
 SOURCES = (AKAKCE, CIMRI, EPEY, URUNAI, KARSILASTIRICI, PAHALIMI, AMAHANGISI, INDIRIMLI,
-           TUBERKARAS, OZGUR_HOST, UCUZYUM, AYAZ_HOST)
+           TUBERKARAS, OZGUR_HOST, UCUZYUM, AYAZ_HOST, SERINAL_HOST)
+DIRECT_PHONE_STORES = {OZGUR_HOST, AYAZ_HOST, SERINAL_HOST}
 URUNAI_CATEGORIES = {
     'telefon': 'phone', 'kulaklik': 'tws', 'laptop': 'laptop', 'monitor': 'monitor',
     'islemci': 'cpu', 'anakart': 'motherboard', 'ram-bellek': 'ram', 'ekran-karti': 'gpu',
@@ -56,6 +58,7 @@ ADDITIONAL_COMPARISON_CATEGORIES = {
     TUBERKARAS: {'phone': '/kategori/telefon', 'tws': '/kategori/kulaklik'},
     OZGUR_HOST: {'phone': '/telefon'},
     AYAZ_HOST: {'phone': '/kategori/cep-telefonu'},
+    SERINAL_HOST: {'phone': SERINAL_CATEGORY},
 }
 PAHALIMI_CATEGORIES = {'phone': '/kategori/cep-telefonu', 'laptop': '/kategori/dizustu-bilgisayar',
                        'monitor': '/kategori/monitor', 'tws': '/kategori/kulaklik'}
@@ -118,6 +121,7 @@ CARD = {
     TUBERKARAS: KARSILASTIRICI_PRODUCT,
     OZGUR_HOST: re.compile(r'/urun/([a-z0-9-]{6,250})'),
     AYAZ_HOST: re.compile(r'/urun/([a-z0-9-]{6,250})'),
+    SERINAL_HOST: SERINAL_PATH,
     UCUZYUM: re.compile(r'/[a-z0-9-]{3,220}-cep-telefonu-([1-9]\d{3,9})'),
 }
 CARD_SELECTOR = {
@@ -130,6 +134,7 @@ CARD_SELECTOR = {
     TUBERKARAS: 'article.urun-satir .satir-bilgi h3 > a[href]',
     OZGUR_HOST: 'h2.oi-card-title > a[href]',
     AYAZ_HOST: '.showcase-title > a[href][title]',
+    SERINAL_HOST: '.card-product-inner > a.c-p-i-link[href][title]:has(> .title)',
 }
 MODEL_TOKEN = re.compile(r'[a-zA-Z0-9]+(?:[-./_][a-zA-Z0-9]+)*')
 STOP_SOURCE = {'http_403', 'http_429', 'challenge_page', 'source_circuit_open',
@@ -144,7 +149,7 @@ def category_url(host, path, page):
         return f'https://{host}{path.removesuffix(".html")},{page}.html'
     if host == EPEY:
         return f'https://{host}{path}{page}/'
-    if host in (PAHALIMI, INDIRIMLI):
+    if host in (PAHALIMI, INDIRIMLI, SERINAL_HOST):
         return f'https://{host}{path}?sayfa={page}'
     if host == AYAZ_HOST:
         return f'https://{host}{path}?tp={page}'
@@ -209,6 +214,8 @@ def comparison_cards(html, host, url):
             elif host == OZGUR_HOST and ozgur_phone_url(card['url']):
                 card['retailerLeads'] = [card['url']]
             elif host == AYAZ_HOST and ayaz_phone_url(card['url']):
+                card['retailerLeads'] = [card['url']]
+            elif host == SERINAL_HOST and serinal_phone_url(card['url']):
                 card['retailerLeads'] = [card['url']]
     return cards.values(), links
 
@@ -691,7 +698,7 @@ def retailer_destination(raw):
             r'/tr/product/_[a-z0-9-]+-[1-9]\d{5,11}\.html', route.path)
     )
     if (product_host(url) or first_party and not selectors or pazarama_product_url(url)
-            or ozgur_phone_url(url) or ayaz_phone_url(url)):
+            or ozgur_phone_url(url) or ayaz_phone_url(url) or serinal_phone_url(url)):
         return url
     if route.netloc in DIRECT_PATHS and offer_host(url):
         return url
@@ -1136,7 +1143,7 @@ def main():
                                 priority, set(args.prioritize_model), collection=args.collection,
                                 known_leads=known_leads, stopped_reason=stopped.get(host),
                                 site_fallback=args.site_lead_fallback)
-                    for host in hosts if host not in (OZGUR_HOST, AYAZ_HOST) and limits[host]]
+                    for host in hosts if host not in DIRECT_PHONE_STORES and limits[host]]
             lead_scans = [scan for job in jobs for scan in job.result()]
     if args.state is not None:
         write_json(args.state, state)
