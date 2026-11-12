@@ -129,6 +129,15 @@ class ComparisonPhoneOffersTest(unittest.TestCase):
                  'phoneOfferAudits': {'family-5': '2026-11-12T05:00:00+00:00'}}
         self.assertEqual(audit_queue(state, products, maximum=4), [*products[:3], products[6]])
 
+    def test_unpriced_variants_get_most_slots_even_when_priced_variants_are_unaudited(self):
+        products = [{'slug': f'model-{i}', 'name': f'Model {i}', 'attributes': {'storage_gb': 128},
+                     'fresh_offer_count': 0 if i < 5 else 2} for i in range(12)]
+        state = {'products': {}, 'phoneNativeLeads': {row['slug']: [HB] for row in products if row is not products[4]},
+                 'phoneOfferAudits': {row['slug']: '2026-11-12T07:00:00+00:00' for row in products[:4]}}
+        self.assertEqual(audit_queue(state, products, maximum=4), [*products[:2], products[10], products[4]])
+        self.assertEqual(set(row['slug'] for row in audit_queue(state, products, maximum=24)),
+                         set(row['slug'] for row in products))
+
     def test_hepsiburada_phone_search_requires_the_exact_echo_and_catalog_memory(self):
         search = Mock()
         wide = HB.replace('128-gb', '256-gb')

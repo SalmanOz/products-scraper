@@ -1,4 +1,58 @@
 {
+  "Anker Soundcore AeroClip": {
+    "summary": "AeroClip, kulağı kapatmayan klipsli bir kablosuz kulaklık. Üretici, şarj kutusuyla 32 saate kadar müzik dinleme süresi belirtiyor.",
+    "highlights": ["Açık kulak klipsi", "12 mm titanyum kaplamalı sürücü", "İki cihaza bağlantı"],
+    "specSource": "https://www.soundcore.com/products/a3388-aeroclip-open-earbuds",
+    "specs": [
+      {"label": "Tasarım", "value": "Açık kulak, klipsli"},
+      {"label": "Sürücü", "value": "12 mm titanyum kaplamalı dinamik"},
+      {"label": "Tek şarjla müzik", "value": "8 saate kadar"},
+      {"label": "Kutuyla toplam müzik", "value": "32 saate kadar"},
+      {"label": "Bluetooth", "value": "5.4"},
+      {"label": "Dayanıklılık", "value": "IP55 (kulaklıklar)"},
+      {"label": "Hızlı şarj", "value": "10 dakika şarjla 3 saate kadar dinleme"}
+    ]
+  },
+  "Anker Soundcore V20i": {
+    "summary": "V20i, döndürülebilir kulak kancalarıyla oturuşu ayarlanabilen açık kulak tasarımına sahip. Kutuyla toplam dinleme süresi üreticiye göre 36 saate kadar çıkıyor.",
+    "highlights": ["Dört konumlu kulak kancası", "16 mm sürücü", "Kutuyla 36 saate kadar dinleme"],
+    "specSource": "https://www.soundcore.com/products/soundcore-v20i",
+    "specs": [
+      {"label": "Tasarım", "value": "Açık kulak, ayarlanabilir kancalı"},
+      {"label": "Sürücü", "value": "16 mm, titanyum kaplamalı diyafram"},
+      {"label": "Tek şarjla müzik", "value": "8 saate kadar"},
+      {"label": "Kutuyla toplam müzik", "value": "36 saate kadar"},
+      {"label": "Bluetooth", "value": "5.4"},
+      {"label": "Ses kodekleri", "value": "SBC ve AAC"}
+    ]
+  },
+  "Anker Soundcore Sleep A30": {
+    "summary": "Sleep A30, uyku için tasarlanmış aktif gürültü engellemeli bir kulaklık. Üreticinin uyku testinde tek şarjla 9 saate, kutuyla 45 saate kadar çalışıyor.",
+    "highlights": ["Uykuya yönelik aktif gürültü engelleme", "Bluetooth 5.3", "IPX4 kulaklık koruması"],
+    "specSource": "https://service.soundcore.com/article-description/soundcore-Sleep-A30-Earbuds-FAQ",
+    "specs": [
+      {"label": "Gürültü kontrolü", "value": "Aktif gürültü engelleme"},
+      {"label": "Tek şarjla kullanım", "value": "9 saate kadar (üreticinin uyku testinde)"},
+      {"label": "Kutuyla toplam kullanım", "value": "45 saate kadar (üreticinin uyku testinde)"},
+      {"label": "Bluetooth", "value": "5.3"},
+      {"label": "Ses kodekleri", "value": "SBC ve AAC"},
+      {"label": "Dayanıklılık", "value": "IPX4 (kulaklıklar)"},
+      {"label": "Şarj kutusu kapasitesi", "value": "800 mAh"}
+    ]
+  },
+  "Anker Soundcore R60i NC": {
+    "summary": "R60i NC, aktif gürültü engelleme ve LDAC desteği sunan bir tam kablosuz kulaklık. Üretici normal modda kutuyla 50, ANC açıkken 40 saate kadar dinleme süresi belirtiyor.",
+    "highlights": ["Aktif gürültü engelleme", "LDAC", "İki cihaza bağlantı"],
+    "specSource": "https://service.soundcore.com/article-description/soundcore-P31i-R60i-NC-FAQ",
+    "specs": [
+      {"label": "Gürültü kontrolü", "value": "Aktif gürültü engelleme ve şeffaf mod"},
+      {"label": "Tek şarjla müzik", "value": "10 saate kadar (normal mod), 8 saate kadar (ANC)"},
+      {"label": "Kutuyla toplam müzik", "value": "50 saate kadar (normal mod), 40 saate kadar (ANC)"},
+      {"label": "Ses kodekleri", "value": "LDAC desteği"},
+      {"label": "Çoklu cihaz bağlantısı", "value": "İki cihaz, LDAC ile de kullanılabilir"},
+      {"label": "Kontrol", "value": "Özelleştirilebilir dokunmatik kontroller"}
+    ]
+  },
   "Sennheiser Momentum True Wireless 4": {
     "summary": "Momentum True Wireless 4, hibrit aktif gürültü engelleme ve 7 mm dinamik sürücüler sunar. Sennheiser, şarj kutusuyla toplam 30 saate kadar müzik dinleme süresi belirtiyor.",
     "highlights": ["Hibrit aktif gürültü engelleme", "aptX Adaptive ve Lossless", "Qi kablosuz şarj"],

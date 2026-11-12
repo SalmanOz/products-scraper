@@ -17,6 +17,13 @@ class EarbudLeadAuditTest(unittest.TestCase):
         self.assertEqual(identify('CMF by Nothing Buds 2a'), 'Nothing CMF Buds 2a')
         self.assertEqual(identify('Nothing EARA'), 'Nothing Ear (a)')
         self.assertIsNone(identify('Nothing Ear (3) Koruma Kılıfı'))
+        self.assertEqual(identify('Anker Soundcore AeroClip Siyah'), 'Anker Soundcore AeroClip')
+        self.assertIsNone(identify('Anker Soundcore AeroClip Special'))
+        self.assertEqual(identify('Anker Soundcore P31i R60i'), 'Anker Soundcore R60i NC')
+        self.assertIsNone(identify('Anker Soundcore R50i NC R60i ile Uyumlu Kılıf'))
+        self.assertIsNone(identify('Anker Soundcore Sleep A30 Special'))
+        self.assertIsNone(identify('Anker Soundcore Sleep A30 Kablosuz Kulaklık D1301S'))
+        self.assertEqual(identify('Anker Soundcore Sleep A30 D1301'), 'Anker Soundcore Sleep A30')
 
     def test_earbud_budget_services_distinct_models_before_more_urls_for_one_model(self):
         host = 'www.n11.com'

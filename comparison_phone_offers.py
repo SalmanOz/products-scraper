@@ -345,7 +345,7 @@ def round_robin_phone_families(rows, maximum):
 
 def audit_queue(state, products, maximum=8):
     audited = state.get('phoneOfferAudits', {})
-    candidates, unrouted = [], []
+    unpriced, priced, unrouted = [], [], []
     index = phone_lead_index(state, expanded=True)
     for product in products:
         slug = product['slug']
@@ -354,17 +354,29 @@ def audit_queue(state, products, maximum=8):
         urls = [*indexed_phone_leads(index, slug), *saved_phone_leads(state, slug)]
         storage = PriceUpdater.get_expected_specs(product['attributes']).get('storage_gb')
         compatible_hosts = {urlsplit(url).netloc for url in urls if capacity_priority(url, storage) < 2}
+        needs_price = product.get('fresh_offer_count') in (0, '0')
         if compatible_hosts:
-            candidates.append((product, len(compatible_hosts)))
-        elif TRPriceScraper._spec_int(storage) and product.get('fresh_offer_count') in (0, '0'):
+            (unpriced if needs_price else priced).append((product, len(compatible_hosts)))
+        elif TRPriceScraper._spec_int(storage) and needs_price:
             unrouted.append(product)
-    ranked = sorted(candidates, key=lambda entry: (
-        audited.get(entry[0]['slug'], ''), entry[0].get('fresh_offer_count') not in (0, '0'),
-        -min(entry[1], 2), entry[0]['slug']))
-    reserved = min(len(unrouted), maximum // 4)
-    selected = round_robin_phone_families((row for row, _ in ranked), maximum - reserved)
+
+    def ranked(rows):
+        return [row for row, _ in sorted(rows, key=lambda entry: (
+            audited.get(entry[0]['slug'], ''), -min(entry[1], 2), entry[0]['slug']))]
+
+    # Keep discovery slots for variants with no retailer routes and reserve
+    # some capacity for finding additional independent sellers on priced models.
+    unpriced = ranked(unpriced)
+    priced = ranked(priced)
     unrouted.sort(key=lambda row: (audited.get(row['slug'], ''), row['slug']))
-    return selected + round_robin_phone_families(unrouted, maximum - len(selected))
+    discovery_slots = min(len(unrouted), maximum // 4)
+    priced_slots = min(len(priced), maximum // 4)
+    selected = round_robin_phone_families(unpriced, maximum - discovery_slots - priced_slots)
+    selected += round_robin_phone_families(priced, priced_slots)
+    selected += round_robin_phone_families(unrouted, discovery_slots)
+    selected_slugs = {row['slug'] for row in selected}
+    overflow = [row for row in (*unpriced, *unrouted, *priced) if row['slug'] not in selected_slugs]
+    return selected + round_robin_phone_families(overflow, maximum - len(selected))
 
 
 def n11_phone_leads(name, specs, reader, excluded_urls, cache=None):
@@ -565,7 +577,7 @@ def run(state, slugs, client=None, *, publish=False, maximum=24, products=None, 
             discovered += indexed_phone_leads(lead_index, slug)
             if public_audit:
                 discovered += saved_phone_leads(state, slug)
-            known = published_offer_urls(slug) if public_audit else ()
+            known = published_offer_urls(slug) if public_audit and product.get('fresh_offer_count') not in (0, '0') else ()
             urls = list(dict.fromkeys(url for pair in zip_longest(discovered, known) for url in pair if url))
         # Keep compatible or unspecified URL hints for the public queue.
         # Reviewed publication still checks every explicitly supplied URL.
@@ -651,17 +663,25 @@ def main():
     mode.add_argument('--audit-queue', type=Path, metavar='REPORT')
     mode.add_argument('--reviewed-pairs', type=Path, metavar='PROFILES')
     mode.add_argument('--iphone-16-plus', action='store_true')
+    parser.add_argument('--audit-limit', type=int, choices=range(1, 25), metavar='1..24',
+                        help='Maximum variants checked in the read-only public queue (default: 8)')
     parser.add_argument('--publish', action='store_true')
     args = parser.parse_args()
     if not (args.iphone_16_plus or args.reviewed_pairs) and (not args.state or not args.state.is_file()):
         parser.error('Provide a saved discovery state')
+    if args.audit_limit is not None and args.audit_queue is None:
+        parser.error('--audit-limit requires --audit-queue')
     state = read_state(args.state)
     if args.audit_queue is not None:
         if args.publish:
             parser.error('The scheduled public audit is read-only')
         public = public_phone_catalog()
-        queue = audit_queue(state, public)
+        queue = audit_queue(state, public, maximum=args.audit_limit or 8)
         rows = run(state, [row['slug'] for row in queue], maximum=40, products=queue, public_audit=True)
+        gaps = {row['slug'] for row in queue if row.get('fresh_offer_count') in (0, '0')}
+        coverage = {'phonesAudited': len(rows), 'verifiedPairs': sum(bool(row['sameGtin']) for row in rows),
+                    'unpricedPhonesAudited': len(gaps),
+                    'unpricedPhonesWithVerifiedPair': sum(row['slug'] in gaps and bool(row['sameGtin']) for row in rows)}
         now = datetime.now(timezone.utc).isoformat()
         state.setdefault('phoneOfferAudits', {}).update({row['slug']: now for row in rows})
         for row in rows:
@@ -670,8 +690,8 @@ def main():
                 state.setdefault('phoneNativeLeads', {})[slug] = list(dict.fromkeys(
                     row['nativeLeads'] + saved_phone_leads(state, slug)))[:8]
         write_json(args.state, state)
-        write_json(args.audit_queue, {'checkedAt': now, 'catalogAvailable': bool(public), 'rows': rows})
-        print(json.dumps({'phonesAudited': len(rows), 'verifiedPairs': sum(bool(row['sameGtin']) for row in rows)}))
+        write_json(args.audit_queue, {'checkedAt': now, 'catalogAvailable': bool(public), 'coverage': coverage, 'rows': rows})
+        print(json.dumps(coverage))
         return
     profiles = None
     if args.iphone_16_plus:
