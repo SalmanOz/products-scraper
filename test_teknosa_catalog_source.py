@@ -1,7 +1,8 @@
 import unittest
 
 from retailer_offer_refresh import RetailerOfferRefresher
-from teknosa_reviewed_source import TeknosaCatalogSource, parse_exact_first_party_offer
+from selected_sku_evidence import selected_sku_evidence
+from teknosa_reviewed_source import TeknosaCatalogSource, parse_catalog_offer, parse_exact_first_party_offer
 from test_teknosa_reviewed_source import EAN, PRODUCT_ID, URL, page
 from update_prices import PriceUpdater
 
@@ -19,6 +20,27 @@ def document(**changes):
 
 
 class TeknosaCatalogTests(unittest.TestCase):
+    def test_first_party_compact_memory_persists_the_selected_barcode_and_capacities(self):
+        url = 'https://www.teknosa.com/oppo-reno15-pro-5g-12512-alacakaranlik-kahvesi-akilli-telefon-p-100000060715'
+        title = 'Oppo Reno15 PRO 5G 12/512 Alacakaranlık Kahvesi Akıllı Telefon'
+        barcode = '6932169396011'
+        profile = {'name': 'OPPO Reno15 Pro 5G',
+                   'specs': {'ram_gb': 12, 'storage_gb': 512, 'network_generation': '5g'}}
+        html = (page(title=title).replace(URL, url).replace('/' + URL.split('/', 3)[3], '/' + url.split('/', 3)[3])
+                .replace(PRODUCT_ID, '100000060715').replace(EAN, barcode))
+        offer, reason = parse_catalog_offer(html, url, profile)
+        self.assertIsNotNone(offer, reason)
+        self.assertEqual(offer['source_title'], title)
+        proof = selected_sku_evidence(offer)
+        self.assertEqual(proof, {
+            'version': 'selected-retailer-sku-v1', 'platform': 'Teknosa', 'product_id': '100000060715',
+            'sku': '100000060715', 'listing_id': '100000060715', 'merchant_id': '1001', 'merchant_name': 'Teknosa',
+            'gtin13': barcode, 'ram_gb': 12, 'storage_gb': 512, 'network_generation': '5g',
+        })
+        for wrong in ({'selected_teknosa_first_party_verified': False}, {'merchant': 'Other seller'},
+                      {'listing_id': '100000060716'}, {'url': url + '?shopId=1001'}):
+            self.assertIsNone(selected_sku_evidence({**offer, **wrong}))
+
     def test_catalog_selected_sku_reaches_writer_preparation_without_a_manual_profile(self):
         class Transport:
             def read_document(self, url):

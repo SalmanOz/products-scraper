@@ -192,6 +192,15 @@ def parse_exact_first_party_offer(html: str, final_url: str = URL, catalog_profi
         result.update(identity)
     elif not matcher.has_observed_offer_evidence(name, result, specs):
         return None, 'catalog_variant_mismatch'
+    elif generic:
+        ram, storage, ambiguous = matcher._unambiguous_listing_capacities(title)
+        radio = matcher._radio_generation(title)
+        compact = matcher.teknosa_shorthand_capacities(matcher._catalog_model_name(name, specs), title, final_url)
+        if compact and not ambiguous and ram in (None, compact[0]) and storage in (None, compact[1]):
+            ram, storage = compact
+        if not ambiguous and ram and storage and radio:
+            result.update(condition='new', product_id=product_id, ram_gb=ram,
+                          storage_gb=storage, network_generation=radio)
     return result, 'observed_exact_first_party_cash_offer'
 
 

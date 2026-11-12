@@ -50,19 +50,21 @@ def selected_capacity_title(title, selected):
 def _teknosa_selected_sku_evidence(offer):
     from priority_retailer_transport import product_host
     from retailer_barcode import retailer_gtin13
-    if (offer.get('selected_teknosa_variant_verified') is not True
-            or offer.get('merchant') != offer.get('selected_teknosa_seller')
-            or offer.get('merchant_id') != offer.get('selected_teknosa_shop_id')
-            or offer.get('currency') != 'TRY' or offer.get('condition') != 'new'
-            or offer.get('availability') != 'in_stock'):
-        return None
     name, merchant = offer.get('merchant'), offer.get('merchant_id')
+    first_party = (offer.get('selected_teknosa_first_party_verified') is True
+                   and name == 'Teknosa' and merchant == '1001')
+    marketplace = (offer.get('selected_teknosa_variant_verified') is True
+                   and name == offer.get('selected_teknosa_seller')
+                   and merchant == offer.get('selected_teknosa_shop_id') and merchant != '1001')
+    if (not (first_party or marketplace) or offer.get('currency') != 'TRY'
+            or offer.get('condition') != 'new' or offer.get('availability') != 'in_stock'):
+        return None
     sku, listing, gtin = offer.get('sku'), offer.get('listing_id'), offer.get('gtin13')
     ram, storage, radio = (offer.get(k) for k in ('ram_gb', 'storage_gb', 'network_generation'))
     url = offer.get('url')
     if (not isinstance(name, str) or not name.strip() or len(name) > 100
-            or re.search(r'[\x00-\x1f]', name) or name.casefold() == 'teknosa'
-            or not isinstance(merchant, str) or not re.fullmatch(r'[1-9]\d{2,9}', merchant) or merchant == '1001'
+            or re.search(r'[\x00-\x1f]', name) or (marketplace and name.casefold() == 'teknosa')
+            or not isinstance(merchant, str) or not re.fullmatch(r'[1-9]\d{2,9}', merchant)
             or not isinstance(sku, str) or not re.fullmatch(r'[1-9]\d{8,13}', sku)
             or offer.get('product_id') != sku
             or not isinstance(listing, str) or not re.fullmatch(r'[1-9]\d{2,12}', listing)
@@ -77,6 +79,8 @@ def _teknosa_selected_sku_evidence(offer):
             'merchant_id': merchant, 'merchant_name': name, 'gtin13': gtin,
             'ram_gb': ram, 'storage_gb': storage, 'network_generation': radio}
     witness = offer.get('independent_radio')
+    if first_party:
+        return proof if listing == sku and radio in ('4g', '5g') and witness is None else None
     if radio == '5g' and witness is None and offer.get('selected_teknosa_physical_specs_verified') is True:
         return proof
     if (radio != '4g' or not isinstance(witness, dict)
