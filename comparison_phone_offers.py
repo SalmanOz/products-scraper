@@ -24,8 +24,8 @@ from laptop_pilot import _hepsiburada_public_get, verify_seller
 from laptop_retailer_sources import marketplace_seller_identity
 from mediamarkt_marketplace_audit import selected_marketplace_offer
 from mediamarkt_source import _selected_offer as mediamarkt_first_party, product_url as mediamarkt_url
-from n11_catalog_source import (discover_catalog_targets as n11_search_targets, parse_catalog_listing as n11_listing,
-                                public_search_card_document)
+from n11_catalog_source import (discover_catalog_targets as n11_search_targets, discover_product_sellers as n11_seller_links,
+                                parse_catalog_listing as n11_listing, public_search_card_document)
 from offer_ingestion_client import IngestionClientError, OfferIngestionClient
 from ozgur_phone_source import OZGUR_HOST, OZGUR_TERMS, ozgur_offer, ozgur_phone_url
 from pazarama_category_source import pazarama_product_url
@@ -130,13 +130,18 @@ def seller_identity(html, offer):
     return NORMALIZE(json.loads(name)), mersis[1:11]
 
 
-def checked_offers(urls, name, specs, transport, documents=None, *, direct=None, seller_cache=None, reviewed_gtin=None):
+def checked_offers(urls, name, specs, transport, documents=None, *, direct=None, seller_cache=None, reviewed_gtin=None,
+                   discover_n11=False):
     observed, rejects = [], []
     documents = {} if documents is None else documents
     direct = direct or {}
     seller_cache = {} if seller_cache is None else seller_cache
     matcher = TRPriceScraper()
-    for url in urls:
+    pending = deque(urls)
+    queued = set(pending)
+    recoverable = queued.copy() if discover_n11 else set()
+    while pending:
+        url = pending.popleft()
         host = urlsplit(url).netloc
         reader = direct.get(host, transport)
         document_url = teknosa_document_url(url) if host == 'www.teknosa.com' else url
@@ -160,6 +165,12 @@ def checked_offers(urls, name, specs, transport, documents=None, *, direct=None,
             elif host == 'www.n11.com':
                 resolved = transport.resolved_url(url)
                 offer, rejected = n11_listing(html, resolved, name, specs, include_legal_identity=True)
+                if url in recoverable and not offer and rejected == 'schema_selected_cash_offer_mismatch':
+                    for hint in n11_seller_links(html, resolved, maximum=1, include_default=True):
+                        destination = hint['source_url']
+                        if hint['discovery_scope'] == 'public_selected_sku_selector' and destination not in queued:
+                            queued.add(destination)
+                            pending.appendleft(destination)
             elif host == 'www.hepsiburada.com' and host in direct:
                 offer, rejected = parse_catalog_buy_box(html, url, name, specs)
                 if offer and not verify_seller(offer, None, reader, seller_cache):
@@ -665,7 +676,7 @@ def run(state, slugs, client=None, *, publish=False, maximum=24, products=None, 
             urls = limited_urls
         pair, observations, rejects = checked_offers(
             urls, product['name'], specs, transport, documents, direct=direct, seller_cache=seller_cache,
-            reviewed_gtin=profile['gtin'] if profile else None)
+            reviewed_gtin=profile['gtin'] if profile else None, discover_n11=public_audit)
         searches, native_leads = {}, []
         if public_audit:
             sources = (('n11Search', n11_phone_leads, n11_search),
@@ -677,10 +688,14 @@ def run(state, slugs, client=None, *, publish=False, maximum=24, products=None, 
                 extra_urls, searches[label] = discover(product['name'], specs, reader, {*urls, *native_leads}, search_cache)
                 native_leads.extend(extra_urls)
                 _, extra_offers, extra_rejects = checked_offers(
-                    extra_urls, product['name'], specs, transport, documents, direct=direct, seller_cache=seller_cache)
+                    extra_urls, product['name'], specs, transport, documents, direct=direct, seller_cache=seller_cache,
+                    discover_n11=True)
                 observations.extend(extra_offers)
                 rejects.extend(extra_rejects)
                 pair = next(iter(ranked_pairs(observations)), [])
+            native_leads.extend(offer['url'] for offer in observations
+                                if offer['platform'] == 'n11' and offer['url'] not in urls)
+            native_leads = list(dict.fromkeys(native_leads))
         if profile:
             rejects.extend({'url': row['url'], 'reason': 'reviewed_gtin_mismatch', 'observedGtin': row['gtin13']}
                            for row in observations if row['gtin13'] != profile['gtin'])

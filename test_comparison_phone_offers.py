@@ -24,6 +24,24 @@ GTIN = '0195949722813'
 
 
 class ComparisonPhoneOffersTest(unittest.TestCase):
+    def test_n11_cash_conflict_rereads_one_source_declared_selector_in_discovery_only(self):
+        base = 'https://www.n11.com/urun/apple-iphone-17-pro-max-2-tb-apple-turkiye-garantili-100819983'
+        selected = base + '?magaza=erateknoloji&renk=gumus'
+        html = Path('fixtures/n11-stale-shop-native-selected-sku-public.html').read_text()
+        specs = {'ram_gb': 12, 'storage_gb': 2048, 'network_generation': '5g'}
+        for discovery, expected_reads in ((False, [base]), (True, [base, selected])):
+            transport = Mock()
+            transport.resolved_url.side_effect = lambda url: url
+            transport._read_document.return_value = html, 'document_read', 200
+            with patch('comparison_phone_offers.n11_listing',
+                       return_value=(None, 'schema_selected_cash_offer_mismatch')):
+                _, offers, rejects = checked_offers([base], 'Apple iPhone 17 Pro Max', specs,
+                                                     transport, discover_n11=discovery)
+            self.assertEqual(offers, [])
+            self.assertEqual([entry['url'] for entry in rejects], expected_reads)
+            self.assertEqual(transport._read_document.call_args_list,
+                             [call(url, 'www.n11.com') for url in expected_reads])
+
     def test_trendyol_category_recovery_uses_observed_exact_capacity_links(self):
         root = 'https://www.trendyol.com/cep-telefonu-x-c103498'
         model = 'https://www.trendyol.com/iphone-17e-cep-telefonu-x-c103498-a292-v10651727'

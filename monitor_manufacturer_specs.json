@@ -1,4 +1,23 @@
 {
+  "4038986143103": {
+    "code": "25g4kur",
+    "url": "https://www.aoc.com/is/gaming/monitors/25g4kur",
+    "facts": {
+      "size": 24.5,
+      "resolution": "1920 × 1080",
+      "panel": "IPS",
+      "refresh": 420,
+      "hdmi": true,
+      "dp": true,
+      "usb_c": false
+    },
+    "specValues": {
+      "panel": "Fast IPS",
+      "refresh": "400 Hz doğal, 420 Hz hız aşırtma ile",
+      "hdmi": "2 × HDMI 2.0, 240 Hz’e kadar",
+      "dp": "1 × DisplayPort 1.4, 400 Hz doğal ve 420 Hz hız aşırtma ile"
+    }
+  },
   "4711377298919": {
     "code": "274qpfx30mv",
     "model": "274QPF X30MV",

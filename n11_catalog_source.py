@@ -109,12 +109,8 @@ def discover_catalog_memory_targets(html, product, *, excluded_urls=()):
     return [card for _, card in memory_variant_destinations(cards, [product])][:2]
 
 
-def _selected_sku_destination(soup, state, canonical, observed_url):
-    """An obsolete shop selector may return a different native selected shop.
-
-    Its quote never belongs to the requested shop. Only the source-declared
-    SKU URL can become a routing hint for a separate, fully verified reread.
-    """
+def _selected_sku_destination(soup, state, canonical, observed_url, *, include_default=False):
+    """Use the source-declared SKU URL as a hint for a separate offer read."""
     product, meta = state.get('product'), state.get('productMeta')
     if not isinstance(product, dict) or not isinstance(meta, dict):
         return None
@@ -128,7 +124,8 @@ def _selected_sku_destination(soup, state, canonical, observed_url):
             or re.search(r'[\x00-\x1f\x7f]', name)
             or links[0]['href'] != '/magaza/' + shop
             or links[0].get('title') != name or links[0].get_text(' ', strip=True) != name
-            or not requested or not requested.get('magaza') or requested['magaza'] == shop
+            or requested is None or (not requested.get('magaza') and not include_default)
+            or requested.get('magaza') == shop
             or str(meta.get('sellerId')) != str(seller.get('id'))):
         return None
     raw = product.get('skuUrl')
@@ -165,12 +162,14 @@ def _selected_sku_destination(soup, state, canonical, observed_url):
                 'dahili-hafiza': values['Dahili Hafıza'].lower().replace(' ', '-')}
     if any(expected.get(key) != value for key, value in selectors.items()):
         return None
+    if not requested.get('magaza') and any(expected.get(key) != value for key, value in requested.items()):
+        return None
     return {'source_url': destination, 'source_document_url': observed_url,
             'seller_name': name, 'seller_slug': shop,
             'discovery_scope': 'public_selected_sku_selector'}
 
 
-def discover_product_sellers(html, observed_url, maximum=3):
+def discover_product_sellers(html, observed_url, maximum=3, *, include_default=False):
     """Actual public same-product shop links only; never copy a card price."""
     canonical = canonical_product_url(observed_url)
     if (canonical is None or not isinstance(html, str) or len(html.encode()) > 5 * 1024 * 1024
@@ -197,7 +196,7 @@ def discover_product_sellers(html, observed_url, maximum=3):
         return []
     selected = soup.select('.sidebarSellerArea-top-name[href]')
     current = selected[0]['href'].removeprefix('/magaza/') if len(selected) == 1 else None
-    recovered = _selected_sku_destination(soup, states[0], canonical, observed_url)
+    recovered = _selected_sku_destination(soup, states[0], canonical, observed_url, include_default=include_default)
     rows = [recovered] if recovered is not None else []
     seen = {recovered['source_url']} if recovered is not None else set()
     if len(rows) >= maximum:

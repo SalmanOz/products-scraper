@@ -90,6 +90,10 @@ class N11CatalogTests(unittest.TestCase):
             'discovery_scope': 'public_selected_sku_selector'}])
         self.assertNotIn('price', str(hints))
         self.assertEqual(discover_product_sellers(stale, actual), [])
+        self.assertEqual(discover_product_sellers(stale, base), [])
+        self.assertEqual(discover_product_sellers(stale, base, include_default=True),
+                         [{**hints[0], 'source_document_url': base}])
+        self.assertEqual(discover_product_sellers(stale, base + '?renk=gri', include_default=True), [])
         class Client:
             def get_published_products(self):
                 return [{'id': 1, 'name': 'Apple iPhone 17 Pro Max', 'slug': 'apple-iphone-17-pro-max',
