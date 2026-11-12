@@ -17,7 +17,7 @@ on:
       collection:
         description: Network for the public retailer document reads
         type: choice
-        options: [site, runner, macos]
+        options: [site, runner, macos, mixed]
         default: site
       publish:
         description: Publish both independently verified prices for each selected capacity
@@ -36,7 +36,7 @@ concurrency:
 jobs:
   verify:
     if: github.ref == 'refs/heads/main'
-    runs-on: ${{ inputs.collection == 'macos' && 'macos-latest' || 'ubuntu-latest' }}
+    runs-on: ${{ (inputs.collection == 'macos' || inputs.collection == 'mixed') && 'macos-latest' || 'ubuntu-latest' }}
     timeout-minutes: 12
     permissions:
       contents: read
@@ -56,12 +56,12 @@ jobs:
           TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
           SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
           PUBLISH: ${{ github.event_name == 'schedule' || inputs.publish }}
-          COLLECTION: ${{ github.event_name == 'schedule' && 'site' || inputs.collection }}
+          COMPARISON_PHONE_COLLECTION: ${{ github.event_name == 'schedule' && 'site' || inputs.collection }}
           TARGET: ${{ github.event_name == 'schedule' && 'iphone-16-plus' || inputs.target }}
           REVIEWED_PAIRS: ${{ inputs.reviewed_pairs }}
         run: |
           set -euo pipefail
-          if [[ "$COLLECTION" == site ]]; then
+          if [[ "$COMPARISON_PHONE_COLLECTION" == site || "$COMPARISON_PHONE_COLLECTION" == mixed ]]; then
             audience='https%3A%2F%2Fteknoskor.com%2Fapi%2Fingestion%2Fcatalog-source-document'
             CATALOG_SOURCE_OIDC=$(curl -fsS --max-time 20 \
               -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \

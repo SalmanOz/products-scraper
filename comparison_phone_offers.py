@@ -5,6 +5,7 @@ from collections import Counter, defaultdict, deque
 from datetime import datetime, timezone
 from itertools import zip_longest
 import json
+import os
 from pathlib import Path
 import re
 from urllib.parse import parse_qs, urljoin, urlsplit
@@ -209,7 +210,7 @@ def checked_offers(urls, name, specs, transport, documents=None, *, direct=None,
         identity = (offer['_legal_name'], offer.get('_tax_key', '')) if offer.get('_legal_name') else None
         if not identity and (seller_url := offer.get('seller_url')):
             if seller_url not in documents:
-                documents[seller_url] = transport._read_document(seller_url, host)
+                documents[seller_url] = reader._read_document(seller_url, host)
             seller_document, _, _ = documents[seller_url]
             identity = seller_identity(seller_document, offer) if seller_document else None
         if not identity or not identity[0]:
@@ -574,6 +575,11 @@ def run(state, slugs, client=None, *, publish=False, maximum=24, products=None, 
                                           n11_collector=client.n11_document_get if client else None,
                                           unavailable_robots_hosts=('www.teknosa.com', 'www.pazarama.com'))
     direct = {}
+    if os.getenv('COMPARISON_PHONE_COLLECTION') == 'mixed':
+        # Read MediaMarkt on the runner and use the existing site reader for
+        # the other marketplaces. Both readers verify the same public URLs.
+        direct['www.mediamarkt.com.tr'] = PriorityRetailerTransport(maximum_per_host=maximum,
+            browser_fallback=False)
     if public_audit or profiles:
         direct['www.hepsiburada.com'] = PriorityRetailerTransport(maximum_per_host=maximum,
             browser_fallback=False, get=_hepsiburada_public_get)
