@@ -6,6 +6,31 @@ from tws_refresh import refresh
 
 
 class TwsRefreshTest(TestCase):
+    def test_discovery_rereads_an_alternate_seller_for_the_original_barcode(self):
+        name, gtin = 'Sony WF-1000XM6', '4548736171770'
+        host = 'www.trendyol.com'
+        original = f'https://{host}/sony/sony-wf-1000xm6-123456'
+        other = original + '?merchantId=2'
+        transport = Mock()
+        transport.read_fresh_document.return_value = 'page', 'document_read', 200
+        transport.resolved_url.side_effect = lambda url: url
+        base = {'gtin13': gtin, 'merchant': 'Mağaza', 'merchant_id': 1, 'currency': 'TRY',
+                'price': 25000, 'availability': 'in_stock', 'condition': 'new', '_legal_name': 'magaza'}
+        for replacement in ({'merchant_id': 1}, {'gtin13': '4548736171824'}, {}):
+            with self.subTest(replacement=replacement):
+                def selected(_, url, model, *, seller_hints=None):
+                    self.assertEqual(model, name)
+                    if url == original:
+                        seller_hints.append((other, 2))
+                        return {**base, 'url': original}, 'observed'
+                    return {**base, 'url': other, 'merchant_id': 2, **replacement}, 'observed'
+
+                with patch('tws_catalog_expansion.PriorityRetailerTransport', return_value=transport), \
+                     patch('tws_catalog_expansion.selected_tws_offer', side_effect=selected):
+                    offers, failures = reread(host, [(name, {'url': original})], discover=True)
+                self.assertEqual([o['url'] for o in offers[name]], [original] if replacement else [original, other])
+                self.assertEqual(failures['selected_seller_or_gtin_changed'], bool(replacement))
+
     def test_earbud_reader_resumes_a_target_deferred_by_source_cooldown(self):
         name, gtin = 'Huawei FreeBuds 6i', '6942103123535'
         host = 'www.n11.com'

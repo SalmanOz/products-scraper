@@ -1,6 +1,6 @@
 """Generate a TWS catalog addition from live selected listings and sourced specs."""
 import argparse
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from itertools import combinations
@@ -14,6 +14,7 @@ from curl_cffi.requests import RequestsError
 
 from laptop_pilot import IMAGE_HOSTS, _hepsiburada_public_get, _image, _public_offers
 from mediamarkt_source import MediaMarktSource, _selected_offer
+from n11_catalog_source import discover_product_sellers
 from priority_retailer_transport import PriorityRetailerTransport, compatible_get, product_host
 from retailer_barcode import retailer_gtin13
 from tws_offer_pilot import NEW_MODEL_NAMES, _mediamarkt_tws_url, independent_sellers, model_name, selected_tws_offer
@@ -25,6 +26,7 @@ from vatan_category_source import VatanCategorySource
 MARKETPLACES = {'www.n11.com', 'www.trendyol.com', 'www.hepsiburada.com', 'www.teknosa.com'}
 STORES = {'www.vatanbilgisayar.com', 'www.mediamarkt.com.tr'}
 TWS_IMAGE_HOSTS = IMAGE_HOSTS | {'productimages.hepsiburada.net', 'reimg-teknosa-cloud-prod.mncdn.com'}
+ALTERNATE_SELLER_BUDGET = 8
 
 
 def exact_tws_sellers(offers, *, maximum=3):
@@ -60,6 +62,10 @@ def verify_media(html, url, name):
 
 def reread(host, rows, statuses=None, document_reader=None, *, discover=False):
     observations, failures = defaultdict(list), Counter()
+    seller_budget = ALTERNATE_SELLER_BUDGET if discover and host in {'www.n11.com', 'www.trendyol.com'} else 0
+    pending = deque(rows)
+    queued = {target['url'] for _, target in pending}
+    expanded = set()
     transport = None
     if host in MARKETPLACES:
         options = {}
@@ -69,7 +75,7 @@ def reread(host, rows, statuses=None, document_reader=None, *, discover=False):
             options.update(get=_hepsiburada_public_get, browser_fallback=False)
         elif discover:
             options['browser_fallback'] = False
-        transport = PriorityRetailerTransport(maximum_per_host=min(260, len(rows)), **options)
+        transport = PriorityRetailerTransport(maximum_per_host=min(260, len(rows) + seller_budget), **options)
     source = None
     if host in STORES:
         source = (VatanCategorySource(fetch=document_reader) if host.startswith('www.vatan')
@@ -77,8 +83,10 @@ def reread(host, rows, statuses=None, document_reader=None, *, discover=False):
         if isinstance(source, MediaMarktSource):
             source.configure_catalog_budget(len(rows))
         source._load_robots()
-    for name, target in rows:
+    while pending:
+        name, target = pending.popleft()
         url = target['url']
+        seller_hints = [] if seller_budget and 'gtin13' not in target else None
         if statuses is not None:
             statuses[url] = 'unavailable'
         try:
@@ -109,7 +117,7 @@ def reread(host, rows, statuses=None, document_reader=None, *, discover=False):
             if host == 'www.n11.com':
                 current, reason = selected_n11_tws(html, final, name, model_name)
             elif host == 'www.trendyol.com':
-                current, reason = selected_tws_offer(html, final, name)
+                current, reason = selected_tws_offer(html, final, name, seller_hints=seller_hints)
             elif host == 'www.hepsiburada.com':
                 current, reason = selected_hepsiburada_tws(html, final, name, model_name)
             elif host == 'www.teknosa.com':
@@ -124,16 +132,34 @@ def reread(host, rows, statuses=None, document_reader=None, *, discover=False):
         except (TypeError, ValueError):
             failures['invalid_page'] += 1
             continue
-        matches_selection = bool(current and (
-            (discover and retailer_gtin13(current.get('gtin13')) and current.get('_legal_name'))
-            or (not discover and current['gtin13'] == target['gtin13']
-                and ('merchant_id' not in target or current.get('merchant_id') == target['merchant_id'])
-                and current['merchant'] == target['merchant'])))
+        matches_selection = bool(current
+            and all(current.get(key) == target[key] for key in ('gtin13', 'merchant_id', 'merchant') if key in target)
+            and (retailer_gtin13(current.get('gtin13')) and current.get('_legal_name') if discover
+                 else 'gtin13' in target and 'merchant' in target))
         if (matches_selection and current['availability'] == 'in_stock' and current['condition'] == 'new'
                 and current['currency'] == 'TRY' and 100 <= current['price'] <= 150_000):
             if statuses is not None:
                 statuses[url] = 'verified'
             observations[name].append(current)
+            sku = (name, current['gtin13'])
+            if seller_hints is not None and sku not in expanded:
+                if host == 'www.n11.com':
+                    alternatives = (
+                        (hint['source_url'], {'merchant': hint['seller_name']})
+                        for hint in discover_product_sellers(html, final, maximum=3)
+                        if hint['discovery_scope'] == 'public_other_seller_selector'
+                    )
+                else:
+                    alternatives = ((destination, {'merchant_id': seller_id})
+                                    for destination, seller_id in seller_hints)
+                for destination, identity in alternatives:
+                    if destination in queued:
+                        continue
+                    pending.append((name, {'url': destination, 'gtin13': current['gtin13'], **identity}))
+                    queued.add(destination)
+                    expanded.add(sku)
+                    seller_budget -= 1
+                    break
         else:
             failures[reason if not current else 'selected_seller_or_gtin_changed'] += 1
     return observations, failures

@@ -3,7 +3,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from comparison_accessory_candidates import candidate_targets, monitor_code, stage_category
+from comparison_accessory_candidates import candidate_targets, stage_category
 
 
 N11 = 'https://www.n11.com/urun/asus-proart-pa278cv-75hz-monitor-53683691?magaza=n11'
@@ -11,10 +11,18 @@ TRENDYOL = 'https://www.trendyol.com/asus/proart-pa278cv-75hz-monitor-p-12238194
 
 
 class ComparisonAccessoryTests(unittest.TestCase):
-    def test_monitor_requires_model_code_shared_by_two_retailer_paths(self):
-        self.assertEqual(monitor_code('ASUS PA278CV 75Hz DisplayPort Monitör', [N11, TRENDYOL]), 'pa278cv')
-        self.assertIsNone(monitor_code('75Hz DisplayPort IPS Monitör', [N11, TRENDYOL]))
-        self.assertIsNone(monitor_code('ASUS PA278CV', [N11, N11.replace('magaza=n11', 'magaza=other')]))
+    def test_monitor_joins_the_same_model_code_across_comparison_pages(self):
+        first = {'category': 'monitor', 'title': 'ASUS PA278CV 75Hz DisplayPort Monitör', 'retailerLeads': [N11]}
+        second = {'category': 'monitor', 'title': 'ASUS PA278CV Monitör', 'retailerLeads': [TRENDYOL]}
+        state = {'products': {'akakce': first, 'cimri': second}}
+        groups = candidate_targets(state, ['monitor'], 5)
+        self.assertEqual(groups['www.n11.com'], [('monitor', N11, 'pa278cv')])
+        self.assertEqual(groups['www.trendyol.com'], [('monitor', TRENDYOL, 'pa278cv')])
+        second['title'] = 'ASUS PA278QV Monitör'
+        self.assertFalse(candidate_targets(state, ['monitor'], 5))
+        second['title'] = 'ASUS PA278CV Monitör'
+        second['retailerLeads'] = [N11.replace('magaza=n11', 'magaza=other')]
+        self.assertFalse(candidate_targets(state, ['monitor'], 5))
 
     def test_only_supported_original_products_enter_the_queue(self):
         state = {'products': {'a': {'category': 'monitor', 'title': 'ASUS PA278CV', 'retailerLeads': [

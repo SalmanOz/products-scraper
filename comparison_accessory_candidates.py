@@ -20,6 +20,7 @@ from competitor_catalog_gaps import MODEL_TOKEN, read_state, retailer_destinatio
 from laptop_discovery import Reader, _pdp
 from laptop_pilot import (PARSERS as LAPTOP_PARSERS, _hepsiburada_public_get, _image,
                           build_model, compatible as laptop_compatible, select_offers, verify_seller)
+from laptop_retailer_sources import model_codes
 from monitor_pilot import PHOTO_HOSTS, compatible as monitor_compatible, independent_pair, materialize
 from monitor_sources import PARSERS as MONITOR_PARSERS, code_key, mentions
 from pc_parts_multistore import DIRECT_PATHS, offer_host
@@ -32,20 +33,16 @@ PARSERS = {'laptop': LAPTOP_PARSERS, 'monitor': MONITOR_PARSERS}
 FEATURE_TOKEN = re.compile(r'(?:\d+(?:hz|ms|k|inc|inch)|[a-z]*hdmi\d*|usb\d*|freesync\d*|gsync\d*|\d+x\d+)')
 
 
-def monitor_code(title, urls):
-    candidates = {code for token in MODEL_TOKEN.findall(title) if 5 <= len(code := code_key(token)) <= 20
-                  and any(c.isdigit() for c in code) and any(c.isalpha() for c in code)
-                  and not FEATURE_TOKEN.fullmatch(code)}
-    for code in sorted(candidates, key=lambda item: (-len(item), item)):
-        matching_hosts = {urlsplit(url).netloc for url in urls if mentions(urlsplit(url).path, code)}
-        if len(matching_hosts) >= 2:
-            return code
-    return None
+def monitor_codes(title):
+    return {code for token in MODEL_TOKEN.findall(title) if 5 <= len(code := code_key(token)) <= 20
+            and any(c.isdigit() for c in code) and any(c.isalpha() for c in code)
+            and not FEATURE_TOKEN.fullmatch(code)}
 
 
 def candidate_targets(state, categories, maximum):
     prior = state.get('accessoryLeadAudits', {})
     targets = defaultdict(dict)
+    model_links = defaultdict(set)
     for key, row in state['products'].items():
         kind = row['category']
         if kind not in categories:
@@ -53,27 +50,33 @@ def candidate_targets(state, categories, maximum):
         urls = [url for raw in row.get('retailerLeads', []) if (url := retailer_destination(raw))
                 and (host := urlsplit(url).netloc) in PARSERS[kind]
                 and (offer_host(url) if host in DIRECT_PATHS else _pdp(host, url))]
+        if not urls:
+            continue
+        codes = (monitor_codes(row['title']) if kind == 'monitor'
+                 else {code_key(code) for code in model_codes(row['title'])})
+        for code in codes:
+            model_links[kind, code, True].update(url for url in urls if mentions(urlsplit(url).path, code))
+        if kind == 'laptop':
+            # Some retailer URLs omit the MPN. A single comparison page can
+            # still supply leads, and the selected PDP has to prove the MPN.
+            model_links[kind, key, False].update(urls)
+    for (kind, model, exact_code), urls in model_links.items():
         sources = len({urlsplit(url).netloc for url in urls})
         if sources < 2:
             continue
-        code = monitor_code(row['title'], urls) if kind == 'monitor' else None
-        if kind == 'monitor' and code is None:
-            continue
         for url in urls:
-            if code and not mentions(urlsplit(url).path, code):
-                continue
             candidates = targets[kind, urlsplit(url).netloc]
-            identity = (sources, code or '', code or key)
-            if identity > candidates.get(url, (0, '', '')):
+            identity = (len(model) if kind == 'monitor' else 0, sources, exact_code, model)
+            if identity > candidates.get(url, (0, 0, False, '')):
                 candidates[url] = identity
     result = defaultdict(list)
     for (kind, host), targets_by_url in targets.items():
         ordered = sorted(targets_by_url.items(), key=lambda row: (prior.get(f'{kind}/{row[0]}', ''),
-                                                                  -row[1][0], row[1][2], row[0]))
+                                                                  -row[1][1], row[1][3], row[0]))
         counts = Counter()
         ranked = []
-        for url, (_, code, model) in ordered:
-            ranked.append((counts[model], kind, url, code))
+        for url, (_, _, _, model) in ordered:
+            ranked.append((counts[model], kind, url, model if kind == 'monitor' else ''))
             counts[model] += 1
         ranked.sort(key=lambda row: row[0])
         result[host].extend((kind, url, code) for _, kind, url, code in ranked[:maximum])
