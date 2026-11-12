@@ -34,6 +34,7 @@ FEATURE_TOKEN = re.compile(r'(?:\d+(?:hz|ms|k|inc|inch)|[a-z]*hdmi\d*|usb\d*|fre
 
 
 def monitor_codes(title):
+    title = re.sub(r'\b(mp\d{3,4})[\s-]+(e\d{2}[a-z]{1,3})\b', r'\1\2', title, flags=re.I)
     return {code for token in MODEL_TOKEN.findall(title) if 5 <= len(code := code_key(token)) <= 20
             and any(c.isdigit() for c in code) and any(c.isalpha() for c in code)
             and not FEATURE_TOKEN.fullmatch(code)}

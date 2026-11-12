@@ -1,4 +1,23 @@
 {
+  "4711377334945": {
+    "code": "mp242e14a",
+    "model": "MP242 E14A",
+    "url": "https://es.msi.com/Business-Productivity-Monitor/PRO-MP242-E14A/Specification",
+    "facts": {
+      "size": 23.8,
+      "resolution": "1920 × 1080",
+      "panel": "IPS",
+      "refresh": 144,
+      "hdmi": true,
+      "dp": true,
+      "usb_c": false
+    },
+    "specValues": {
+      "hdmi": "1 × HDMI 2.0b, 144 Hz’e kadar",
+      "dp": "1 × DisplayPort 1.2a, 144 Hz’e kadar"
+    },
+    "name": "PRO MP242 E14A"
+  },
   "0198155418945": {
     "code": "64a4marxtk",
     "url": "https://psref.lenovo.com/syspool/Sys/PDF/ThinkVision/ThinkVision_T24_40/ThinkVision_T24_40_Spec.pdf",

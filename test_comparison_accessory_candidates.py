@@ -33,6 +33,16 @@ class ComparisonAccessoryTests(unittest.TestCase):
             'www.trendyol.com': [('monitor', TRENDYOL, 'pa278cv')],
         })
 
+    def test_monitor_discovery_keeps_msi_variant_suffix(self):
+        n11 = 'https://www.n11.com/urun/msi-pro-mp242-e14a-144hz-monitor-127487692'
+        trendyol = 'https://www.trendyol.com/msi/pro-mp242-e14a-144hz-monitor-p-1144662158'
+        state = {'products': {'a': {'category': 'monitor', 'title': 'MSI PRO MP242 E14A 144 Hz',
+                                    'retailerLeads': [n11, trendyol]}}}
+        self.assertEqual(dict(candidate_targets(state, ['monitor'], 5)), {
+            'www.n11.com': [('monitor', n11, 'mp242e14a')],
+            'www.trendyol.com': [('monitor', trendyol, 'mp242e14a')],
+        })
+
     def test_single_platform_or_existing_barcode_cannot_stage_an_addition(self):
         barcode = '4711081273981'
         other = '0198155418945'
