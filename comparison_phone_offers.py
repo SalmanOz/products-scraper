@@ -17,7 +17,7 @@ from ayaz_phone_source import AYAZ_HOST, AYAZ_TERMS, ayaz_offer, ayaz_phone_url
 from besken_phone_source import BESKEN_HOST, BESKEN_TERMS, besken_offer, besken_phone_url
 from catalog_source_collector import catalog_document_reader
 
-from competitor_catalog_gaps import phone_catalog_family, public_phone_catalog, read_state, retailer_destination, write_json
+from competitor_catalog_gaps import lead_group, phone_catalog_family, public_phone_catalog, read_state, retailer_destination, write_json
 from hepsiburada_catalog_discovery import public_model_search_cards
 from evofone_offer_source import (HOST as EVOFONE, TERMS as EVOFONE_TERMS, product_url as evofone_product_url,
                                   selected_offer as evofone_offer, seller_identity as evofone_seller_identity)
@@ -353,11 +353,15 @@ def supported_phone_url(url, *, expanded=False):
     return pazarama_product_url(url) and bool(re.fullmatch(r'/[a-z0-9-]+-p-\d{12,13}', route.path))
 
 
-def phone_lead_index(state, *, expanded=False):
+def phone_lead_index(state, *, expanded=False, include_unlisted=False):
     by_family, by_slug = defaultdict(dict), defaultdict(dict)
     for row in state['products'].values():
         family, slug = row.get('catalogFamily'), row.get('catalogSlug')
-        if row.get('category') != 'phone' or not (family or slug):
+        if row.get('category') != 'phone':
+            continue
+        if include_unlisted and not (family or slug):
+            _, family = lead_group(row)
+        if not (family or slug):
             continue
         urls = {url: None for raw in row.get('retailerLeads', ())
                 if (url := retailer_destination(raw)) and supported_phone_url(url, expanded=expanded)}
@@ -639,7 +643,10 @@ def load_iphone_16_plus_profiles(path=IPHONE_16_PLUS_PROFILES):
     return profiles
 
 
-def run(state, slugs, client=None, *, publish=False, maximum=24, products=None, public_audit=False, profiles=None):
+def run(state, slugs, client=None, *, publish=False, maximum=24, products=None, public_audit=False, profiles=None,
+        unlisted_audit=False):
+    if unlisted_audit and (not public_audit or profiles or products is None):
+        raise ValueError('Unlisted phones require an explicit read-only candidate list')
     if publish and public_audit:
         raise ValueError('Public queue verification is read-only')
     if publish and client is None:
@@ -680,13 +687,15 @@ def run(state, slugs, client=None, *, publish=False, maximum=24, products=None, 
     if public_audit:
         direct['www.vatanbilgisayar.com'] = PriorityRetailerTransport(maximum_per_host=maximum,
             browser_fallback=False)
+    if public_audit and not unlisted_audit:
         # Category search stays public. Destination pages use the same
         # retailer verifier and request budget as every other product lead.
         n11_search = PriorityRetailerTransport(maximum_per_host=min(maximum, 8), browser_fallback=False)
     documents = {}
     seller_cache = {}
     search_cache = {}
-    lead_index = phone_lead_index(state, expanded=public_audit) if not profiles else None
+    lead_index = (phone_lead_index(state, expanded=public_audit, include_unlisted=unlisted_audit)
+                  if not profiles else None)
     for slug in slugs:
         product = products[slug]
         specs = PriceUpdater.get_expected_specs(product.get('attributes'))
@@ -694,11 +703,13 @@ def run(state, slugs, client=None, *, publish=False, maximum=24, products=None, 
         if profile:
             urls = profile['urls'][:]
         else:
-            discovered = category_leads(slug, product['name'], specs, transport, documents)
-            discovered += indexed_phone_leads(lead_index, slug)
-            if public_audit:
+            discovered = indexed_phone_leads(lead_index, slug)
+            if not unlisted_audit:
+                discovered = category_leads(slug, product['name'], specs, transport, documents) + discovered
+            if public_audit and not unlisted_audit:
                 discovered += saved_phone_leads(state, slug)
-            known = published_offer_urls(slug) if public_audit and product.get('fresh_offer_count') not in (0, '0') else ()
+            known = (published_offer_urls(slug) if public_audit and not unlisted_audit
+                     and product.get('fresh_offer_count') not in (0, '0') else ())
             urls = list(dict.fromkeys(url for pair in zip_longest(discovered, known) for url in pair if url))
         # Keep compatible or unspecified URL hints for the public queue.
         # Reviewed publication still checks every explicitly supplied URL.
@@ -717,7 +728,7 @@ def run(state, slugs, client=None, *, publish=False, maximum=24, products=None, 
             urls, product['name'], specs, transport, documents, direct=direct, seller_cache=seller_cache,
             reviewed_gtin=profile['gtin'] if profile else None, discover_n11=public_audit)
         searches, native_leads = {}, []
-        if public_audit:
+        if public_audit and not unlisted_audit:
             sources = (('n11Search', n11_phone_leads, n11_search),
                        ('hepsiburadaSearch', hepsiburada_phone_leads, direct['www.hepsiburada.com']),
                        ('trendyolCategory', trendyol_phone_leads, transport))

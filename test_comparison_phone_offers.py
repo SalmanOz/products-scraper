@@ -11,6 +11,7 @@ from comparison_phone_offers import (audit_queue, candidate_urls, capacity_prior
                                      publishable_pair, published_offer_urls, run, trendyol_phone_leads)
 from offer_ingestion_client import IngestionClientError
 from ozgur_phone_source import OZGUR_HOST, OZGUR_TERMS, ozgur_offer
+from unlisted_phone_audit import candidate_queue
 
 
 MM = 'https://www.mediamarkt.com.tr/tr/product/_apple-iphone-16-plus-128-gb-akilli-telefon-mavi-146562812.html'
@@ -280,6 +281,22 @@ class ComparisonPhoneOffersTest(unittest.TestCase):
         state = {'products': {'x': {'catalogFamily': 'apple-iphone-16-plus', 'category': 'phone',
                                    'retailerLeads': ['https://urunai.com/telefon/apple/iphone-16-plus', MM, PZ, PZ]}}}
         self.assertEqual(candidate_urls(state, 'apple-iphone-16-plus-8gb-256gb'), [MM, PZ])
+
+    def test_unlisted_audit_finds_cross_platform_leads_without_a_catalog_slug(self):
+        slug = 'apple-iphone-16-plus'
+        state = {'products': {
+            'one': {'category': 'phone', 'title': TITLE, 'retailerLeads': [HB]},
+            'two': {'category': 'phone', 'title': NAME + ' 5G 128 GB', 'retailerLeads': [MM]},
+            'three': {'category': 'phone', 'title': NAME + ' 8 GB 128 GB', 'retailerLeads': [PZ, HB]},
+        }}
+        candidate = {'name': NAME, 'slug': slug, 'evidenceUrl': 'https://www.apple.com/tr/iphone-16-plus/'}
+        self.assertEqual(candidate_urls(state, slug, expanded=True), [])
+        count, queue = candidate_queue(state, [], [candidate, candidate], 4)
+        self.assertEqual(count, 1)
+        self.assertEqual(queue[0]['leadPlatforms'], 2)
+        self.assertEqual(candidate_queue(state, [{'slug': slug + '-8gb-256gb'}], [candidate], 4), (0, []))
+        with self.assertRaisesRegex(ValueError, 'read-only'):
+            run(state, [slug], products=[], publish=True, unlisted_audit=True)
 
     def test_phone_discovery_prioritizes_exact_capacity_links_and_keeps_family_fallbacks(self):
         slug = 'apple-iphone-16-plus-8gb-256gb'
