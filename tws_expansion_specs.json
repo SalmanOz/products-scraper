@@ -1,4 +1,20 @@
 {
+  "Anker Soundcore AeroFit 2 Pro": {
+    "summary": "AeroFit 2 Pro, açık kulak kullanımı ile aktif gürültü engelleme arasında geçiş yapılabilen bir tam kablosuz kulaklık. Kutu, Qi kablosuz şarjı destekliyor.",
+    "highlights": ["Açık kulak ve ANC modları", "Bluetooth 6.1", "LDAC desteği"],
+    "specSource": "https://service.soundcore.com/article-description/soundcore-AeroFit-2-Pro-FAQ",
+    "specs": [
+      {"label": "Gürültü kontrolü", "value": "Aktif gürültü engelleme ve açık kulak modu"},
+      {"label": "Tek şarjla müzik", "value": "Yaklaşık 7 saat (açık kulak), 5 saat (ANC)"},
+      {"label": "Kutuyla toplam müzik", "value": "Yaklaşık 34 saat (açık kulak)"},
+      {"label": "Kutuyla toplam müzik (ANC açık)", "value": "Yaklaşık 24 saat"},
+      {"label": "Bluetooth", "value": "6.1"},
+      {"label": "Ses kodekleri", "value": "SBC, AAC ve LDAC"},
+      {"label": "Dayanıklılık", "value": "IP55 (kulaklıklar)"},
+      {"label": "Şarj", "value": "USB-C ve 3 W’a kadar Qi"},
+      {"label": "Çoklu cihaz bağlantısı", "value": "İki cihaz"}
+    ]
+  },
   "Apple AirPods Pro 2 USB-C": {
     "summary": "AirPods Pro 2’nin USB-C şarj kutulu sürümü, aktif gürültü engelleme ve şeffaf mod sunuyor. Apple, kutuyla 30 saate kadar dinleme süresi belirtiyor.",
     "highlights": ["Aktif gürültü engelleme", "USB-C ve MagSafe şarj", "IP54 koruma"],

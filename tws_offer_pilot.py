@@ -112,6 +112,7 @@ NEW_MODELS = (
     ('Anker', 'Soundcore R50i NC', r'(?:soundcore )?r50i nc'),
     ('Anker', 'Soundcore C30i', r'(?:soundcore )?c30i'),
     ('Anker', 'Soundcore AeroFit 2', r'(?:soundcore )?aerofit ?2(?! pro)'),
+    ('Anker', 'Soundcore AeroFit 2 Pro', r'(?:soundcore )?aerofit ?2 pro'),
     ('Anker', 'Soundcore Sport X20', r'(?:soundcore )?sport x20'),
     ('QCY', 'T13 ANC', r't13 anc(?! ?2| pro| plus)'),
     ('QCY', 'T13 ANC 2', r't13 anc ?2'),
