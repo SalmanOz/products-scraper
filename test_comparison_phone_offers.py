@@ -4,7 +4,7 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import Mock, patch
 
-from comparison_phone_offers import (audit_queue, candidate_urls, checked_offers, load_reviewed_profiles,
+from comparison_phone_offers import (audit_queue, candidate_urls, capacity_priority, checked_offers, load_reviewed_profiles,
                                      publishable_pair, published_offer_urls, run)
 from ozgur_phone_source import OZGUR_HOST, OZGUR_TERMS, ozgur_offer
 
@@ -20,6 +20,22 @@ GTIN = '0195949722813'
 
 
 class ComparisonPhoneOffersTest(unittest.TestCase):
+    def test_phone_queue_uses_exact_storage_selectors_and_tb_url_hints(self):
+        root = 'https://www.n11.com/urun/phone-'
+        self.assertEqual(capacity_priority(root + '8gb128gb-123456', 128), 0)
+        self.assertEqual(capacity_priority(root + '12-gb-1-tb-123456', '1024 GB'), 0)
+        self.assertEqual(capacity_priority(root + '128-gb-123456?dahili-hafiza=256-gb', 256), 0)
+        self.assertEqual(capacity_priority(root + '12-gb-128-gb-123456', 256), 2)
+        self.assertEqual(capacity_priority(root + '8gb-123456', 128), 1)
+
+    def test_phone_queue_services_distinct_families_before_sibling_capacities(self):
+        families = ('apple-iphone-16-plus', 'honor-600')
+        state = {'products': {name: {'catalogFamily': name, 'category': 'phone',
+                                    'retailerLeads': [HB, VATAN]} for name in families}}
+        names = (families[0], families[0] + '-8gb-256gb', families[1])
+        products = [{'slug': name, 'name': name, 'attributes': {}, 'fresh_offer_count': 0} for name in names]
+        self.assertEqual([row['slug'] for row in audit_queue(state, products, maximum=2)], list(families))
+
     def test_ozgur_uses_the_selected_upc_without_inventing_missing_sku_or_radio(self):
         url = 'https://ozguriletisimankara.com/urun/iphone-15-mavi-128-gb'
         photo = 'https://ozguriletisimankara.com/uploads/photo.jpg'

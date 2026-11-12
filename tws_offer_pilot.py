@@ -77,6 +77,9 @@ EXPANSION_COHORT = (
 )
 NEW_MODELS = (
     ('Baseus', 'Bass BP1 Pro', r'bass bp1 pro'),
+    ('Nothing', 'CMF Buds 2a', r'(?:cmf(?: by nothing)? )?buds ?2a'),
+    ('Nothing', 'Ear (a)', r'ear ?a'),
+    ('Nothing', 'Ear (3)', r'ear ?3'),
     ('Apple', 'AirPods 5', r'airpods 5(?! .*\b(?:mkft4tu|kablosuz sarj kutusu|magsafe)\b)'),
     ('Xiaomi', 'Redmi Buds 6', r'redmi buds 6(?! play| active| lite| pro| plus)'),
     ('Xiaomi', 'Buds 5', r'xiaomi buds 5(?! pro| lite| plus)'),
@@ -128,7 +131,7 @@ PILOT_MODEL_NAMES = tuple(f'{brand} {name}' for brand, name, _ in COHORT)
 MODEL_NAMES = (*PILOT_MODEL_NAMES, *(f'{brand} {name}' for brand, name, _ in EXPANSION_COHORT),
                *PAIR_REQUIRED_MODEL_NAMES)
 BAD_CONDITION = re.compile(
-    r'\b(?:yenilenmis|ikinci el|teshir|outlet|muadil|replika|sadece kutu|yedek|kilif|tek kulaklik)\b')
+    r'\b(?:yenilenmis|ikinci el|teshir|outlet|muadil|replika|sadece kutu|yedek|kilif(?:i|lari?)?|tek kulaklik)\b')
 MEDIAMARKT_CATEGORIES = (
     ('https://www.mediamarkt.com.tr/tr/category/kulak-ici-kulakliklar-795546.html', 'kulak ici kulaklik'),
     ('https://www.mediamarkt.com.tr/tr/category/anker-kulaklik-901010.html', 'anker kulaklik'),
@@ -144,6 +147,8 @@ def model_name(title, brand):
     maker_name = TRPriceScraper._normalize_words(brand)
     if maker_name == 'soundcore':
         maker_name = 'anker'
+    if maker_name in ('cmf', 'cmf by nothing', 'nothing cmf'):
+        maker_name = 'nothing'
     matches = [f'{maker} {model}' for maker, model, pattern in (*COHORT, *EXPANSION_COHORT, *NEW_MODELS)
                if maker.casefold() == maker_name
                and re.search(r'\b(?:' + pattern + r')\b', words)]

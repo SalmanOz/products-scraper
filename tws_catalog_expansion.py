@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 from requests import RequestException
 from curl_cffi.requests import RequestsError
 
+from catalog_source_collector import catalog_document_reader
 from hepsiburada_catalog_discovery import discover_product_sellers as hepsiburada_seller_targets
 from laptop_pilot import IMAGE_HOSTS, _hepsiburada_public_get, _image, _public_offers, verify_seller
 from mediamarkt_source import MediaMarktSource, _selected_offer
@@ -31,6 +32,25 @@ MARKETPLACES = {'www.n11.com', 'www.trendyol.com', 'www.hepsiburada.com', 'www.t
 STORES = {'www.vatanbilgisayar.com', 'www.mediamarkt.com.tr'}
 TWS_IMAGE_HOSTS = IMAGE_HOSTS | {'productimages.hepsiburada.net', 'reimg-teknosa-cloud-prod.mncdn.com', 'img.pzrmcdn.com'}
 ALTERNATE_SELLER_BUDGET = 8
+COLOR_NAMES = {
+    'beyaz': 'Beyaz', 'bej': 'Bej', 'gri': 'Gri', 'gumus': 'Gümüş', 'kirmizi': 'Kırmızı',
+    'lacivert': 'Lacivert', 'mavi': 'Mavi', 'mor': 'Mor', 'pembe': 'Pembe', 'sari': 'Sarı',
+    'siyah': 'Siyah', 'turuncu': 'Turuncu', 'yesil': 'Yeşil',
+}
+
+
+def common_color(offers):
+    colors = set()
+    for offer in offers:
+        title_words = TRPriceScraper._normalize_words(offer.get('source_title') or '').split()
+        title_colors = set(title_words).intersection(COLOR_NAMES)
+        selected = offer.get('selected_n11_color_slug', '').split('-')[-1]
+        if selected in COLOR_NAMES:
+            title_colors.add(selected)
+        if len(title_colors) != 1:
+            return None
+        colors.update(title_colors)
+    return COLOR_NAMES[next(iter(colors))] if len(colors) == 1 else None
 
 
 def public_tws_offers(offers):
@@ -237,7 +257,20 @@ def reread(host, rows, statuses=None, document_reader=None, *, discover=False):
     return observations, failures
 
 
-def stage(catalog, snapshot, specs, candidates, output):
+def candidates_from_audit(audit):
+    """Carry retailer destinations and selected identities into a fresh read."""
+    candidates = {}
+    for row in audit['verified']:
+        paired_gtins = {item['gtin13'] for item in row['verifiedVariants'] if len(item['offers']) >= 2}
+        if paired_gtins:
+            candidates[row['name']] = [
+                {key: offer[key] for key in ('url', 'gtin13', 'merchant')}
+                for offer in row['observations'] if offer['gtin13'] in paired_gtins
+            ]
+    return candidates
+
+
+def stage(catalog, snapshot, specs, candidates, output, *, allow_empty=False):
     existing = {row['name'] for row in catalog['models']}
     owned = {row['gtin'] for row in snapshot['models'] if row['gtin']}
     sources, seen = defaultdict(list), set()
@@ -257,8 +290,11 @@ def stage(catalog, snapshot, specs, candidates, output):
                 sources[p.netloc].append((name, row))
                 seen.add(url)
     verified, failures = defaultdict(list), Counter()
+    n11_reader = catalog_document_reader('earbud-discovery') if 'www.n11.com' in sources else None
     with ThreadPoolExecutor(max_workers=4) as pool:
-        jobs = {h: pool.submit(reread, h, rows) for h, rows in sources.items()}
+        jobs = {h: pool.submit(reread, h, rows,
+                              document_reader=n11_reader if h == 'www.n11.com' else None)
+                for h, rows in sources.items()}
         for host, job in jobs.items():
             observations, skipped = job.result()
             failures.update({f'{host}:{reason}': total for reason, total in skipped.items()})
@@ -271,8 +307,13 @@ def stage(catalog, snapshot, specs, candidates, output):
     products, prices, photos = [], [], {}
     targets = dict(snapshot.get('sourceTargets', {}))
     for name, rows in sorted(verified.items()):
-        offers = exact_tws_sellers([row for row in rows if len(gtin_models[row['gtin13']]) == 1])
-        if len(offers) < 2:
+        groups = defaultdict(list)
+        for row in rows:
+            if len(gtin_models[row['gtin13']]) == 1:
+                groups[row['gtin13']].append(row)
+        variants = [offers for group in groups.values() if (offers := exact_tws_sellers(group))]
+        variants.sort(key=lambda offers: (offers[0]['price'], offers[0]['gtin13']))
+        if not variants:
             failures['independent_pair_missing'] += 1
             continue
         spec = specs[name]
@@ -281,21 +322,30 @@ def stage(catalog, snapshot, specs, candidates, output):
                 or not spec['summary'] or not spec['highlights']
                 or urlsplit(spec['specSource']).scheme != 'https'):
             raise ValueError(f'Incomplete manufacturer specification for {name}')
-        for offer in offers:
+        for offer in (offer for offers in variants for offer in offers):
             image = _image(offer['_image'], allowed_hosts=TWS_IMAGE_HOSTS) if offer.get('_image') else None
             if image:
                 photos[slug] = image
                 products.append({**spec, 'name': name, 'slug': slug, 'photoSource': offer['url'],
                                  'requiresIndependentPair': True})
-                prices.append({'name': name, 'gtin': offer['gtin13'], 'offers': public_tws_offers(offers)})
-                if any('storePickup' in current for current in offers):
-                    targets[name] = [tws_source_target(current) for current in offers]
                 break
         else:
             failures['selected_image_missing'] += 1
-    print(json.dumps({'qualified': [p['name'] for p in products], 'rejections': failures}, ensure_ascii=False))
+            continue
+        for offers in variants:
+            gtin = offers[0]['gtin13']
+            row = {'name': name, 'gtin': gtin, 'offers': public_tws_offers(offers)}
+            if color := common_color(offers):
+                row['variant'] = color
+            prices.append(row)
+            target_key = f'{name}/{gtin}' if len(variants) > 1 else name
+            targets[target_key] = [tws_source_target(current) for current in offers]
+    report = {'qualified': [p['name'] for p in products], 'qualifiedVariants': len(prices),
+              'rejections': dict(failures)}
     if not products:
-        raise ValueError('No new TWS model has two independent sellers and a selected product photo')
+        if not allow_empty:
+            raise ValueError('No new TWS model has two independent sellers and a selected product photo')
+        return report
     now = datetime.now(timezone.utc).isoformat()
     output.mkdir(parents=True, exist_ok=True)
     (output / 'earbuds').mkdir(exist_ok=True)
@@ -307,12 +357,18 @@ def stage(catalog, snapshot, specs, candidates, output):
                                   'sourceTargets': targets}),
     ):
         (output / filename).write_text(json.dumps(payload, ensure_ascii=False, indent=2) + '\n')
+    return report
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     for argument in ('catalog', 'snapshot', 'specs', 'candidates', 'output'):
         parser.add_argument(argument, type=Path)
+    parser.add_argument('--from-audit', action='store_true', help='Read same-GTIN candidates from a retailer audit')
     args = parser.parse_args()
-    stage(*(json.loads(path.read_text()) for path in (args.catalog, args.snapshot, args.specs, args.candidates)),
-          args.output)
+    catalog, snapshot, specs, candidates = (json.loads(path.read_text(encoding='utf-8'))
+                                             for path in (args.catalog, args.snapshot, args.specs, args.candidates))
+    if args.from_audit:
+        candidates = candidates_from_audit(candidates)
+    print(json.dumps(stage(catalog, snapshot, specs, candidates, args.output, allow_empty=args.from_audit),
+                     ensure_ascii=False))

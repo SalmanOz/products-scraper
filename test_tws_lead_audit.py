@@ -1,7 +1,11 @@
 from datetime import datetime, timedelta, timezone
+import json
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
+from tws_catalog_expansion import candidates_from_audit, stage
 from tws_lead_audit import audit, collect_leads, identify
 
 
@@ -10,6 +14,54 @@ class EarbudLeadAuditTest(unittest.TestCase):
         self.assertEqual(identify('Sony WF-1000XM6'), 'Sony WF-1000XM6')
         self.assertIsNone(identify('Sony WH-1000XM6'))
         self.assertIsNone(identify('Sony WF-1000XM6 Yenilenmiş'))
+        self.assertEqual(identify('CMF by Nothing Buds 2a'), 'Nothing CMF Buds 2a')
+        self.assertEqual(identify('Nothing EARA'), 'Nothing Ear (a)')
+        self.assertIsNone(identify('Nothing Ear (3) Koruma Kılıfı'))
+
+    def test_earbud_budget_services_distinct_models_before_more_urls_for_one_model(self):
+        host = 'www.n11.com'
+        state = {'products': {
+            '1': {'title': 'Sony WF-1000XM6', 'category': 'tws', 'retailerLeads': [
+                f'https://{host}/urun/aaa-10001', f'https://{host}/urun/aaa-10002']},
+            '2': {'title': 'Nothing Ear (a)', 'category': 'tws', 'retailerLeads': [
+                f'https://{host}/urun/zzz-10003']},
+        }}
+        self.assertEqual([name for name, _ in collect_leads(state, maximum=2)[host]],
+                         ['Sony WF-1000XM6', 'Nothing Ear (a)'])
+
+    def test_new_product_stages_all_fresh_independent_gtins_from_audit(self):
+        name = 'Nothing Ear (a)'
+        gtins = ['4548736171770', '4548736171824']
+        offers = []
+        for i, gtin in enumerate(gtins):
+            for platform, domain, route in (
+                ('n11', 'www.n11.com', f'/urun/nothing-ear-a-{10001+i}'),
+                ('Trendyol', 'www.trendyol.com', f'/nothing/ear-a-p-{10001+i}'),
+            ):
+                offers.append({'gtin13': gtin, 'merchant': platform, 'platform': platform,
+                               'url': f'https://{domain}{route}', 'price': 3000 + i,
+                               'observed_at': 'current', '_legal_name': platform,
+                               'source_title': name + (' Sarı' if i == 0 else ' Beyaz'),
+                               '_image': 'https://example.test/product.webp'})
+        prior = {'verified': [{'name': name, 'observations': offers, 'verifiedVariants': [
+            {'gtin13': gtin, 'offers': [o for o in offers if o['gtin13'] == gtin]} for gtin in gtins]}]}
+        targets = candidates_from_audit(prior)
+        self.assertNotIn('price', targets[name][0])
+        specs = {name: {'summary': 'Özet', 'highlights': ['Özellik'], 'specSource': 'https://example.test/spec',
+                        'specs': [{'label': str(i), 'value': 'Değer'} for i in range(5)]}}
+
+        def live(host, rows, document_reader=None):
+            urls = {row['url'] for _, row in rows}
+            return {name: [o for o in offers if o['url'] in urls]}, {}
+
+        with TemporaryDirectory() as folder, patch('tws_catalog_expansion.reread', side_effect=live), \
+                patch('tws_catalog_expansion._image', return_value=b'photo'):
+            report = stage({'models': []}, {'models': []}, specs, targets, Path(folder))
+            result = json.loads((Path(folder) / 'twsOfferSnapshot.json').read_text())
+        self.assertEqual(report['qualifiedVariants'], 2)
+        self.assertEqual([(row['gtin'], row['variant']) for row in result['models']],
+                         [(gtins[0], 'Sarı'), (gtins[1], 'Beyaz')])
+        self.assertEqual(set(result['sourceTargets']), {f'{name}/{gtin}' for gtin in gtins})
 
     def test_canonical_links_with_conflicting_owners_do_not_get_read(self):
         url = 'https://www.n11.com/urun/sony-wf-1000xm6-12345678'

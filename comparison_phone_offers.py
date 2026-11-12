@@ -1,13 +1,13 @@
 """Verify retailer leads for existing phones using two independent sellers of one GTIN."""
 
 import argparse
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, deque
 from datetime import datetime, timezone
 from itertools import zip_longest
 import json
 from pathlib import Path
 import re
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import parse_qs, urljoin, urlsplit
 
 from bs4 import BeautifulSoup
 import requests
@@ -196,6 +196,22 @@ def product_family(slug):
     return re.sub(r'-[1-9]\d?gb-[1-9]\d{1,3}gb$', '', slug)
 
 
+def capacity_priority(url, storage_gb):
+    """Rank public URL hints without treating them as variant evidence."""
+    storage_gb = TRPriceScraper._spec_int(storage_gb)
+    if not storage_gb:
+        return 1
+    route = urlsplit(url)
+    selector = parse_qs(route.query).get('dahili-hafiza', [])
+    text = selector[0] if len(selector) == 1 else route.path
+    values = {
+        int(amount) * (1024 if unit == 'tb' else 1)
+        for amount, unit in re.findall(r'(?<!\d)([1-9]\d{0,3})[-_ ]?(gb|tb)(?=$|[-_.\d])', text.casefold())
+    }
+    plausible = {value for value in values if value >= min(storage_gb, 64)}
+    return 0 if storage_gb in plausible else 2 if plausible else 1
+
+
 def category_leads(slug, name, specs, transport, documents):
     matcher = TRPriceScraper()
     leads = set()
@@ -294,8 +310,19 @@ def audit_queue(state, products, maximum=8):
         family = product_family(slug)
         if len(by_family[family]) >= 2:
             candidates.append(product)
-    return sorted(candidates, key=lambda row: (
-        audited.get(row['slug'], ''), row.get('fresh_offer_count') not in (0, '0'), row['slug']))[:maximum]
+    ranked = sorted(candidates, key=lambda row: (
+        audited.get(row['slug'], ''), row.get('fresh_offer_count') not in (0, '0'), row['slug']))
+    families = defaultdict(deque)
+    for row in ranked:
+        families[product_family(row['slug'])].append(row)
+    queue = deque(families.values())
+    selected = []
+    while queue and len(selected) < maximum:
+        siblings = queue.popleft()
+        selected.append(siblings.popleft())
+        if siblings:
+            queue.append(siblings)
+    return selected
 
 
 def publishable_pair(observations, client, product):
@@ -394,15 +421,16 @@ def run(state, slugs, client=None, *, publish=False, maximum=24, products=None, 
             discovered += candidate_urls(state, slug, expanded=public_audit)
             known = published_offer_urls(slug) if public_audit else ()
             urls = list(dict.fromkeys(url for pair in zip_longest(discovered, known) for url in pair if url))
-        # Spend each store's budget on the capacity being audited first.
-        capacity = re.compile(r'-' + str(specs.get('storage_gb')) + '-?gb(?:-|_)')
-        urls.sort(key=lambda url: not bool(capacity.search(urlsplit(url).path)))
+        # Keep compatible or unspecified URL hints for the public queue.
+        # Reviewed publication still checks every explicitly supplied URL.
+        storage = specs.get('storage_gb')
+        urls.sort(key=lambda url: capacity_priority(url, storage))
         if public_audit:
             per_host = Counter()
             limited_urls = []
             for url in urls:
                 host = urlsplit(url).netloc
-                if per_host[host] < 4:
+                if per_host[host] < 4 and capacity_priority(url, storage) < 2:
                     limited_urls.append(url)
                     per_host[host] += 1
             urls = limited_urls

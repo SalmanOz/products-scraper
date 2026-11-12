@@ -1,7 +1,7 @@
 """Read original retailer listings discovered on comparison sites for known earbuds."""
 
 import argparse
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 import json
@@ -21,7 +21,8 @@ def identify(title):
     words = TRPriceScraper._normalize_words(title).split()
     if not words:
         return None
-    brand = {'redmi': 'xiaomi', 'airpods': 'apple', 'soundcore': 'anker'}.get(words[0], words[0])
+    brand = {'redmi': 'xiaomi', 'airpods': 'apple', 'soundcore': 'anker',
+             'cmf': 'nothing'}.get(words[0], words[0])
     if brand not in {row[0].casefold() for row in (*COHORT, *EXPANSION_COHORT, *NEW_MODELS)}:
         return None
     return model_name(title, brand)
@@ -39,12 +40,23 @@ def collect_leads(state, models=(), maximum=16):
             url = retailer_destination(raw)
             if url and selected_host(url):
                 candidates[url].add(name)
-    groups = defaultdict(list)
+    groups = defaultdict(lambda: defaultdict(deque))
     previous = state.get('earbudLeadAudits', {})
     for url, names in sorted(candidates.items(), key=lambda item: (previous.get(item[0], ''), item[0])):
         if len(names) == 1:
-            groups[urlsplit(url).netloc].append((next(iter(names)), {'url': url}))
-    return {host: rows[:maximum] for host, rows in groups.items()}
+            name = next(iter(names))
+            groups[urlsplit(url).netloc][name].append({'url': url})
+    selected = {}
+    for host, models in groups.items():
+        pending = deque(models)
+        rows = []
+        while pending and len(rows) < maximum:
+            name = pending.popleft()
+            rows.append((name, models[name].popleft()))
+            if models[name]:
+                pending.append(name)
+        selected[host] = rows
+    return selected
 
 
 def recent_observations(state, now):

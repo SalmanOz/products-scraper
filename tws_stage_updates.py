@@ -11,29 +11,8 @@ from pathlib import Path
 from catalog_source_collector import catalog_document_reader
 from competitor_catalog_gaps import retailer_destination
 from retailer_barcode import retailer_gtin13
-from tr_price_scraper import TRPriceScraper
-from tws_catalog_expansion import exact_tws_sellers, public_tws_offers, reread, tws_source_target
+from tws_catalog_expansion import common_color, exact_tws_sellers, public_tws_offers, reread, tws_source_target
 from tws_refresh import MAX_CURRENT_OFFERS, selected_host
-
-
-COLOR_NAMES = {
-    'beyaz': 'Beyaz', 'bej': 'Bej', 'gri': 'Gri', 'gumus': 'Gümüş', 'kirmizi': 'Kırmızı',
-    'mavi': 'Mavi', 'mor': 'Mor', 'pembe': 'Pembe', 'siyah': 'Siyah', 'yesil': 'Yeşil',
-}
-
-
-def common_color(offers):
-    colors = set()
-    for offer in offers:
-        title_words = TRPriceScraper._normalize_words(offer.get('source_title') or '').split()
-        title_colors = set(title_words).intersection(COLOR_NAMES)
-        selected = offer.get('selected_n11_color_slug', '').split('-')[-1]
-        if selected in COLOR_NAMES:
-            title_colors.add(selected)
-        if len(title_colors) != 1:
-            return None
-        colors.update(title_colors)
-    return COLOR_NAMES[next(iter(colors))] if len(colors) == 1 else None
 
 
 def stage(snapshot, catalog, report, selected_models=()):
