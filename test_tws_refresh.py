@@ -9,6 +9,47 @@ from tws_retailer_sources import selected_vatan_store_tws
 
 
 class TwsRefreshTest(TestCase):
+    def test_ozgur_refresh_checks_the_live_barcode_and_seller(self):
+        host = 'ozguriletisimankara.com'
+        url = f'https://{host}/urun/xiaomi-buds-5-kablosuz-kulaklik-gri'
+        name, gtin = 'Xiaomi Buds 5', '6941812768518'
+        photo = f'https://{host}/uploads/products/buds-5-gri.jpg'
+        title = f'{name} Kablosuz Kulaklık Gri'
+        merchant = 'Özgür İletişim'
+        product = {'@type': 'Product', 'url': url, 'name': title, 'gtin13': gtin, 'image': [photo],
+                   'brand': {'name': 'Xiaomi'}, 'mpn': 'BUDS5-GRI',
+                   'offers': {'@type': 'Offer', 'url': url, 'price': '5499.00', 'priceCurrency': 'TRY',
+                              'seller': {'name': merchant}, 'availability': 'https://schema.org/InStock',
+                              'itemCondition': 'https://schema.org/NewCondition'}}
+        html = f'''
+          <link rel="canonical" href="{url}">
+          <script type="application/ld+json">{json.dumps(product)}</script>
+          <main class="oi-product-detail" data-product-id="81" data-oi-view-variant="813">
+            <img id="oi-product-main-img" src="{photo}">
+            <section class="oi-pd-buybox">
+              <h1 class="oi-pd-title">{title}</h1><div class="oi-pd-model"><span>BUDS5-GRI</span></div>
+              <div class="oi-pd-stockline is-in">Stokta</div><span data-oi-price>5.499,00 TL</span>
+              <button data-oi-add-cart data-id="81">Sepete Ekle</button>
+            </section>
+          </main>
+        '''
+        terms = '<p>Satıcı: Özgür İletişim Limited Şirketi Vergi dairesi: Ankara</p>'
+        target = {'url': url, 'merchant': merchant, 'gtin13': gtin}
+        for page, expected in ((html, 'verified'), (html.replace(gtin, '6941812772256'), 'unverified'),
+                               (html.replace('InStock', 'OutOfStock'), 'unverified')):
+            with self.subTest(status=expected), patch('tws_catalog_expansion.PriorityRetailerTransport') as factory:
+                transport = factory.return_value
+                transport._read_document.side_effect = [(terms, 'document_read', 200), (page, 'document_read', 200)]
+                statuses = {}
+                offers, _ = reread(host, [(name, target)], statuses)
+                self.assertEqual(statuses[url], expected)
+                self.assertEqual(bool(offers), expected == 'verified')
+                if offers:
+                    self.assertEqual(offers[name][0]['_legal_name'], 'ozgur iletisim limited sirketi')
+                    self.assertEqual(offers[name][0]['price'], 5499)
+                self.assertEqual(transport._read_document.call_args_list[0].args[0],
+                                 f'https://{host}/mesafeli-satis')
+
     def test_pazarama_uses_the_scoped_site_reader_in_mixed_refresh(self):
         name, gtin = 'Anker Soundcore AeroFit 2', '0194644298876'
         url = 'https://www.pazarama.com/anker-aerofit-2-siyah-p-0194644298876'

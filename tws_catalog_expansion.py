@@ -21,6 +21,7 @@ from laptop_pilot import IMAGE_HOSTS, _hepsiburada_public_get, _image, _public_o
 from mediamarkt_source import MediaMarktSource, _selected_offer
 from nethouse_offer_source import HOST as NETHOUSE, IMAGE_HOST as NETHOUSE_IMAGE, nethouse_product_url, selected_nethouse_offer
 from n11_catalog_source import discover_product_sellers
+from ozgur_phone_source import OZGUR_HOST, OZGUR_TERMS, ozgur_phone_url, ozgur_tws_offer
 from pazarama_category_source import HOST as PAZARAMA, pazarama_product_url
 from pazarama_offer_source import pazarama_seller_identity
 from pttavm_offer_source import HOST as PTTAVM, ptt_product_url, ptt_seller_identity, selected_ptt_offer
@@ -36,7 +37,7 @@ from vatan_category_source import VatanCategorySource
 MARKETPLACES = {'www.n11.com', 'www.trendyol.com', 'www.hepsiburada.com', 'www.teknosa.com'}
 STORES = {'www.vatanbilgisayar.com', 'www.mediamarkt.com.tr'}
 TWS_IMAGE_HOSTS = IMAGE_HOSTS | IDEFIX_IMAGES | {'productimages.hepsiburada.net', 'reimg-teknosa-cloud-prod.mncdn.com',
-                               'img.pzrmcdn.com', 'cdn-s3.pttavm.com', NETHOUSE_IMAGE}
+                               'img.pzrmcdn.com', 'cdn-s3.pttavm.com', NETHOUSE_IMAGE, OZGUR_HOST}
 ALTERNATE_SELLER_BUDGET = 8
 COLOR_NAMES = {
     'beyaz': 'Beyaz', 'bej': 'Bej', 'gri': 'Gri', 'gumus': 'Gümüş', 'kirmizi': 'Kırmızı',
@@ -118,7 +119,7 @@ def reread(host, rows, statuses=None, document_reader=None, *, discover=False):
     identities = {}
     transport = None
     direct_reader = {PAZARAMA: pazarama_product_url, PTTAVM: ptt_product_url,
-                     NETHOUSE: nethouse_product_url, IDEFIX: idefix_product_url}.get(host)
+                     NETHOUSE: nethouse_product_url, IDEFIX: idefix_product_url, OZGUR_HOST: ozgur_phone_url}.get(host)
     if host in MARKETPLACES or direct_reader:
         options = {}
         if document_reader is not None:
@@ -127,7 +128,7 @@ def reread(host, rows, statuses=None, document_reader=None, *, discover=False):
             options.update(get=_hepsiburada_public_get, browser_fallback=False)
         elif host == PTTAVM:
             options.update(get=compatible_get, browser_fallback=False)
-        elif discover or host in (NETHOUSE, IDEFIX):
+        elif discover or host in (NETHOUSE, IDEFIX, OZGUR_HOST):
             options['browser_fallback'] = False
         if host == IDEFIX:
             options['missing_robots_hosts'] = (IDEFIX_API,)
@@ -148,6 +149,15 @@ def reread(host, rows, statuses=None, document_reader=None, *, discover=False):
             return None, 'robots_disallowed', None
         source._sleep(max(.5, source._delay))
         return source._read(url, 64 * 1024, 'application/json')
+
+    legal_html = None
+    if host == OZGUR_HOST:
+        legal_html, reason, _ = transport._read_document(OZGUR_TERMS, host, category=True)
+        if not legal_html:
+            if statuses is not None:
+                statuses.update({target['url']: 'unavailable' for _, target in pending})
+            failures['ozgur_seller_identity_' + reason] = len(pending)
+            return observations, failures
 
     while pending:
         name, target = pending.popleft()
@@ -196,6 +206,11 @@ def reread(host, rows, statuses=None, document_reader=None, *, discover=False):
                 current, reason = selected_teknosa_tws(html, final, name, model_name)
             elif host == NETHOUSE:
                 current, reason = selected_nethouse_offer(html, final, name, model_name)
+            elif host == OZGUR_HOST:
+                try:
+                    current = ozgur_tws_offer(html, legal_html, url=final, name=name, model_name=model_name)
+                except ValueError as error:
+                    current, reason = None, str(error)
             elif host == IDEFIX:
                 selected = {}
                 current, reason = selected_idefix_offer(html, final, name, model_name, discovery=selected)
@@ -341,6 +356,7 @@ def stage(catalog, snapshot, specs, candidates, output, *, allow_empty=False):
                     or p.netloc == PTTAVM and ptt_product_url(url)
                     or p.netloc == NETHOUSE and nethouse_product_url(url)
                     or p.netloc == IDEFIX and idefix_product_url(url)
+                    or p.netloc == OZGUR_HOST and ozgur_phone_url(url)
                     or p.netloc == 'www.vatanbilgisayar.com' and _vatan_url(url)
                     or p.netloc == 'www.mediamarkt.com.tr' and _mediamarkt_tws_url(url)):
                 sources[p.netloc].append((name, row))

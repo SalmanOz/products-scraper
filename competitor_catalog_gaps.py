@@ -66,7 +66,7 @@ ADDITIONAL_COMPARISON_CATEGORIES = {
         'cooler': '/kategori/islemci-sogutucu',
     },
     TUBERKARAS: {'phone': '/kategori/telefon', 'tws': '/kategori/kulaklik'},
-    OZGUR_HOST: {'phone': '/telefon'},
+    OZGUR_HOST: {'phone': '/telefon', 'tws': '/kulaklik'},
     AYAZ_HOST: {'phone': '/kategori/cep-telefonu'},
     SERINAL_HOST: {'phone': SERINAL_CATEGORY},
     BESKEN_HOST: {'phone': BESKEN_CATEGORY},

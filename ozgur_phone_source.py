@@ -1,4 +1,4 @@
-"""Verify a selected Özgür İletişim phone on its public PDP and legal page."""
+"""Verify selected Özgür İletişim products on the public PDP and legal page."""
 from datetime import datetime, timezone
 import re
 from urllib.parse import urljoin
@@ -22,7 +22,7 @@ def ozgur_phone_url(url):
         re.escape(OZGUR_BASE) + r'/urun/[a-z0-9-]{6,250}', url))
 
 
-def ozgur_offer(html, legal_html, *, url, name, specs, mpn=None, gtin=None, brand=None):
+def _selected_offer(html, legal_html, *, url, matches_model, mpn=None, gtin=None):
     if not ozgur_phone_url(url):
         raise ValueError('ozgur_invalid_phone_url')
     soup = BeautifulSoup(html, 'html.parser')
@@ -43,8 +43,9 @@ def ozgur_offer(html, legal_html, *, url, name, specs, mpn=None, gtin=None, bran
     observed_brand = product.get('brand')
     observed_brand = observed_brand.get('name') if isinstance(observed_brand, dict) else None
     matcher = TRPriceScraper()
-    expected_brand = matcher._normalize_words(brand) if brand else matcher._normalize_words(name.split()[0])
-    offer = product.get('offers') or {}
+    offer = product.get('offers')
+    if not isinstance(offer, dict) or offer.get('@type') != 'Offer':
+        raise ValueError('ozgur_selected_offer_missing')
     box = root.select_one('.oi-pd-buybox')
     if box is None:
         raise ValueError('ozgur_buybox_missing')
@@ -61,11 +62,11 @@ def ozgur_offer(html, legal_html, *, url, name, specs, mpn=None, gtin=None, bran
     legal_name = matcher._normalize_words(company[1]) if company else ''
     price = _amount(offer.get('price'))
     if (not legal_name or not title or product.get('name') != title or product.get('url') != url
-            or not matcher.is_strict_match(name, title, specs)
+            or not matches_model(title, observed_brand)
             or not isinstance(observed_mpn, str) or not re.fullmatch(r'[A-Za-z0-9./-]{4,80}', observed_mpn)
             or not model or model.get_text(strip=True) != observed_mpn
             or mpn is not None and observed_mpn != mpn or gtin is not None and observed_gtin != gtin
-            or matcher._normalize_words(observed_brand) != expected_brand or not photo_url
+            or not photo_url
             or photo_url not in product.get('image', []) or offer.get('url') != url
             or (offer.get('seller') or {}).get('name') != 'Özgür İletişim'
             or offer.get('availability') != 'https://schema.org/InStock'
@@ -80,6 +81,26 @@ def ozgur_offer(html, legal_html, *, url, name, specs, mpn=None, gtin=None, bran
     result = {'merchant': merchant, 'platform': merchant, '_legal_name': legal_name,
               'price': float(price), 'currency': 'TRY', 'availability': 'in_stock', 'gtin13': observed_gtin,
               'source_title': title, 'url': url, 'observed_at': datetime.now(timezone.utc).isoformat()}
+    return result, photo_url, product, identifiers
+
+
+def ozgur_tws_offer(html, legal_html, *, url, name, model_name):
+    offer, photo, _, _ = _selected_offer(html, legal_html, url=url,
+        matches_model=lambda title, observed_brand: model_name(title, observed_brand) == name)
+    return {**offer, 'model': name, 'condition': 'new', '_image': photo}
+
+
+def ozgur_offer(html, legal_html, *, url, name, specs, mpn=None, gtin=None, brand=None):
+    matcher = TRPriceScraper()
+    expected_brand = matcher._normalize_words(brand or name.split()[0])
+
+    def matches_model(title, observed_brand):
+        return (matcher._normalize_words(observed_brand) == expected_brand
+                and matcher.is_strict_match(name, title, specs))
+
+    result, photo_url, product, identifiers = _selected_offer(
+        html, legal_html, url=url, matches_model=matches_model, mpn=mpn, gtin=gtin)
+    merchant = result['merchant']
     if mpn is None or gtin is None:
         return result, photo_url
     if not isinstance(product.get('sku'), str) or not re.fullmatch(r'[A-Z0-9-]{4,60}', product['sku']):

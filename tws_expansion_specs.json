@@ -1,4 +1,34 @@
 {
+  "Xiaomi Buds 5": {
+    "summary": "Xiaomi Buds 5, yarı kulak içi tasarımı 11 mm sürücü ve aktif gürültü engellemeyle birleştiriyor. Şarj kutusuyla 39 saate kadar dinleme süresi sunuyor.",
+    "highlights": ["11 mm dinamik sürücü", "Aktif gürültü engelleme", "Kulaklıklarda IP54"],
+    "specSource": "https://www.mi.com/tr/product/xiaomi-buds-5/",
+    "specs": [
+      {"label": "Sürücü", "value": "11 mm çift mıknatıslı dinamik"},
+      {"label": "Frekans aralığı", "value": "16 Hz–40 kHz"},
+      {"label": "Gürültü kontrolü", "value": "Aktif gürültü engelleme"},
+      {"label": "Bluetooth", "value": "5.4"},
+      {"label": "Tek şarjla müzik", "value": "6,5 saate kadar"},
+      {"label": "Kutuyla toplam müzik", "value": "39 saate kadar"},
+      {"label": "Dayanıklılık", "value": "IP54 (kulaklıklar)"},
+      {"label": "Tek kulaklık ağırlığı", "value": "Yaklaşık 4,2 g"}
+    ]
+  },
+  "Xiaomi Buds 5 Pro": {
+    "summary": "Xiaomi Buds 5 Pro, koaksiyel üçlü sürücüler ve ayarlanabilir aktif gürültü engelleme sunuyor. Seramik beyazı sürümün şarj kutusu Qi kablosuz şarjı destekliyor.",
+    "highlights": ["Koaksiyel üçlü sürücü", "55 dB’ye kadar ANC", "Qi kablosuz şarj"],
+    "specSource": "https://www.mi.com/tr/product/xiaomi-buds-5-pro/",
+    "specs": [
+      {"label": "Sürücü", "value": "11 mm dinamik, seramik tiz ve düzlemsel sürücü"},
+      {"label": "Frekans aralığı", "value": "15 Hz–50 kHz"},
+      {"label": "Gürültü kontrolü", "value": "55 dB’ye kadar aktif gürültü engelleme"},
+      {"label": "Bluetooth", "value": "5.4"},
+      {"label": "Kutuyla toplam müzik", "value": "40 saate kadar"},
+      {"label": "Şarj", "value": "USB-C ve Qi kablosuz şarj"},
+      {"label": "Dayanıklılık", "value": "IP54 (kulaklıklar)"},
+      {"label": "Tek kulaklık ağırlığı", "value": "Yaklaşık 5,6 g"}
+    ]
+  },
   "Beats Solo Buds": {
     "summary": "Beats Solo Buds, çift katmanlı sürücülere sahip tam kablosuz kulaklık. Üretici, kulaklıklarda tek şarjla 18 saate kadar dinleme süresi belirtiyor.",
     "highlights": ["Tek şarjla 18 saate kadar dinleme", "Bluetooth 5.3", "USB-C şarj kutusu"],
