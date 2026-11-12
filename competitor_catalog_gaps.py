@@ -86,7 +86,7 @@ PHONE_STORAGE_THEN_RAM = re.compile(r' (?:[1-9]\d{2,3} gb|[1-9] tb) [1-9]\d? gb(
 PHONE_COLOR_AFTER_MEMORY = re.compile(
     r'( [1-9]\d{0,3} (?:gb(?: ram)?|tb)) (?:[a-z]{2,16} ){0,2}'
     r'(?:siyah|siyahi|beyaz|beyazi|gri|grisi|mavi|mavisi|mor|moru|yesil|yesili|kirmizi|pembe|'
-    r'turuncu|sari|gumus|altin|lacivert|bej|grafit|titanyum)$'
+    r'turuncu|sari|gumus|altin|lacivert|bej|grafit|titanyum|abis|burgonya|buzul rengi|kahve|kahvesi)$'
 )
 CATEGORIES = {
     'phone': ('/cep-telefonu.html', '/cep-telefonlari', '/akilli-telefonlar/'),
@@ -232,18 +232,21 @@ def load_inventory(data, phone_sitemap):
 
 
 def identity_index(parts):
-    by_label, by_mpn = defaultdict(set), defaultdict(set)
+    by_label, by_mpn, by_family = defaultdict(set), defaultdict(set), set()
     for part in parts:
         for label in {part['name'], part['slug']}:
             by_label[WORDS(label)].add(part['slug'])
+        family = phone_catalog_family(part['slug'])
+        if family != part['slug']:
+            by_family.add(family)
         mpn = WORDS(part.get('mpn', '')).replace(' ', '')
         if len(mpn) >= 6 and any(char.isdigit() for char in mpn) and any(char.isalpha() for char in mpn):
             by_mpn[mpn].add(part['slug'])
-    return by_label, by_mpn
+    return by_label, by_mpn, by_family
 
 
 def catalog_match(title, index):
-    by_label, by_mpn = index
+    by_label, by_mpn, _ = index
     label = WORDS(title)
     matches = by_label.get(label, set())
     if not matches:
@@ -255,17 +258,27 @@ def catalog_match(title, index):
 
 def phone_family(title):
     label = WORDS(re.sub(r'(\d+)(gb|tb)\b', r'\1 \2', title, flags=re.I))
+    if label.startswith('iphone '):
+        label = 'apple ' + label
+    label = re.sub(r'^oppo reno (\d+)', r'oppo reno\1', label)
     label = PHONE_COLOR_AFTER_MEMORY.sub(r'\1', label)
     label = PHONE_STORAGE_THEN_RAM.sub('', label)
     label = re.sub(r' [1-9]\d? gb ram$', '', label)
     return PHONE_MEMORY.sub('', label)
 
 
+def phone_catalog_family(slug):
+    return re.sub(r'-[1-9]\d?gb-[1-9]\d{1,3}gb$', '', slug)
+
+
 def candidate_family(kind, title, index):
     if kind != 'phone':
         return None
     family = phone_family(title)
-    return catalog_match(family, index) if family != WORDS(title) else None
+    if family != WORDS(title) and (base := catalog_match(family, index)):
+        return base
+    slug = family.replace(' ', '-')
+    return slug if slug in index[2] else None
 
 
 def urunai_sitemap_cards(xml, kinds, indexes):
@@ -1093,8 +1106,8 @@ def main():
             source_snapshots[host] = {'source': host, 'status': 'snapshot_unavailable_or_invalid'}
     priority = set(args.prioritize_model)
     if args.lead_limit and 'phone' in kinds:
-        priority.update(row['slug'] for row in public_phone_catalog()
-                        if row.get('fresh_offer_count') in (0, '0'))
+        unpriced = {row['slug'] for row in public_phone_catalog() if row.get('fresh_offer_count') in (0, '0')}
+        priority.update(unpriced, map(phone_catalog_family, unpriced))
     hosts = list(dict.fromkeys(args.source or SOURCES))
     batches = []
     if not args.lead_only:

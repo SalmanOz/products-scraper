@@ -15,7 +15,7 @@ import requests
 from ayaz_phone_source import AYAZ_HOST, AYAZ_TERMS, ayaz_offer, ayaz_phone_url
 from catalog_source_collector import catalog_document_reader
 
-from competitor_catalog_gaps import public_phone_catalog, read_state, retailer_destination, write_json
+from competitor_catalog_gaps import phone_catalog_family, public_phone_catalog, read_state, retailer_destination, write_json
 from hepsiburada_catalog_discovery import public_model_search_cards
 from hepsiburada_catalog_source import parse_catalog_buy_box
 from laptop_pilot import _hepsiburada_public_get, verify_seller
@@ -208,10 +208,6 @@ def ranked_pairs(observed):
     return sorted(pairs, key=lambda pair: (pair[0]['price'], pair[1]['price']))
 
 
-def product_family(slug):
-    return re.sub(r'-[1-9]\d?gb-[1-9]\d{1,3}gb$', '', slug)
-
-
 def capacity_priority(url, storage_gb):
     """Rank public URL hints without treating them as variant evidence."""
     storage_gb = TRPriceScraper._spec_int(storage_gb)
@@ -233,7 +229,7 @@ def capacity_priority(url, storage_gb):
 def category_leads(slug, name, specs, transport, documents):
     matcher = TRPriceScraper()
     leads = set()
-    for category in RETAILER_CATEGORIES.get(product_family(slug), ()):
+    for category in RETAILER_CATEGORIES.get(phone_catalog_family(slug), ()):
         host = urlsplit(category).netloc
         if category not in documents:
             documents[category] = transport._read_document(category, host, category=True)
@@ -288,7 +284,7 @@ def phone_lead_index(state, *, expanded=False):
         urls = {url: None for raw in row.get('retailerLeads', ())
                 if (url := retailer_destination(raw)) and supported_phone_url(url, expanded=expanded)}
         if family:
-            by_family[family].update(urls)
+            by_family[phone_catalog_family(family)].update(urls)
         if slug:
             by_slug[slug].update(urls)
     return by_family, by_slug
@@ -296,7 +292,7 @@ def phone_lead_index(state, *, expanded=False):
 
 def indexed_phone_leads(index, slug):
     by_family, by_slug = index
-    return list(dict.fromkeys([*by_slug.get(slug, ()), *by_family.get(product_family(slug), ())]))
+    return list(dict.fromkeys([*by_slug.get(slug, ()), *by_family.get(phone_catalog_family(slug), ())]))
 
 
 def candidate_urls(state, slug, *, expanded=False):
@@ -333,7 +329,7 @@ def saved_phone_leads(state, slug):
 def round_robin_phone_families(rows, maximum):
     families = defaultdict(deque)
     for row in rows:
-        families[product_family(row['slug'])].append(row)
+        families[phone_catalog_family(row['slug'])].append(row)
     queue = deque(families.values())
     selected = []
     while queue and len(selected) < maximum:

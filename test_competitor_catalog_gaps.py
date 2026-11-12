@@ -385,6 +385,29 @@ class CompetitorCatalogGapsTest(unittest.TestCase):
         self.assertEqual(candidate_family('phone', title, index), 'apple-iphone-16-plus')
         self.assertIsNone(candidate_family('phone', 'Apple iPhone 16 Pro (256 GB)', index))
 
+    def test_phone_color_and_model_spelling_supply_family_hints_only(self):
+        index = identity_index([
+            {'name': 'Apple iPhone 17 Pro Max', 'slug': 'apple-iphone-17-pro-max'},
+            {'name': 'Apple iPhone 18 Pro', 'slug': 'apple-iphone-18-pro'},
+            {'name': 'OPPO Reno15 Pro 5G', 'slug': 'oppo-reno15-pro-5g'},
+        ])
+        for title, family in (
+                ('iPhone 17 Pro Max 256 GB Abis', 'apple-iphone-17-pro-max'),
+                ('Apple iPhone 18 Pro 2 TB Burgonya', 'apple-iphone-18-pro'),
+                ('Apple iPhone 18 Pro 512 GB Buzul Rengi', 'apple-iphone-18-pro'),
+                ('Oppo Reno 15 Pro 5G 512GB 12GB Ram Alacakaranlık Kahvesi', 'oppo-reno15-pro-5g')):
+            with self.subTest(title=title):
+                self.assertIsNone(catalog_match(title, index))
+                self.assertEqual(candidate_family('phone', title, index), family)
+        self.assertIsNone(candidate_family('phone', 'iPhone 17 Pro 256 GB Abis', index))
+        self.assertIsNone(candidate_family('phone', 'Oppo Reno 15 Pro 4G 512GB Siyah', index))
+        capacity_only = identity_index([
+            {'name': 'OPPO Reno15 Pro 5G 12 GB 512 GB', 'slug': 'oppo-reno15-pro-5g-12gb-512gb'},
+        ])
+        self.assertIsNone(catalog_match('OPPO Reno15 Pro 5G', capacity_only))
+        self.assertEqual(candidate_family('phone', 'Oppo Reno 15 Pro 5G 512GB Mavi', capacity_only),
+                         'oppo-reno15-pro-5g')
+
     def test_color_suffix_retains_family_for_discovery_only(self):
         index = identity_index([{'name': 'Xiaomi Redmi 17 5G', 'slug': 'xiaomi-redmi-17-5g'}])
         title = 'Xiaomi Redmi 17 5G 128 GB 4 GB RAM Derin Mavi'
