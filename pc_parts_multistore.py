@@ -285,7 +285,7 @@ class PcRetailer:
         self.seller_targets = {}
         self.trendyol_default_document = (None, None)
 
-    def read(self, url, part, *, discover_sellers=False):
+    def read(self, url, part, *, discover_sellers=False, alternatives=()):
         if offer_host(url) != self.host or self.stop:
             return None
         html, reason, _ = self.transport._read_document(url, self.host)
@@ -298,6 +298,8 @@ class PcRetailer:
             raw, reason = self.parse(html, final, part)
         except (KeyError, ValueError, TypeError, AttributeError):
             raw, reason = None, 'invalid_source_data'
+        if raw and alternatives and raw['gtin13'] != part['gtin']:
+            part = next((candidate for candidate in alternatives if candidate['gtin'] == raw['gtin13']), part)
         if discover_sellers and not urlsplit(final).query:
             if self.host == TRENDYOL:
                 self.seller_targets.update((target, part) for target in trendyol_pc_seller_targets(
@@ -372,7 +374,8 @@ class PcRetailer:
         return offer, reason
 
 
-def collect_targets(targets, *, discover_sellers=False):
+def collect_targets(targets, *, discover_sellers=False, alternatives_by_url=None):
+    alternatives_by_url = alternatives_by_url or {}
     by_host = {}
     for url, part in targets:
         if host := offer_host(url):
@@ -384,7 +387,7 @@ def collect_targets(targets, *, discover_sellers=False):
         for url, part in rows:
             if reader.stop:
                 break
-            if offer := reader.read(url, part, discover_sellers=discover_sellers):
+            if offer := reader.read(url, part, discover_sellers=discover_sellers, alternatives=alternatives_by_url.get(url, ())):
                 results.append(offer)
         visited = {url for url, _ in rows}
         for url, part in reader.seller_targets.items():

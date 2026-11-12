@@ -72,18 +72,22 @@ def pazarama_selected(html, url, *, verify_product=None):
     if len(selected) != 2:
         return None
     detail = selected[1][:30000]
-    identities = re.match(r'name:\w+,displayName:\w+,sellerName:("(?:[^"\\]|\\.)+"),'
-                          r'sellerSeoName:"([a-z0-9-]+)",[^{}]{0,1000}?'
-                          r'\bcode:(' + NUXT_STRING + '|' + NUXT_IDENTIFIER + r'),stockCount:', detail)
-    if not identities or NORMALIZE(json.loads(identities[1])) != NORMALIZE(seller):
+    token = NUXT_STRING + '|' + NUXT_IDENTIFIER
+    identities = re.match(r'name:\w+,displayName:\w+,sellerName:(' + token + r'),'
+                          r'sellerSeoName:(' + token + r'),[^{}]{0,1000}?'
+                          r'\bcode:(' + token + r'),stockCount:', detail)
+    if not identities:
         return None
-    code = native_string(identities[3], document)
+    selected_name, seller_slug, code = (native_string(value, document) for value in identities.groups())
+    if (not selected_name or NORMALIZE(selected_name) != NORMALIZE(seller)
+            or not seller_slug or not re.fullmatch(r'[a-z0-9-]+', seller_slug) or not code):
+        return None
     gtin = retailer_gtin13(code)
     if not gtin or not re.fullmatch(r'\d{12,13}', code) or not url.endswith('-p-' + code):
         return None
     if re.search(r'\bproductSellerId:"' + re.escape(listing_id) + r'"', detail) is None:
         return None
-    seller_path = '/magaza/' + identities[2]
+    seller_path = '/magaza/' + seller_slug
     anchors = soup.select('.product-detail a[href]')
     if not any(a['href'] == seller_path and
                NORMALIZE(a.get_text(' ', strip=True)).startswith('satici ' + NORMALIZE(seller))
@@ -93,7 +97,7 @@ def pazarama_selected(html, url, *, verify_product=None):
     if evidence is None:
         return None
     return {**cash, **evidence, 'merchant': seller, 'platform': 'Pazarama', 'gtin13': gtin,
-            'merchant_id': identities[2], 'seller_url': SELLER_ROOT + identities[2]}
+            'merchant_id': seller_slug, 'seller_url': SELLER_ROOT + seller_slug}
 
 
 def pazarama_seller_identity(html, offer):

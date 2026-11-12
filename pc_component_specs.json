@@ -1,0 +1,182 @@
+{
+  "4719331871680": {
+    "kind": "motherboard",
+    "brand": "Gigabyte",
+    "mpn": "B850 EAGLE ICE",
+    "specSourceUrl": "https://www.gigabyte.com/Motherboard/B850-EAGLE-ICE/sp",
+    "specs": {
+      "Soket Tipi": "AM5",
+      "Yonga Seti": "AMD B850",
+      "RAM Tipi": "DDR5",
+      "RAM Desteği (Maks)": "256 GB",
+      "RAM Yuvası": "4 × DIMM",
+      "Form Faktörü": "ATX",
+      "Boyutlar": "305 × 244 mm",
+      "Depolama Bağlantıları": "3 × M.2, 4 × SATA",
+      "Ethernet": "2,5 GbE"
+    },
+    "sourceUrl": "https://www.incehesap.com/gigabyte-b850-eagle-ice-am5-ddr5-8200mhz-oc-atx-gaming-anakart-fiyati-84021/"
+  },
+  "5056547208701": {
+    "kind": "psu",
+    "brand": "NZXT",
+    "mpn": "PA-8G3BB-EU",
+    "specSourceUrl": "https://nzxt.com/products/c850-gold-core",
+    "specs": {
+      "Güç Kaynağı Değeri": "850 W",
+      "Güç Kaynağı Tipi": "ATX 3.1, tam modüler",
+      "Verimlilik": "80 PLUS Gold",
+      "Boyutlar": "150 × 150 × 86 mm",
+      "Fan": "135 mm",
+      "Ekran Kartı Bağlantısı": "1 × 16 pin 12V-2x6 (600 W), 3 × 6+2 pin PCIe"
+    },
+    "sourceUrl": "https://www.incehesap.com/nzxt-c850-gold-core-pa-8g3bb-eu-850w-80-gold-full-moduler-guc-kaynagi-fiyati-88527/"
+  },
+  "4718466019868": {
+    "kind": "case",
+    "brand": "Lian Li",
+    "mpn": "G99.O11DMIV2FW.00",
+    "specSourceUrl": "https://lian-li.com/product/o11-dynamic-mini-v2/",
+    "specs": {
+      "Kasa Tipi": "Mid Tower",
+      "Anakart Desteği": "ATX, Micro-ATX, Mini-ITX",
+      "Renk": "Beyaz",
+      "Boyutlar": "423,6 × 273,3 × 391,95 mm",
+      "Ekran Kartı Uzunluğu (Maks)": "400 mm",
+      "Soğutucu Yüksekliği (Maks)": "160 mm",
+      "Güç Kaynağı Desteği": "ATX, 200 mm’den kısa",
+      "Takılı Fan Sayısı": "5 × 120 mm ters kanat PWM",
+      "Radyatör Desteği": "Üst 360 mm, yan 240 mm"
+    },
+    "sourceUrl": "https://www.incehesap.com/lian-li-o11-dynamic-flow-mini-v2-mid-tower-atx-kasa-beyaz-fiyati-82336/"
+  },
+  "4718466019851": {
+    "kind": "case",
+    "brand": "Lian Li",
+    "mpn": "G99.O11DMIV2FX.00",
+    "specSourceUrl": "https://lian-li.com/product/o11-dynamic-mini-v2/",
+    "specs": {
+      "Kasa Tipi": "Mid Tower",
+      "Anakart Desteği": "ATX, Micro-ATX, Mini-ITX",
+      "Renk": "Siyah",
+      "Boyutlar": "423,6 × 273,3 × 391,95 mm",
+      "Ekran Kartı Uzunluğu (Maks)": "400 mm",
+      "Soğutucu Yüksekliği (Maks)": "160 mm",
+      "Güç Kaynağı Desteği": "ATX, 200 mm’den kısa",
+      "Takılı Fan Sayısı": "5 × 120 mm ters kanat PWM",
+      "Radyatör Desteği": "Üst 360 mm, yan 240 mm"
+    },
+    "sourceUrl": "https://www.incehesap.com/lian-li-o11-dynamic-flow-mini-v2-mid-tower-atx-kasa-fiyati-82333/"
+  },
+  "4718466019837": {
+    "kind": "case",
+    "brand": "Lian Li",
+    "mpn": "G99.O11DMIV2X.00",
+    "specSourceUrl": "https://lian-li.com/product/o11-dynamic-mini-v2/",
+    "specs": {
+      "Kasa Tipi": "Mid Tower",
+      "Anakart Desteği": "ATX, Micro-ATX, Mini-ITX",
+      "Renk": "Siyah",
+      "Boyutlar": "423,6 × 273,3 × 391,95 mm",
+      "Ekran Kartı Uzunluğu (Maks)": "400 mm",
+      "Soğutucu Yüksekliği (Maks)": "160 mm",
+      "Güç Kaynağı Desteği": "ATX, 200 mm’den kısa",
+      "Radyatör Desteği": "Üst 360 mm, yan 240 mm"
+    },
+    "sourceUrl": "https://www.incehesap.com/lian-li-o11-dynamic-mini-v2-siyah-mid-tower-atx-kasa-fiyati-82310/"
+  },
+  "4719331871529": {
+    "kind": "motherboard",
+    "brand": "Gigabyte",
+    "mpn": "X870E AORUS ELITE WIFI7 ICE",
+    "specSourceUrl": "https://www.gigabyte.com/Motherboard/X870E-AORUS-ELITE-WIFI7-ICE-rev-12/sp",
+    "specs": {
+      "Soket Tipi": "AM5",
+      "Yonga Seti": "AMD X870E",
+      "RAM Tipi": "DDR5",
+      "Form Faktörü": "ATX",
+      "RAM Yuvası": "4 × DIMM",
+      "Boyutlar": "305 × 244 mm",
+      "Depolama Bağlantıları": "4 × M.2, 4 × SATA"
+    },
+    "sourceUrl": "https://www.incehesap.com/gigabyte-x870e-aorus-elite-wifi7-ice-am5-ddr5-8200mhz-oc-atx-gaming-anakart-fiyati-84026/"
+  },
+  "4711377105613": {
+    "kind": "ssd",
+    "brand": "MSI",
+    "mpn": "SPATIUM M480 PRO 2TB",
+    "specSourceUrl": "https://www.msi.com/Storage/SPATIUM-M480-PRO-PCIe-4.0-NVMe-M.2/Specification",
+    "specs": {
+      "Depolama Tipi": "Dahili SSD",
+      "Depolama Biçimi": "M.2 2280",
+      "Depolama Kapasitesi": "2 TB",
+      "Bağlantı": "PCIe 4.0 ×4, NVMe 1.4",
+      "Sıralı Okuma": "7.400 MB/sn",
+      "Sıralı Yazma": "7.000 MB/sn",
+      "Yazma Dayanıklılığı": "1.400 TBW",
+      "Boyutlar": "80 × 22 × 2,15 mm"
+    },
+    "sourceUrl": "https://www.incehesap.com/msi-spatium-m480-pro-2tb-7400-7000mb-s-pcie-gen4-nvme-m-2-ssd-disk-fiyati-69709/"
+  },
+  "5056547206233": {
+    "kind": "cooler",
+    "brand": "NZXT",
+    "mpn": "RL-KR36C-B1",
+    "specSourceUrl": "https://support.nzxt.com/hc/en-us/articles/41097983638299-Kraken-Core-2025-Specs",
+    "specs": {
+      "Uyumlu Soketler": "AM5, AM4, LGA1851, LGA1700, LGA1200, LGA115X",
+      "Soğutma Yöntemi": "Kapalı devre sıvı soğutma",
+      "Radyatör": "360 mm",
+      "Radyatör Boyutları": "397 × 120 × 27 mm",
+      "Hortum Uzunluğu": "420 mm",
+      "Blok Yüksekliği": "64,24 mm"
+    },
+    "sourceUrl": "https://www.incehesap.com/nzxt-kraken-core-360-rgb-rl-kr36c-b1-siyah-islemci-sivi-sogutucu-fiyati-88515/"
+  },
+  "4895106296381": {
+    "kind": "gpu",
+    "brand": "Sapphire",
+    "mpn": "11350-03-20G",
+    "specSourceUrl": "https://www.sapphiretech.com/en/consumer/pulse-radeon-rx-9060-xt-16g-gddr6",
+    "specs": {
+      "Grafik İşlemci Modeli": "AMD Radeon RX 9060 XT",
+      "Grafik Bellek": "16 GB GDDR6",
+      "Uzunluk": "240 mm",
+      "Güç Tüketimi": "170 W",
+      "Önerilen Güç Kaynağı": "450 W",
+      "Güç Bağlantısı": "1 × 8 pin",
+      "Yuva Kalınlığı": "2,3 yuva"
+    },
+    "sourceUrl": "https://www.incehesap.com/sapphire-pulse-amd-radeon-rx-9060-xt-11350-03-20g-16gb-oc-gddr6-128bit-gaming-ekran-karti-fiyati-81722/"
+  },
+  "4711387192962": {
+    "kind": "psu",
+    "brand": "ASUS",
+    "mpn": "90YE00U1-B0NA00",
+    "specSourceUrl": "https://www.asus.com/uk/motherboards-components/power-supply-units/prime/ap-750g/techspec/",
+    "specs": {
+      "Güç Kaynağı Değeri": "750 W",
+      "Güç Kaynağı Tipi": "ATX12V",
+      "Verimlilik": "80 PLUS Gold",
+      "Boyutlar": "150 × 150 × 86 mm",
+      "PFC": "Aktif"
+    },
+    "sourceUrl": "https://www.incehesap.com/asus-prime-ap-750g-750w-80-gold-power-supply-fiyati-77058/"
+  },
+  "4711377357104": {
+    "kind": "psu",
+    "brand": "MSI",
+    "mpn": "MAG A1000GL PCIE5 WHITE",
+    "specSourceUrl": "https://us.msi.com/Power-Supply/MAG-A1000GL-PCIE5/Specification",
+    "specs": {
+      "Güç Kaynağı Değeri": "1000 W",
+      "Güç Kaynağı Tipi": "ATX 3.1, tam modüler",
+      "Verimlilik": "80 PLUS Gold",
+      "Boyutlar": "150 × 150 × 86 mm",
+      "Fan": "135 mm",
+      "Renk": "Beyaz",
+      "Ekran Kartı Bağlantısı": "1 × 16 pin PCIe (600 W), 4 × 6+2 pin PCIe"
+    },
+    "sourceUrl": "https://www.incehesap.com/msi-mag-a1000gl-pcie5-beyaz-1000w-80-gold-full-moduler-power-supply-fiyati-89238/"
+  }
+}
