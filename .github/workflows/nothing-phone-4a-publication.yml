@@ -1,10 +1,15 @@
-name: Nothing Phone 4a catalog publication
+name: Nothing phone catalog publication
 
 on:
   workflow_dispatch:
     inputs:
+      model:
+        description: Reviewed Nothing phone model
+        type: choice
+        options: ['4a', '3a']
+        default: '4a'
       publish:
-        description: Publish only Nothing Phone 4a white 8/256 after live same-barcode verification
+        description: Publish only the selected model after live same-barcode verification
         type: boolean
         default: false
 
@@ -41,14 +46,15 @@ jobs:
           R2_BUCKET_NAME: ${{ inputs.publish && secrets.R2_BUCKET_NAME || '' }}
           R2_PUBLIC_DOMAIN: ${{ inputs.publish && secrets.R2_PUBLIC_DOMAIN || '' }}
           PUBLISH: ${{ inputs.publish }}
+          MODEL: ${{ inputs.model }}
         run: |
           set -euo pipefail
           mode=--validate
           if [[ "$PUBLISH" == true ]]; then mode=--publish; fi
-          python publish_nothing_phone_4a.py "$mode" | tee "$RUNNER_TEMP/nothing-phone-4a.jsonl"
+          python publish_nothing_phones.py --model "$MODEL" "$mode" | tee "$RUNNER_TEMP/nothing-phone-${MODEL}.jsonl"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: nothing-phone-4a-${{ github.run_id }}
-          path: ${{ runner.temp }}/nothing-phone-4a.jsonl
+          name: nothing-phone-${{ inputs.model }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/nothing-phone-${{ inputs.model }}.jsonl
           retention-days: 15
