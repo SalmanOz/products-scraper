@@ -1,4 +1,24 @@
 {
+  "4711377298919": {
+    "code": "274qpfx30mv",
+    "model": "274QPF X30MV",
+    "url": "https://fr.msi.com/Monitor/MAG-274QPF-X30MV/Specification",
+    "facts": {
+      "size": 27,
+      "resolution": "2560 × 1440",
+      "panel": "VA",
+      "refresh": 300,
+      "hdmi": true,
+      "dp": true,
+      "usb_c": false
+    },
+    "specValues": {
+      "panel": "Rapid VA, Mini-LED",
+      "hdmi": "2 × HDMI 2.1",
+      "dp": "1 × DisplayPort 1.4a"
+    },
+    "name": "MAG 274QPF X30MV"
+  },
   "4711377334945": {
     "code": "mp242e14a",
     "model": "MP242 E14A",

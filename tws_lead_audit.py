@@ -93,8 +93,8 @@ def native_search_models(state, snapshot, models, now):
 
 def search_native_retailer(host, names):
     hepsiburada = host == 'www.hepsiburada.com'
-    options = {'get': _hepsiburada_public_get} if hepsiburada else {}
-    reader = PriorityRetailerTransport(maximum_per_host=len(names), browser_fallback=False, **options)
+    get = _hepsiburada_public_get if hepsiburada else catalog_document_reader('earbud-discovery')
+    reader = PriorityRetailerTransport(maximum_per_host=len(names), browser_fallback=False, get=get)
     search = reader.read_hepsiburada_search if hepsiburada else reader.read_n11_search
     targets, reports = {}, []
     for name in names:
@@ -105,7 +105,8 @@ def search_native_retailer(host, names):
                 if identify(row['discovery_title']) == name and selected_host(row['source_url']) == host][:4]
         targets[name] = urls
         reports.append({'model': name, 'reason': reason, 'httpStatus': status,
-                        'parser': parser, 'destinations': len(urls)})
+                        'parser': parser, 'destinations': len(urls),
+                        'collection': 'site' if not hepsiburada and get else 'runner'})
     return targets, reports
 
 

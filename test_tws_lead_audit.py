@@ -44,11 +44,16 @@ class EarbudLeadAuditTest(unittest.TestCase):
             return f'<a href="{path}"><h2 class="product-item-title">{title}</h2><span>1 TL</span></a>'
         html = card(route, name + ' Siyah') + card(route.replace('78', '79'), name + ' Kılıf')
         html += card('https://example.org' + route, name + ' Gümüş')
-        with patch('tws_lead_audit.PriorityRetailerTransport') as transport:
+        document_reader = object()
+        with patch('tws_lead_audit.catalog_document_reader', return_value=document_reader) as reader, \
+                patch('tws_lead_audit.PriorityRetailerTransport') as transport:
             transport.return_value.read_n11_search.return_value = html, 'document_read', 200
             leads, report = search_native_retailer('www.n11.com', [name])
+        reader.assert_called_once_with('earbud-discovery')
+        transport.assert_called_once_with(maximum_per_host=1, browser_fallback=False, get=document_reader)
         self.assertEqual(leads, {name: [url]})
         self.assertEqual(report[0]['destinations'], 1)
+        self.assertEqual(report[0]['collection'], 'site')
         state = {'products': {}, 'earbudNativeLeads': leads}
         self.assertEqual(collect_leads(state), {'www.n11.com': [(name, {'url': url})]})
 

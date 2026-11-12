@@ -3,7 +3,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from comparison_accessory_candidates import candidate_targets, stage_category
+from comparison_accessory_candidates import candidate_targets, monitor_codes, stage_category
 
 
 N11 = 'https://www.n11.com/urun/asus-proart-pa278cv-75hz-monitor-53683691?magaza=n11'
@@ -61,6 +61,11 @@ class ComparisonAccessoryTests(unittest.TestCase):
             'www.n11.com': [('monitor', n11, 'mp242e14a')],
             'www.trendyol.com': [('monitor', trendyol, 'mp242e14a')],
         })
+
+    def test_monitor_discovery_keeps_full_msi_mag_code(self):
+        for title in ('MSI MAG 274QPF X30MV 27 inç 300Hz', 'MSI MAG-274QPF-X30MV Monitör'):
+            self.assertEqual(monitor_codes(title), {'274qpfx30mv'})
+        self.assertEqual(monitor_codes('MSI MAG 274QPF Monitör'), {'274qpf'})
 
     def test_single_platform_or_existing_barcode_cannot_stage_an_addition(self):
         barcode = '4711081273981'
