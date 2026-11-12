@@ -133,7 +133,7 @@ def _phone_variant(product, title, brand, name, specs, *, allow_missing_radio=Fa
     allowed_brand_names = {alias for key in expected_brands
                            for alias in matcher.PHONE_BRAND_ALIASES[key]}
     if (not isinstance(brand, dict) or not allowed_brand_names
-            or matcher._normalize_words(brand.get('name')) not in allowed_brand_names):
+            or matcher._normalize_words(brand.get('name')).replace(' ', '') not in allowed_brand_names):
         return None, 'selected_brand_mismatch'
     features = {}
     attributes = product.get('attributes')

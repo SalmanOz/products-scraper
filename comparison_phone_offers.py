@@ -363,8 +363,17 @@ def phone_lead_index(state, *, expanded=False, include_unlisted=False):
             _, family = lead_group(row)
         if not (family or slug):
             continue
-        urls = {url: None for raw in row.get('retailerLeads', ())
-                if (url := retailer_destination(raw)) and supported_phone_url(url, expanded=expanded)}
+        urls = {}
+        for raw in row.get('retailerLeads', ()):
+            url = retailer_destination(raw)
+            if not url or not supported_phone_url(url, expanded=expanded):
+                continue
+            route = urlsplit(url)
+            if include_unlisted and route.netloc == 'www.trendyol.com' and route.query:
+                # The default seller is an independent candidate. It still
+                # needs a fresh selected SKU, price, stock and seller check.
+                urls[route._replace(query='').geturl()] = None
+            urls[url] = None
         if family:
             by_family[phone_catalog_family(family)].update(urls)
         if slug:

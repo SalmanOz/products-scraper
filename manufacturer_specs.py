@@ -22,6 +22,7 @@ SPEC_PROFILES = {
     'xiaomi': ({'mi.com', 'www.mi.com'}, r'/tr/product/(?:xiaomi|redmi|poco)-[a-z0-9-]+'),
     'poco': ({'mi.com', 'www.mi.com'}, r'/tr/product/poco-[a-z0-9-]+'),
     'oppo': ({'oppo.com', 'www.oppo.com'}, r'/tr/smartphones/series-[a-z0-9-]+/[a-z0-9-]+'),
+    'general-mobile': ({'www.generalmobile.com'}, r'/tr/urunler/(?:gm[a-z0-9]+|era\d+[a-z0-9]*)'),
 }
 
 
@@ -29,11 +30,12 @@ def is_spec_url(candidate, raw):
     try:
         page, url = urlparse(candidate['evidenceUrl']), urlparse(raw)
         hosts, pattern = SPEC_PROFILES[candidate['brandSlug']]
-        base = re.sub(r'/specs/?$', '', page.path).rstrip('/')
+        section = 'teknik-ozellikler' if candidate['brandSlug'] == 'general-mobile' else 'specs'
+        base = re.sub(r'/' + section + r'/?$', '', page.path).rstrip('/')
         return (page.scheme == url.scheme == 'https' and page.hostname in hosts and
                 url.hostname == page.hostname and re.fullmatch(pattern, base) is not None and
                 not any((u.username or u.password or u.port or u.query or u.fragment) for u in (page, url)) and
-                url.path.rstrip('/') == base + '/specs')
+                url.path.rstrip('/') == base + '/' + section)
     except (ValueError, KeyError, TypeError):
         return False
 
@@ -121,6 +123,55 @@ def _xiaomi_sections(soup, candidate):
     return attrs
 
 
+def _general_mobile_sections(soup, candidate):
+    expected = candidate['name'].removeprefix('General Mobile ')
+    if not any(key(name) == key(expected) for name in official_model_names(soup)):
+        raise ValueError('manufacturer_spec_identity_not_confirmed')
+    groups = {'kapasite': 'Performance & Hardware', 'cip': 'Performance & Hardware',
+              'ekran': 'Design & Materials', 'boyutlar ve agirlik': 'Design & Materials',
+              'agirlik ve boyutlar': 'Design & Materials', 'kamera': 'Camera',
+              'batarya': 'Batarya', 'guc ve pil': 'Batarya', 'baglanti': 'Connectivity',
+              'baglantilar': 'Connectivity', 'sistem': 'Software', 'isletim sistemi': 'Software'}
+    sections = {}
+    for heading in soup.select('.row.border-bottom > .col-md-3 > h3'):
+        label = key(heading.get_text(' ', strip=True))
+        values = heading.parent.find_next_sibling(class_='col-md-9')
+        if label not in groups or not values or label in sections:
+            continue
+        facts = [node.get_text(' ', strip=True) for node in values.select('li')]
+        if facts and all(0 < len(fact) <= 1000 for fact in facts):
+            sections[label] = facts
+
+    attributes = {}
+    for label, values in sections.items():
+        attributes.setdefault(groups[label], {})[label] = values
+    options = []
+    for item in sections.get('kapasite', []):
+        plain = re.fullmatch(r'(\d+)\s*(?:GB(?:\s+RAM)?)?\s*\+\s*(\d+)\s*GB(?:\s+Depolama)?', item, re.I)
+        extended = re.fullmatch(r"(\d+)\s*GB['’][ea] kadar RAM \((\d+)\s*GB\s*\+\s*(\d+)\s*GB Genişletilmiş\)\s*\+\s*(\d+)\s*GB", item, re.I)
+        if plain:
+            ram, storage = map(int, plain.groups())
+        elif extended:
+            total, ram, virtual, storage = map(int, extended.groups())
+            if total != ram + virtual:
+                continue
+        else:
+            continue
+        if 1 <= ram <= 64 and 16 <= storage <= 4096 and storage >= ram * 4:
+            options.append((ram, storage))
+    if options:
+        attributes['Performance & Hardware']['Memory options'] = [
+            {'ram_gb': ram, 'storage_gb': storage} for ram, storage in dict.fromkeys(options)]
+    connectivity = sections.get('baglanti', []) + sections.get('baglantilar', []) + sections.get('cip', [])
+    if any(re.search(r'\b(?:5G (?:Teknolojisi|Destekli)|NR:\s*n\d+)', value, re.I) for value in connectivity):
+        attributes.setdefault('Connectivity', {})['5G'] = True
+    for battery in sections.get('batarya', []) + sections.get('guc ve pil', []):
+        _scalars(attributes, battery=battery)
+    for screen in sections.get('ekran', []):
+        _scalars(attributes, screen=screen)
+    return attributes
+
+
 def parse_manufacturer_specifications(html, source_url, candidate, observed_at):
     if candidate['brandSlug'] == 'vivo':
         return parse_vivo_specifications(html, source_url, candidate, observed_at)
@@ -132,7 +183,9 @@ def parse_manufacturer_specifications(html, source_url, candidate, observed_at):
         raise ValueError('manufacturer_spec_canonical_mismatch')
     brand = candidate['brandSlug']
     attributes = {}
-    if brand == 'apple':
+    if brand == 'general-mobile':
+        attributes = _general_mobile_sections(soup, candidate)
+    elif brand == 'apple':
         # Establish all column identities from actual capacity headings first.
         model_names = [tag.get_text(' ', strip=True) for tag in soup.select('.techspecs-column strong.techspecs-small-heading')]
         names = official_model_names(soup) + model_names

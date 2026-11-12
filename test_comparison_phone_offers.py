@@ -11,6 +11,7 @@ from comparison_phone_offers import (audit_queue, candidate_urls, capacity_prior
                                      publishable_pair, published_offer_urls, run, trendyol_phone_leads)
 from offer_ingestion_client import IngestionClientError
 from ozgur_phone_source import OZGUR_HOST, OZGUR_TERMS, ozgur_offer
+from tr_price_scraper import TRPriceScraper
 from unlisted_phone_audit import candidate_queue
 
 
@@ -25,6 +26,14 @@ GTIN = '0195949722813'
 
 
 class ComparisonPhoneOffersTest(unittest.TestCase):
+    def test_general_mobile_compact_physical_memory_is_distinct_from_virtual_memory(self):
+        matcher = TRPriceScraper()
+        title = 'General Mobile GM 26 One 5G 8+256 GB Akıllı Telefon Gece Mavisi'
+        self.assertEqual(matcher._unambiguous_listing_capacities(title), (8, 256, False))
+        for misleading in (title.replace('8+256', '8+12+256'), title.replace('8+256', '8 GB RAM + 12 GB'),
+                           title.replace('General Mobile GM 26 One', 'OPPO A6 Pro')):
+            self.assertTrue(matcher._unambiguous_listing_capacities(misleading)[2])
+
     def test_n11_cash_conflict_rereads_one_source_declared_selector_in_discovery_only(self):
         base = 'https://www.n11.com/urun/apple-iphone-17-pro-max-2-tb-apple-turkiye-garantili-100819983'
         selected = base + '?magaza=erateknoloji&renk=gumus'

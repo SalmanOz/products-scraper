@@ -88,7 +88,8 @@ def safe_product_url(brand, raw):
         hosts = {'apple': ('apple.com', 'www.apple.com'),
                  'samsung': ('samsung.com', 'www.samsung.com'),
                  'xiaomi': ('mi.com', 'www.mi.com'), 'poco': ('mi.com', 'www.mi.com'),
-                 'vivo': ('vivo.com', 'www.vivo.com'), 'oppo': ('oppo.com', 'www.oppo.com')}
+                 'vivo': ('vivo.com', 'www.vivo.com'), 'oppo': ('oppo.com', 'www.oppo.com'),
+                 'general-mobile': ('www.generalmobile.com',)}
         if (url.scheme != 'https' or url.hostname not in hosts.get(brand, ()) or
                 url.port is not None or url.username is not None or url.password is not None or
                 url.query or url.fragment or re.search(r'[\x00-\x20\\]', raw)):
@@ -100,6 +101,7 @@ def safe_product_url(brand, raw):
             'poco': r'/tr/product/poco-[a-z0-9-]+/(?:specs/)?',
             'vivo': r'/tr/products/[a-z0-9-]+(?:/param)?/?',
             'oppo': r'/tr/smartphones/series-[a-z0-9-]+/[a-z0-9-]+/(?:specs/)?',
+            'general-mobile': r'/tr/urunler/(?:gm[a-z0-9]+|era\d+[a-z0-9]*)(?:/teknik-ozellikler)?',
         }
         return bool(re.fullmatch(patterns[brand], url.path))
     except (ValueError, TypeError, KeyError):
@@ -154,6 +156,8 @@ def candidate_name(brand, text):
         text = text if text.lower().startswith('vivo ') else f'vivo {text}'
     elif brand == 'oppo' and re.fullmatch(r'OPPO (?:Reno|Find|A|F|K)[A-Za-z0-9+ -]+', text, re.I):
         pass
+    elif brand == 'general-mobile' and re.fullmatch(r'(?:GM|Era) [A-Za-z0-9 ]+', text, re.I):
+        text = f'General Mobile {text}'
     else:
         return None
     if not re.search(r'\d', text) and text not in ('Apple iPhone Air', 'Apple iPhone Duo'):

@@ -13,26 +13,30 @@ from daily_discovery import LISTINGS, PublicReader, discover_candidates, may_dup
 from manufacturer_specs import manufacturer_spec_links, missing_critical_facts, parse_manufacturer_specifications
 
 
+MANUFACTURER_LISTINGS = {**LISTINGS, 'general-mobile': 'https://www.generalmobile.com/tr/urunler/mobilephone'}
+
+
 def candidate_queue(state, catalog, candidates, limit):
     index = phone_lead_index(state, expanded=True, include_unlisted=True)
     families = {phone_catalog_family(row['slug']) for row in catalog}
     names = {phone_family(row['name']) for row in catalog if isinstance(row.get('name'), str)}
     last_checked = state.get('unlistedPhoneAudits', {})
     queue = []
-    seen_pages = set()
+    seen_pages, seen_families = set(), set()
     for candidate in candidates:
         slug, name, page = (candidate[key] for key in ('slug', 'name', 'evidenceUrl'))
-        brand = phone_family(name).partition(' ')[0]
-        if (slug in families or page in seen_pages
+        family = phone_family(name).replace(' ', '-')
+        brand = family.partition('-')[0]
+        if (slug in families or page in seen_pages or family in seen_families
                 or any(known.partition(' ')[0] == brand and may_duplicate(name, known) for known in names)):
             continue
         # The official catalog supplies names. Comparison titles and URLs
         # only prioritize reads of the manufacturer and retailer documents.
-        family = phone_family(name).replace(' ', '-')
         hosts = {urlsplit(url).netloc for url in indexed_phone_leads(index, family)}
         if len(hosts) >= 2:
             queue.append({**candidate, 'leadPlatforms': len(hosts), 'leadFamily': family})
             seen_pages.add(page)
+            seen_families.add(family)
     queue.sort(key=lambda row: (last_checked.get(row['slug'], ''), -row['leadPlatforms'], row['slug']))
     return len(queue), queue[:limit]
 
@@ -41,7 +45,7 @@ def audit(state, catalog, reader, limit):
     if not catalog:
         raise ValueError('public_phone_catalog_unavailable')
     candidates, sources = [], {}
-    for brand, url in LISTINGS.items():
+    for brand, url in MANUFACTURER_LISTINGS.items():
         try:
             found = discover_candidates(brand, reader.read(url), url)
         except (ValueError, requests.RequestException):
@@ -50,7 +54,7 @@ def audit(state, catalog, reader, limit):
         sources[brand] = len(found)
         candidates.extend(found)
     queued, queue = candidate_queue(state, catalog, candidates, limit)
-    ready, rows = [], {}
+    ready, rows, variants = [], {}, {}
     for candidate in queue:
         slug, page, family = (candidate[key] for key in ('slug', 'evidenceUrl', 'leadFamily'))
         row = rows[family] = {**candidate, 'status': 'manufacturer_spec_unavailable'}
@@ -61,10 +65,16 @@ def audit(state, catalog, reader, limit):
                 records = parse_manufacturer_specifications(html, url, candidate, utc_now())
                 attributes = staged_attributes(records)
                 row.update(specificationUrl=url, missingPublicationFields=missing_critical_facts(records))
-                if not attributes.get('ram_gb') or not attributes.get('storage_gb'):
+                options = attributes.get('Performance & Hardware', {}).get('Memory options', [])
+                if attributes.get('ram_gb') and attributes.get('storage_gb'):
+                    options = [{key: attributes[key] for key in ('ram_gb', 'storage_gb')}]
+                if not options or not all(isinstance(option, dict) for option in options):
                     row['status'] = 'manufacturer_memory_variant_unresolved'
                     continue
-                ready.append({'slug': family, 'name': candidate['name'], 'attributes': attributes})
+                for option in options[:4]:
+                    variant = f"{family}-{option['ram_gb']}gb-{option['storage_gb']}gb"
+                    ready.append({'slug': variant, 'name': candidate['name'], 'attributes': {**attributes, **option}})
+                    variants[variant] = (row, option)
                 row['status'] = 'retailer_check_pending'
                 break
         except (ValueError, requests.RequestException) as error:
@@ -75,9 +85,11 @@ def audit(state, catalog, reader, limit):
         offers = run(state, [row['slug'] for row in ready], products=ready, maximum=12,
                      public_audit=True, unlisted_audit=True)
         for offer in offers:
-            row = rows[offer['slug']]
-            row['retailerAudit'] = {key: value for key, value in offer.items() if key != 'slug'}
-            row['status'] = 'verified_offer_pair' if offer['sameGtin'] else 'no_verified_offer_pair'
+            row, option = variants[offer['slug']]
+            row.setdefault('variants', []).append({**option, **{key: value for key, value in offer.items() if key != 'slug'}})
+        for row in rows.values():
+            if row.get('variants'):
+                row['status'] = 'verified_offer_pair' if any(result['sameGtin'] for result in row['variants']) else 'no_verified_offer_pair'
     return {'checkedAt': utc_now(), 'manufacturerSources': sources, 'queued': queued,
             'statuses': dict(Counter(row['status'] for row in rows.values())), 'rows': list(rows.values())}
 

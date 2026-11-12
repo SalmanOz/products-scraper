@@ -27,6 +27,27 @@ def official_html(model='V70', pair='12 GB + 256 GB'):
 
 
 class ManufacturerSpecsTests(unittest.TestCase):
+    def test_general_mobile_keeps_official_memory_pairs_and_excludes_virtual_ram(self):
+        overview = 'https://www.generalmobile.com/tr/urunler/gm26pro5g'
+        url = overview + '/teknik-ozellikler'
+        candidate = {'name': 'General Mobile GM 26 Pro 5G', 'slug': 'general-mobile-gm-26-pro-5g',
+                     'brandSlug': 'general-mobile', 'evidenceUrl': overview}
+        self.assertEqual(manufacturer_spec_links(f'<a href="{url}">Teknik özellikler</a>', candidate), [url])
+        def section(label, items):
+            return ('<div class="row border-bottom"><div class="col-md-3"><h3>' + label + '</h3></div>'
+                    '<div class="col-md-9"><ul>' + ''.join(f'<li>{item}</li>' for item in items) + '</ul></div></div>')
+        html = '<h1>GM 26 Pro 5G</h1>' + section('Kapasite', ["20GB'e kadar RAM (8GB+12GB Genişletilmiş) + 256GB",
+            "24GB'a kadar RAM (12GB+12GB Genişletilmiş) + 512GB", "36GB'a kadar RAM (12GB+12GB Genişletilmiş) + 1024GB"])
+        html += section('Çip', ['5G Teknolojisi'])
+        values = {record['attribute_key']: record['value'] for record in parse_manufacturer_specifications(
+            html, url, candidate, '2026-11-12T19:59:00Z')}
+        self.assertEqual(values['Performance & Hardware']['Memory options'], [
+            {'ram_gb': 8, 'storage_gb': 256}, {'ram_gb': 12, 'storage_gb': 512}])
+        self.assertEqual(values['Connectivity'], {'5G': True})
+        self.assertNotIn('ram_gb', values)
+        with self.assertRaisesRegex(ValueError, 'identity_not_confirmed'):
+            parse_manufacturer_specifications(html.replace('26 Pro', '26 One'), url, candidate, '2026-11-12T19:59:00Z')
+
     def test_other_manufacturers_follow_only_observed_exact_turkish_specs(self):
         for brand, page in [('apple', 'https://www.apple.com/tr/iphone-18-pro/'),
                             ('samsung', 'https://www.samsung.com/tr/smartphones/galaxy-a/galaxy-a56-5g/'),

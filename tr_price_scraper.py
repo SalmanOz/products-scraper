@@ -94,6 +94,7 @@ class TRPriceScraper:
 
     PHONE_BRAND_ALIASES = {
         'apple': {'apple', 'iphone'},
+        'general-mobile': {'generalmobile'},
         'google': {'google', 'pixel'},
         'honor': {'honor'},
         'huawei': {'huawei'},
@@ -400,6 +401,8 @@ class TRPriceScraper:
         value = str(value or '').replace('+', ' plus ')
         value = re.sub(r'\bmagic[\s_-]+([1-9]\d?)\b', r'magic\1', value, flags=re.I)
         value = re.sub(r'\b(iphone)(?=\d)', r'\1 ', value, flags=re.I)
+        value = re.sub(r'\bgeneral[\s_-]+mobile\b', 'generalmobile', value, flags=re.I)
+        value = re.sub(r'\b(gm)(?=\d)', r'\1 ', value, flags=re.I)
         value = re.sub(r'\b([45])\s*g\b', r'\1g', value, flags=re.I)
         value = re.sub(r'\b([a-z]*\d+)(fe|se|pro|plus|ultra|mini|max|lite|edge|e)\b', r'\1 \2', value, flags=re.I)
         return cls._normalize_words(value).split()
@@ -495,7 +498,9 @@ class TRPriceScraper:
                 re.search(rf'{capacity}\s*{label}\s*$', before, re.I))
             after_label = bool(re.search(rf'^\s*{label}\b', after))
             labelled = before_label or after_label
-            if '+' not in group and len(values) == 2 and all(value is not None for value in values) and 0 < values[0] <= 24 and values[1] >= 64 and values[1] >= values[0] * 4 and not labelled:
+            compact_gm = (re.fullmatch(r'\d{1,2}\s*\+\s*\d{3,4}\s*gb', group)
+                          and 'generalmobile' in cls._identity_words(title))
+            if ('+' not in group or compact_gm) and len(values) == 2 and all(value is not None for value in values) and 0 < values[0] <= 24 and values[1] >= 64 and values[1] >= values[0] * 4 and not labelled:
                 ram.add(values[0]); storage.add(values[1])
             else:
                 ambiguous = True
