@@ -549,5 +549,149 @@
       "Denetleyici": "Phison E28",
       "Boyutlar": "80 × 22 × 2,15 mm"
     }
+  },
+  "4711387313350": {
+    "kind": "motherboard",
+    "brand": "ASUS",
+    "mpn": "PRIME H610M-K ARGB",
+    "name": "ASUS PRIME H610M-K ARGB",
+    "specSourceUrl": "https://www.asus.com/motherboards-components/motherboards/prime/prime-h610m-k-argb/techspec/",
+    "sourceUrl": "https://www.sinerji.gen.tr/asus-prime-h610m-k-argb-5600mhz-oc-m2-1700p-matx-ddr5-anakart-p-48115",
+    "specs": {
+      "Soket Tipi": "LGA1700",
+      "Yonga Seti": "Intel H610",
+      "RAM Tipi": "DDR5",
+      "Form Faktörü": "Micro-ATX",
+      "Boyutlar": "234 × 203 mm",
+      "RAM Desteği (Maks)": "96 GB",
+      "RAM Yuvası": "2 × DIMM",
+      "Depolama Bağlantıları": "1 × M.2, 4 × SATA",
+      "Ethernet": "1 GbE"
+    }
+  },
+  "4711636188203": {
+    "kind": "motherboard",
+    "brand": "ASUS",
+    "mpn": "PRIME H810M-E-CSM",
+    "name": "ASUS PRIME H810M-E-CSM",
+    "specSourceUrl": "https://www.asus.com/motherboards-components/motherboards/csm/prime-h810m-e-csm/techspec/",
+    "sourceUrl": "https://www.sinerji.gen.tr/asus-prime-h810m-e-csm-6400mhz-oc-m2-1851p-matx-anakart-p-56546",
+    "specs": {
+      "Soket Tipi": "LGA1851",
+      "Yonga Seti": "Intel H810",
+      "RAM Tipi": "DDR5",
+      "Form Faktörü": "Micro-ATX",
+      "Boyutlar": "244 × 222 mm",
+      "RAM Desteği (Maks)": "128 GB",
+      "RAM Yuvası": "2 × DIMM",
+      "Depolama Bağlantıları": "2 × M.2, 4 × SATA",
+      "Ethernet": "1 GbE"
+    }
+  },
+  "4711387723036": {
+    "kind": "motherboard",
+    "brand": "ASUS",
+    "mpn": "PRIME X870-P",
+    "name": "ASUS PRIME X870-P",
+    "specSourceUrl": "https://www.asus.com/motherboards-components/motherboards/prime/prime-x870-p/techspec/",
+    "sourceUrl": "https://www.sinerji.gen.tr/asus-prime-x870-p-8000mhz-oc-m2-am5-atx-anakart-p-52247",
+    "specs": {
+      "Soket Tipi": "AM5",
+      "Yonga Seti": "AMD X870",
+      "RAM Tipi": "DDR5",
+      "Form Faktörü": "ATX",
+      "Boyutlar": "305 × 244 mm",
+      "RAM Desteği (Maks)": "256 GB",
+      "RAM Yuvası": "4 × DIMM",
+      "Depolama Bağlantıları": "4 × M.2, 2 × SATA",
+      "Ethernet": "2,5 GbE"
+    }
+  },
+  "4711387769300": {
+    "kind": "motherboard",
+    "brand": "ASUS",
+    "mpn": "ROG STRIX B850-E GAMING WIFI",
+    "name": "ASUS ROG STRIX B850-E GAMING WIFI",
+    "specSourceUrl": "https://rog.asus.com/motherboards/rog-strix/rog-strix-b850-e-gaming-wifi/spec/",
+    "sourceUrl": "https://www.sinerji.gen.tr/asus-rog-strix-b850-e-gaming-wifi-8000mhz-oc-m2-am5-atx-anakart-p-53735",
+    "specs": {
+      "Soket Tipi": "AM5",
+      "Yonga Seti": "AMD B850",
+      "RAM Tipi": "DDR5",
+      "Form Faktörü": "ATX",
+      "Boyutlar": "305 × 244 mm",
+      "RAM Desteği (Maks)": "256 GB",
+      "RAM Yuvası": "4 × DIMM",
+      "Depolama Bağlantıları": "5 × M.2, 4 × SATA",
+      "Ethernet": "5 GbE"
+    }
+  },
+  "4711377126632": {
+    "kind": "psu",
+    "brand": "MSI",
+    "mpn": "MAG A550BNL",
+    "name": "MSI MAG A550BNL 550 W",
+    "specSourceUrl": "https://www.msi.com/Power-Supply/MAG-A550BNL/Specification",
+    "sourceUrl": "https://www.sinerji.gen.tr/msi-550w-mag-a550bnl-80-bronze-guc-kaynagi-p-51669",
+    "specs": {
+      "Güç Kaynağı Değeri": "550 W",
+      "Güç Kaynağı Tipi": "ATX, sabit kablolu",
+      "Verimlilik": "80 PLUS Bronze",
+      "Boyutlar": "150 × 140 × 86 mm",
+      "Fan": "120 mm",
+      "Ekran Kartı Bağlantısı": "2 × 6+2 pin PCIe",
+      "SATA Bağlantısı": "5 adet"
+    }
+  },
+  "4711377084284": {
+    "kind": "psu",
+    "brand": "MSI",
+    "mpn": "MAG A750GL PCIE5",
+    "name": "MSI MAG A750GL PCIE5 750 W",
+    "specSourceUrl": "https://www.msi.com/Power-Supply/MAG-A750GL-PCIE5/Specification",
+    "sourceUrl": "https://www.sinerji.gen.tr/msi-750w-mag-a750gl-pci5-80-gold-tam-moduler-guc-kaynagi-p-47275",
+    "specs": {
+      "Güç Kaynağı Değeri": "750 W",
+      "Güç Kaynağı Tipi": "ATX, tam modüler",
+      "Verimlilik": "80 PLUS Gold",
+      "Boyutlar": "140 × 150 × 86 mm",
+      "Fan": "120 mm",
+      "Ekran Kartı Bağlantısı": "1 × 16 pin PCIe (450 W), 3 × 6+2 pin PCIe",
+      "SATA Bağlantısı": "8 adet"
+    }
+  },
+  "4711377244282": {
+    "kind": "psu",
+    "brand": "MSI",
+    "mpn": "MAG A750GN PCIE5",
+    "name": "MSI MAG A750GN PCIE5 750 W",
+    "specSourceUrl": "https://www.msi.com/Power-Supply/MAG-A750GN-PCIE5/Specification",
+    "sourceUrl": "https://www.sinerji.gen.tr/msi-750w-mag-a750gn-pcie5-80-gold-atx-31-pcie-51-gen5-guc-kaynagi-p-54783",
+    "specs": {
+      "Güç Kaynağı Değeri": "750 W",
+      "Güç Kaynağı Tipi": "ATX 3.1, sabit kablolu",
+      "Verimlilik": "80 PLUS Gold",
+      "Boyutlar": "140 × 150 × 86 mm",
+      "Fan": "120 mm",
+      "Ekran Kartı Bağlantısı": "1 × 16 pin PCIe 5.1, 2 × 6+2 pin PCIe",
+      "SATA Bağlantısı": "4 adet"
+    }
+  },
+  "4711377297783": {
+    "kind": "psu",
+    "brand": "MSI",
+    "mpn": "MAG A850GLS PCIE5",
+    "name": "MSI MAG A850GLS PCIE5 850 W",
+    "specSourceUrl": "https://www.msi.com/Power-Supply/MAG-A850GLS-PCIE5/Specification",
+    "sourceUrl": "https://www.sinerji.gen.tr/msi-850w-mag-a850gls-pcie5-80-gold-tam-moduler-atx-31-pcie-gen-51-guc-kaynagi-p-57395",
+    "specs": {
+      "Güç Kaynağı Değeri": "850 W",
+      "Güç Kaynağı Tipi": "ATX 3.1, tam modüler",
+      "Verimlilik": "80 PLUS Gold",
+      "Boyutlar": "150 × 150 × 86 mm",
+      "Fan": "135 mm",
+      "Ekran Kartı Bağlantısı": "1 × 16 pin PCIe 5.1 (600 W), 4 × 6+2 pin PCIe",
+      "SATA Bağlantısı": "8 adet"
+    }
   }
 }
