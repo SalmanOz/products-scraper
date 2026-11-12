@@ -50,7 +50,7 @@ jobs:
           python-version: '3.12'
           cache: pip
       - run: python -m pip install -r requirements.txt
-      - run: python -m unittest -q test_competitor_catalog_gaps test_comparison_phone_offers
+      - run: python -m unittest -q test_competitor_catalog_gaps test_comparison_phone_offers test_metto_phone_source
       - name: Verify same-barcode offers from independent retailers
         env:
           TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}

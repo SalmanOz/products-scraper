@@ -18,6 +18,7 @@ from ayaz_phone_source import AYAZ_HOST, ayaz_phone_url
 from besken_phone_source import BESKEN_CATEGORY, BESKEN_HOST, BESKEN_PATH, besken_phone_url
 from catalog_source_collector import catalog_document_reader
 from laptop_retailer_sources import WORDS
+from metto_phone_source import METTO_CATEGORY, METTO_HOST, METTO_PATH, metto_phone_url
 import onual_catalog_source as onual
 from ozgur_phone_source import OZGUR_HOST, ozgur_phone_url
 from pazarama_category_source import pazarama_product_url
@@ -44,8 +45,8 @@ UCUZYUM = 'www.ucuzyum.com'
 COKUYGUN = 'cokuygun.com.tr'
 SOURCES = (AKAKCE, CIMRI, EPEY, URUNAI, KARSILASTIRICI, PAHALIMI, AMAHANGISI, INDIRIMLI,
            TUBERKARAS, OZGUR_HOST, UCUZYUM, AYAZ_HOST, SERINAL_HOST, BESKEN_HOST, PTTAVM, NETHOUSE,
-           KARSILASTIRMA_IO, onual.HOST, COKUYGUN)
-DIRECT_RETAILER_SOURCES = {OZGUR_HOST, AYAZ_HOST, SERINAL_HOST, BESKEN_HOST, PTTAVM, NETHOUSE}
+           KARSILASTIRMA_IO, onual.HOST, COKUYGUN, METTO_HOST)
+DIRECT_RETAILER_SOURCES = {OZGUR_HOST, AYAZ_HOST, SERINAL_HOST, BESKEN_HOST, PTTAVM, NETHOUSE, METTO_HOST}
 URUNAI_CATEGORIES = {
     'telefon': 'phone', 'kulaklik': 'tws', 'laptop': 'laptop', 'monitor': 'monitor',
     'islemci': 'cpu', 'anakart': 'motherboard', 'ram-bellek': 'ram', 'ekran-karti': 'gpu',
@@ -72,6 +73,7 @@ ADDITIONAL_COMPARISON_CATEGORIES = {
     OZGUR_HOST: {'phone': '/telefon', 'tws': '/kulaklik'},
     AYAZ_HOST: {'phone': '/kategori/cep-telefonu'},
     SERINAL_HOST: {'phone': SERINAL_CATEGORY},
+    METTO_HOST: {'phone': METTO_CATEGORY},
     BESKEN_HOST: {'phone': BESKEN_CATEGORY},
     PTTAVM: {'phone': '/cep-telefonu-c-53', 'tws': '/bluetooth-kulaklik-c-315'},
     NETHOUSE: {'tws': NETHOUSE_CATEGORY},
@@ -110,7 +112,7 @@ PHONE_WARRANTY = re.compile(r'\s*\([^()]{0,65}Türkiye Garantili\s*\)', re.I)
 PHONE_REPEATED_STORAGE = re.compile(r'( ([1-9]\d{1,3}) gb)( [a-z ]{2,40}) \2 gb$')
 PHONE_COLOR_AFTER_MEMORY = re.compile(
     r'( [1-9]\d{0,3} (?:gb(?: ram)?|tb)) (?:[a-z]{2,16} ){0,2}'
-    r'(?:siyah|siyahi|beyaz|beyazi|gri|grisi|mavi|mavisi|mor|moru|yesil|yesili|kirmizi|pembe|'
+    r'(?:siyah|siyahi|beyaz|beyazi|gri|grisi|mavi|mavisi|mor|moru|yesil|yesili|kirmizi|kizili|pembe|'
     r'turuncu|sari|gumus|altin|lacivert|bej|grafit|titanyum|abis|burgonya|buzul rengi|kahve|kahvesi|cam|buz|gece)$'
 )
 CATEGORIES = {
@@ -146,6 +148,7 @@ CARD = {
     OZGUR_HOST: re.compile(r'/urun/([a-z0-9-]{6,250})'),
     AYAZ_HOST: re.compile(r'/urun/([a-z0-9-]{6,250})'),
     SERINAL_HOST: SERINAL_PATH,
+    METTO_HOST: METTO_PATH,
     BESKEN_HOST: BESKEN_PATH,
     PTTAVM: PTT_PATH,
     NETHOUSE: NETHOUSE_PATH,
@@ -163,6 +166,7 @@ CARD_SELECTOR = {
     OZGUR_HOST: 'h2.oi-card-title > a[href]',
     AYAZ_HOST: '.showcase-title > a[href][title]',
     SERINAL_HOST: '.card-product-inner > a.c-p-i-link[href][title]:has(> .title)',
+    METTO_HOST: '.card-product-inner > a.c-p-i-link[href][title]:has(> .title)',
     BESKEN_HOST: '.product-list-wrapper .item-product-name > a[href]',
     PTTAVM: 'article[class^="compactArticle__"] > a[class^="compactCard__"][href]:has(h2[class^="compactName__"])',
     NETHOUSE: '.productDetail[data-id][data-variant-id] .productName > a[href][title]',
@@ -181,7 +185,7 @@ def category_url(host, path, page):
         return f'https://{host}{path.removesuffix(".html")},{page}.html'
     if host == EPEY:
         return f'https://{host}{path}{page}/'
-    if host in (PAHALIMI, INDIRIMLI, SERINAL_HOST):
+    if host in (PAHALIMI, INDIRIMLI, SERINAL_HOST, METTO_HOST):
         return f'https://{host}{path}?sayfa={page}'
     if host == BESKEN_HOST:
         return f'https://{host}{path}/sayfa/{page}'
@@ -260,6 +264,8 @@ def comparison_cards(html, host, url):
                 card['retailerLeads'] = [card['url']]
             elif host == SERINAL_HOST and serinal_phone_url(card['url']):
                 card['retailerLeads'] = [card['url']]
+            elif host == METTO_HOST and metto_phone_url(card['url']):
+                card['retailerLeads'] = [card['url']]
             elif host == BESKEN_HOST and besken_phone_url(card['url']) and not target.query:
                 card['retailerLeads'] = [card['url']]
             elif host == PTTAVM:
@@ -314,6 +320,7 @@ def catalog_match(title, index):
 
 def phone_family(title):
     title = PHONE_WARRANTY.sub(' ', title)
+    title = re.sub(r'\b([1-9]\d?)\s*/\s*(?=\d{2,4}\s*GB\b)', r'\1 GB ', title, flags=re.I)
     label = WORDS(re.sub(r'(\d+)(gb|tb)\b', r'\1 \2', title, flags=re.I))
     if label.startswith('iphone '):
         label = 'apple ' + label
@@ -822,6 +829,7 @@ def retailer_destination(raw):
     )
     if (product_host(url) or first_party and not selectors or pazarama_product_url(url)
             or ozgur_phone_url(url) or ayaz_phone_url(url) or serinal_phone_url(url) or besken_phone_url(url)
+            or metto_phone_url(url)
             or ptt_product_url(url) or nethouse_product_url(url)):
         return url
     if route.netloc in DIRECT_PATHS and offer_host(url):

@@ -24,6 +24,7 @@ from laptop_pilot import _hepsiburada_public_get, verify_seller
 from laptop_retailer_sources import marketplace_seller_identity
 from mediamarkt_marketplace_audit import selected_marketplace_offer
 from mediamarkt_source import _selected_offer as mediamarkt_first_party, product_url as mediamarkt_url
+from metto_phone_source import METTO_HOST, METTO_TERMS, metto_offer, metto_phone_url
 from n11_catalog_source import (discover_catalog_targets as n11_search_targets, discover_product_sellers as n11_seller_links,
                                 parse_catalog_listing as n11_listing, public_search_card_document)
 from offer_ingestion_client import IngestionClientError, OfferIngestionClient
@@ -212,6 +213,15 @@ def checked_offers(urls, name, specs, transport, documents=None, *, direct=None,
                     rejected = 'besken_selected_offer_or_seller_unverified'
                 else:
                     rejected = 'besken_seller_identity_' + legal_reason
+            elif metto_phone_url(url) and host in direct:
+                if METTO_TERMS not in documents:
+                    documents[METTO_TERMS] = reader._read_document(METTO_TERMS, host, category=True)
+                terms, legal_reason, _ = documents[METTO_TERMS]
+                if terms:
+                    offer = metto_offer(html, terms, url=url, name=name, specs=specs)
+                    rejected = 'metto_selected_offer_or_seller_unverified'
+                else:
+                    rejected = 'metto_seller_identity_' + legal_reason
             elif ptt_product_url(url) and host in direct:
                 offer, rejected = selected_ptt_offer(html, url, 'phone')
             elif vatan_phone_url(url):
@@ -304,6 +314,8 @@ def supported_phone_url(url, *, expanded=False):
         return expanded and besken_phone_url(url)
     if route.netloc == SERINAL_HOST:
         return expanded and serinal_phone_url(url)
+    if route.netloc == METTO_HOST:
+        return expanded and metto_phone_url(url)
     if route.netloc in ('www.n11.com', 'www.trendyol.com'):
         return product_host(url) == route.netloc
     if expanded and route.netloc == 'www.hepsiburada.com':
@@ -637,6 +649,8 @@ def run(state, slugs, client=None, *, publish=False, maximum=24, products=None, 
         direct[PTTAVM] = PriorityRetailerTransport(maximum_per_host=min(maximum, 16),
             browser_fallback=False, get=phone_reader or compatible_get)
         direct[BESKEN_HOST] = PriorityRetailerTransport(maximum_per_host=min(maximum, 12),
+            browser_fallback=False, get=compatible_get)
+        direct[METTO_HOST] = PriorityRetailerTransport(maximum_per_host=min(maximum, 12),
             browser_fallback=False, get=compatible_get)
     if public_audit:
         direct['www.vatanbilgisayar.com'] = PriorityRetailerTransport(maximum_per_host=maximum,
