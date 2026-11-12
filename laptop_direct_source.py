@@ -176,7 +176,8 @@ def selected_direct_laptop(html, url, *, read_facts=None):
     images = product.get('image')
     if isinstance(images, str):
         images = [images]
-    photo = next((img for src in images or [] if (img := _photo(src, host))), None)
+    photo_hosts = (host, 'static.sinerji.gen.tr') if host == 'www.sinerji.gen.tr' else (host,)
+    photo = next((img for src in images or [] if (img := _photo(src, *photo_hosts))), None)
     return {'platform': platform, 'merchant': platform, 'merchant_id': host,
             'seller_url': 'https://' + host + legal_path, 'facts': facts,
             'gtin13': gtin, '_image': photo, 'price': float(price), 'currency': 'TRY',

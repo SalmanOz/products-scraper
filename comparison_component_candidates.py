@@ -18,6 +18,11 @@ from pc_parts import CATEGORIES
 from pc_parts_multistore import GAMING, INCEHESAP, PcRetailer, collect_targets, independent_offers, offer_host
 
 
+SINERJI = 'www.sinerji.gen.tr'
+PRIMARY_HOSTS = {INCEHESAP, SINERJI}
+IMAGE_HOSTS = {INCEHESAP: {INCEHESAP}, SINERJI: {SINERJI, 'static.sinerji.gen.tr'}}
+
+
 def candidate_groups(state, catalog, maximum, preferred=()):
     known = {url for row in catalog['parts'] for url in [row['sourceUrl'], *row.get('offerTargets', [])]}
     attempts = state.get('componentLeadAudits', {})
@@ -31,15 +36,16 @@ def candidate_groups(state, catalog, maximum, preferred=()):
         if len({offer_host(url) for url in urls}) < 2:
             continue
         for url in urls:
-            if offer_host(url) == INCEHESAP:
+            if offer_host(url) in PRIMARY_HOSTS:
                 groups[kind, url].update(urls - {url})
     ordered = sorted(groups, key=lambda pair: (pair[1] not in preferred, attempts.get(pair[1], ''), -len(groups[pair]), pair))
     result = []
     counts = Counter()
     for kind, url in ordered:
-        if counts[kind] >= maximum:
+        source = kind, offer_host(url)
+        if counts[source] >= maximum:
             continue
-        counts[kind] += 1
+        counts[source] += 1
         # Other URLs only discover possible offers. A selected GTIN from the
         # primary document must independently match each selected retailer SKU.
         links = sorted(groups[kind, url], key=lambda link: (bool(urlsplit(link).query), link))
@@ -65,7 +71,9 @@ def selected_images(html, title):
 def stage(state, catalog, profiles, output, maximum):
     budget = min(50, len(CATEGORIES) * maximum + 2)
     site_reader = catalog_document_reader('component-discovery')
-    reader = PcRetailer(INCEHESAP, budget=budget, document_reader=site_reader)
+    readers = {INCEHESAP: PcRetailer(INCEHESAP, budget=budget, document_reader=site_reader),
+               SINERJI: PcRetailer(SINERJI, budget=budget)}
+    blocked_hosts, selected_hosts = set(), set()
     known = {part['gtin'] for part in catalog['parts']}
     leads = candidate_groups(state, catalog, maximum, {p['sourceUrl'] for p in profiles.values()})
     candidates, targets = {}, {}
@@ -73,28 +81,34 @@ def stage(state, catalog, profiles, output, maximum):
     attempts = state.setdefault('componentLeadAudits', {})
     checked_at = datetime.now(timezone.utc).isoformat()
     for kind, url, links in leads:
-        html, reason, _ = reader.transport._read_document(url, INCEHESAP)
-        if not html and site_reader and not candidates and reason in (
+        host = offer_host(url)
+        if host in blocked_hosts:
+            continue
+        reader = readers[host]
+        html, reason, _ = reader.transport._read_document(url, host)
+        if not html and host == INCEHESAP and site_reader and host not in selected_hosts and reason in (
                 'http_403', 'http_503', 'robots_http_403', 'robots_http_503', 'transport_error'):
             site_reader = None
-            reader = PcRetailer(INCEHESAP, budget=budget)
-            html, reason, _ = reader.transport._read_document(url, INCEHESAP)
+            readers[host] = reader = PcRetailer(host, budget=budget)
+            html, reason, _ = reader.transport._read_document(url, host)
         attempts[url] = checked_at
         if not html:
             rejects[reason] += 1
             if reason.startswith('robots_') or reason in ('http_403', 'http_429', 'source_circuit_open'):
-                break
+                blocked_hosts.add(host)
             continue
         offer, reason = reader.parse(html, url, {'kind': kind})
         if not offer:
             rejects[reason] += 1
             continue
+        selected_hosts.add(host)
         gtin = offer['gtin13']
-        if gtin in known or gtin in candidates:
+        if gtin in known:
             continue
         part = {'kind': kind, 'gtin': gtin, 'brand': offer['brand'], 'name': offer['source_title']}
-        photo = selected_images(html, part['name'])
-        candidates[gtin] = (part, url, photo)
+        if gtin not in candidates or profiles.get(gtin, {}).get('sourceUrl') == url:
+            photo = selected_images(html, part['name']) if host == INCEHESAP else [offer.get('_image')]
+            candidates[gtin] = (part, url, photo)
         per_host = Counter()
         for link in [url, *links]:
             host = offer_host(link)
@@ -122,7 +136,8 @@ def stage(state, catalog, profiles, output, maximum):
                 or profile['brand'].casefold() != part['brand'].casefold()):
             rejects['manufacturer_specifications_missing'] += 1
             continue
-        asset = next((image for url in photo if (image := _image(url, allowed_hosts={INCEHESAP}))), None)
+        image_hosts = IMAGE_HOSTS[offer_host(url)]
+        asset = next((image for src in photo if src and (image := _image(src, allowed_hosts=image_hosts))), None)
         if not asset:
             rejects['selected_product_image_unavailable'] += 1
             continue
