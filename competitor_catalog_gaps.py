@@ -44,9 +44,10 @@ INDIRIMLI = 'indirimli.com'
 TUBERKARAS = 'tuberkaras.com'
 UCUZYUM = 'www.ucuzyum.com'
 COKUYGUN = 'cokuygun.com.tr'
+NEKACA = 'www.nekaca.com'
 SOURCES = (AKAKCE, CIMRI, EPEY, URUNAI, KARSILASTIRICI, PAHALIMI, AMAHANGISI, INDIRIMLI,
            TUBERKARAS, OZGUR_HOST, UCUZYUM, AYAZ_HOST, SERINAL_HOST, BESKEN_HOST, PTTAVM, NETHOUSE,
-           KARSILASTIRMA_IO, onual.HOST, COKUYGUN, METTO_HOST, *FEEDS)
+           KARSILASTIRMA_IO, onual.HOST, COKUYGUN, METTO_HOST, NEKACA, *FEEDS)
 DIRECT_RETAILER_SOURCES = {OZGUR_HOST, AYAZ_HOST, SERINAL_HOST, BESKEN_HOST, PTTAVM, NETHOUSE, METTO_HOST, *FEEDS}
 URUNAI_CATEGORIES = {
     'telefon': 'phone', 'kulaklik': 'tws', 'laptop': 'laptop', 'monitor': 'monitor',
@@ -94,6 +95,14 @@ AMAHANGISI_CATEGORIES = {
 }
 AMAHANGISI_PRODUCT = re.compile(
     r'/(' + '|'.join(map(re.escape, AMAHANGISI_CATEGORIES)) + r')/([a-z0-9-]{3,220})')
+NEKACA_CATEGORIES = {
+    'cep-telefonu': 'phone', 'bluetooth-kulaklik': 'tws', 'kulaklik': 'tws',
+    'laptop-ve-notebook': 'laptop', 'monitor': 'monitor', 'islemci': 'cpu',
+    'anakart': 'motherboard', 'ram': 'ram', 'ekran-karti': 'gpu', 'ssd': 'ssd',
+    'bilgisayar-kasasi': 'case', 'power-supply': 'psu', 'islemci-sogutucu': 'cooler',
+}
+NEKACA_PRODUCT = re.compile(
+    r'/(' + '|'.join(NEKACA_CATEGORIES) + r')/([a-z0-9-]{3,220})-fiyati-p([1-9]\d{2,10})\.html')
 ADDITIONAL_RETAILER_PATHS = {
     'www.idefix.com': r'/[a-z0-9-]+-p-[1-9]\d{4,11}',
     'www.amazon.com.tr': r'/(?:[\w%-]+/)?(?:dp|gp/product)/[A-Z0-9]{10}',
@@ -105,6 +114,7 @@ PRODUCT_SITEMAPS = {
     EPEY: ('/sitemap/urun.xml', '/sitemap/urun_'),
     AMAHANGISI: ('/sitemap.xml', '/sitemap/urunler-'),
     onual.HOST: ('/sitemap.xml', '/sitemap/urunler-'),
+    NEKACA: ('/sitemap.xml', '/sitemap-products-'),
 }
 PRODUCT_SITEMAP_LIMIT = 50 * 1024 * 1024
 PHONE_MEMORY = re.compile(r'(?: [1-9]\d? gb(?: ram)?)? (?:[1-9]\d{1,3} gb|[1-9] tb)$')
@@ -480,7 +490,7 @@ def scan_source(host, kinds, indexes, start_page, pages, cursors=None, *, collec
         return scan_urunai(reader, kinds, indexes)
     if host == UCUZYUM:
         return scan_ucuzyum(reader, indexes['phone']) if 'phone' in kinds else ([], [])
-    if host in (AMAHANGISI, onual.HOST):
+    if host in (AMAHANGISI, onual.HOST, NEKACA):
         reports, rows = scan_product_sitemap(host, kinds, indexes, cursors or {}, reader=reader, maximum=pages)
         return [{**report, 'collection': collection} for report in reports], rows
     if host == KARSILASTIRMA_IO:
@@ -695,6 +705,29 @@ def amahangisi_sitemap_cards(xml, kinds, indexes):
     return list(cards.values())
 
 
+def nekaca_sitemap_cards(xml, kinds, indexes):
+    cards = {}
+    for url in sitemap_locations(xml, 'urlset'):
+        if not url.startswith(f'https://{NEKACA}/'):
+            continue
+        route = urlsplit(url)
+        if route.query or route.fragment:
+            continue
+        match = NEKACA_PRODUCT.fullmatch(route.path)
+        if not match:
+            continue
+        category, slug, product_id = match.groups()
+        kind, title = NEKACA_CATEGORIES[category], slug.replace('-', ' ')
+        if kind not in kinds or not in_scope(kind, title):
+            continue
+        known = catalog_match(title, indexes[kind])
+        if not known and not additional_comparison_in_scope(kind, title):
+            continue
+        cards.setdefault((kind, product_id), {'id': product_id, 'title': title, 'url': url, 'source': NEKACA,
+            'category': kind, 'catalogSlug': known, 'titleFromSitemap': True})
+    return list(cards.values())
+
+
 def onual_product_identity(url):
     if not url.startswith(onual.BASE + '/') or not (match := onual.PRODUCT.fullmatch(url.removeprefix(onual.BASE))):
         return None
@@ -741,7 +774,7 @@ def scan_product_sitemap(host, kinds, indexes, cursors, *, reader=None, maximum=
         return [{**report, 'status': 'product_sitemap_shards_missing'}], []
     start = shards.index(report['nextPage']) if report['nextPage'] in shards else 0
     parse_cards = {CIMRI: cimri_sitemap_cards, EPEY: epey_sitemap_cards,
-                   AMAHANGISI: amahangisi_sitemap_cards, onual.HOST: onual_sitemap_cards}[host]
+                   AMAHANGISI: amahangisi_sitemap_cards, onual.HOST: onual_sitemap_cards, NEKACA: nekaca_sitemap_cards}[host]
     rows = {}
     report.update(status='sitemap_read', pages=1, shardsRead=[])
     for offset in range(start, min(len(shards), start + maximum)):
@@ -1306,12 +1339,14 @@ def main():
         limits = {host: akakce_leads if host == AKAKCE else min(args.lead_limit, source_caps.get(host, args.lead_limit))
                   for host in hosts}
         known_leads = lead_inventory(state)
+        # Nekaca's sitemap supports inventory discovery. Its retailer links
+        # are tracking redirects outside its crawler rules.
         with ThreadPoolExecutor(max_workers=len(hosts)) as pool:
             jobs = [pool.submit(scan_source_leads, state, host, kinds, limits[host], now,
                                 priority, set(args.prioritize_model), collection=source_collection(host),
                                 known_leads=known_leads, stopped_reason=stopped.get(host),
                                 site_fallback=args.site_lead_fallback)
-                    for host in hosts if host not in DIRECT_RETAILER_SOURCES and limits[host]]
+                    for host in hosts if host not in DIRECT_RETAILER_SOURCES and host != NEKACA and limits[host]]
             lead_scans = [scan for job in jobs for scan in job.result()]
     if args.state is not None:
         write_json(args.state, state)

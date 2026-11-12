@@ -7,14 +7,31 @@ from unittest.mock import Mock, patch
 from ayaz_phone_source import AYAZ_BASE, AYAZ_HOST
 from competitor_catalog_gaps import (AKAKCE, CIMRI, EPEY, KARSILASTIRICI, PAHALIMI, URUNAI, akakce_limits, candidate_family, cimri_sitemap_cards, epey_earbud_title, epey_sitemap_cards, export_source_snapshot, import_source_snapshot, product_state_key, scan_product_sitemap, scan_source, urunai_market_slugs, urunai_sitemap_cards, catalog_match, category_url, comparison_cards, comparison_retailer_leads,
                                      identity_index, in_scope, merge_state, read_state)
-from competitor_catalog_gaps import (AMAHANGISI, COKUYGUN, INDIRIMLI, KARSILASTIRMA_IO, TUBERKARAS, UCUZYUM, comparison_lead_destination,
-                                     lead_inventory, phone_family, retailer_destination, scan_retailer_leads,
+from competitor_catalog_gaps import (AMAHANGISI, COKUYGUN, INDIRIMLI, KARSILASTIRMA_IO, NEKACA, TUBERKARAS, UCUZYUM, comparison_lead_destination,
+                                     lead_inventory, nekaca_sitemap_cards, phone_family, retailer_destination, scan_retailer_leads,
                                      scan_source_leads)
 from ozgur_phone_source import OZGUR_HOST
 import onual_catalog_source as onual
 
 
 class CompetitorCatalogGapsTest(unittest.TestCase):
+    def test_nekaca_sitemap_keeps_inventory_only_and_filters_nonproducts(self):
+        routes = [
+            'https://www.nekaca.com/cep-telefonu/iphone-16-plus-128-gb-beyaz-fiyati-p18616.html',
+            'https://www.nekaca.com/bluetooth-kulaklik/jbl-wave-beam-2-tws-fiyati-p1609.html',
+            'https://www.nekaca.com/bluetooth-kulaklik/kablolu-jbl-yedek-fiyati-p1610.html',
+            'https://www.nekaca.com/cep-telefonu/iphone-16-plus-yenilenmis-fiyati-p18617.html',
+            'https://www.nekaca.com/laptop-cantasi/ornek-kilif-fiyati-p1777.html',
+            'https://www.nekaca.com/go.php?link_id=18616',
+            'https://other.example/cep-telefonu/iphone-16-plus-128-gb-fiyati-p18616.html',
+        ]
+        xml = '<urlset>' + ''.join(f'<url><loc>{route}</loc></url>' for route in routes) + '</urlset>'
+        indexes = {kind: identity_index([]) for kind in ('phone', 'tws')}
+        rows = nekaca_sitemap_cards(xml, ('phone', 'tws'), indexes)
+        self.assertEqual([(row['source'], row['category'], row['id'], row['url']) for row in rows],
+                         [(NEKACA, 'phone', '18616', routes[0]), (NEKACA, 'tws', '1609', routes[1])])
+        self.assertTrue(all('retailerLeads' not in row and 'price' not in row for row in rows))
+
     def test_phone_routing_ignores_repeated_capacity_and_official_warranty_labels(self):
         for title, family in (
             ('Samsung Galaxy A37 5g 256 GB 8 GB Ram (Samsung Türkiye Garantili) Çam', 'samsung galaxy a37 5g'),
