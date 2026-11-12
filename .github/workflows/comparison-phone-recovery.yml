@@ -12,7 +12,7 @@ on:
       target:
         description: Reviewed phone group for this run
         type: choice
-        options: [iphone-16-plus, galaxy-foldables, vivo-x300-pro, reviewed-candidates]
+        options: [iphone-16-plus, galaxy-foldables, vivo-x300-pro, reviewed-candidates, oppo-a6-pro-5g]
         default: iphone-16-plus
       reviewed_pairs:
         description: Reviewed candidates as JSON containing only slug, gtin, and retailer URLs
@@ -38,14 +38,27 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  verify:
+  dispatch-daily-iphone:
     if: >-
       github.ref == 'refs/heads/main' &&
-      (github.event_name == 'workflow_dispatch' ||
-        (github.event_name == 'workflow_run' &&
-          github.event.workflow_run.event == 'schedule' &&
-          github.event.workflow_run.head_repository.full_name == github.repository &&
-          github.event.workflow_run.run_attempt == 1))
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.event == 'schedule' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.run_attempt == 1
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      actions: write
+    steps:
+      - name: Dispatch the approved iPhone pair on the trusted source-reader event
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run comparison-phone-recovery.yml --repo "$GITHUB_REPOSITORY" --ref main \
+            -f target=iphone-16-plus -f collection=site -f publish=true
+
+  verify:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
     runs-on: ${{ (inputs.collection == 'macos' || inputs.collection == 'mixed') && 'macos-latest' || 'ubuntu-latest' }}
     timeout-minutes: 12
     permissions:
@@ -65,10 +78,15 @@ jobs:
         env:
           TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
           SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
-          PUBLISH: ${{ github.event_name == 'workflow_run' || inputs.publish }}
-          COMPARISON_PHONE_COLLECTION: ${{ github.event_name == 'workflow_run' && 'site' || inputs.collection }}
-          TARGET: ${{ github.event_name == 'workflow_run' && 'iphone-16-plus' || inputs.target }}
+          PUBLISH: ${{ inputs.publish }}
+          COMPARISON_PHONE_COLLECTION: ${{ inputs.collection }}
+          TARGET: ${{ inputs.target }}
           REVIEWED_PAIRS: ${{ inputs.reviewed_pairs }}
+          R2_ACCESS_KEY_ID: ${{ inputs.target == 'oppo-a6-pro-5g' && inputs.publish && secrets.R2_ACCESS_KEY_ID || '' }}
+          R2_SECRET_ACCESS_KEY: ${{ inputs.target == 'oppo-a6-pro-5g' && inputs.publish && secrets.R2_SECRET_ACCESS_KEY || '' }}
+          R2_ACCOUNT_ID: ${{ inputs.target == 'oppo-a6-pro-5g' && inputs.publish && secrets.R2_ACCOUNT_ID || '' }}
+          R2_BUCKET_NAME: ${{ inputs.target == 'oppo-a6-pro-5g' && inputs.publish && secrets.R2_BUCKET_NAME || '' }}
+          R2_PUBLIC_DOMAIN: ${{ inputs.target == 'oppo-a6-pro-5g' && inputs.publish && secrets.R2_PUBLIC_DOMAIN || '' }}
         run: |
           set -euo pipefail
           if [[ "$COMPARISON_PHONE_COLLECTION" == site || "$COMPARISON_PHONE_COLLECTION" == mixed ]]; then
@@ -83,6 +101,12 @@ jobs:
           args=()
           if [[ "$PUBLISH" == true ]]; then args+=(--publish); fi
           case "$TARGET" in
+            oppo-a6-pro-5g)
+              mode=--validate
+              if [[ "$PUBLISH" == true ]]; then mode=--publish; fi
+              python publish_oppo_a6_pro_queue.py "$mode" | tee "$RUNNER_TEMP/comparison-recovery.json"
+              exit
+              ;;
             iphone-16-plus) args+=(--iphone-16-plus) ;;
             galaxy-foldables|vivo-x300-pro)
               args+=(--reviewed-pairs "offer_batches/comparison-${TARGET}.json") ;;

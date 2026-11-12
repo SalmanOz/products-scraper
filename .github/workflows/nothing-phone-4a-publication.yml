@@ -6,7 +6,7 @@ on:
       model:
         description: Reviewed phone model
         type: choice
-        options: ['4a', '3a', 'poco-c81-pro', 'oppo-a6-pro-5g']
+        options: ['4a', '3a', 'poco-c81-pro']
         default: '4a'
       publish:
         description: Publish only the selected model after live same-barcode verification
@@ -35,9 +35,8 @@ jobs:
           python-version: '3.12'
           cache: pip
       - run: python -m pip install -r requirements.txt
-      - run: python -m unittest -q test_comparison_phone_offers test_evofone_offer_source test_daily_discovery test_teknosa_catalog_source
+      - run: python -m unittest -q test_comparison_phone_offers test_evofone_offer_source test_daily_discovery
       - name: Validate and optionally publish two independent current offers
-        id: publication
         env:
           TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
           SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
@@ -52,17 +51,14 @@ jobs:
           set -euo pipefail
           mode=--validate
           if [[ "$PUBLISH" == true ]]; then mode=--publish; fi
-          case "$MODEL" in
-            poco-c81-pro) report=$MODEL; command=(python publish_poco_c81_pro_queue.py) ;;
-            oppo-a6-pro-5g) report=$MODEL; command=(python publish_oppo_a6_pro_queue.py) ;;
-            4a|3a) report="nothing-phone-$MODEL"; command=(python publish_nothing_phones.py --model "$MODEL") ;;
-            *) exit 2 ;;
-          esac
-          echo "report=$report" >> "$GITHUB_OUTPUT"
-          "${command[@]}" "$mode" | tee "$RUNNER_TEMP/$report.jsonl"
+          if [[ "$MODEL" == poco-c81-pro ]]; then
+            python publish_poco_c81_pro_queue.py "$mode" | tee "$RUNNER_TEMP/poco-c81-pro.jsonl"
+          else
+            python publish_nothing_phones.py --model "$MODEL" "$mode" | tee "$RUNNER_TEMP/nothing-phone-${MODEL}.jsonl"
+          fi
       - uses: actions/upload-artifact@v4
-        if: always() && steps.publication.outputs.report != ''
+        if: always()
         with:
-          name: ${{ steps.publication.outputs.report }}-${{ github.run_id }}
-          path: ${{ runner.temp }}/${{ steps.publication.outputs.report }}.jsonl
+          name: ${{ inputs.model == 'poco-c81-pro' && inputs.model || format('nothing-phone-{0}', inputs.model) }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/${{ inputs.model == 'poco-c81-pro' && inputs.model || format('nothing-phone-{0}', inputs.model) }}.jsonl
           retention-days: 15

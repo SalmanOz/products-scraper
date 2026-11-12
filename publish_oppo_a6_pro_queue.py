@@ -7,6 +7,7 @@ import re
 from bs4 import BeautifulSoup
 
 from automatic_memory_variants import variant_selected_evidence
+from catalog_source_collector import catalog_document_reader
 from comparison_phone_offers import checked_offers, ranked_pairs, report_offer
 from daily_discovery import model_key, product_names, staged_attributes, utc_now
 from manufacturer_specs import parse_manufacturer_specifications
@@ -77,8 +78,12 @@ def prepare():
         raise ValueError('oppo_manufacturer_model_unverified')
     transport = PriorityRetailerTransport(maximum_per_host=4, browser_fallback=False, get=compatible_get,
                                           unavailable_robots_hosts=('www.teknosa.com',))
+    site_reader = catalog_document_reader('phone')
+    teknosa = PriorityRetailerTransport(maximum_per_host=4, browser_fallback=False, get=site_reader,
+                                       unavailable_robots_hosts=('www.teknosa.com',)) if site_reader else transport
     documents = {}
-    _, observed, rejected = checked_offers((TRENDYOL, TEKNOSA), NAME, SPECS, transport, documents, reviewed_gtin=GTIN)
+    _, observed, rejected = checked_offers((TRENDYOL, TEKNOSA), NAME, SPECS, transport, documents,
+                                           direct={'www.teknosa.com': teknosa}, reviewed_gtin=GTIN)
     verified = []
     for row in observed:
         proof = variant_selected_evidence(row, NAME, SPECS)
