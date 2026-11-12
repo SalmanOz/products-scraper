@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from comparison_phone_offers import (audit_queue, candidate_urls, capacity_priority, checked_offers, load_reviewed_profiles,
-                                     n11_phone_leads, publishable_pair, published_offer_urls, run)
+                                     hepsiburada_phone_leads, n11_phone_leads, publishable_pair, published_offer_urls, run)
 from ozgur_phone_source import OZGUR_HOST, OZGUR_TERMS, ozgur_offer
 
 
@@ -59,6 +59,32 @@ class ComparisonPhoneOffersTest(unittest.TestCase):
                          ([url], {'reason': 'document_read', 'httpStatus': 200, 'destinations': 1}))
         search.read_n11_phone_search.assert_called_once_with('Apple iPhone 16 Plus 128 GB')
         self.assertEqual(n11_phone_leads(NAME, SPECS, search, [url])[0], [])
+
+    def test_phone_queue_reserves_a_slot_for_an_unpriced_variant_without_store_leads(self):
+        products = [{'slug': f'family-{i}', 'name': f'Family {i}',
+                     'attributes': {'storage_gb': 128}, 'fresh_offer_count': 0} for i in range(7)]
+        state = {'products': {}, 'phoneNativeLeads': {product['slug']: [HB] for product in products[:5]},
+                 'phoneOfferAudits': {'family-5': '2026-11-12T05:00:00+00:00'}}
+        self.assertEqual(audit_queue(state, products, maximum=4), [*products[:3], products[6]])
+
+    def test_hepsiburada_phone_search_requires_the_exact_echo_and_catalog_memory(self):
+        search = Mock()
+        wide = HB.replace('128-gb', '256-gb')
+        html = f'''<h1>"{NAME}" araması (2 ürün)</h1>
+            <h2 data-test-id="title-1"><a href="{HB}" title="{NAME} 128 GB">{NAME} 128 GB</a></h2>
+            <h2 data-test-id="title-2"><a href="{wide}" title="{NAME} 256 GB">{NAME} 256 GB</a></h2>'''
+        search.read_hepsiburada_search.return_value = html, 'document_read', 200
+        urls, report = hepsiburada_phone_leads(NAME, SPECS, search, ())
+        self.assertEqual(urls, [HB])
+        self.assertEqual(report['destinations'], 1)
+        self.assertEqual(hepsiburada_phone_leads(NAME, SPECS, search, [HB])[0], [])
+        cache = {}
+        hepsiburada_phone_leads(NAME, SPECS, search, (), cache)
+        search.read_hepsiburada_search.reset_mock()
+        self.assertEqual(hepsiburada_phone_leads(NAME, {**SPECS, 'storage_gb': 256}, search, (), cache)[0], [wide])
+        search.read_hepsiburada_search.assert_not_called()
+        search.read_hepsiburada_search.return_value = html.replace('<h1>', '<h1>wrong '), 'document_read', 200
+        self.assertEqual(hepsiburada_phone_leads(NAME, SPECS, search, ())[0], [])
 
     def test_ozgur_uses_the_selected_upc_without_inventing_missing_sku_or_radio(self):
         url = 'https://ozguriletisimankara.com/urun/iphone-15-mavi-128-gb'

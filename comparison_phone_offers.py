@@ -15,12 +15,14 @@ import requests
 from catalog_source_collector import catalog_document_reader
 
 from competitor_catalog_gaps import public_phone_catalog, read_state, retailer_destination, write_json
+from hepsiburada_catalog_discovery import public_model_search_cards
 from hepsiburada_catalog_source import parse_catalog_buy_box
 from laptop_pilot import _hepsiburada_public_get, verify_seller
 from laptop_retailer_sources import marketplace_seller_identity
 from mediamarkt_marketplace_audit import selected_marketplace_offer
 from mediamarkt_source import _selected_offer as mediamarkt_first_party, product_url as mediamarkt_url
-from n11_catalog_source import discover_catalog_targets as n11_search_targets, parse_catalog_listing as n11_listing
+from n11_catalog_source import (discover_catalog_targets as n11_search_targets, parse_catalog_listing as n11_listing,
+                                public_search_card_document)
 from offer_ingestion_client import IngestionClientError, OfferIngestionClient
 from ozgur_phone_source import OZGUR_HOST, OZGUR_TERMS, ozgur_offer, ozgur_phone_url
 from pazarama_category_source import pazarama_product_url
@@ -292,9 +294,28 @@ def published_offer_urls(slug):
     ))
 
 
+def saved_phone_leads(state, slug):
+    return [url for raw in state.get('phoneNativeLeads', {}).get(slug, ())
+            if (url := retailer_destination(raw)) and supported_phone_url(url, expanded=True)]
+
+
+def round_robin_phone_families(rows, maximum):
+    families = defaultdict(deque)
+    for row in rows:
+        families[product_family(row['slug'])].append(row)
+    queue = deque(families.values())
+    selected = []
+    while queue and len(selected) < maximum:
+        siblings = queue.popleft()
+        selected.append(siblings.popleft())
+        if siblings:
+            queue.append(siblings)
+    return selected
+
+
 def audit_queue(state, products, maximum=8):
     audited = state.get('phoneOfferAudits', {})
-    candidates = []
+    candidates, unrouted = [], []
     by_family = defaultdict(set)
     for row in state['products'].values():
         if row.get('category') != 'phone' or not row.get('catalogFamily'):
@@ -307,37 +328,63 @@ def audit_queue(state, products, maximum=8):
         slug = product['slug']
         if not product.get('name') or not isinstance(product.get('attributes'), dict):
             continue
-        urls = by_family[product_family(slug)]
+        urls = by_family[product_family(slug)] | set(saved_phone_leads(state, slug))
         storage = PriceUpdater.get_expected_specs(product['attributes']).get('storage_gb')
         compatible_hosts = {urlsplit(url).netloc for url in urls if capacity_priority(url, storage) < 2}
-        if compatible_hosts or len({urlsplit(url).netloc for url in urls}) >= 2:
+        if compatible_hosts:
             candidates.append((product, len(compatible_hosts)))
+        elif TRPriceScraper._spec_int(storage) and product.get('fresh_offer_count') in (0, '0'):
+            unrouted.append(product)
     ranked = sorted(candidates, key=lambda entry: (
         audited.get(entry[0]['slug'], ''), entry[0].get('fresh_offer_count') not in (0, '0'),
         -min(entry[1], 2), entry[0]['slug']))
-    families = defaultdict(deque)
-    for row, _ in ranked:
-        families[product_family(row['slug'])].append(row)
-    queue = deque(families.values())
-    selected = []
-    while queue and len(selected) < maximum:
-        siblings = queue.popleft()
-        selected.append(siblings.popleft())
-        if siblings:
-            queue.append(siblings)
-    return selected
+    reserved = min(len(unrouted), maximum // 4)
+    selected = round_robin_phone_families((row for row, _ in ranked), maximum - reserved)
+    unrouted.sort(key=lambda row: (audited.get(row['slug'], ''), row['slug']))
+    return selected + round_robin_phone_families(unrouted, maximum - len(selected))
 
 
-def n11_phone_leads(name, specs, reader, excluded_urls):
+def n11_phone_leads(name, specs, reader, excluded_urls, cache=None):
     storage = TRPriceScraper._spec_int(specs.get('storage_gb'))
     model = TRPriceScraper._catalog_model_name(name, specs)
     if not storage or not model:
         return [], {'reason': 'phone_search_identity_incomplete', 'destinations': 0}
     model = ' '.join(re.sub(r'\b(?:4g|5g|lte)\b', '', model, flags=re.I).split())
     capacity = f'{storage // 1024} TB' if storage >= 1024 and storage % 1024 == 0 else f'{storage} GB'
-    html, reason, status = reader.read_n11_phone_search(f'{model} {capacity}')
+    query = f'{model} {capacity}'
+    key = ('n11', query)
+    if cache is not None and key in cache:
+        html, reason, status = cache[key], 'same_run_search_hints', 200
+    else:
+        html, reason, status = reader.read_n11_phone_search(query)
+        if cache is not None and html and status == 200:
+            cache[key] = public_search_card_document(html)
     urls = [row['source_url'] for row in n11_search_targets(html, name, specs, excluded_urls=excluded_urls)]
     return urls, {'reason': reason, 'httpStatus': status, 'destinations': len(urls)}
+
+
+def hepsiburada_phone_leads(name, specs, reader, excluded_urls, cache=None):
+    storage = TRPriceScraper._spec_int(specs.get('storage_gb'))
+    model = TRPriceScraper._catalog_model_name(name, specs)
+    if not storage or not model:
+        return [], {'reason': 'phone_search_identity_incomplete', 'destinations': 0}
+    radio = specs.get('network_generation')
+    if radio and TRPriceScraper._dual_radio_family(model) and not TRPriceScraper._radio_generation(model):
+        model = f'{model} {radio.upper()}'
+    key = ('Hepsiburada', model)
+    if cache is not None and key in cache:
+        cards, reason, status, parser_status = cache[key], 'same_run_search_hints', 200, 'parsed'
+    else:
+        html, reason, status = reader.read_hepsiburada_search(model)
+        cards, parser_status = public_model_search_cards(html, model) if html else ([], None)
+        if cache is not None and parser_status == 'parsed' and status == 200:
+            cache[key] = cards
+    matcher = TRPriceScraper()
+    urls = [card['source_url'] for card in cards
+            if card['source_url'] not in excluded_urls and capacity_priority(card['source_url'], storage) < 2
+            and matcher.is_strict_match(name, card['discovery_title'], specs)]
+    urls.sort(key=lambda url: capacity_priority(url, storage))
+    return urls[:2], {'reason': reason, 'httpStatus': status, 'parser': parser_status, 'destinations': min(2, len(urls))}
 
 
 def publishable_pair(observations, client, product):
@@ -428,6 +475,7 @@ def run(state, slugs, client=None, *, publish=False, maximum=24, products=None, 
         n11_search = PriorityRetailerTransport(maximum_per_host=min(maximum, 8), browser_fallback=False)
     documents = {}
     seller_cache = {}
+    search_cache = {}
     for slug in slugs:
         product = products[slug]
         specs = PriceUpdater.get_expected_specs(product.get('attributes'))
@@ -437,6 +485,8 @@ def run(state, slugs, client=None, *, publish=False, maximum=24, products=None, 
         else:
             discovered = category_leads(slug, product['name'], specs, transport, documents)
             discovered += candidate_urls(state, slug, expanded=public_audit)
+            if public_audit:
+                discovered += saved_phone_leads(state, slug)
             known = published_offer_urls(slug) if public_audit else ()
             urls = list(dict.fromkeys(url for pair in zip_longest(discovered, known) for url in pair if url))
         # Keep compatible or unspecified URL hints for the public queue.
@@ -455,10 +505,15 @@ def run(state, slugs, client=None, *, publish=False, maximum=24, products=None, 
         pair, observations, rejects = checked_offers(
             urls, product['name'], specs, transport, documents, direct=direct, seller_cache=seller_cache,
             reviewed_gtin=profile['gtin'] if profile else None)
-        search = None
-        if public_audit and not pair:
-            extra_urls, search = n11_phone_leads(product['name'], specs, n11_search, urls)
-            if extra_urls:
+        searches, native_leads = {}, []
+        if public_audit:
+            sources = (('n11Search', n11_phone_leads, n11_search),
+                       ('hepsiburadaSearch', hepsiburada_phone_leads, direct['www.hepsiburada.com']))
+            for label, discover, reader in sources:
+                if pair:
+                    break
+                extra_urls, searches[label] = discover(product['name'], specs, reader, {*urls, *native_leads}, search_cache)
+                native_leads.extend(extra_urls)
                 _, extra_offers, extra_rejects = checked_offers(
                     extra_urls, product['name'], specs, transport, documents, direct=direct, seller_cache=seller_cache)
                 observations.extend(extra_offers)
@@ -469,9 +524,9 @@ def run(state, slugs, client=None, *, publish=False, maximum=24, products=None, 
             pair = next(iter(ranked_pairs(observations)), [])
         result = {'slug': slug, 'sameGtin': pair[0]['gtin13'] if pair else None,
                   'selectedPair': [report_offer(row) for row in pair],
-                  'offers': [report_offer(row) for row in observations], 'rejections': rejects}
-        if search is not None:
-            result['n11Search'] = search
+                  'offers': [report_offer(row) for row in observations], 'rejections': rejects, **searches}
+        if native_leads:
+            result['nativeLeads'] = native_leads
         if (publish or profile) and pair:
             pair, result['sellerChecks'] = publishable_pair(observations, client, product)
             if not pair:
@@ -527,6 +582,11 @@ def main():
         rows = run(state, [row['slug'] for row in queue], maximum=40, products=queue, public_audit=True)
         now = datetime.now(timezone.utc).isoformat()
         state.setdefault('phoneOfferAudits', {}).update({row['slug']: now for row in rows})
+        for row in rows:
+            if row.get('nativeLeads'):
+                slug = row['slug']
+                state.setdefault('phoneNativeLeads', {})[slug] = list(dict.fromkeys(
+                    row['nativeLeads'] + saved_phone_leads(state, slug)))[:8]
         write_json(args.state, state)
         write_json(args.audit_queue, {'checkedAt': now, 'catalogAvailable': bool(public), 'rows': rows})
         print(json.dumps({'phonesAudited': len(rows), 'verifiedPairs': sum(bool(row['sameGtin']) for row in rows)}))
