@@ -358,9 +358,20 @@ def _pazarama_visible_cash_price(soup, product, offer, url, schema_price, availa
     visible = detail.get_text(' ', strip=True)
     if re.search(r'kupon|üyelere|uyelere|üyelik|uyelik|premium|plus\s+fiyat', visible, re.I):
         return None
+    discounts = detail.select('[data-testid="product-card-discount"]')
     main_prices = [node for node in detail.select('p')
                    if 'text-4xl' in node.get('class', [])
                    and not node.find_parent(attrs={'data-testid': 'product-card-discount'})]
+    price_panel = None
+    if not main_prices and len(discounts) == 1:
+        # The active cart-discount layout renders the ordinary amount in both
+        # the sticky checkout header and the selected discount panel's sibling.
+        price_panel = discounts[0].parent
+        main_prices = price_panel.select(':scope > div.cursor-pointer p.text-lg.font-bold.text-red-600')
+        sticky_prices = detail.select('div.fixed.top-0 p.text-lg.text-gray-600.leading-tight')
+        if (len(main_prices) != 1 or len(sticky_prices) != 1
+                or main_prices[0].get_text(' ', strip=True) != sticky_prices[0].get_text(' ', strip=True)):
+            return None
     if len(main_prices) != 1:
         return None
     main_price = main_prices[0]
@@ -375,9 +386,8 @@ def _pazarama_visible_cash_price(soup, product, offer, url, schema_price, availa
     cash_price = float(amount[1].replace('.', '').replace(',', '.'))
     if not math.isfinite(cash_price) or not 0 < cash_price <= 5_000_000:
         return None
-    discounts = detail.select('[data-testid="product-card-discount"]')
     if discounts:
-        if len(discounts) != 1 or discounts[0].parent is not main_price.parent:
+        if len(discounts) != 1 or discounts[0].parent is not (price_panel or main_price.parent):
             return None
         discount = re.fullmatch(r'Sepette\s+(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)\s*TL',
                                 discounts[0].get_text(' ', strip=True), re.I)

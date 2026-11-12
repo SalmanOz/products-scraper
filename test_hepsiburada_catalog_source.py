@@ -1,4 +1,5 @@
 """Catalog-derived HB selected seller proof; no production requests or writes."""
+import json
 import unittest
 from pathlib import Path
 from bs4 import BeautifulSoup
@@ -26,6 +27,28 @@ def document(changes=None):
 
 
 class HepsiburadaCatalogTests(unittest.TestCase):
+    def test_price_skeleton_requires_ordinary_cash_and_matching_buy_box_events(self):
+        soup = BeautifulSoup(document(), 'html.parser')
+        redux = soup.select_one('script#reduxStore')
+        state = json.loads(redux.get_text())
+        product = state['productState']['product']
+        price = float(product['variants'][0]['price'])
+        formatted = f'{price:,.2f}'.translate(str.maketrans(',.', '.,'))
+        product.update(prices=[{'value': price, 'formattedPrice': formatted, 'currency': 0, 'discountRate': 0}],
+                       campaignIds=[], campaignNote='', isCampaignParticipationClosed=True)
+        redux.string = json.dumps(state)
+        region = soup.select_one('[data-test-id="default-price"]')
+        region['data-test-id'] = 'price-skeleton'
+        region.clear()
+        html = str(soup)
+        offer, reason = parse_catalog_buy_box(html, TARGET, NAME, SPECS)
+        self.assertIsNotNone(offer, reason)
+        self.assertEqual(offer['price'], price)
+        for changed in (html.replace('price-skeleton', 'unrelated-region'),
+                        html.replace('"campaignIds": []', '"campaignIds": ["coupon"]'),
+                        html.replace(formatted, '1.234,00')):
+            self.assertIsNone(parse_catalog_buy_box(changed, TARGET, NAME, SPECS)[0])
+
     def test_actual_selected_one_tb_label_control_and_technical_cell_agree_on_1024_gb(self):
         from automatic_memory_variants import variant_selected_evidence
         from observed_memory_variants import inspect_hepsiburada_memory_variant

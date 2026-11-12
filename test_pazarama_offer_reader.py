@@ -86,6 +86,16 @@ class PazaramaOfferReaderTests(unittest.TestCase):
         self.assertEqual(result['url'], URL)
         self.assertNotEqual(result['price'], schema()['offers']['price'])
 
+    def test_discount_panel_alternate_layout_requires_matching_sticky_price(self):
+        normal = '<p class="text-4xl">20.000,00 TL</p>'
+        panel = '<div class="cursor-pointer"><p class="text-lg font-bold text-red-600">20.000,00 TL</p></div>'
+        sticky = '<div class="fixed top-0"><p class="text-lg text-gray-600 leading-tight">20.000,00 TL</p></div>'
+        document = page(extra=sticky).replace(normal, panel)
+        self.assertEqual(observed(document)['price'], 20000)
+        self.assertIsNone(observed(document.replace(sticky, '')))
+        self.assertIsNone(observed(document.replace(sticky, sticky.replace('20.000', '22.000'))))
+        self.assertIsNone(observed(document.replace(panel, panel.replace('font-bold', 'font-bold line-through'))))
+
     def test_non_cart_selected_offer_requires_schema_and_visible_price_equality(self):
         product = schema()
         product['offers']['price'] = 20000

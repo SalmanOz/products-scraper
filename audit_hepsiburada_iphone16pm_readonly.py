@@ -87,7 +87,7 @@ def _first_party_laptop_cash(product, price):
             and type(prices[1].get('discountRate')) is int and 0 < prices[1]['discountRate'] < 100)
 
 
-def _ordinary_laptop_cash(product, price):
+def _ordinary_selected_cash(product, price):
     prices = product.get('prices')
     if (price is None or product.get('campaignIds') != [] or product.get('campaignNote') != ''
             or product.get('isCampaignParticipationClosed') is not True
@@ -295,16 +295,18 @@ def parse_exact_buy_box(html: str, final_url: str = URL, *, scope=None, verify_l
     client_rendered_cash = False
     if len(price_regions) == 1:
         visible = price_regions[0].find('span')
-    elif not price_regions and verify_laptop is not None:
-        # Some discounted laptop PDPs render cash only on the checked SSD
-        # option. The laptop verifier already binds this control to the SKU.
-        selected_prices = soup.select(
+    elif not price_regions and generic:
+        # Laptop pages may display the cash amount on the selected SSD. Phone
+        # pages can leave a price skeleton while serving the exact cash amount
+        # in selected state, schema and both merchant-bound buy-box events.
+        selected_prices = (soup.select(
             'button[aria-label^="Seçili SSD Kapasitesi "] [data-test-id="variant-box-price"]')
+            if verify_laptop is not None else [])
         visible = selected_prices[0] if len(selected_prices) == 1 else None
         client_rendered_cash = not selected_prices and (
-            _first_party_laptop_cash(product, price)
+            (verify_laptop is not None and _first_party_laptop_cash(product, price))
             or (len(soup.select('[data-test-id="price-skeleton"]')) == 1
-                and _ordinary_laptop_cash(product, price)))
+                and _ordinary_selected_cash(product, price)))
     else:
         return None, 'selected_price_region_missing'
     match = re.fullmatch(r'(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)\s*TL',

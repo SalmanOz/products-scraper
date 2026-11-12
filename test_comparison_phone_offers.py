@@ -158,6 +158,9 @@ class ComparisonPhoneOffersTest(unittest.TestCase):
             vatan_profile = {**profile, 'urls': [MM, VATAN]}
             path.write_text(json.dumps([vatan_profile]))
             self.assertEqual(load_reviewed_profiles(path), {slug: vatan_profile})
+            hb_profile = {**profile, 'urls': [MM, HB]}
+            path.write_text(json.dumps([hb_profile]))
+            self.assertEqual(load_reviewed_profiles(path), {slug: hb_profile})
             for invalid in ({**profile, 'price': 1}, {**profile, 'urls': [MM, MM, PZ]},
                             {**profile, 'urls': [MM, VATAN + '?secret=private']}):
                 path.write_text(json.dumps([invalid]))

@@ -382,7 +382,7 @@ def load_reviewed_profiles(path):
                 not isinstance(gtin, str) or retailer_gtin13(gtin) != gtin or
                 not isinstance(urls, list) or not 2 <= len(urls) <= 6 or
                 any(not url or retailer_destination(url) != url
-                    or not (supported_phone_url(url) or vatan_phone_url(url)) for url in urls) or
+                    or not supported_phone_url(url, expanded=True) for url in urls) or
                 len(set(urls)) != len(urls) or
                 len({urlsplit(url).netloc for url in urls}) < 2):
             raise ValueError('Invalid reviewed capacity or original retailer URLs')
@@ -404,12 +404,12 @@ def run(state, slugs, client=None, *, publish=False, maximum=24, products=None, 
                                           n11_collector=client.n11_document_get if client else None,
                                           unavailable_robots_hosts=('www.teknosa.com', 'www.pazarama.com'))
     direct = {}
+    if public_audit or profiles:
+        direct['www.hepsiburada.com'] = PriorityRetailerTransport(maximum_per_host=maximum,
+            browser_fallback=False, get=_hepsiburada_public_get)
     if public_audit:
-        direct = {
-            'www.hepsiburada.com': PriorityRetailerTransport(maximum_per_host=maximum, browser_fallback=False,
-                                                            get=_hepsiburada_public_get),
-            'www.vatanbilgisayar.com': PriorityRetailerTransport(maximum_per_host=maximum, browser_fallback=False),
-        }
+        direct['www.vatanbilgisayar.com'] = PriorityRetailerTransport(maximum_per_host=maximum,
+            browser_fallback=False)
     documents = {}
     seller_cache = {}
     for slug in slugs:
