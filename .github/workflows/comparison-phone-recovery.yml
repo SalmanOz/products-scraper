@@ -1,9 +1,12 @@
 name: Recover phone prices from comparison leads
 
 on:
-  schedule:
-    # 19:13 Europe/Istanbul. Scheduled writes use the two approved GTINs.
-    - cron: '13 16 * * *'
+  workflow_run:
+    # Reuse the daily phone discovery trigger. The previous standalone
+    # schedule had no recorded executions.
+    workflows: ['Daily Phone Discovery & Quality Gate']
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       target:
@@ -36,7 +39,13 @@ concurrency:
 
 jobs:
   verify:
-    if: github.ref == 'refs/heads/main'
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' ||
+        (github.event_name == 'workflow_run' &&
+          github.event.workflow_run.event == 'schedule' &&
+          github.event.workflow_run.head_repository.full_name == github.repository &&
+          github.event.workflow_run.run_attempt == 1))
     runs-on: ${{ (inputs.collection == 'macos' || inputs.collection == 'mixed') && 'macos-latest' || 'ubuntu-latest' }}
     timeout-minutes: 12
     permissions:
@@ -56,9 +65,9 @@ jobs:
         env:
           TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
           SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
-          PUBLISH: ${{ github.event_name == 'schedule' || inputs.publish }}
-          COMPARISON_PHONE_COLLECTION: ${{ github.event_name == 'schedule' && 'site' || inputs.collection }}
-          TARGET: ${{ github.event_name == 'schedule' && 'iphone-16-plus' || inputs.target }}
+          PUBLISH: ${{ github.event_name == 'workflow_run' || inputs.publish }}
+          COMPARISON_PHONE_COLLECTION: ${{ github.event_name == 'workflow_run' && 'site' || inputs.collection }}
+          TARGET: ${{ github.event_name == 'workflow_run' && 'iphone-16-plus' || inputs.target }}
           REVIEWED_PAIRS: ${{ inputs.reviewed_pairs }}
         run: |
           set -euo pipefail
