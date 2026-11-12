@@ -56,10 +56,9 @@ def merge_snapshot(snapshot, catalog, observations, statuses, now, *, partial=Fa
         required = row.get('requiresIndependentPair') is True or models[name].get('requiresIndependentPair') is True
         fresh = (exact_tws_sellers(current, maximum=MAX_CURRENT_OFFERS) if required or partial
                  else select_sku_offers(current, maximum=MAX_CURRENT_OFFERS))
-        if partial and (not fresh or any(statuses.get(offer['url']) not in ('verified', 'unverified')
-                                          for offer in previous)):
-            # During a source outage, only change variants with a live pair
-            # and a completed recheck of every offer previously shown.
+        if partial and not fresh:
+            # A partial run can replace a variant only with a live pair.
+            # All saved retailer URLs remain in sourceTargets for retry.
             output.append(row)
             counts['deferred'] += 1
             continue

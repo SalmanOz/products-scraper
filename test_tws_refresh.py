@@ -35,7 +35,7 @@ class TwsRefreshTest(TestCase):
         self.assertFalse(offers)
         self.assertEqual(reasons, {'http_403': 1})
 
-    def test_partial_refresh_only_changes_fully_checked_variants_with_an_independent_pair(self):
+    def test_partial_refresh_replaces_offers_when_an_independent_pair_is_live(self):
         first, second, third = ('https://shop.example/' + suffix for suffix in ('one', 'two', 'three'))
         gtin = '0194644298876'
         a = {'url': first, 'merchant': 'Satıcı A', 'platform': 'Trendyol', 'price': 5000, 'observed_at': 'old'}
@@ -52,9 +52,11 @@ class TwsRefreshTest(TestCase):
         statuses = {first: 'verified', second: 'verified', third: 'unavailable'}
         observations = {'Covered': current, 'Unavailable': current, 'Single': current[:1]}
         updated, counts = merge_snapshot(snapshot, catalog, observations, statuses, 'new', partial=True)
-        self.assertEqual(counts, {'refreshed': 1, 'deferred': 2})
-        self.assertEqual(updated['models'][1:], snapshot['models'][1:])
-        self.assertEqual([row['price'] for row in updated['models'][0]['offers']], [4900, 5000])
+        self.assertEqual(counts, {'refreshed': 2, 'deferred': 1})
+        self.assertEqual(updated['models'][2], snapshot['models'][2])
+        for row in updated['models'][:2]:
+            self.assertEqual([offer['url'] for offer in row['offers']], [first, second])
+            self.assertEqual([offer['price'] for offer in row['offers']], [4900, 5000])
 
     def test_vatan_store_inventory_requires_exact_sku_price_and_sellable_stock(self):
         url = 'https://www.vatanbilgisayar.com/sony-wf1000xm6s-kulaklik-gumus.html'
