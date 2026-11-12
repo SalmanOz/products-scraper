@@ -94,6 +94,7 @@ NEW_MODELS = (
     ('Samsung', 'Galaxy Buds3', r'galaxy buds ?3(?! fe| pro)'),
     ('Samsung', 'Galaxy Buds3 Pro', r'galaxy buds ?3 pro'),
     ('Samsung', 'Galaxy Buds4', r'galaxy buds ?4(?! fe| pro)'),
+    ('Sennheiser', 'Momentum True Wireless 4', r'momentum true wireless ?4'),
     ('Sony', 'WF-C510', r'wf ?c510'),
     ('Sony', 'WF-C710N', r'wf ?c710n'),
     ('Sony', 'WF-1000XM5', r'wf ?1000xm5'),

@@ -1,4 +1,19 @@
 {
+  "Sennheiser Momentum True Wireless 4": {
+    "summary": "Momentum True Wireless 4, hibrit aktif gürültü engelleme ve 7 mm dinamik sürücüler sunar. Sennheiser, şarj kutusuyla toplam 30 saate kadar müzik dinleme süresi belirtiyor.",
+    "highlights": ["Hibrit aktif gürültü engelleme", "aptX Adaptive ve Lossless", "Qi kablosuz şarj"],
+    "specSource": "https://support.sennheiser-hearing.com/hc/en-us/sections/34501220485789-Momentum-True-Wireless-4",
+    "specs": [
+      {"label": "Gürültü kontrolü", "value": "Hibrit aktif gürültü engelleme"},
+      {"label": "Sürücü", "value": "7 mm TrueResponse dinamik"},
+      {"label": "Tek şarjla müzik", "value": "7,5 saate kadar (ANC kapalı), 7 saate kadar (ANC açık)"},
+      {"label": "Kutuyla toplam müzik", "value": "30 saate kadar"},
+      {"label": "Bluetooth", "value": "5.4"},
+      {"label": "Ses kodekleri", "value": "SBC, AAC, aptX, aptX Adaptive, aptX Lossless ve LC3"},
+      {"label": "Dayanıklılık", "value": "IP54 (kulaklıklar)"},
+      {"label": "Şarj", "value": "USB-C ve Qi kablosuz şarj"}
+    ]
+  },
   "Anker Soundcore AeroFit 2 Pro": {
     "summary": "AeroFit 2 Pro, açık kulak kullanımı ile aktif gürültü engelleme arasında geçiş yapılabilen bir tam kablosuz kulaklık. Kutu, Qi kablosuz şarjı destekliyor.",
     "highlights": ["Açık kulak ve ANC modları", "Bluetooth 6.1", "LDAC desteği"],
