@@ -60,6 +60,25 @@ class Session:
 
 
 class RawSellerProofTests(unittest.TestCase):
+    def test_gtin_scope_is_bound_to_the_requested_barcode_and_covers_every_other_url(self):
+        url, profile = next(iter(PROFILES.items()))
+        gtin = '0195949822308'
+        body = proof(profile['id'], conflict=3)
+        body['proposed_seller_historical_other_url_rows'] = 1
+        scope = {'gtin13': gtin, 'distinct_variant_other_url_rows': 1,
+                 'unresolved_other_url_rows': 1, 'conflicting_exact_url_rows': 0}
+        body['verified_variant_scope'] = scope
+        session = Session(body)
+        client = OfferIngestionClient('https://teknoskor.com', SECRET, session=session, sleep=lambda _: None)
+        result = client.get_raw_seller_collision_proof(profile['id'], profile['seller_name'], url, gtin13=gtin)
+        self.assertEqual(result['verified_variant_scope'], scope)
+        self.assertEqual(session.calls[0][2]['params']['gtin13'], gtin)
+        for invalid in ({'gtin13': '0195949822124'}, {'unresolved_other_url_rows': 0},
+                        {'conflicting_exact_url_rows': 1}):
+            body['verified_variant_scope'] = {**scope, **invalid}
+            with self.assertRaisesRegex(IngestionClientError, 'GTIN scope is invalid'):
+                client.get_raw_seller_collision_proof(profile['id'], profile['seller_name'], url, gtin13=gtin)
+
     def test_authenticated_read_accepts_complete_invalid_historical_other_seller(self):
         url, profile = next(iter(PROFILES.items()))
         session = Session(proof(profile['id']))

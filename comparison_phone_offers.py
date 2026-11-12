@@ -25,6 +25,7 @@ from offer_ingestion_client import IngestionClientError, OfferIngestionClient
 from pazarama_category_source import pazarama_product_url
 from priority_retailer_transport import PriorityRetailerTransport, product_host
 from retailer_offer_refresh import _product_offer, _schema_nodes
+from selected_sku_evidence import selected_sku_evidence
 from teknosa_reviewed_source import parse_catalog_offer as parse_teknosa_offer
 from teknosa_seller_cards import canonical_document_url as teknosa_document_url
 from tr_price_scraper import TRPriceScraper
@@ -331,23 +332,33 @@ def publishable_pair(observations, client, product):
     decisions, diagnostics = {}, []
     for pair in ranked_pairs(observations):
         for offer in pair:
-            key = offer['url'], offer['merchant']
+            key = offer['url'], offer['merchant'], offer['gtin13']
             if key not in decisions:
                 try:
-                    proof = client.get_raw_seller_collision_proof(product['id'], offer['merchant'], offer['url'])
+                    selected = selected_sku_evidence(offer)
+                    gtin = selected.get('gtin13') if selected else None
+                    proof = client.get_raw_seller_collision_proof(
+                        product['id'], offer['merchant'], offer['url'], **({'gtin13': gtin} if gtin else {}))
                     other = proof.get('proposed_seller_other_url_rows')
                     historical = proof.get('proposed_seller_historical_other_url_rows')
-                    expired_conflicts = (proof.get('reasons') == ['proposed_seller_on_other_url_or_platform']
-                                         and type(historical) is int and historical > 0 and other == historical)
-                    decisions[key] = proof.get('complete') is True and (proof.get('blocked') is False or expired_conflicts)
+                    scope = proof.get('verified_variant_scope') if gtin else None
+                    other_listing_reason = proof.get('reasons') == ['proposed_seller_on_other_url_or_platform']
+                    if scope is not None:
+                        compatible = (scope['conflicting_exact_url_rows'] == 0 and scope['unresolved_other_url_rows'] == 0
+                                      and (proof.get('blocked') is False or other_listing_reason))
+                    else:
+                        expired = other_listing_reason and type(historical) is int and historical > 0 and other == historical
+                        compatible = proof.get('blocked') is False or expired
+                    decisions[key] = proof.get('complete') is True and compatible
                     diagnostics.append({'platform': offer['platform'], 'reasons': proof.get('reasons'),
-                                        'otherUrls': other, 'expiredOtherUrls': historical})
+                                        'otherUrls': other, 'expiredOtherUrls': historical,
+                                        **({'variantScope': scope} if scope else {})})
                 except IngestionClientError as error:
                     match = re.match(r'HTTP ([45]\d{2})\b', str(error))
                     diagnostics.append({'platform': offer['platform'], 'reasons': [
                         'collision_proof_http_' + match[1] if match else 'collision_proof_contract_unavailable']})
                     decisions[key] = False
-        if all(decisions[offer['url'], offer['merchant']] for offer in pair):
+        if all(decisions[offer['url'], offer['merchant'], offer['gtin13']] for offer in pair):
             return pair, diagnostics
     return [], diagnostics
 

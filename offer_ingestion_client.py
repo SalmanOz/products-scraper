@@ -554,24 +554,27 @@ class OfferIngestionClient:
                 'offer_targets_snapshot': snapshot,
                 **({'offer_targets_page': page} if multiple else {})}
 
-    def get_raw_seller_collision_proof(self, product_id, seller_name, source_url):
+    def get_raw_seller_collision_proof(self, product_id, seller_name, source_url, *, gtin13=None):
         """Read a separate authenticated proof over raw stored seller/URL rows.
 
         The endpoint returns only booleans and counts. Historical URLs are
         never used as refresh hints here, and this proof does not clear the
         existing complete-target ingestion gate.
         """
+        from retailer_barcode import retailer_gtin13
+
         if (type(product_id) is not int or product_id <= 0 or
                 not isinstance(seller_name, str) or not seller_name.strip() or
                 len(seller_name) > 100 or not isinstance(source_url, str) or
-                len(source_url) > 500):
+                len(source_url) > 500 or gtin13 is not None and retailer_gtin13(gtin13) != gtin13):
             raise IngestionClientError('Raw seller collision request is invalid')
         body = self._request_json(
             'GET', '/api/ingestion/offer-target-collision',
             headers={'Authorization': f'Bearer {self.secret}',
                      'Accept': 'application/json'},
             params={'product_id': str(product_id),
-                    'seller_name': seller_name, 'source_url': source_url},
+                    'seller_name': seller_name, 'source_url': source_url,
+                    **({'gtin13': gtin13} if gtin13 is not None else {})},
         )
         fields = ('stored_rows_checked', 'unknown_seller_rows', 'invalid_url_rows',
                   'invalid_url_other_seller_rows', 'invalid_url_proposed_seller_rows',
@@ -617,6 +620,16 @@ class OfferIngestionClient:
         ]
         if body['reasons'] != reasons or body['blocked'] != bool(reasons):
             raise IngestionClientError('Raw seller collision proof is inconsistent')
+        if gtin13 is not None:
+            scope = body.get('verified_variant_scope')
+            historical = body.get('proposed_seller_historical_other_url_rows')
+            keys = ('distinct_variant_other_url_rows', 'unresolved_other_url_rows', 'conflicting_exact_url_rows')
+            if (not isinstance(scope, dict) or scope.get('gtin13') != gtin13 or
+                    any(type(scope.get(key)) is not int or scope[key] < 0 for key in keys) or
+                    type(historical) is not int or historical < 0 or
+                    historical + scope[keys[0]] + scope[keys[1]] != body['proposed_seller_other_url_rows'] or
+                    scope[keys[2]] > body['exact_seller_url_rows']):
+                raise IngestionClientError('Raw seller GTIN scope is invalid')
         return body
 
     def get_public_price_priority(self):

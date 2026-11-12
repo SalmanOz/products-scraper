@@ -115,6 +115,27 @@ class ComparisonPhoneOffersTest(unittest.TestCase):
             {**history, 'proposed_seller_historical_other_url_rows': 2}, clean]
         self.assertEqual(publishable_pair(offers, client, {'id': 1})[0], offers)
 
+    def test_publisher_accepts_only_proven_different_gtin_collisions(self):
+        offers = [
+            {'price': 89599, 'url': MM, 'merchant': 'Seller A', 'platform': 'MediaMarkt',
+             'gtin13': GTIN, '_legal_name': 'seller a', '_tax_key': '1'},
+            {'price': 90699, 'url': PZ, 'merchant': 'Seller B', 'platform': 'Pazarama',
+             'gtin13': GTIN, '_legal_name': 'seller b', '_tax_key': '2'},
+        ]
+        clean = {'complete': True, 'blocked': False, 'reasons': []}
+        collision = {'complete': True, 'blocked': True,
+                     'reasons': ['proposed_seller_on_other_url_or_platform'],
+                     'proposed_seller_other_url_rows': 1, 'proposed_seller_historical_other_url_rows': 0}
+        verified = {'gtin13': GTIN, 'distinct_variant_other_url_rows': 1,
+                    'unresolved_other_url_rows': 0, 'conflicting_exact_url_rows': 0}
+        for scope in (verified, {**verified, 'distinct_variant_other_url_rows': 0, 'unresolved_other_url_rows': 1},
+                      {**verified, 'conflicting_exact_url_rows': 1}):
+            client = Mock()
+            client.get_raw_seller_collision_proof.side_effect = [{**collision, 'verified_variant_scope': scope}, clean]
+            with patch('comparison_phone_offers.selected_sku_evidence', side_effect=[{'gtin13': GTIN}, None]):
+                self.assertEqual(publishable_pair(offers, client, {'id': 1})[0], offers if scope == verified else [])
+            self.assertEqual(client.get_raw_seller_collision_proof.call_args_list[0].kwargs, {'gtin13': GTIN})
+
     def test_reviewed_capacity_rejects_a_pair_with_a_different_barcode(self):
         slug = 'apple-iphone-16-plus'
         product = {'id': 1, 'slug': slug, 'name': NAME, 'attributes': {}}
