@@ -4,6 +4,7 @@ import asyncio
 from unittest.mock import patch
 
 from offer_ingestion_client import (
+    AtomicListingRejected,
     IngestionClientError,
     OfferIngestionClient,
 )
@@ -964,7 +965,48 @@ def test_refreshed_stock_and_actual_fetch_time_are_not_rewritten_as_new_unknown_
             raise AssertionError(f'Invalid refreshed evidence accepted: {override}')
 
 
+def test_catalog_listing_rollback_isolated_by_product_and_later_flush_continues():
+    first = sample_offer(0)
+    second = sample_offer(1)
+    other_store = {**second, 'seller': 'Other', 'source_url': 'https://www.n11.com/urun/phone-123456'}
+    later = sample_offer(2)
+    rollback = {'error': 'require_all_accepted_rejected', 'index': -1, 'committed': False}
+    accepted = {'accepted': 1, 'stale_ignored': 0, 'variant_rejected': 0, 'variant_rejections': [],
+                'committed': True, 'require_all_accepted': True, 'offer_identity_contract': 'seller-source-url-v1'}
+    session = FakeSession([FakeResponse(409, rollback), FakeResponse(200, accepted),
+                           FakeResponse(409, rollback), FakeResponse(200, accepted)])
+    client = OfferIngestionClient('https://teknoskor.com', TEST_SECRET, session=session)
+    updater = PriceUpdater(ingestion_client=client)
+    total = updater.empty_ingestion_result()
+    pending = [first, second, other_store]
+    updater.flush_offers(pending, total, isolate_products=True)
+    assert not pending
+    updater.flush_offers([later], total, isolate_products=True)
+    assert total['accepted'] == 2
+    assert total['atomic_rejected_products'] == [second['product_slug']]
+    assert [call[2]['json']['offers'] for call in session.calls] == [
+        [first, second, other_store], [first], [second, other_store], [later]]
+    assert all(call[1].endswith('/listing-offers') and call[2]['json']['require_all_accepted'] is True
+               for call in session.calls)
+
+    for isolate, body, expected in (
+        (False, rollback, AtomicListingRejected),
+        (True, {**rollback, 'index': 0}, IngestionClientError),
+        (True, {key: value for key, value in rollback.items() if key != 'committed'}, IngestionClientError),
+    ):
+        session = FakeSession([FakeResponse(409, body)])
+        updater.ingestion_client.session = session
+        try:
+            updater.flush_offers([first, second], updater.empty_ingestion_result(), isolate_products=isolate)
+        except IngestionClientError as error:
+            assert type(error) is expected
+        else:
+            raise AssertionError('An unresolved or scoped atomic rejection was swallowed')
+        assert len(session.calls) == 1
+
+
 if __name__ == "__main__":
+    test_catalog_listing_rollback_isolated_by_product_and_later_flush_continues()
     test_refreshed_stock_and_actual_fetch_time_are_not_rewritten_as_new_unknown_evidence()
     test_catalog_is_read_without_mysql()
     test_catalog_target_completeness_must_be_boolean_and_survive_local_filtering()

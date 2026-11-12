@@ -25,6 +25,10 @@ class IngestionClientError(RuntimeError):
     pass
 
 
+class AtomicListingRejected(IngestionClientError):
+    """The listing writer explicitly confirmed rolling back the entire batch."""
+
+
 class PublicDocumentResponse:
     def __init__(self, url, status, document, content_type, location=None, redirect_diagnostic=None):
         self.url, self.status_code = url, status
@@ -182,6 +186,10 @@ class OfferIngestionClient:
                 return body
 
             message = body.get("error") if isinstance(body, dict) else None
+            if (method == "POST" and path == "/api/ingestion/listing-offers"
+                    and response.status_code == 409 and message == "require_all_accepted_rejected"
+                    and body.get("committed") is False and body.get("index") == -1):
+                raise AtomicListingRejected(f"HTTP 409 from {path}: {message}")
             last_error = IngestionClientError(
                 f"HTTP {response.status_code} from {path}: "
                 f"{message or 'request failed'}"

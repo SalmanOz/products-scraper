@@ -595,5 +595,5 @@ if __name__ == '__main__':
     test_akakce_direct_offer_and_graph_shapes_use_offer_name_never_parent_product_name()
     test_epey_keeps_same_merchant_destinations_until_actual_pdp_match()
     test_epey_parent_heading_or_old_aggregate_price_never_becomes_pdp_evidence()
-    test_epey_pdp_stock_overrides_same_url_search_and_preserves_other_available_listing()
+    test_google_prices_require_live_retailer_confirmation_and_keep_independent_listings()
     print('✅ Observed source title forwarding and aggregator provenance passed')

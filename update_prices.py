@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 from urllib.parse import urlparse
 from tr_price_scraper import TRPriceScraper
 from indexnow import submit_urls
-from offer_ingestion_client import OfferIngestionClient
+from offer_ingestion_client import AtomicListingRejected, OfferIngestionClient
 from price_sanity import filter_price_outliers
 from retailer_offer_refresh import ALLOWED_HOSTS, RetailerOfferRefresher, _safe_url
 from reviewed_offer_targets import daily_offer_targets, with_reviewed_radio, PROTECTED_TWO_STORE_SLUGS
@@ -448,14 +448,33 @@ class PriceUpdater:
             if isinstance(path, str) and path.startswith("/")
         )
 
-    def flush_offers(self, pending_offers, aggregate):
+    def flush_offers(self, pending_offers, aggregate, *, isolate_products=False):
         if not pending_offers:
             return
         writer = self.ingestion_client.ingest_listing_offers if self.listing_scoped else self.ingestion_client.ingest_offers
-        result = writer(
-            list(pending_offers),
-            **({'require_all_accepted': True} if self.listing_scoped else {}),
-        )
+        try:
+            result = writer(
+                list(pending_offers),
+                **({'require_all_accepted': True} if self.listing_scoped else {}),
+            )
+        except AtomicListingRejected:
+            if not isolate_products:
+                raise
+            by_product = {}
+            for record in pending_offers:
+                by_product.setdefault(record["product_id"], []).append(record)
+            groups = list(by_product.values())
+            if len(groups) == 1:
+                slug = pending_offers[0]["product_slug"]
+                aggregate.setdefault("atomic_rejected_products", []).append(slug)
+                logging.warning("  Listing batch rolled back for %s (%s offers)", slug, len(pending_offers))
+            else:
+                midpoint = len(groups) // 2
+                for group_half in (groups[:midpoint], groups[midpoint:]):
+                    self.flush_offers([record for group in group_half for record in group],
+                                      aggregate, isolate_products=True)
+            pending_offers.clear()
+            return
         self.merge_ingestion_result(aggregate, result)
         logging.info(
             "  ✅ HTTPS ingestion committed: %s accepted, %s stale, %s variant rejected",
@@ -664,6 +683,7 @@ class PriceUpdater:
         failures = []
         products_with_offers = 0
         merchant_counts = {}
+        isolate_products = product_id is None and product_slugs is None and not phase2_backfill
         for processed_count, p in enumerate(products, start=1):
             name = p['name']
             expected_specs = with_reviewed_radio(p, self.get_expected_specs(p.get('attributes')))
@@ -894,12 +914,12 @@ class PriceUpdater:
                 self.last_report['turk_telekom_source'] = self.turk_telekom_source.report()
 
             if processed_count % INGESTION_PRODUCT_BATCH_SIZE == 0:
-                self.flush_offers(pending_offers, aggregate_result)
+                self.flush_offers(pending_offers, aggregate_result, isolate_products=isolate_products)
 
             # Small delay to avoid aggressive scraping
             await asyncio.sleep(1)
 
-        self.flush_offers(pending_offers, aggregate_result)
+        self.flush_offers(pending_offers, aggregate_result, isolate_products=isolate_products)
         aggregate_result["changed_paths"] = list(
             dict.fromkeys(aggregate_result["changed_paths"])
         )
@@ -957,6 +977,8 @@ class PriceUpdater:
 
         logging.info("\n🏁 Price update completed!")
         run_issues = []
+        if rejected_products := aggregate_result.get("atomic_rejected_products"):
+            run_issues.append("Atomic offer ingestion rolled back for " + ", ".join(rejected_products))
         if product_id is None and product_slugs is None and self.last_report['coverage']['protected_pair_failures']:
             run_issues.append('Protected budget models did not retain two live verified merchants: '
                               + ', '.join(self.last_report['coverage']['protected_pair_failures']))
