@@ -12,6 +12,7 @@ from mediamarkt_marketplace_audit import _gtin13, catalog_variant_matches
 from priority_retailer_transport import PriorityRetailerTransport, product_host
 from retailer_barcode import retailer_gtin13, trendyol_product_code
 from tr_price_scraper import TRPriceScraper
+from trendyol_basket_price import cash
 
 
 def _amount(value):
@@ -309,8 +310,21 @@ def _parse_selected_listing(html, url, read_variant, check_group, *, default_htm
         if basket is None:
             return None, 'public_basket_promotion_mismatch'
         price = _amount(basket['price'])
-    if price is None or not scoped and (not isinstance(variant.get('price'), dict)
-                                        or _amount(variant['price'].get('value')) != price):
+    variant_price = variant.get('price')
+    original = price_data.get('originalPrice')
+    # Some canonical pages display a new cash price in the selected buy box
+    # while the product option carries the older price for the same item.
+    # The selected price must still match the independent schema and UI below.
+    buy_box_cash = (
+        not query and basket is None and retailer_gtin13(winner['barcode']) is not None
+        and isinstance(variant_price, dict) and _amount(variant_price.get('value')) is not None
+        and merchant_variant.get('price') is None
+        and isinstance(original, dict) and _amount(original.get('value')) == price
+        and cash(original.get('text')) == price and isinstance(selling, dict)
+        and cash(selling.get('text')) == price
+    )
+    if price is None or not scoped and not buy_box_cash and (
+            not isinstance(variant_price, dict) or _amount(variant_price.get('value')) != price):
         return None, 'selected_price_mismatch'
     # A coupon/member price cannot silently become the unconditional price.
     for key in ('discountedPrice', 'couponApplicablePrice', 'tyPlusCouponApplicablePrice',

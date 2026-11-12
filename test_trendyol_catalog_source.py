@@ -52,6 +52,21 @@ def document(changes=None):
 
 
 class TrendyolCatalogTests(unittest.TestCase):
+    def test_canonical_cash_uses_selected_buy_box_only_when_schema_and_visible_price_agree(self):
+        price = {'value': 34997, 'text': '34.997 TL'}
+        changes = {
+            ('state', 'product', 'variants', 0, 'price'): {'value': 35997, 'text': '35.997 TL'},
+            ('state', 'product', 'merchantListing', 'variants', 0, 'price'): None,
+            ('state', 'product', 'merchantListing', 'winnerVariant', 'price', 'originalPrice'): price,
+        }
+        canonical = URL.split('?')[0]
+        self.assertEqual(parse_catalog_listing(document(changes), canonical, NAME, SPECS)[0]['price'], 34997)
+        self.assertIsNone(parse_catalog_listing(document(changes), URL, NAME, SPECS)[0])
+        for conflicting in ({('visible_price',): '35.997 TL'},
+                            {('schema', 'offers', 'price'): '35997.00'},
+                            {('state', 'product', 'merchantListing', 'variants', 0, 'price'): {'value': 35997}}):
+            self.assertIsNone(parse_catalog_listing(document({**changes, **conflicting}), canonical, NAME, SPECS)[0])
+
     def test_actual_unknown_ram_property_uses_only_selected_heading_state_and_own_group_caption(self):
         from pathlib import Path
         from selected_sku_evidence import selected_sku_evidence
