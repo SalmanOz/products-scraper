@@ -1,4 +1,43 @@
 {
+  "4711377180078": {
+    "code": "27c6x",
+    "name": "MAG 27C6X",
+    "url": "https://www.msi.com/Monitor/MAG-27C6X/Specification",
+    "facts": {
+      "size": 27,
+      "resolution": "1920 × 1080",
+      "panel": "VA",
+      "refresh": 250,
+      "hdmi": true,
+      "dp": true,
+      "usb_c": false
+    },
+    "specValues": {
+      "panel": "1500R kavisli VA",
+      "refresh": "250 Hz hız aşırtma ile",
+      "hdmi": "2 × HDMI 2.0b, 240 Hz’e kadar",
+      "dp": "1 × DisplayPort 1.2a, 250 Hz’e kadar"
+    }
+  },
+  "4711377235112": {
+    "code": "274cxf",
+    "name": "MAG 274CXF",
+    "url": "https://www.msi.com/Monitor/MAG-274CXF/Specification",
+    "facts": {
+      "size": 27,
+      "resolution": "1920 × 1080",
+      "panel": "VA",
+      "refresh": 280,
+      "hdmi": true,
+      "dp": true,
+      "usb_c": false
+    },
+    "specValues": {
+      "panel": "1500R kavisli Rapid VA",
+      "hdmi": "2 × HDMI 2.0b, 240 Hz’e kadar",
+      "dp": "1 × DisplayPort 1.2a, 280 Hz’e kadar"
+    }
+  },
   "4711377150255": {
     "code": "321upx",
     "model": "321UPX",
