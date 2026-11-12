@@ -5,9 +5,40 @@ from unittest.mock import Mock, patch
 
 from competitor_catalog_gaps import (AKAKCE, CIMRI, EPEY, KARSILASTIRICI, PAHALIMI, URUNAI, akakce_limits, candidate_family, cimri_sitemap_cards, epey_earbud_title, epey_sitemap_cards, export_source_snapshot, import_source_snapshot, product_state_key, scan_product_sitemap, scan_source, urunai_market_slugs, urunai_sitemap_cards, catalog_match, category_url, comparison_cards, comparison_retailer_leads,
                                      identity_index, in_scope, merge_state, read_state)
+from competitor_catalog_gaps import AMAHANGISI
 
 
 class CompetitorCatalogGapsTest(unittest.TestCase):
+    def test_amahangisi_discovers_only_native_sitemap_products_and_direct_offer_links(self):
+        root = f'https://{AMAHANGISI}'
+        product = root + '/akilli-telefon/iphone/apple-iphone-16-plus'
+        shard = root + '/sitemap/urunler-1.xml'
+        reader = Mock()
+        reader._read_document.side_effect = [
+            (f'<sitemapindex><sitemap><loc>{root}/sitemap/kategoriler-1.xml</loc></sitemap>'
+             f'<sitemap><loc>{shard}</loc></sitemap></sitemapindex>', 'ready', 200),
+            (f'<urlset><url><loc>{product}</loc></url><url><loc>{product}</loc></url>'
+             f'<url><loc>{root}/televizyon/other-product</loc></url></urlset>', 'ready', 200),
+        ]
+        indexes = {'phone': identity_index([{'name': 'Apple iPhone 16 Plus', 'slug': 'apple-iphone-16-plus'}])}
+        reports, rows = scan_product_sitemap(AMAHANGISI, ('phone',), indexes, {}, reader=reader)
+        self.assertEqual(reports[0]['shardsRead'], [1])
+        self.assertEqual(reports[0]['matched'], 1)
+        self.assertEqual([call.args[0] for call in reader._read_document.call_args_list], [root + '/sitemap.xml', shard])
+        self.assertEqual([(row['url'], row['catalogSlug']) for row in rows], [(product, 'apple-iphone-16-plus')])
+        merchant = 'https://www.trendyol.com/apple/iphone-16-plus-p-857296119?merchantId=624588'
+        html = f'''
+          <link rel="canonical" href="{product}">
+          <section id="offers"><div id="price-panel-offers">
+          <a href="{merchant}&amp;utm_source=compare" target="_blank" rel="noopener noreferrer">₺1</a>
+          <a href="/api/go?sp=1" target="_blank" rel="noopener noreferrer">Other</a>
+          </div></section>
+          <aside><a href="https://www.trendyol.com/apple/iphone-16-p-857296118"
+            target="_blank" rel="noopener">Another phone</a></aside>
+        '''
+        self.assertEqual(comparison_retailer_leads(html, AMAHANGISI, product), [merchant])
+        self.assertEqual(comparison_retailer_leads(html, AMAHANGISI, product + '-other'), [])
+
     def test_akakce_budget_keeps_every_category_and_reserves_product_reads(self):
         self.assertEqual(akakce_limits(26, 12, 3, 36), (1, 14))
         self.assertEqual(akakce_limits(24, 12, 3, 0), (2, 0))

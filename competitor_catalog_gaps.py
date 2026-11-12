@@ -29,7 +29,8 @@ EPEY = 'www.epey.com'
 URUNAI = 'urunai.com'
 KARSILASTIRICI = 'karsilastirici.com'
 PAHALIMI = 'pahalimi.com'
-SOURCES = (AKAKCE, CIMRI, EPEY, URUNAI, KARSILASTIRICI, PAHALIMI)
+AMAHANGISI = 'amahangisi.com'
+SOURCES = (AKAKCE, CIMRI, EPEY, URUNAI, KARSILASTIRICI, PAHALIMI, AMAHANGISI)
 URUNAI_CATEGORIES = {
     'telefon': 'phone', 'kulaklik': 'tws', 'laptop': 'laptop', 'monitor': 'monitor',
     'islemci': 'cpu', 'anakart': 'motherboard', 'ram-bellek': 'ram', 'ekran-karti': 'gpu',
@@ -41,6 +42,14 @@ KARSILASTIRICI_PRODUCT = re.compile(r'/urun/([a-z0-9-]{1,220})')
 PAHALIMI_CATEGORIES = {'phone': '/kategori/cep-telefonu', 'laptop': '/kategori/dizustu-bilgisayar',
                        'monitor': '/kategori/monitor', 'tws': '/kategori/kulaklik'}
 PAHALIMI_PRODUCT = re.compile(r'/kategori/[a-z0-9-]+/[a-z0-9-]{1,220}-p-([a-f0-9]{8})')
+AMAHANGISI_CATEGORIES = {
+    'akilli-telefon/android': 'phone', 'akilli-telefon/iphone': 'phone', 'akilli-telefon/harmonyos': 'phone',
+    'kulaklik': 'tws', 'laptop': 'laptop', 'monitor': 'monitor', 'islemci': 'cpu',
+    'anakart': 'motherboard', 'ram-bellek': 'ram', 'ekran-karti': 'gpu', 'ssd': 'ssd',
+    'bilgisayar-kasasi': 'case',
+}
+AMAHANGISI_PRODUCT = re.compile(
+    r'/(' + '|'.join(map(re.escape, AMAHANGISI_CATEGORIES)) + r')/([a-z0-9-]{3,220})')
 ADDITIONAL_RETAILER_PATHS = {
     'www.idefix.com': r'/[a-z0-9-]+-p-[1-9]\d{4,11}',
     'www.pttavm.com': r'/[a-z0-9-]+-p-[1-9]\d{5,11}',
@@ -48,7 +57,11 @@ ADDITIONAL_RETAILER_PATHS = {
     'www.a101.com.tr': r'/elektronik/[a-z0-9-]+_p-[1-9]\d{5,11}',
     'www.gurgencler.com.tr': r'/iphone-[a-z0-9-]+',
 }
-PRODUCT_SITEMAPS = {CIMRI: '/sitemaps/product', EPEY: '/sitemap/urun'}
+PRODUCT_SITEMAPS = {
+    CIMRI: ('/sitemaps/product.xml', '/sitemaps/product_'),
+    EPEY: ('/sitemap/urun.xml', '/sitemap/urun_'),
+    AMAHANGISI: ('/sitemap.xml', '/sitemap/urunler-'),
+}
 PRODUCT_SITEMAP_LIMIT = 50 * 1024 * 1024
 PHONE_MEMORY = re.compile(r'(?: [1-9]\d? gb)? (?:[1-9]\d{1,3} gb|[1-9] tb)$')
 PHONE_COLOR_AFTER_MEMORY = re.compile(
@@ -80,6 +93,7 @@ CARD = {
     EPEY: re.compile(r'/[a-z0-9-]+/[a-z0-9-]+\.html'),
     KARSILASTIRICI: KARSILASTIRICI_PRODUCT,
     PAHALIMI: PAHALIMI_PRODUCT,
+    AMAHANGISI: AMAHANGISI_PRODUCT,
 }
 CARD_SELECTOR = {
     AKAKCE: '#CPL a.iC[href][title]',
@@ -322,6 +336,8 @@ def scan_source(host, kinds, indexes, start_page, pages, cursors=None, *, collec
     reports, observations = [], []
     if host == URUNAI:
         return scan_urunai(reader, kinds, indexes)
+    if host == AMAHANGISI:
+        return scan_product_sitemap(host, kinds, indexes, cursors or {}, reader=reader, maximum=pages)
     stopped = None
     if host in PRODUCT_SITEMAPS and sitemap_only:
         return scan_product_sitemap(host, kinds, indexes, cursors or {}, reader=reader, maximum=sitemap_only)
@@ -443,13 +459,32 @@ def epey_sitemap_cards(xml, kinds, indexes):
     return list(cards.values())
 
 
+def amahangisi_sitemap_cards(xml, kinds, indexes):
+    cards = {}
+    for url in sitemap_locations(xml, 'urlset'):
+        if not url.startswith(f'https://{AMAHANGISI}/'):
+            continue
+        route = urlsplit(url)
+        match = AMAHANGISI_PRODUCT.fullmatch(route.path)
+        if not match or route.query or route.fragment:
+            continue
+        category, slug = match.groups()
+        kind, title = AMAHANGISI_CATEGORIES[category], slug.replace('-', ' ')
+        if kind not in kinds or not in_scope(kind, title):
+            continue
+        cards.setdefault((kind, slug), {'id': slug, 'title': title, 'url': url, 'source': AMAHANGISI,
+            'category': kind, 'catalogSlug': catalog_match(title, indexes[kind]), 'titleFromSitemap': True})
+    return list(cards.values())
+
+
 def scan_product_sitemap(host, kinds, indexes, cursors, *, reader=None, maximum=1):
     reader = reader or comparison_reader(host)
-    stem = f'https://{host}{PRODUCT_SITEMAPS[host]}'
-    shard_url = re.compile(re.escape(stem) + r'_([1-9]\d{0,3})\.xml')
+    index_path, shard_prefix = PRODUCT_SITEMAPS[host]
+    stem = f'https://{host}{shard_prefix}'
+    shard_url = re.compile(re.escape(stem) + r'([1-9]\d{0,3})\.xml')
     previous = cursors.get(f'{host}/product_sitemap', {})
     report = {'source': host, 'category': 'product_sitemap', 'pages': 0, 'nextPage': previous.get('nextPage')}
-    index, reason, _ = reader._read_document(stem + '.xml', host, category=True, sitemap=True)
+    index, reason, _ = reader._read_document(f'https://{host}{index_path}', host, category=True, sitemap=True)
     if not index:
         return [{**report, 'status': reason}], []
     try:
@@ -460,13 +495,14 @@ def scan_product_sitemap(host, kinds, indexes, cursors, *, reader=None, maximum=
     if not shards:
         return [{**report, 'status': 'product_sitemap_shards_missing'}], []
     start = shards.index(report['nextPage']) if report['nextPage'] in shards else 0
-    parse_cards = cimri_sitemap_cards if host == CIMRI else epey_sitemap_cards
+    parse_cards = {CIMRI: cimri_sitemap_cards, EPEY: epey_sitemap_cards,
+                   AMAHANGISI: amahangisi_sitemap_cards}[host]
     rows = {}
     report.update(status='sitemap_read', pages=1, shardsRead=[])
     for offset in range(start, min(len(shards), start + maximum)):
         shard = shards[offset]
         report.update(shard=shard, nextPage=shard)
-        url = f'{stem}_{shard}.xml'
+        url = f'{stem}{shard}.xml'
         xml, reason, _ = reader._read_document(url, host, category=True, sitemap=True, sitemap_limit=PRODUCT_SITEMAP_LIMIT)
         if not xml:
             report['status'] = reason
@@ -480,7 +516,8 @@ def scan_product_sitemap(host, kinds, indexes, cursors, *, reader=None, maximum=
         report['pages'] += 1
         report['shardsRead'].append(shard)
         report['nextPage'] = shards[offset + 1] if offset + 1 < len(shards) else None
-    report['cards'] = len(rows)
+    matched = sum(bool(card['catalogSlug']) for card in rows.values())
+    report.update(cards=len(rows), matched=matched, unmatched=len(rows) - matched)
     return [report], list(rows.values())
 
 
@@ -566,6 +603,12 @@ def comparison_retailer_leads(html, host, source_url):
     soup = BeautifulSoup(html, 'html.parser')
     if host == EPEY:
         raw_links = [unquote(anchor['data-link']) for anchor in soup.select('a.git[data-link]:has(.urun_adi)')]
+    elif host == AMAHANGISI:
+        canonical = [node.get('href') for node in soup.select('link[rel=canonical]')]
+        if canonical != [source_url]:
+            return []
+        raw_links = [anchor['href'] for anchor in soup.select(
+            'section#offers #price-panel-offers a[target="_blank"][rel~=noopener][href]')]
     else:
         selectors = {URUNAI: 'a[rel~=sponsored][href]',
                      KARSILASTIRICI: '#fiyatlar a.store-link[rel~=sponsored][href]',
