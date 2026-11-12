@@ -305,10 +305,10 @@ def stage(catalog, snapshot, specs, candidates, output, *, allow_empty=False):
                 sources[p.netloc].append((name, row))
                 seen.add(url)
     verified, failures = defaultdict(list), Counter()
-    n11_reader = catalog_document_reader('earbud-discovery') if 'www.n11.com' in sources else None
     with ThreadPoolExecutor(max_workers=4) as pool:
         jobs = {h: pool.submit(reread, h, rows,
-                              document_reader=n11_reader if h == 'www.n11.com' else None)
+                              document_reader=catalog_document_reader('earbud-discovery')
+                                  if h in ('www.n11.com', PTTAVM) else None)
                 for h, rows in sources.items()}
         for host, job in jobs.items():
             observations, skipped = job.result()

@@ -10,6 +10,7 @@ from pathlib import Path
 
 from catalog_source_collector import catalog_document_reader
 from competitor_catalog_gaps import retailer_destination
+from pttavm_offer_source import HOST as PTTAVM
 from retailer_barcode import retailer_gtin13
 from tws_catalog_expansion import common_color, exact_tws_sellers, public_tws_offers, reread, tws_source_target
 from tws_refresh import MAX_CURRENT_OFFERS, selected_host
@@ -66,10 +67,10 @@ def stage(snapshot, catalog, report, selected_models=()):
             groups[selected_host(url)].append((name, {**target, 'gtin13': gtin}))
 
     observed = defaultdict(list)
-    n11_reader = catalog_document_reader('earbud-discovery')
     with ThreadPoolExecutor(max_workers=6) as pool:
         jobs = {host: pool.submit(reread, host, targets,
-                                  document_reader=n11_reader if host == 'www.n11.com' else None)
+                                  document_reader=catalog_document_reader('earbud-discovery')
+                                  if host in ('www.n11.com', PTTAVM) else None)
                 for host, targets in groups.items()}
         for host, job in jobs.items():
             values, rejected = job.result()

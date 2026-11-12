@@ -19,9 +19,9 @@ from tws_retailer_sources import _vatan_url
 
 SITE_DOCUMENT_HOSTS = {
     'www.n11.com', 'www.vatanbilgisayar.com', 'www.mediamarkt.com.tr',
-    'www.hepsiburada.com', 'www.teknosa.com', PAZARAMA,
+    'www.hepsiburada.com', 'www.teknosa.com', PAZARAMA, PTTAVM,
 }
-MIXED_SITE_DOCUMENT_HOSTS = {'www.n11.com', 'www.vatanbilgisayar.com', PAZARAMA}
+MIXED_SITE_DOCUMENT_HOSTS = {'www.n11.com', 'www.vatanbilgisayar.com', PAZARAMA, PTTAVM}
 MAX_CURRENT_OFFERS = 4
 
 

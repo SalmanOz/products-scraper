@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 
 from catalog_source_collector import catalog_document_reader
 from competitor_catalog_gaps import read_state, retailer_destination, write_json
+from pttavm_offer_source import HOST as PTTAVM
 from retailer_barcode import retailer_gtin13
 from tr_price_scraper import TRPriceScraper
 from tws_catalog_expansion import exact_tws_sellers, reread
@@ -133,10 +134,10 @@ def audit(state, models=(), snapshot=None):
     known = add_catalog_targets(groups, snapshot or {}, history)
     observations, failures = defaultdict(list), {}
     statuses = {host: {} for host in groups}
-    n11_reader = catalog_document_reader('earbud-discovery')
     with ThreadPoolExecutor(max_workers=4) as pool:
         jobs = {host: pool.submit(reread, host, rows, statuses[host], discover=True,
-                                  document_reader=n11_reader if host == 'www.n11.com' else None)
+                                  document_reader=catalog_document_reader('earbud-discovery')
+                                  if host in ('www.n11.com', PTTAVM) else None)
                 for host, rows in groups.items()}
         for host, job in jobs.items():
             rows, rejects = job.result()
