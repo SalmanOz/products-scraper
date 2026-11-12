@@ -165,6 +165,12 @@ def model_name(title, brand):
                and re.search(r'\b(?:' + pattern + r')\b', words)]
     if matches == ['JBL Tune Flex 2'] and re.search(r'\bghost\b', words):
         return None
+    if matches == ['Anker Soundcore A30i']:
+        # soundcore lists A3958 for A30i and A3948 for A20i/A25i.
+        # https://service.soundcore.com/article-description/Guide-to-Locating-the-Serial-Number-SN-of-Your-soundcore-Headphones
+        codes = re.findall(r'\b(a\d{4})(?:[a-z]\d{2})?\b', words)
+        if any(code != 'a3958' for code in codes):
+            return None
     return matches[0] if len(matches) == 1 else None
 
 

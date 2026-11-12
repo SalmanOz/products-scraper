@@ -22,7 +22,7 @@ def ozgur_phone_url(url):
         re.escape(OZGUR_BASE) + r'/urun/[a-z0-9-]{6,250}', url))
 
 
-def _selected_offer(html, legal_html, *, url, matches_model, mpn=None, gtin=None):
+def _selected_offer(html, legal_html, *, url, matches_model, mpn=None, gtin=None, allow_single_sku=False):
     if not ozgur_phone_url(url):
         raise ValueError('ozgur_invalid_phone_url')
     soup = BeautifulSoup(html, 'html.parser')
@@ -33,12 +33,22 @@ def _selected_offer(html, legal_html, *, url, matches_model, mpn=None, gtin=None
         raise ValueError('ozgur_selected_page_unverified')
     product, root = products[0], roots[0]
     identifiers = (root['data-product-id'], root['data-oi-view-variant'])
-    if not all(re.fullmatch(r'[1-9]\d{0,19}', value) for value in identifiers):
+    single_sku = allow_single_sku and identifiers[1] == '0' and not root.select('[data-variant-id]')
+    if not re.fullmatch(r'[1-9]\d{0,19}', identifiers[0]) or (
+            not single_sku and not re.fullmatch(r'[1-9]\d{0,19}', identifiers[1])):
         raise ValueError('ozgur_invalid_selected_ids')
     barcodes = {retailer_gtin13(product[key]) for key in ('gtin', 'gtin12', 'gtin13') if key in product}
     if len(barcodes) != 1 or None in barcodes:
         raise ValueError('ozgur_selected_barcode_unverified')
     observed_gtin = next(iter(barcodes))
+    if single_sku:
+        visible_barcodes = [
+            retailer_gtin13(row.td.get_text(strip=True))
+            for row in root.select('#oi-pd-features .oi-pd-feature-table tr')
+            if row.th and row.th.get_text(strip=True) == 'Barkod' and row.td
+        ]
+        if visible_barcodes != [observed_gtin]:
+            raise ValueError('ozgur_single_sku_barcode_mismatch')
     observed_mpn = product.get('mpn')
     observed_brand = product.get('brand')
     observed_brand = observed_brand.get('name') if isinstance(observed_brand, dict) else None
@@ -85,7 +95,7 @@ def _selected_offer(html, legal_html, *, url, matches_model, mpn=None, gtin=None
 
 
 def ozgur_tws_offer(html, legal_html, *, url, name, model_name):
-    offer, photo, _, _ = _selected_offer(html, legal_html, url=url,
+    offer, photo, _, _ = _selected_offer(html, legal_html, url=url, allow_single_sku=True,
         matches_model=lambda title, observed_brand: model_name(title, observed_brand) == name)
     return {**offer, 'model': name, 'condition': 'new', '_image': photo}
 

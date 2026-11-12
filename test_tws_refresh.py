@@ -35,8 +35,18 @@ class TwsRefreshTest(TestCase):
         '''
         terms = '<p>Satıcı: Özgür İletişim Limited Şirketi Vergi dairesi: Ankara</p>'
         target = {'url': url, 'merchant': merchant, 'gtin13': gtin}
-        for page, expected in ((html, 'verified'), (html.replace(gtin, '6941812772256'), 'unverified'),
-                               (html.replace('InStock', 'OutOfStock'), 'unverified')):
+        single_sku = html.replace('data-oi-view-variant="813"', 'data-oi-view-variant="0"').replace('</main>',
+            f'<div id="oi-pd-features"><table class="oi-pd-feature-table"><tr>'
+            f'<th>Barkod</th><td>{gtin}</td></tr></table></div></main>')
+        for page, expected in (
+            (html, 'verified'),
+            (html.replace(gtin, '6941812772256'), 'unverified'),
+            (html.replace('InStock', 'OutOfStock'), 'unverified'),
+            (single_sku, 'verified'),
+            (single_sku.replace('<th>Barkod</th>', '<th>Renk</th>'), 'unverified'),
+            (single_sku.replace('<td>' + gtin, '<td>6941812772256'), 'unverified'),
+            (single_sku.replace('</section>', '<button data-variant-id="123">Renk</button></section>'), 'unverified'),
+        ):
             with self.subTest(status=expected), patch('tws_catalog_expansion.PriorityRetailerTransport') as factory:
                 transport = factory.return_value
                 transport._read_document.side_effect = [(terms, 'document_read', 200), (page, 'document_read', 200)]

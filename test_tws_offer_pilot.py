@@ -61,6 +61,8 @@ class TwsOfferPilotTests(unittest.TestCase):
         self.assertEqual(model_name('JBL Wave Buds Bluetooth Siyah', 'JBL'), 'JBL Wave Buds')
         self.assertEqual(model_name('JBL Wave Buds2 Siyah', 'JBL'), 'JBL Wave Buds 2')
         self.assertEqual(model_name('Soundcore P20i Kulak İçi Kulaklık', 'soundcore'), 'Anker Soundcore P20i')
+        self.assertEqual(model_name('Soundcore A30i A3958G51 Pembe', 'Anker'), 'Anker Soundcore A30i')
+        self.assertIsNone(model_name('Soundcore A30i A3948 Pembe', 'Anker'))
         self.assertEqual(model_name('Soundcore AeroFit 2 Pro Beyaz A3875', 'Soundcore'), 'Anker Soundcore AeroFit 2 Pro')
         self.assertEqual(model_name('Anker Soundcore AeroFit 2 Beyaz A3874', 'Anker'), 'Anker Soundcore AeroFit 2')
         self.assertIsNone(model_name('JBL Tune Flex 2 NC Ghost Edition Siyah', 'JBL'))
