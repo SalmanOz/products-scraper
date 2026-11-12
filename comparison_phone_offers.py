@@ -585,7 +585,9 @@ def publishable_pair(observations, client, product):
 
 
 def report_offer(row):
-    return {key: row[key] for key in ('url', 'platform', 'merchant', 'price', 'gtin13')}
+    return {key: row[key] for key in (
+        'url', 'platform', 'merchant', 'price', 'gtin13', 'availability', 'observed_at',
+    )}
 
 
 def load_reviewed_profiles(path):

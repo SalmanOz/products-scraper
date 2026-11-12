@@ -2,7 +2,8 @@ name: Recover phone prices from comparison leads
 
 on:
   schedule:
-    - cron: '11 10 * * *'
+    # 19:13 Europe/Istanbul. Scheduled writes use the two approved GTINs.
+    - cron: '13 16 * * *'
   workflow_dispatch:
     inputs:
       target:
