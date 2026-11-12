@@ -18,6 +18,8 @@ from ayaz_phone_source import AYAZ_HOST, ayaz_phone_url
 from besken_phone_source import BESKEN_CATEGORY, BESKEN_HOST, BESKEN_PATH, besken_phone_url
 from catalog_source_collector import catalog_document_reader
 from laptop_retailer_sources import WORDS
+from evofone_offer_source import (CATEGORIES as EVOFONE_CATEGORIES, HOST as EVOFONE, PRODUCT as EVOFONE_PATH,
+                                  product_url as evofone_product_url)
 from metto_phone_source import METTO_CATEGORY, METTO_HOST, METTO_PATH, metto_phone_url
 import onual_catalog_source as onual
 from ozgur_phone_source import OZGUR_HOST, ozgur_phone_url
@@ -47,8 +49,8 @@ COKUYGUN = 'cokuygun.com.tr'
 NEKACA = 'www.nekaca.com'
 SOURCES = (AKAKCE, CIMRI, EPEY, URUNAI, KARSILASTIRICI, PAHALIMI, AMAHANGISI, INDIRIMLI,
            TUBERKARAS, OZGUR_HOST, UCUZYUM, AYAZ_HOST, SERINAL_HOST, BESKEN_HOST, PTTAVM, NETHOUSE,
-           KARSILASTIRMA_IO, onual.HOST, COKUYGUN, METTO_HOST, NEKACA, *FEEDS)
-DIRECT_RETAILER_SOURCES = {OZGUR_HOST, AYAZ_HOST, SERINAL_HOST, BESKEN_HOST, PTTAVM, NETHOUSE, METTO_HOST, *FEEDS}
+           KARSILASTIRMA_IO, onual.HOST, COKUYGUN, METTO_HOST, NEKACA, EVOFONE, *FEEDS)
+DIRECT_RETAILER_SOURCES = {OZGUR_HOST, AYAZ_HOST, SERINAL_HOST, BESKEN_HOST, PTTAVM, NETHOUSE, METTO_HOST, EVOFONE, *FEEDS}
 URUNAI_CATEGORIES = {
     'telefon': 'phone', 'kulaklik': 'tws', 'laptop': 'laptop', 'monitor': 'monitor',
     'islemci': 'cpu', 'anakart': 'motherboard', 'ram-bellek': 'ram', 'ekran-karti': 'gpu',
@@ -76,6 +78,7 @@ ADDITIONAL_COMPARISON_CATEGORIES = {
     AYAZ_HOST: {'phone': '/kategori/cep-telefonu'},
     SERINAL_HOST: {'phone': SERINAL_CATEGORY},
     METTO_HOST: {'phone': METTO_CATEGORY},
+    EVOFONE: EVOFONE_CATEGORIES,
     BESKEN_HOST: {'phone': BESKEN_CATEGORY},
     PTTAVM: {'phone': '/cep-telefonu-c-53', 'tws': '/bluetooth-kulaklik-c-315'},
     NETHOUSE: {'tws': NETHOUSE_CATEGORY},
@@ -160,6 +163,7 @@ CARD = {
     AYAZ_HOST: re.compile(r'/urun/([a-z0-9-]{6,250})'),
     SERINAL_HOST: SERINAL_PATH,
     METTO_HOST: METTO_PATH,
+    EVOFONE: EVOFONE_PATH,
     BESKEN_HOST: BESKEN_PATH,
     PTTAVM: PTT_PATH,
     NETHOUSE: NETHOUSE_PATH,
@@ -181,6 +185,7 @@ CARD_SELECTOR = {
     BESKEN_HOST: '.product-list-wrapper .item-product-name > a[href]',
     PTTAVM: 'article[class^="compactArticle__"] > a[class^="compactCard__"][href]:has(h2[class^="compactName__"])',
     NETHOUSE: '.productDetail[data-id][data-variant-id] .productName > a[href][title]',
+    EVOFONE: '.productName > a[href]',
     COKUYGUN: '.cardbody > a[href]:has(> h3)',
 }
 MODEL_TOKEN = re.compile(r'[a-zA-Z0-9]+(?:[-./_][a-zA-Z0-9]+)*')
@@ -245,7 +250,7 @@ def comparison_cards(html, host, url):
                 continue
             title = anchor.select_one('h2[class^="compactName__"]').get_text(' ', strip=True)
             title = re.sub(r'\s*\([^)]{1,70} garantili\)\s*$', '', title, flags=re.I)
-        elif host in (PAHALIMI, TUBERKARAS, OZGUR_HOST, BESKEN_HOST):
+        elif host in (PAHALIMI, TUBERKARAS, OZGUR_HOST, BESKEN_HOST, EVOFONE):
             title = anchor.get_text(' ', strip=True)
         else:
             title = anchor['title']
@@ -274,6 +279,8 @@ def comparison_cards(html, host, url):
             elif host == AYAZ_HOST and ayaz_phone_url(card['url']):
                 card['retailerLeads'] = [card['url']]
             elif host == SERINAL_HOST and serinal_phone_url(card['url']):
+                card['retailerLeads'] = [card['url']]
+            elif host == EVOFONE and evofone_product_url(card['url']) and not target.query:
                 card['retailerLeads'] = [card['url']]
             elif host == METTO_HOST and metto_phone_url(card['url']):
                 card['retailerLeads'] = [card['url']]
@@ -549,7 +556,8 @@ def scan_source(host, kinds, indexes, start_page, pages, cursors=None, *, collec
             stats['cards'] += len(distinct)
             for card in distinct:
                 if (not in_scope(kind, card['title']) or
-                        host in ADDITIONAL_COMPARISON_CATEGORIES and not additional_comparison_in_scope(kind, card['title']) or
+                        (host in ADDITIONAL_COMPARISON_CATEGORIES and (host != EVOFONE or kind != 'tws')
+                         and not additional_comparison_in_scope(kind, card['title'])) or
                         host == EPEY and kind == 'tws' and 'tam kablosuz' not in WORDS(card['title'])):
                     stats['excluded'] += 1
                     continue
@@ -865,7 +873,7 @@ def retailer_destination(raw):
     )
     if (product_host(url) or first_party and not selectors or pazarama_product_url(url)
             or ozgur_phone_url(url) or ayaz_phone_url(url) or serinal_phone_url(url) or besken_phone_url(url)
-            or metto_phone_url(url)
+            or metto_phone_url(url) or evofone_product_url(url)
             or ptt_product_url(url) or nethouse_product_url(url)):
         return url
     if route.netloc in DIRECT_PATHS and offer_host(url):

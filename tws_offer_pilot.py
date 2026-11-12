@@ -219,8 +219,12 @@ def selected_tws_offer(html, url, expected_model, *, seller_hints=None):
             if isinstance(rows, list):
                 discovered.extend(rows)
         tax_number = merchant.get('taxNumber')
+        colors = [row['value'].get('name') for row in product.get('attributes') or []
+                  if isinstance(row, dict) and row.get('key') == {'id': 348, 'name': 'Renk'}
+                  and row.get('type') == 'WebColor' and isinstance(row.get('value'), dict)]
         return {
             'model': expected_model,
+            '_selected_color': colors[0] if len(colors) == 1 and isinstance(colors[0], str) else None,
             '_image': next((photo for url in product.get('images') or []
                             if (photo := selected_photo(url, {'cdn.dsmcdn.com'}))), None),
             'retailer_model_code': str(product.get('productCode') or ''),

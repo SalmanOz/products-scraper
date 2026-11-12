@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from catalog_source_collector import catalog_document_reader
+from evofone_offer_source import HOST as EVOFONE, product_url as evofone_product_url
 from idefix_tws_source import HOST as IDEFIX, idefix_product_url
 from nethouse_offer_source import HOST as NETHOUSE, nethouse_product_url
 from ozgur_phone_source import OZGUR_HOST, ozgur_phone_url
@@ -42,6 +43,8 @@ def selected_host(url):
     if host == NETHOUSE and nethouse_product_url(url):
         return host
     if host == IDEFIX and idefix_product_url(url):
+        return host
+    if host == EVOFONE and evofone_product_url(url):
         return host
     if host == OZGUR_HOST and ozgur_phone_url(url):
         return host

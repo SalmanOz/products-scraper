@@ -19,6 +19,8 @@ from catalog_source_collector import catalog_document_reader
 
 from competitor_catalog_gaps import phone_catalog_family, public_phone_catalog, read_state, retailer_destination, write_json
 from hepsiburada_catalog_discovery import public_model_search_cards
+from evofone_offer_source import (HOST as EVOFONE, TERMS as EVOFONE_TERMS, product_url as evofone_product_url,
+                                  selected_offer as evofone_offer, seller_identity as evofone_seller_identity)
 from hepsiburada_catalog_source import parse_catalog_buy_box
 from laptop_pilot import _hepsiburada_public_get, verify_seller
 from laptop_retailer_sources import marketplace_seller_identity
@@ -213,6 +215,12 @@ def checked_offers(urls, name, specs, transport, documents=None, *, direct=None,
                     rejected = 'besken_selected_offer_or_seller_unverified'
                 else:
                     rejected = 'besken_seller_identity_' + legal_reason
+            elif evofone_product_url(url) and host in direct:
+                if EVOFONE_TERMS not in documents:
+                    terms, reason, _ = reader._read_document(EVOFONE_TERMS, host, category=True)
+                    documents[EVOFONE_TERMS] = (evofone_seller_identity(terms) if terms else None, reason)
+                company, _ = documents[EVOFONE_TERMS]
+                offer, rejected = evofone_offer(html, url, company, kind='phone')
             elif metto_phone_url(url) and host in direct:
                 if METTO_TERMS not in documents:
                     documents[METTO_TERMS] = reader._read_document(METTO_TERMS, host, category=True)
@@ -314,6 +322,8 @@ def supported_phone_url(url, *, expanded=False):
         return expanded and besken_phone_url(url)
     if route.netloc == SERINAL_HOST:
         return expanded and serinal_phone_url(url)
+    if route.netloc == EVOFONE:
+        return expanded and evofone_product_url(url)
     if route.netloc == METTO_HOST:
         return expanded and metto_phone_url(url)
     if route.netloc in ('www.n11.com', 'www.trendyol.com'):
@@ -651,6 +661,8 @@ def run(state, slugs, client=None, *, publish=False, maximum=24, products=None, 
         direct[PTTAVM] = PriorityRetailerTransport(maximum_per_host=min(maximum, 16),
             browser_fallback=False, get=phone_reader or compatible_get)
         direct[BESKEN_HOST] = PriorityRetailerTransport(maximum_per_host=min(maximum, 12),
+            browser_fallback=False, get=compatible_get)
+        direct[EVOFONE] = PriorityRetailerTransport(maximum_per_host=min(maximum, 12),
             browser_fallback=False, get=compatible_get)
         direct[METTO_HOST] = PriorityRetailerTransport(maximum_per_host=min(maximum, 12),
             browser_fallback=False, get=compatible_get)
