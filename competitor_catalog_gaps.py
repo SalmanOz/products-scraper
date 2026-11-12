@@ -41,8 +41,10 @@ AMAHANGISI = 'amahangisi.com'
 INDIRIMLI = 'indirimli.com'
 TUBERKARAS = 'tuberkaras.com'
 UCUZYUM = 'www.ucuzyum.com'
+COKUYGUN = 'cokuygun.com.tr'
 SOURCES = (AKAKCE, CIMRI, EPEY, URUNAI, KARSILASTIRICI, PAHALIMI, AMAHANGISI, INDIRIMLI,
-           TUBERKARAS, OZGUR_HOST, UCUZYUM, AYAZ_HOST, SERINAL_HOST, BESKEN_HOST, PTTAVM, NETHOUSE, KARSILASTIRMA_IO, onual.HOST)
+           TUBERKARAS, OZGUR_HOST, UCUZYUM, AYAZ_HOST, SERINAL_HOST, BESKEN_HOST, PTTAVM, NETHOUSE,
+           KARSILASTIRMA_IO, onual.HOST, COKUYGUN)
 DIRECT_RETAILER_SOURCES = {OZGUR_HOST, AYAZ_HOST, SERINAL_HOST, BESKEN_HOST, PTTAVM, NETHOUSE}
 URUNAI_CATEGORIES = {
     'telefon': 'phone', 'kulaklik': 'tws', 'laptop': 'laptop', 'monitor': 'monitor',
@@ -73,6 +75,10 @@ ADDITIONAL_COMPARISON_CATEGORIES = {
     BESKEN_HOST: {'phone': BESKEN_CATEGORY},
     PTTAVM: {'phone': '/cep-telefonu-c-53', 'tws': '/bluetooth-kulaklik-c-315'},
     NETHOUSE: {'tws': NETHOUSE_CATEGORY},
+    COKUYGUN: {kind: '/?' + urlencode({'category': label}) for kind, label in (
+        ('phone', 'Cep Telefonu'), ('tws', 'Bluetooth Kulaklık'),
+        ('laptop', 'Dizüstü Bilgisayar'), ('monitor', 'Monitör'),
+    )},
 }
 PAHALIMI_CATEGORIES = {'phone': '/kategori/cep-telefonu', 'laptop': '/kategori/dizustu-bilgisayar',
                        'monitor': '/kategori/monitor', 'tws': '/kategori/kulaklik'}
@@ -100,10 +106,12 @@ PRODUCT_SITEMAPS = {
 PRODUCT_SITEMAP_LIMIT = 50 * 1024 * 1024
 PHONE_MEMORY = re.compile(r'(?: [1-9]\d? gb(?: ram)?)? (?:[1-9]\d{1,3} gb|[1-9] tb)$')
 PHONE_STORAGE_THEN_RAM = re.compile(r' (?:[1-9]\d{2,3} gb|[1-9] tb) [1-9]\d? gb(?: ram)?$')
+PHONE_WARRANTY = re.compile(r'\s*\([^()]{0,65}Türkiye Garantili\s*\)', re.I)
+PHONE_REPEATED_STORAGE = re.compile(r'( ([1-9]\d{1,3}) gb)( [a-z ]{2,40}) \2 gb$')
 PHONE_COLOR_AFTER_MEMORY = re.compile(
     r'( [1-9]\d{0,3} (?:gb(?: ram)?|tb)) (?:[a-z]{2,16} ){0,2}'
     r'(?:siyah|siyahi|beyaz|beyazi|gri|grisi|mavi|mavisi|mor|moru|yesil|yesili|kirmizi|pembe|'
-    r'turuncu|sari|gumus|altin|lacivert|bej|grafit|titanyum|abis|burgonya|buzul rengi|kahve|kahvesi)$'
+    r'turuncu|sari|gumus|altin|lacivert|bej|grafit|titanyum|abis|burgonya|buzul rengi|kahve|kahvesi|cam|buz|gece)$'
 )
 CATEGORIES = {
     'phone': ('/cep-telefonu.html', '/cep-telefonlari', '/akilli-telefonlar/'),
@@ -142,6 +150,7 @@ CARD = {
     PTTAVM: PTT_PATH,
     NETHOUSE: NETHOUSE_PATH,
     UCUZYUM: re.compile(r'/[a-z0-9-]{3,220}-cep-telefonu-([1-9]\d{3,9})'),
+    COKUYGUN: KARSILASTIRICI_PRODUCT,
 }
 CARD_SELECTOR = {
     AKAKCE: '#CPL a.iC[href][title]',
@@ -157,6 +166,7 @@ CARD_SELECTOR = {
     BESKEN_HOST: '.product-list-wrapper .item-product-name > a[href]',
     PTTAVM: 'article[class^="compactArticle__"] > a[class^="compactCard__"][href]:has(h2[class^="compactName__"])',
     NETHOUSE: '.productDetail[data-id][data-variant-id] .productName > a[href][title]',
+    COKUYGUN: '.cardbody > a[href]:has(> h3)',
 }
 MODEL_TOKEN = re.compile(r'[a-zA-Z0-9]+(?:[-./_][a-zA-Z0-9]+)*')
 STOP_SOURCE = {'http_403', 'http_429', 'challenge_page', 'source_circuit_open',
@@ -177,6 +187,8 @@ def category_url(host, path, page):
         return f'https://{host}{path}/sayfa/{page}'
     if host == AYAZ_HOST:
         return f'https://{host}{path}?tp={page}'
+    if host == COKUYGUN:
+        return f'https://{host}{path}&page={page}'
     return f'https://{host}{path}?page={page}'
 
 
@@ -211,7 +223,7 @@ def comparison_cards(html, host, url):
             source_id = CARD[host].fullmatch(path)[1]
         if host == INDIRIMLI:
             title = anchor.select_one('.product-card-title').get_text(' ', strip=True)
-        elif host == KARSILASTIRICI:
+        elif host in (KARSILASTIRICI, COKUYGUN):
             title = anchor.select_one('h3').get_text(' ', strip=True)
         elif host == PTTAVM:
             if not ptt_product_url(target.geturl()):
@@ -301,10 +313,13 @@ def catalog_match(title, index):
 
 
 def phone_family(title):
+    title = PHONE_WARRANTY.sub(' ', title)
     label = WORDS(re.sub(r'(\d+)(gb|tb)\b', r'\1 \2', title, flags=re.I))
     if label.startswith('iphone '):
         label = 'apple ' + label
     label = re.sub(r'^oppo reno (\d+)', r'oppo reno\1', label)
+    label = re.sub(r'(?<= gb) akilli telefon\b', '', label)
+    label = PHONE_REPEATED_STORAGE.sub(r'\1\3', label)
     label = PHONE_COLOR_AFTER_MEMORY.sub(r'\1', label)
     label = PHONE_STORAGE_THEN_RAM.sub('', label)
     label = re.sub(r' [1-9]\d? gb ram$', '', label)
@@ -443,7 +458,8 @@ def comparison_reader(host, *, collection='runner', **options):
     gateway = catalog_document_reader('competitor') if use_gateway else None
     unavailable = (EPEY,) if host == EPEY and collection == 'runner' else ()
     return PriorityRetailerTransport(browser_fallback=False, get=gateway or compatible_get,
-                                     unavailable_robots_hosts=unavailable, **options)
+                                     unavailable_robots_hosts=unavailable,
+                                     missing_robots_hosts=(COKUYGUN,) if host == COKUYGUN else (), **options)
 
 
 def scan_source(host, kinds, indexes, start_page, pages, cursors=None, *, collection='runner',
@@ -824,7 +840,7 @@ def comparison_retailer_leads(html, host, source_url):
     soup = BeautifulSoup(html, 'html.parser')
     if host == EPEY:
         raw_links = [unquote(anchor['data-link']) for anchor in soup.select('a.git[data-link]:has(.urun_adi)')]
-    elif host in (AMAHANGISI, INDIRIMLI, TUBERKARAS, UCUZYUM, KARSILASTIRMA_IO):
+    elif host in (AMAHANGISI, INDIRIMLI, TUBERKARAS, UCUZYUM, KARSILASTIRMA_IO, COKUYGUN):
         canonical = [node.get('href') for node in soup.select('link[rel=canonical]')]
         if canonical != [source_url]:
             return []
@@ -835,6 +851,17 @@ def comparison_retailer_leads(html, host, source_url):
             raw_links = [anchor['href'] for anchor in soup.select('#t1List a[rel~=sponsored][href]')]
         elif host == KARSILASTIRMA_IO:
             raw_links = [anchor['href'] for anchor in soup.select('a.k-seller[rel~=sponsored][href]')]
+        elif host == COKUYGUN:
+            raw_links = []
+            for anchor in soup.select('.selection-note a[target="_blank"][rel~=noopener][href]'):
+                try:
+                    route = urlsplit(anchor['href'])
+                    if route.scheme == 'https' and route.hostname and route.netloc == route.hostname + ':443':
+                        raw_links.append(route._replace(netloc=route.hostname).geturl())
+                    else:
+                        raw_links.append(anchor['href'])
+                except ValueError:
+                    continue
         else:
             raw_links = [anchor['href'] for anchor in soup.select('a[rel~=sponsored][href]')]
             if host == INDIRIMLI:

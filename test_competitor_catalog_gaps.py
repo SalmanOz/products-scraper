@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 from ayaz_phone_source import AYAZ_BASE, AYAZ_HOST
 from competitor_catalog_gaps import (AKAKCE, CIMRI, EPEY, KARSILASTIRICI, PAHALIMI, URUNAI, akakce_limits, candidate_family, cimri_sitemap_cards, epey_earbud_title, epey_sitemap_cards, export_source_snapshot, import_source_snapshot, product_state_key, scan_product_sitemap, scan_source, urunai_market_slugs, urunai_sitemap_cards, catalog_match, category_url, comparison_cards, comparison_retailer_leads,
                                      identity_index, in_scope, merge_state, read_state)
-from competitor_catalog_gaps import (AMAHANGISI, INDIRIMLI, KARSILASTIRMA_IO, TUBERKARAS, UCUZYUM, comparison_lead_destination,
+from competitor_catalog_gaps import (AMAHANGISI, COKUYGUN, INDIRIMLI, KARSILASTIRMA_IO, TUBERKARAS, UCUZYUM, comparison_lead_destination,
                                      lead_inventory, phone_family, retailer_destination, scan_retailer_leads,
                                      scan_source_leads)
 from ozgur_phone_source import OZGUR_HOST
@@ -15,6 +15,33 @@ import onual_catalog_source as onual
 
 
 class CompetitorCatalogGapsTest(unittest.TestCase):
+    def test_phone_routing_ignores_repeated_capacity_and_official_warranty_labels(self):
+        for title, family in (
+            ('Samsung Galaxy A37 5g 256 GB 8 GB Ram (Samsung Türkiye Garantili) Çam', 'samsung galaxy a37 5g'),
+            ('Samsung Galaxy S25 FE 8 GB 256 GB (Samsung Türkiye Garantili) Gece Siyahı 256 GB', 'samsung galaxy s25 fe'),
+            ('Apple iPhone 16 Pro 256 GB Akıllı Telefon (Apple Türkiye Garantili) Siyah', 'apple iphone 16 pro'),
+        ):
+            self.assertEqual(phone_family(title), family)
+
+    def test_cokuygun_uses_canonical_cards_and_original_store_links_without_offer_values(self):
+        category = 'https://cokuygun.com.tr/?category=Cep+Telefonu'
+        route = '/urun/samsung-galaxy-a37-256-gb'
+        url = 'https://cokuygun.com.tr' + route
+        title = 'Samsung Galaxy A37 256 GB'
+        html = f'<div class="cardbody"><a href="{route}"><h3>{title}</h3><span>1 TL</span></a></div>'
+        cards, links = comparison_cards(html, COKUYGUN, category)
+        self.assertEqual(list(cards), [{'id': route.split('/')[-1], 'title': title, 'url': url}])
+        self.assertEqual(links, {url})
+
+        offer = 'https://www.hepsiburada.com/samsung-galaxy-a37-256-gb-p-HBCV0000DU647I'
+        selected = offer.replace('hepsiburada.com', 'hepsiburada.com:443')
+        detail = f'''<link rel="canonical" href="{url}">
+          <p class="selection-note"><a href="{selected}" target="_blank" rel="noopener">1 TL</a>
+          <a href="{selected.replace(':443', ':444')}" target="_blank" rel="noopener">other port</a></p>
+          <a href="{offer.replace('647I', '647J')}" target="_blank" rel="noopener">related</a>'''
+        self.assertEqual(comparison_retailer_leads(detail, COKUYGUN, url), [offer])
+        self.assertEqual(comparison_retailer_leads(detail, COKUYGUN, url + '-other'), [])
+
     def test_onual_sitemap_keeps_only_in_scope_products_and_routes_merchant_aliases(self):
         url = 'https://onual.com/urun/samsung-galaxy-a37-5g-6-gb-128-gb-siyah-p-42'
         accessory = 'https://onual.com/urun/samsung-galaxy-a37-5g-uyumlu-kilif-p-43'
