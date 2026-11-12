@@ -8,7 +8,7 @@ on:
       target:
         description: Reviewed phone group for this run
         type: choice
-        options: [iphone-16-plus, galaxy-foldables]
+        options: [iphone-16-plus, galaxy-foldables, vivo-x300-pro]
         default: iphone-16-plus
       collection:
         description: Network for the public retailer document reads
@@ -48,7 +48,7 @@ jobs:
       - run: python -m pip install -r requirements.txt
       - run: python -m unittest -q test_competitor_catalog_gaps test_comparison_phone_offers
       - name: Discover original retailer links
-        if: github.event_name == 'schedule' || inputs.target != 'galaxy-foldables'
+        if: github.event_name == 'schedule' || inputs.target == 'iphone-16-plus'
         run: |
           curl -fsS --max-time 25 https://teknoskor.com/sitemap.xml -o "$RUNNER_TEMP/phone-sitemap.xml"
           python competitor_catalog_gaps.py --phone-sitemap "$RUNNER_TEMP/phone-sitemap.xml" \
@@ -75,12 +75,14 @@ jobs:
           fi
           args=()
           if [[ "$PUBLISH" == true ]]; then args+=(--publish); fi
-          if [[ "$TARGET" == galaxy-foldables ]]; then
-            args+=(--reviewed-pairs offer_batches/comparison-galaxy-foldables.json)
-          else
-            args+=(--state "$RUNNER_TEMP/comparison-state.json" \
-              --slug apple-iphone-16-plus --slug apple-iphone-16-plus-8gb-256gb)
-          fi
+          case "$TARGET" in
+            galaxy-foldables|vivo-x300-pro)
+              args+=(--reviewed-pairs "offer_batches/comparison-${TARGET}.json") ;;
+            iphone-16-plus)
+              args+=(--state "$RUNNER_TEMP/comparison-state.json" \
+                --slug apple-iphone-16-plus --slug apple-iphone-16-plus-8gb-256gb) ;;
+            *) exit 2 ;;
+          esac
           python comparison_phone_offers.py "${args[@]}" | tee "$RUNNER_TEMP/comparison-recovery.json"
       - uses: actions/upload-artifact@v4
         if: always()
