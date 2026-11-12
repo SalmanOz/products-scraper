@@ -297,11 +297,13 @@ class ComparisonPhoneOffersTest(unittest.TestCase):
         slug = 'apple-iphone-16-plus'
         product = {'id': 1, 'slug': slug, 'name': NAME, 'attributes': {}}
         profiles = {slug: {'urls': [MM, PZ], 'gtin': GTIN}}
-        wrong = [{'gtin13': '0195949722240'}, {'gtin13': '0195949722240'}]
+        wrong = [{'url': url, 'gtin13': '0195949722240'} for url in (MM, PZ)]
         client = Mock()
         with patch('comparison_phone_offers.checked_offers', return_value=(wrong, wrong, [])):
             report = run({}, [slug], client, publish=True, products=[product], profiles=profiles)
         self.assertIsNone(report[0]['sameGtin'])
+        self.assertEqual(report[0]['rejections'], [
+            {'url': url, 'reason': 'reviewed_gtin_mismatch', 'observedGtin': '0195949722240'} for url in (MM, PZ)])
         client.get_raw_seller_collision_proof.assert_not_called()
         client.ingest_offers.assert_not_called()
 

@@ -551,6 +551,8 @@ def run(state, slugs, client=None, *, publish=False, maximum=24, products=None, 
                 rejects.extend(extra_rejects)
                 pair = next(iter(ranked_pairs(observations)), [])
         if profile:
+            rejects.extend({'url': row['url'], 'reason': 'reviewed_gtin_mismatch', 'observedGtin': row['gtin13']}
+                           for row in observations if row['gtin13'] != profile['gtin'])
             observations = [row for row in observations if row['gtin13'] == profile['gtin']]
             pair = next(iter(ranked_pairs(observations)), [])
         result = {'slug': slug, 'sameGtin': pair[0]['gtin13'] if pair else None,
