@@ -16,6 +16,7 @@ from catalog_source_collector import catalog_document_reader
 from hepsiburada_catalog_discovery import discover_product_sellers as hepsiburada_seller_targets
 from laptop_pilot import IMAGE_HOSTS, _hepsiburada_public_get, _image, _public_offers, verify_seller
 from mediamarkt_source import MediaMarktSource, _selected_offer
+from nethouse_offer_source import HOST as NETHOUSE, IMAGE_HOST as NETHOUSE_IMAGE, nethouse_product_url, selected_nethouse_offer
 from n11_catalog_source import discover_product_sellers
 from pazarama_category_source import HOST as PAZARAMA, pazarama_product_url
 from pazarama_offer_source import pazarama_seller_identity
@@ -31,7 +32,8 @@ from vatan_category_source import VatanCategorySource
 
 MARKETPLACES = {'www.n11.com', 'www.trendyol.com', 'www.hepsiburada.com', 'www.teknosa.com'}
 STORES = {'www.vatanbilgisayar.com', 'www.mediamarkt.com.tr'}
-TWS_IMAGE_HOSTS = IMAGE_HOSTS | {'productimages.hepsiburada.net', 'reimg-teknosa-cloud-prod.mncdn.com', 'img.pzrmcdn.com', 'cdn-s3.pttavm.com'}
+TWS_IMAGE_HOSTS = IMAGE_HOSTS | {'productimages.hepsiburada.net', 'reimg-teknosa-cloud-prod.mncdn.com',
+                               'img.pzrmcdn.com', 'cdn-s3.pttavm.com', NETHOUSE_IMAGE}
 ALTERNATE_SELLER_BUDGET = 8
 COLOR_NAMES = {
     'beyaz': 'Beyaz', 'bej': 'Bej', 'gri': 'Gri', 'gumus': 'Gümüş', 'kirmizi': 'Kırmızı',
@@ -112,7 +114,9 @@ def reread(host, rows, statuses=None, document_reader=None, *, discover=False):
     expanded = set()
     identities = {}
     transport = None
-    if host in MARKETPLACES or host in (PAZARAMA, PTTAVM):
+    direct_reader = {PAZARAMA: pazarama_product_url, PTTAVM: ptt_product_url,
+                     NETHOUSE: nethouse_product_url}.get(host)
+    if host in MARKETPLACES or direct_reader:
         options = {}
         if document_reader is not None:
             options.update(get=document_reader, browser_fallback=False)
@@ -120,7 +124,7 @@ def reread(host, rows, statuses=None, document_reader=None, *, discover=False):
             options.update(get=_hepsiburada_public_get, browser_fallback=False)
         elif host == PTTAVM:
             options.update(get=compatible_get, browser_fallback=False)
-        elif discover:
+        elif discover or host == NETHOUSE:
             options['browser_fallback'] = False
         if host in ('www.teknosa.com', PAZARAMA):
             options.update(browser_fallback=False, unavailable_robots_hosts=(host,))
@@ -146,9 +150,8 @@ def reread(host, rows, statuses=None, document_reader=None, *, discover=False):
         if statuses is not None:
             statuses[url] = 'unavailable'
         try:
-            if host in (PAZARAMA, PTTAVM):
-                valid = pazarama_product_url if host == PAZARAMA else ptt_product_url
-                if not valid(url):
+            if direct_reader:
+                if not direct_reader(url):
                     failures['source_policy'] += 1
                     continue
                 html, reason, _ = transport._read_document(url, host, fresh=True)
@@ -185,6 +188,8 @@ def reread(host, rows, statuses=None, document_reader=None, *, discover=False):
                 current, reason = selected_hepsiburada_tws(html, final, name, model_name)
             elif host == 'www.teknosa.com':
                 current, reason = selected_teknosa_tws(html, final, name, model_name)
+            elif host == NETHOUSE:
+                current, reason = selected_nethouse_offer(html, final, name, model_name)
             elif host in (PAZARAMA, PTTAVM):
                 if host == PAZARAMA:
                     current = selected_pazarama_tws(html, final, name, model_name)
@@ -300,6 +305,7 @@ def stage(catalog, snapshot, specs, candidates, output, *, allow_empty=False):
             if (p.netloc in MARKETPLACES and product_host(url) == p.netloc
                     or p.netloc == PAZARAMA and pazarama_product_url(url)
                     or p.netloc == PTTAVM and ptt_product_url(url)
+                    or p.netloc == NETHOUSE and nethouse_product_url(url)
                     or p.netloc == 'www.vatanbilgisayar.com' and _vatan_url(url)
                     or p.netloc == 'www.mediamarkt.com.tr' and _mediamarkt_tws_url(url)):
                 sources[p.netloc].append((name, row))

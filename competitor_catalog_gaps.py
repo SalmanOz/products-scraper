@@ -24,6 +24,8 @@ from pc_parts_multistore import DIRECT_PATHS, offer_host
 from public_retailer_sources import public_source
 import requests
 from pttavm_offer_source import HOST as PTTAVM, PRODUCT_PATH as PTT_PATH, ptt_product_url
+from nethouse_offer_source import (HOST as NETHOUSE, CATEGORY as NETHOUSE_CATEGORY,
+                                   PRODUCT_PATH as NETHOUSE_PATH, nethouse_product_url)
 from priority_retailer_transport import PriorityRetailerTransport, compatible_get, product_host
 from serinal_phone_source import SERINAL_CATEGORY, SERINAL_HOST, SERINAL_PATH, serinal_phone_url
 
@@ -38,8 +40,8 @@ INDIRIMLI = 'indirimli.com'
 TUBERKARAS = 'tuberkaras.com'
 UCUZYUM = 'www.ucuzyum.com'
 SOURCES = (AKAKCE, CIMRI, EPEY, URUNAI, KARSILASTIRICI, PAHALIMI, AMAHANGISI, INDIRIMLI,
-           TUBERKARAS, OZGUR_HOST, UCUZYUM, AYAZ_HOST, SERINAL_HOST, BESKEN_HOST, PTTAVM)
-DIRECT_RETAILER_SOURCES = {OZGUR_HOST, AYAZ_HOST, SERINAL_HOST, BESKEN_HOST, PTTAVM}
+           TUBERKARAS, OZGUR_HOST, UCUZYUM, AYAZ_HOST, SERINAL_HOST, BESKEN_HOST, PTTAVM, NETHOUSE)
+DIRECT_RETAILER_SOURCES = {OZGUR_HOST, AYAZ_HOST, SERINAL_HOST, BESKEN_HOST, PTTAVM, NETHOUSE}
 URUNAI_CATEGORIES = {
     'telefon': 'phone', 'kulaklik': 'tws', 'laptop': 'laptop', 'monitor': 'monitor',
     'islemci': 'cpu', 'anakart': 'motherboard', 'ram-bellek': 'ram', 'ekran-karti': 'gpu',
@@ -63,6 +65,7 @@ ADDITIONAL_COMPARISON_CATEGORIES = {
     SERINAL_HOST: {'phone': SERINAL_CATEGORY},
     BESKEN_HOST: {'phone': BESKEN_CATEGORY},
     PTTAVM: {'phone': '/cep-telefonu-c-53', 'tws': '/bluetooth-kulaklik-c-315'},
+    NETHOUSE: {'tws': NETHOUSE_CATEGORY},
 }
 PAHALIMI_CATEGORIES = {'phone': '/kategori/cep-telefonu', 'laptop': '/kategori/dizustu-bilgisayar',
                        'monitor': '/kategori/monitor', 'tws': '/kategori/kulaklik'}
@@ -127,6 +130,7 @@ CARD = {
     SERINAL_HOST: SERINAL_PATH,
     BESKEN_HOST: BESKEN_PATH,
     PTTAVM: PTT_PATH,
+    NETHOUSE: NETHOUSE_PATH,
     UCUZYUM: re.compile(r'/[a-z0-9-]{3,220}-cep-telefonu-([1-9]\d{3,9})'),
 }
 CARD_SELECTOR = {
@@ -142,6 +146,7 @@ CARD_SELECTOR = {
     SERINAL_HOST: '.card-product-inner > a.c-p-i-link[href][title]:has(> .title)',
     BESKEN_HOST: '.product-list-wrapper .item-product-name > a[href]',
     PTTAVM: 'article[class^="compactArticle__"] > a[class^="compactCard__"][href]:has(h2[class^="compactName__"])',
+    NETHOUSE: '.productDetail[data-id][data-variant-id] .productName > a[href][title]',
 }
 MODEL_TOKEN = re.compile(r'[a-zA-Z0-9]+(?:[-./_][a-zA-Z0-9]+)*')
 STOP_SOURCE = {'http_403', 'http_429', 'challenge_page', 'source_circuit_open',
@@ -236,6 +241,8 @@ def comparison_cards(html, host, url):
             elif host == BESKEN_HOST and besken_phone_url(card['url']) and not target.query:
                 card['retailerLeads'] = [card['url']]
             elif host == PTTAVM:
+                card['retailerLeads'] = [card['url']]
+            elif host == NETHOUSE and nethouse_product_url(card['url']):
                 card['retailerLeads'] = [card['url']]
     return cards.values(), links
 
@@ -463,12 +470,12 @@ def scan_source(host, kinds, indexes, start_page, pages, cursors=None, *, collec
         else:
             path = CATEGORIES[kind][SOURCES.index(host)]
         previous = (cursors or {}).get(f'{host}/{kind}', {})
-        first_page = previous.get('nextPage') or start_page
+        first_page = 1 if host == NETHOUSE else previous.get('nextPage') or start_page
         stats = Counter()
         seen = set()
         state = 'page_limit'
         next_page = first_page
-        for page in range(first_page, first_page + pages):
+        for page in range(first_page, first_page + (1 if host == NETHOUSE else pages)):
             if stopped:
                 state = stopped
                 break
@@ -719,7 +726,8 @@ def retailer_destination(raw):
             r'/tr/product/_[a-z0-9-]+-[1-9]\d{5,11}\.html', route.path)
     )
     if (product_host(url) or first_party and not selectors or pazarama_product_url(url)
-            or ozgur_phone_url(url) or ayaz_phone_url(url) or serinal_phone_url(url) or besken_phone_url(url) or ptt_product_url(url)):
+            or ozgur_phone_url(url) or ayaz_phone_url(url) or serinal_phone_url(url) or besken_phone_url(url)
+            or ptt_product_url(url) or nethouse_product_url(url)):
         return url
     if route.netloc in DIRECT_PATHS and offer_host(url):
         return url
