@@ -75,6 +75,15 @@ def selected_offer(html, url, company, *, kind):
     if kind == 'phone':
         ram, storage, ambiguous = TRPriceScraper._unambiguous_listing_capacities(title)
         radio = TRPriceScraper._radio_generation(title)
+        declared_radio = []
+        for row in root.select('.product-detail-tab-content .product-detail tr'):
+            cells = row.select(':scope > td')
+            if len(cells) == 2 and NORMALIZE(cells[0].get_text(' ', strip=True)) == 'mobil erisim teknolojisi':
+                declared_radio.append(cells[1].get_text(' ', strip=True).removeprefix(':').strip().casefold())
+        if declared_radio:
+            if len(declared_radio) != 1 or declared_radio[0] not in ('4g', '5g') or radio not in (None, declared_radio[0]):
+                return None, 'firsatkurdu_selected_radio_conflict'
+            radio = declared_radio[0]
         if ram and storage and radio and not ambiguous:
             facts = {'selected_firsatkurdu_variant_verified': True, 'ram_gb': ram,
                      'storage_gb': storage, 'network_generation': radio,

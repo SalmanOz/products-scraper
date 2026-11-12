@@ -1,12 +1,12 @@
-name: Nothing phone catalog publication
+name: Reviewed phone catalog publication
 
 on:
   workflow_dispatch:
     inputs:
       model:
-        description: Reviewed Nothing phone model
+        description: Reviewed phone model
         type: choice
-        options: ['4a', '3a']
+        options: ['4a', '3a', 'poco-c81-pro']
         default: '4a'
       publish:
         description: Publish only the selected model after live same-barcode verification
@@ -51,10 +51,14 @@ jobs:
           set -euo pipefail
           mode=--validate
           if [[ "$PUBLISH" == true ]]; then mode=--publish; fi
-          python publish_nothing_phones.py --model "$MODEL" "$mode" | tee "$RUNNER_TEMP/nothing-phone-${MODEL}.jsonl"
+          if [[ "$MODEL" == poco-c81-pro ]]; then
+            python publish_poco_c81_pro_queue.py "$mode" | tee "$RUNNER_TEMP/poco-c81-pro.jsonl"
+          else
+            python publish_nothing_phones.py --model "$MODEL" "$mode" | tee "$RUNNER_TEMP/nothing-phone-${MODEL}.jsonl"
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: nothing-phone-${{ inputs.model }}-${{ github.run_id }}
-          path: ${{ runner.temp }}/nothing-phone-${{ inputs.model }}.jsonl
+          name: ${{ inputs.model == 'poco-c81-pro' && inputs.model || format('nothing-phone-{0}', inputs.model) }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/${{ inputs.model == 'poco-c81-pro' && inputs.model || format('nothing-phone-{0}', inputs.model) }}.jsonl
           retention-days: 15
