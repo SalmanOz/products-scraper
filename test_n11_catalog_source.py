@@ -27,6 +27,20 @@ def document(change=None):
 
 
 class N11CatalogTests(unittest.TestCase):
+    def test_phone_title_comparison_normalizes_display_spacing_only(self):
+        def doubled_space(state, _soup):
+            state['product']['title'] = state['product']['title'].replace(' ', '  ', 1)
+
+        offer, reason = parse_catalog_listing(document(doubled_space), URL, NAME, SPECS)
+        self.assertEqual(reason, 'selected_n11_cash_offer')
+        self.assertIsNotNone(offer)
+
+        def changed_model(state, _soup):
+            state['product']['title'] = state['product']['title'].replace('A57', 'A27')
+
+        self.assertEqual(parse_catalog_listing(document(changed_model), URL, NAME, SPECS)[1],
+                         'catalog_title_variant_mismatch')
+
     def test_native_default_redirect_requires_a_new_get_and_full_actual_selected_variant_proof(self):
         from priority_retailer_transport import PriorityRetailerTransport
         from test_pasaj_source import Response

@@ -255,13 +255,13 @@ def _parse_selected_listing(html, url, name, specs, *, verify_tws=None, verify_l
     heading = main[0].select('h1.title') if len(main) == 1 else []
     title = ' '.join(heading[0].get_text(' ', strip=True).split()) if len(heading) == 1 else ''
     matcher = TRPriceScraper()
-    product_title = product.get('title')
+    raw_title = product.get('title')
+    product_title = ' '.join(raw_title.split()) if isinstance(raw_title, str) else ''
     verify_category = verify_laptop or verify_tws
     if verify_category is None:
         matches_title = lambda value: matcher.is_strict_match(name, value, specs)
         selected_details = {}
     else:
-        product_title = ' '.join(str(product_title or '').split())
         matches_title, selected_details = verify_category(product)
     if not title or title != product_title or not matches_title(title):
         return None, 'catalog_title_variant_mismatch'
