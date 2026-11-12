@@ -20,7 +20,8 @@ from priority_retailer_transport import PriorityRetailerTransport, compatible_ge
 from retailer_barcode import retailer_gtin13
 from tws_offer_pilot import NEW_MODEL_NAMES, _mediamarkt_tws_url, independent_sellers, model_name, selected_tws_offer
 from tws_retailer_sources import (BOT, STOP_REASONS, _vatan_url, selected_hepsiburada_tws,
-                                  selected_n11_tws, selected_photo, selected_teknosa_tws, selected_vatan_tws)
+                                  selected_n11_tws, selected_photo, selected_teknosa_tws,
+                                  selected_vatan_store_tws, selected_vatan_tws)
 from tr_price_scraper import TRPriceScraper
 from vatan_category_source import VatanCategorySource
 
@@ -28,6 +29,23 @@ MARKETPLACES = {'www.n11.com', 'www.trendyol.com', 'www.hepsiburada.com', 'www.t
 STORES = {'www.vatanbilgisayar.com', 'www.mediamarkt.com.tr'}
 TWS_IMAGE_HOSTS = IMAGE_HOSTS | {'productimages.hepsiburada.net', 'reimg-teknosa-cloud-prod.mncdn.com'}
 ALTERNATE_SELLER_BUDGET = 8
+
+
+def public_tws_offers(offers):
+    public = _public_offers(offers)
+    for row, offer in zip(public, offers, strict=True):
+        if 'storePickup' in offer:
+            row['storePickup'] = offer['storePickup']
+    return public
+
+
+def tws_source_target(offer, previous=None):
+    target = {key: offer[key] for key in ('url', 'merchant')}
+    pickup = offer.get('storePickup')
+    sku = pickup.get('sku') if isinstance(pickup, dict) else (previous or {}).get('storePickupSku')
+    if isinstance(sku, str) and re.fullmatch(r'[1-9][0-9]{4,6}', sku) and _vatan_url(offer['url']):
+        target['storePickupSku'] = sku
+    return target
 
 
 def exact_tws_sellers(offers, *, maximum=3):
@@ -87,6 +105,13 @@ def reread(host, rows, statuses=None, document_reader=None, *, discover=False):
         if isinstance(source, MediaMarktSource):
             source.configure_catalog_budget(len(rows))
         source._load_robots()
+
+    def vatan_inventory(url):
+        if not source._rules.can_fetch(BOT, url):
+            return None, 'robots_disallowed', None
+        source._sleep(max(.5, source._delay))
+        return source._read(url, 64 * 1024, 'application/json')
+
     while pending:
         name, target = pending.popleft()
         url = target['url']
@@ -126,9 +151,16 @@ def reread(host, rows, statuses=None, document_reader=None, *, discover=False):
                 current, reason = selected_hepsiburada_tws(html, final, name, model_name)
             elif host == 'www.teknosa.com':
                 current, reason = selected_teknosa_tws(html, final, name, model_name)
+            elif host == 'www.vatanbilgisayar.com':
+                current = selected_vatan_tws(html, final, name, model_name)
+                reason = 'first_party_evidence_missing'
+                if current is None and (discover or 'storePickupSku' in target):
+                    current, reason = selected_vatan_store_tws(
+                        html, final, name, model_name, vatan_inventory, target.get('storePickupSku'))
+                    if statuses is not None and reason.startswith('store_inventory_unavailable_'):
+                        statuses[url] = 'unavailable'
             else:
-                current = (selected_vatan_tws(html, final, name, model_name)
-                           if host == 'www.vatanbilgisayar.com' else verify_media(html, final, name))
+                current = verify_media(html, final, name)
                 reason = 'first_party_evidence_missing'
         except (RequestException, RequestsError):
             failures['transport_error'] += 1
@@ -211,6 +243,7 @@ def stage(catalog, snapshot, specs, candidates, output):
         for row in rows:
             gtin_models[row['gtin13']].add(name)
     products, prices, photos = [], [], {}
+    targets = dict(snapshot.get('sourceTargets', {}))
     for name, rows in sorted(verified.items()):
         offers = exact_tws_sellers([row for row in rows if len(gtin_models[row['gtin13']]) == 1])
         if len(offers) < 2:
@@ -228,7 +261,9 @@ def stage(catalog, snapshot, specs, candidates, output):
                 photos[slug] = image
                 products.append({**spec, 'name': name, 'slug': slug, 'photoSource': offer['url'],
                                  'requiresIndependentPair': True})
-                prices.append({'name': name, 'gtin': offer['gtin13'], 'offers': _public_offers(offers)})
+                prices.append({'name': name, 'gtin': offer['gtin13'], 'offers': public_tws_offers(offers)})
+                if any('storePickup' in current for current in offers):
+                    targets[name] = [tws_source_target(current) for current in offers]
                 break
         else:
             failures['selected_image_missing'] += 1
@@ -242,7 +277,8 @@ def stage(catalog, snapshot, specs, candidates, output):
         (output / 'earbuds' / f'{slug}.webp').write_bytes(image)
     for filename, payload in (
         ('twsProductCatalog.json', {'reviewedAt': now, 'models': [*catalog['models'], *products]}),
-        ('twsOfferSnapshot.json', {**snapshot, 'checked_at': now, 'models': [*snapshot['models'], *prices]}),
+        ('twsOfferSnapshot.json', {**snapshot, 'checked_at': now, 'models': [*snapshot['models'], *prices],
+                                  'sourceTargets': targets}),
     ):
         (output / filename).write_text(json.dumps(payload, ensure_ascii=False, indent=2) + '\n')
 

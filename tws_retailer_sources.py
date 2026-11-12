@@ -288,6 +288,84 @@ def selected_vatan_tws(html, url, name, model_name):
             '_image': photo, '_legal_name': 'vatan bilgisayar sanayi ve ticaret anonim sirketi'}
 
 
+def selected_vatan_store_tws(html, url, name, model_name, read_stock, expected_sku=None):
+    """Verify a selected store-only offer and its native inventory response."""
+    if not _vatan_url(url):
+        return None, 'store_product_unverified'
+    soup = BeautifulSoup(html, 'html.parser')
+    canonical = soup.select('link[rel=canonical][href]')
+    heading = soup.select('.product-detail h1.product-list__product-name')
+    code = soup.select('.product-detail .product-id[data-productid][data-productcode]')
+    button = soup.select('.product-detail button.stockBTN[data-productid]')
+    barcode = soup.select('.detailPartialPage > input.flixinpage[ean][brand]')
+    if (not len(canonical) == len(heading) == len(code) == len(button) == len(barcode) == 1
+            or canonical[0]['href'] != url or soup.select('.product-detail button.basketBTN')
+            or button[0].has_attr('disabled') or button[0].get('aria-disabled') == 'true'
+            or button[0].get_text(' ', strip=True) != 'Stoktaki Mağazalar'):
+        return None, 'store_product_unverified'
+    sku, mpn = (code[0][key] for key in ('data-productid', 'data-productcode'))
+    brand, gtin = barcode[0]['brand'], retailer_gtin13(barcode[0]['ean'])
+    title = ' '.join(heading[0].get_text(' ', strip=True).split())
+    if (not re.fullmatch(r'[1-9][0-9]{4,6}', sku) or not mpn or not gtin
+            or expected_sku is not None and sku != expected_sku
+            or button[0]['data-productid'] != sku or model_name(f'{title} {mpn}', brand) != name):
+        return None, 'store_product_unverified'
+    products = [node for node in _schema_nodes(soup, url)
+                if _type_is(node, 'Product') and str(node.get('sku')) == sku]
+    if len(products) != 1:
+        return None, 'store_product_unverified'
+    product = products[0]
+    if (product.get('offers') or product.get('mpn') != mpn
+            or product.get('url', url) != url or not isinstance(product.get('brand'), dict)
+            or _words(product['brand'].get('name')) != _words(brand)
+            or ' '.join(unescape(str(product.get('name', ''))).split()) != title):
+        return None, 'store_product_unverified'
+
+    regions = soup.select('.product-detail .product-detail-price')
+    cash = regions[0].select('.product-detail-price-big') if len(regions) == 1 else []
+    price = _cash_price(cash[0].get_text(' ', strip=True)) if len(cash) == 1 else None
+    events = [match[1] for script in soup.find_all('script') if (match := re.fullmatch(
+        r'UpdateProductDetayItem\((\{.+\})\)\s*;?', script.get_text().strip()))]
+    if price is None or len(events) != 1 or _is_conditional_price(regions[0], {}, float(price)):
+        return None, 'store_price_unverified'
+    try:
+        event = json.loads(events[0])
+    except ValueError:
+        return None, 'store_price_unverified'
+    if (event.get('ProductNumericId') != int(sku) or event.get('ProductId') != mpn
+            or _words(event.get('ProductBrand')) != _words(brand) or event.get('ProductName') != title
+            or _amount(event.get('ProductPrice')) != price):
+        return None, 'store_price_unverified'
+
+    raw, reason, _ = read_stock(f'{VATAN_HOME}/ProductDetail/ShopStockByProductQ?productId={sku}')
+    if raw is None:
+        return None, f'store_inventory_unavailable_{reason}'
+    try:
+        stock = json.loads(raw)
+        if isinstance(stock, str):
+            stock = json.loads(stock)
+    except (TypeError, ValueError):
+        return None, 'store_inventory_unavailable_invalid_json'
+    if not isinstance(stock, list) or any(
+        not isinstance(row, dict) or type(row.get('I_ID')) is not int or row['I_ID'] != int(sku)
+        or type(row.get('StokStat')) is not int or type(row.get('Stok')) is not int
+        or not isinstance(row.get('Sp_Title'), str) for row in stock
+    ):
+        return None, 'store_inventory_unavailable_invalid_rows'
+    locations = sorted({row['Sp_Title'].strip() for row in stock
+                        if row['StokStat'] in (1, 2) and row['Stok'] > 0
+                        and re.fullmatch(r'[^\x00-\x1f]{1,100}', row['Sp_Title'].strip())})
+    if not locations:
+        return None, 'store_inventory_out_of_stock'
+    return {'platform': 'Vatan Bilgisayar', 'merchant': 'Vatan Bilgisayar', 'model': name,
+            'gtin13': gtin, 'sku': sku, 'retailer_model_code': mpn, 'source_title': title,
+            'url': url, 'price': float(price), 'currency': 'TRY', 'condition': 'new', 'availability': 'in_stock',
+            'observed_at': datetime.now(timezone.utc).isoformat(),
+            '_image': selected_photo(product.get('image'), {'cdn.vatanbilgisayar.com'}),
+            '_legal_name': 'vatan bilgisayar sanayi ve ticaret anonim sirketi',
+            'storePickup': {'sku': sku, 'name': locations[0]}}, 'verified'
+
+
 def vatan_offers(source, models, model_name, failures):
     source._load_robots()
     if source._rules is None:

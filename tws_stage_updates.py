@@ -10,10 +10,9 @@ from pathlib import Path
 
 from catalog_source_collector import catalog_document_reader
 from competitor_catalog_gaps import retailer_destination
-from laptop_pilot import _public_offers
 from retailer_barcode import retailer_gtin13
 from tr_price_scraper import TRPriceScraper
-from tws_catalog_expansion import exact_tws_sellers, reread
+from tws_catalog_expansion import exact_tws_sellers, public_tws_offers, reread, tws_source_target
 from tws_refresh import MAX_CURRENT_OFFERS, selected_host
 
 
@@ -50,7 +49,8 @@ def stage(snapshot, catalog, report, selected_models=()):
         target_key = f'{name}/{gtin}' if model_counts[name] > 1 else name
         for target in (*prior_targets.get(target_key, []), *row['offers']):
             url_owners[target['url']].add(key)
-            current_targets[key][target['url']] = target['merchant']
+            current_targets[key][target['url']] = tws_source_target(
+                target, current_targets[key].get(target['url']) or target)
 
     for record in report['verified']:
         name = record['name']
@@ -66,7 +66,7 @@ def stage(snapshot, catalog, report, selected_models=()):
             key = (name, gtin)
             gtin_owners[gtin].add(name)
             url_owners[url].add(key)
-            observed_targets[key][url] = merchant
+            observed_targets[key][url] = tws_source_target({**offer, 'url': url})
 
     groups, attempted, reasons = defaultdict(list), [], Counter()
     for key, leads in observed_targets.items():
@@ -77,14 +77,14 @@ def stage(snapshot, catalog, report, selected_models=()):
         if gtin_owners[gtin] != {name}:
             reasons['conflicting_barcode_owner'] += 1
             continue
-        targets = {url: merchant for url, merchant in {**leads, **current_targets[key]}.items()
+        targets = {url: target for url, target in {**leads, **current_targets[key]}.items()
                    if url_owners[url] == {key} and selected_host(url)}
         if len(targets) < 2:
             reasons['insufficient_retailer_urls'] += 1
             continue
         attempted.append(key)
-        for url, merchant in targets.items():
-            groups[selected_host(url)].append((name, {'url': url, 'merchant': merchant, 'gtin13': gtin}))
+        for url, target in targets.items():
+            groups[selected_host(url)].append((name, {**target, 'gtin13': gtin}))
 
     observed = defaultdict(list)
     n11_reader = catalog_document_reader('earbud-discovery')
@@ -129,10 +129,11 @@ def stage(snapshot, catalog, report, selected_models=()):
                 variants.append(row)
         if 'variant' not in row and (color := common_color(offers)):
             confirmed_colors[key] = color
-        row['offers'] = _public_offers(offers)
+        row['offers'] = public_tws_offers(offers)
         target_key = f'{name}/{gtin}' if len(variants) > 1 else name
         targets = {o['url']: o for o in target_map.get(target_key, [])}
-        targets.update({o['url']: {k: o[k] for k in ('url', 'merchant')} for o in offers})
+        for offer in offers:
+            targets[offer['url']] = tws_source_target(offer, targets.get(offer['url']))
         target_map[target_key] = list(targets.values())
         updated['checked_at'] = max(updated['checked_at'], max(o['observed_at'] for o in offers))
         staged.append({'name': name, 'gtin': gtin, 'offers': row['offers']})

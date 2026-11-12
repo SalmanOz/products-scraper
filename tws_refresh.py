@@ -9,10 +9,9 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from catalog_source_collector import catalog_document_reader
-from laptop_pilot import _public_offers
 from priority_retailer_transport import n11_product_selectors, product_host
 from retailer_barcode import retailer_gtin13
-from tws_catalog_expansion import MARKETPLACES, exact_tws_sellers, reread
+from tws_catalog_expansion import MARKETPLACES, exact_tws_sellers, public_tws_offers, reread, tws_source_target
 from tws_offer_pilot import _mediamarkt_tws_url, select_sku_offers
 from tws_retailer_sources import _vatan_url
 
@@ -52,15 +51,16 @@ def merge_snapshot(snapshot, catalog, observations, statuses, now):
         fresh = (exact_tws_sellers(current, maximum=MAX_CURRENT_OFFERS) if required
                  else select_sku_offers(current, maximum=MAX_CURRENT_OFFERS))
         if fresh:
-            offers = _public_offers(fresh)
+            offers = public_tws_offers(fresh)
             counts['refreshed'] += 1
         else:
             # A selected listing that failed verification is removed. For a
             # transport failure, keep its original timestamp and let the site's
             # existing freshness limit expire it.
-            prices = {offer['url']: offer['price'] for offer in current}
+            checked = {offer['url']: (offer['price'], offer.get('storePickup')) for offer in current}
             offers = [o for o in previous if statuses.get(o['url']) != 'unverified'
-                      and prices.get(o['url'], o['price']) == o['price']]
+                      and checked.get(o['url'], (o['price'], o.get('storePickup'))) ==
+                      (o['price'], o.get('storePickup'))]
             if required and len(offers) < 2:
                 offers = []
             counts['retained' if offers == previous else 'withdrawn'] += 1
@@ -81,7 +81,7 @@ def refresh(snapshot, catalog, *, collection='site'):
         legacy = previous_targets.pop(name, [])
         known = {o['url']: o for o in previous_targets.get(target_key, legacy)}
         for offer in row['offers']:
-            known[offer['url']] = {key: offer[key] for key in ('url', 'merchant')}
+            known[offer['url']] = tws_source_target(offer, known.get(offer['url']))
         if known and retailer_gtin13(gtin) != gtin:
             raise ValueError(f'Invalid GTIN for {name}')
         if known:

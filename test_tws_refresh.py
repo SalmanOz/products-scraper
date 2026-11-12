@@ -1,11 +1,75 @@
+import json
 from unittest import TestCase
 from unittest.mock import Mock, patch
 
 from tws_catalog_expansion import reread
+from tws_offer_pilot import model_name
 from tws_refresh import refresh
+from tws_retailer_sources import selected_vatan_store_tws
 
 
 class TwsRefreshTest(TestCase):
+    def test_vatan_store_inventory_requires_exact_sku_price_and_sellable_stock(self):
+        url = 'https://www.vatanbilgisayar.com/sony-wf1000xm6s-kulaklik-gumus.html'
+        name = 'Sony WF-1000XM6'
+        title = 'SONY WF-1000XM6S Tam Kablosuz Kulaklık - Gümüş'
+        sku, mpn, gtin = '159657', 'WF1000XM6S.CE7', '4548736171824'
+        product = {'@type': 'Product', 'sku': sku, 'mpn': mpn, 'name': title, 'brand': {'name': 'SONY'}}
+        event = {'ProductNumericId': int(sku), 'ProductId': mpn, 'ProductName': title,
+                 'ProductBrand': 'SONY', 'ProductPrice': '25499'}
+        html = f'''
+          <link rel="canonical" href="{url}">
+          <script type="application/ld+json">{json.dumps(product)}</script>
+          <main class="product-detail">
+            <h1 class="product-list__product-name">{title}</h1>
+            <div class="product-id" data-productid="{sku}" data-productcode="{mpn}"></div>
+            <button class="stockBTN" data-productid="{sku}">Stoktaki Mağazalar</button>
+            <div class="product-detail-price"><span class="product-detail-price-big">25.499 TL</span></div>
+          </main>
+          <div class="detailPartialPage"><input class="flixinpage" ean="{gtin}" brand="SONY"></div>
+          <script>UpdateProductDetayItem({json.dumps(event)})</script>
+        '''
+        store = {'I_ID': int(sku), 'StokStat': 1, 'Stok': 3, 'Sp_Title': 'Ankara (Söğütözü)'}
+        stock = Mock(return_value=(json.dumps(json.dumps([store])), 'ready', 200))
+        offer, reason = selected_vatan_store_tws(html, url, name, model_name, stock, sku)
+        stock.assert_called_once_with(
+            'https://www.vatanbilgisayar.com/ProductDetail/ShopStockByProductQ?productId=159657')
+        self.assertEqual(reason, 'verified')
+        self.assertEqual(offer['gtin13'], gtin)
+        self.assertEqual(offer['storePickup'], {'sku': sku, 'name': store['Sp_Title']})
+        self.assertEqual(offer['price'], 25499)
+        for changed, rejection in (
+            ({'I_ID': 159656}, 'store_inventory_unavailable_invalid_rows'),
+            ({'StokStat': 3}, 'store_inventory_out_of_stock'),
+            ({'Stok': 0}, 'store_inventory_out_of_stock'),
+        ):
+            with self.subTest(changed=changed):
+                stock.return_value = json.dumps([{**store, **changed}]), 'ready', 200
+                self.assertEqual(
+                    selected_vatan_store_tws(html, url, name, model_name, stock, sku), (None, rejection))
+        stock.reset_mock()
+        self.assertEqual(
+            selected_vatan_store_tws(html.replace('25.499 TL', '25.499 TL sepette'), url, name, model_name, stock, sku),
+            (None, 'store_price_unverified'))
+        stock.assert_not_called()
+
+    def test_store_target_survives_stock_loss_for_later_refresh(self):
+        name, gtin = 'Sony WF-1000XM6', '4548736171824'
+        url = 'https://www.vatanbilgisayar.com/sony-wf1000xm6s-kulaklik-gumus.html'
+        offer = {'url': url, 'merchant': 'Vatan Bilgisayar', 'platform': 'Vatan Bilgisayar',
+                 'price': 25499, 'observed_at': 'old', 'storePickup': {'sku': '159657', 'name': 'Ankara'}}
+        snapshot = {'checked_at': 'old', 'models': [{'name': name, 'gtin': gtin, 'offers': [offer]}]}
+        catalog = {'models': [{'name': name}]}
+        def collect(host, rows, statuses, document_reader=None):
+            self.assertEqual(rows[0][1]['storePickupSku'], '159657')
+            statuses[url] = 'unverified'
+            return {}, {'store_inventory_out_of_stock': 1}
+        with patch('tws_refresh.reread', side_effect=collect):
+            empty, _ = refresh(snapshot, catalog)
+            repeated, _ = refresh(empty, catalog)
+        self.assertEqual(empty['models'][0]['offers'], [])
+        self.assertEqual(repeated['sourceTargets'][name][0]['storePickupSku'], '159657')
+
     def test_hepsiburada_new_marketplace_seller_requires_legal_profile(self):
         name = 'Sony WF-1000XM6'
         host = 'www.hepsiburada.com'

@@ -92,7 +92,7 @@ NEW_MODELS = (
     ('Sony', 'WF-C510', r'wf ?c510'),
     ('Sony', 'WF-C710N', r'wf ?c710n'),
     ('Sony', 'WF-1000XM5', r'wf ?1000xm5'),
-    ('Sony', 'WF-1000XM6', r'wf ?1000xm6'),
+    ('Sony', 'WF-1000XM6', r'wf ?1000xm6(?:[bs])?'),
     ('Sony', 'LinkBuds Clip', r'linkbuds clip|wf ?lc900b?(?: ce7)?'),
     ('Sony', 'LinkBuds Fit', r'linkbuds fit|wf ?ls910n'),
     ('JBL', 'Wave Beam', r'wave beam(?! ?2| pro| plus)'),
