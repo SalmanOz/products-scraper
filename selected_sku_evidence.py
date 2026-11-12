@@ -126,6 +126,24 @@ def _pazarama_selected_sku_evidence(offer):
 
 
 def selected_sku_evidence(offer):
+    if isinstance(offer, dict) and offer.get('selected_firsatkurdu_variant_verified') is True:
+        from firsatkurdu_offer_source import HOST, MERCHANT, product_url
+        from retailer_barcode import retailer_gtin13
+
+        url, gtin = offer.get('url'), offer.get('gtin13')
+        product, sku, listing = (offer.get(key) for key in ('product_id', 'sku', 'listing_id'))
+        ram, storage, radio = (offer.get(key) for key in ('ram_gb', 'storage_gb', 'network_generation'))
+        if (offer.get('platform') != MERCHANT or offer.get('merchant') != MERCHANT or offer.get('merchant_id') != HOST
+                or offer.get('currency') != 'TRY' or offer.get('condition') != 'new' or offer.get('availability') != 'in_stock'
+                or not product_url(url) or not isinstance(gtin, str) or retailer_gtin13(gtin) != gtin
+                or not isinstance(product, str) or not re.fullmatch(r'[1-9]\d{0,11}', product)
+                or not isinstance(sku, str) or not re.fullmatch(r'[A-Za-z0-9-]{1,40}', sku)
+                or listing != url.rsplit('-', 1)[-1] or type(ram) is not int or not 1 <= ram <= 64
+                or type(storage) is not int or not 32 <= storage <= 4096 or radio not in ('4g', '5g')):
+            return None
+        return {'version': 'selected-retailer-sku-v1', 'platform': MERCHANT, 'merchant_name': MERCHANT,
+                'merchant_id': HOST, 'product_id': product, 'sku': sku, 'listing_id': listing, 'gtin13': gtin,
+                'ram_gb': ram, 'storage_gb': storage, 'network_generation': radio}
     if isinstance(offer, dict) and offer.get('platform') == 'Pazarama':
         return _pazarama_selected_sku_evidence(offer)
     if isinstance(offer, dict) and offer.get('platform') == 'Teknosa':

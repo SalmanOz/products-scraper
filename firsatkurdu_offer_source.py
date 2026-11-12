@@ -71,7 +71,15 @@ def selected_offer(html, url, company, *, kind):
     image = urlsplit(value(soup, 'meta[property="og:image"]'))
     photo = (image._replace(query='').geturl() if image.scheme == 'https' and image.netloc == HOST and not image.fragment
              and re.fullmatch(r'/idea/jv/99/myassets/products/[0-9]+/[a-z0-9_.-]+\.(?:png|jpe?g|webp)', image.path, re.I) else None)
-    return {'platform': MERCHANT, 'merchant': MERCHANT, 'merchant_id': HOST, '_legal_name': company,
+    facts = {}
+    if kind == 'phone':
+        ram, storage, ambiguous = TRPriceScraper._unambiguous_listing_capacities(title)
+        radio = TRPriceScraper._radio_generation(title)
+        if ram and storage and radio and not ambiguous:
+            facts = {'selected_firsatkurdu_variant_verified': True, 'ram_gb': ram,
+                     'storage_gb': storage, 'network_generation': radio,
+                     'listing_id': url.rsplit('-', 1)[-1]}
+    return {**facts, 'platform': MERCHANT, 'merchant': MERCHANT, 'merchant_id': HOST, '_legal_name': company,
             'gtin13': barcode, 'product_id': cart['data-product-id'], 'sku': sku, 'source_title': title,
             'url': url, 'brand': brand, '_image': photo, 'currency': 'TRY', 'condition': 'new',
             'price': float(price), 'availability': 'in_stock',
