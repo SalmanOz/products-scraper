@@ -1,10 +1,14 @@
 import json
 from copy import deepcopy
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 from laptop_hepsiburada_source import hepsiburada_seller_identity
 from pc_parts_multistore import (company_key, hepsiburada_pc_seller_targets,
-                                 independent_offers, processor_packaging, trendyol_pc_offer,
+                                 independent_offers, processor_packaging, refresh, trendyol_pc_offer,
                                  trendyol_pc_seller_targets)
 
 
@@ -130,6 +134,29 @@ class PcSellerIndependenceTest(unittest.TestCase):
             different['merchantListing']['otherMerchants'][0]['variants'][0][key] = value
             self.assertIsNone(trendyol_pc_offer(html, url, default_html=document(different, '6.900 TL'))[0])
         self.assertIsNone(trendyol_pc_offer(document(scoped, '8.501 TL'), url, default_html=witness)[0])
+
+    def test_refresh_keeps_only_unread_still_current_observations(self):
+        now = datetime.now(timezone.utc)
+        gtin = '4711387981016'
+        def observation(index, hours_ago):
+            return {'url': f'https://www.incehesap.com/board-fiyati-{index}/', 'gtin': gtin,
+                    'sellerKey': f'seller-{index}', 'stock': 'in_stock', 'platform': 'İncehesap',
+                    'price': 100 + index, 'checkedAt': (now - timedelta(hours=hours_ago)).isoformat()}
+
+        current, unavailable, outdated, rejected = [observation(i, age) for i, age in enumerate((0, 1, 73, 1), 1)]
+        previous = [unavailable, outdated, rejected]
+        part = {'gtin': gtin, 'sourceUrl': current['url'], 'offer': previous[0], 'offers': previous,
+                'offerTargets': [row['url'] for row in [current, *previous]]}
+
+        def fetch(_targets, *, discover_sellers, unavailable):
+            unavailable.update([previous[0]['url'], previous[1]['url']])
+            return [current]
+
+        with TemporaryDirectory() as directory, patch('pc_parts_multistore.collect_targets', side_effect=fetch):
+            path = Path(directory) / 'catalog.json'
+            refresh({'parts': [part]}, path)
+            offers = json.loads(path.read_text())['parts'][0]['offers']
+            self.assertEqual(offers, [current, unavailable])
 
     def test_processor_packaging_distinguishes_same_barcode_tray_and_box(self):
         self.assertEqual(processor_packaging('AMD Ryzen 5600X (Kutusuz Fansız)'), 'tray')

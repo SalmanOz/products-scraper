@@ -2,7 +2,7 @@
 import argparse
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -43,6 +43,11 @@ DIRECT_PATHS = {
 }
 HOSTS = DIRECT_PATHS.keys() | {HEPSIBURADA, TRENDYOL, N11, TEKNOSA}
 STOP = {'source_circuit_open', 'challenge_page', 'http_403', 'http_429', 'transport_error'}
+TEMPORARY_READ_FAILURES = STOP | {
+    'source_cooldown', 'robots_http_403', 'robots_http_429', 'robots_transport_error',
+    'http_500', 'http_502', 'http_503', 'http_504', 'pdp_budget_exhausted',
+}
+OFFER_MAX_AGE = timedelta(hours=72)
 
 
 def offer_host(url):
@@ -281,6 +286,7 @@ class PcRetailer:
         )
         self.identities = {}
         self.stop = False
+        self.unavailable = set()
         self.rejected = Counter()
         self.seller_targets = {}
         self.trendyol_default_document = (None, None)
@@ -291,6 +297,8 @@ class PcRetailer:
         html, reason, _ = self.transport._read_document(url, self.host)
         if not html:
             self.rejected[reason] += 1
+            if reason in TEMPORARY_READ_FAILURES:
+                self.unavailable.add(url)
             self.stop = reason in STOP or reason.startswith('robots_')
             return None
         final = self.transport.resolved_url(url)
@@ -374,7 +382,7 @@ class PcRetailer:
         return offer, reason
 
 
-def collect_targets(targets, *, discover_sellers=False, alternatives_by_url=None):
+def collect_targets(targets, *, discover_sellers=False, alternatives_by_url=None, unavailable=None):
     alternatives_by_url = alternatives_by_url or {}
     by_host = {}
     for url, part in targets:
@@ -382,13 +390,15 @@ def collect_targets(targets, *, discover_sellers=False, alternatives_by_url=None
             by_host.setdefault(host, []).append((url, part))
 
     def collect(host, rows):
-        reader = PcRetailer(host, budget=max(150, len(rows) * 2))
+        reader = PcRetailer(host, budget=min(400, max(150, len(rows) * 2)))
         results = []
-        for url, part in rows:
-            if reader.stop:
-                break
+        for index, (url, part) in enumerate(rows):
             if offer := reader.read(url, part, discover_sellers=discover_sellers, alternatives=alternatives_by_url.get(url, ())):
                 results.append(offer)
+            if reader.stop:
+                if url in reader.unavailable:
+                    reader.unavailable.update(target for target, _ in rows[index + 1:])
+                break
         visited = {url for url, _ in rows}
         for url, part in reader.seller_targets.items():
             if reader.stop:
@@ -397,11 +407,32 @@ def collect_targets(targets, *, discover_sellers=False, alternatives_by_url=None
                 results.append(offer)
         print(json.dumps({'host': host, 'verified': len(results), 'rejected': dict(reader.rejected)},
                          ensure_ascii=False), flush=True)
-        return results
+        return results, reader.unavailable
 
     with ThreadPoolExecutor(max_workers=min(len(by_host) or 1, 6)) as pool:
         jobs = [pool.submit(collect, host, rows) for host, rows in by_host.items()]
-        return [offer for job in jobs for offer in job.result()]
+        offers = []
+        for job in jobs:
+            verified, unread = job.result()
+            offers.extend(verified)
+            if unavailable is not None:
+                unavailable.update(unread)
+        return offers
+
+
+def retained_observations(part, unavailable, now):
+    previous = []
+    for offer in part.get('offers', []):
+        if (offer['url'] not in unavailable or offer.get('gtin') != part['gtin']
+                or offer.get('stock') != 'in_stock' or not offer.get('sellerKey')):
+            continue
+        try:
+            timestamp = datetime.fromisoformat(offer['checkedAt'])
+            if timedelta(0) <= now - timestamp <= OFFER_MAX_AGE:
+                previous.append(offer)
+        except (ValueError, TypeError, KeyError):
+            continue
+    return previous
 
 
 def refresh(snapshot, output, *, discovery=None):
@@ -417,24 +448,32 @@ def refresh(snapshot, output, *, discovery=None):
                 for url in urls:
                     if offer_host(url):
                         targets.setdefault(url, parts[gtin])
-    verified = collect_targets(targets.items(), discover_sellers=discovery is not None)
+    last_check = {offer['url']: offer['checkedAt'] for part in snapshot['parts'] for offer in part.get('offers', [])}
+    ordered = sorted(targets.items(), key=lambda row: (last_check.get(row[0], ''), row[0]))
+    unavailable = set()
+    verified = collect_targets(ordered, discover_sellers=discovery is not None, unavailable=unavailable)
     now = datetime.now(timezone.utc)
-    # A failed reader does not create a new observation or advance a timestamp.
-    # Unconfirmed prices are omitted until the source can verify them again.
     if not verified:
         raise SystemExit('No component prices verified')
+    by_gtin = {}
+    for row in verified:
+        by_gtin.setdefault(row['gtin'], []).append(row)
+    retained_count = 0
     for part in snapshot['parts']:
-        observations = [row for row in verified if row['gtin'] == part['gtin']]
+        observations = by_gtin.get(part['gtin'], [])
+        retained = retained_observations(part, unavailable, now)
+        retained_count += len(retained)
         if discovery is not None:
             existing = part.get('offerTargets') or [part['sourceUrl'], *(row['url'] for row in part.get('offers', []))]
             part['offerTargets'] = list(dict.fromkeys([*existing, *(row['url'] for row in observations)]))
-        offers = independent_offers(observations)
+        offers = independent_offers([*observations, *retained])
         part['offers'] = offers
         if offers:
             part['offer'] = offers[0]
     snapshot['checkedAt'] = now.isoformat()
     output.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2) + '\n')
     print(json.dumps({'parts': len(snapshot['parts']), 'verified_offers': len(verified),
+                      'retained_unavailable_offers': retained_count,
                       'with_two_sellers': sum(len(part['offers']) >= 2 for part in snapshot['parts'])}))
 
 
