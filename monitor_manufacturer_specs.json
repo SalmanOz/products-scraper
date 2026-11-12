@@ -1,7 +1,8 @@
 {
   "4711377150255": {
     "code": "321upx",
-    "model": "MAG 321UPX QD-OLED",
+    "model": "321UPX",
+    "name": "MAG 321UPX QD-OLED",
     "url": "https://tr.msi.com/Monitor/MAG-321UPX-QD-OLED/Specification",
     "facts": {
       "size": 31.5,

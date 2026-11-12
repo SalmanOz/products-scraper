@@ -16,6 +16,7 @@ from requests import RequestException
 from laptop_discovery import Reader, _pdp
 from laptop_pilot import IMAGE_HOSTS, _hepsiburada_public_get, _image, _public_offers, _target, verify_seller
 from monitor_sources import PARSERS, WORDS
+from pc_parts_multistore import DIRECT_PATHS, offer_host
 from priority_retailer_transport import PriorityRetailerTransport
 from retailer_barcode import retailer_gtin13
 from tws_offer_pilot import independent_sellers
@@ -194,7 +195,7 @@ def collect_observations(targets, collector=None, *, direct_hosts=()):
         route = _target(url)
         if (not route or route.netloc not in PARSERS or url in seen or not re.fullmatch('[a-z0-9]{4,20}', code)
                 or not any(c.isdigit() for c in code) or not gtin or retailer_gtin13(gtin) != gtin
-                or (route.netloc not in {'www.incehesap.com', 'www.gaming.gen.tr'} and not _pdp(route.netloc, url))):
+                or not (offer_host(url) == route.netloc if route.netloc in DIRECT_PATHS else _pdp(route.netloc, url))):
             raise ValueError('Invalid or duplicate monitor target')
         seen.add(url)
         by_host[route.netloc].append(row)

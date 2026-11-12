@@ -64,6 +64,9 @@ def feed_candidates(payload, host, categories):
 
 
 def scan_feed(host, categories):
+    categories = [kind for kind in categories if kind in LEAF_CATEGORIES.values()]
+    if not categories:
+        return [], []
     reader = PriorityRetailerTransport(maximum_per_host=1, browser_fallback=False, get=feed_get)
     html, status, _ = reader._read_document(FEEDS[host], host, sitemap=True, sitemap_limit=MAX_FEED_BYTES)
     rows, rejected = [], {}
@@ -75,6 +78,6 @@ def scan_feed(host, categories):
             status = 'invalid_feed'
     counts = Counter(row['category'] for row in rows)
     reports = [{'source': host, 'category': kind, 'nextPage': None, 'status': status,
-                'pages': int(status == 'feed_read'), 'cards': counts[kind], 'excluded': rejected.get(kind, 0)} for kind in categories
-               if kind in LEAF_CATEGORIES.values()]
+                'pages': int(status == 'feed_read'), 'cards': counts[kind], 'excluded': rejected.get(kind, 0)}
+               for kind in categories]
     return reports, rows
