@@ -699,12 +699,19 @@ def run(state, slugs, client=None, *, publish=False, maximum=24, products=None, 
             if not outcome.get('committed') or outcome.get('accepted') != len(records):
                 raise RuntimeError('Verified pair was not committed atomically')
             result['published'] = outcome['accepted']
-            identity = client.get_offer_identity_readiness()
+            try:
+                identity = client.get_offer_identity_readiness()
+            except IngestionClientError:
+                result.update(readback='unverified', publicationReason='readback_unavailable_after_commit')
+                results.append(result)
+                break
             coverage = next((row for row in identity.get('productCoverage', ()) if row.get('slug') == slug), {})
             matched = {(row.get('source_url'), row.get('merchant_name'), float(row.get('price') or 0))
                        for row in coverage.get('matchedOffers', ())}
             if not all((offer['url'], offer['merchant'], offer['price']) in matched for offer in pair):
-                raise RuntimeError('Public offer matching did not confirm both retailers')
+                result.update(readback='unverified', publicationReason='readback_missing_after_commit')
+                results.append(result)
+                break
             result['readback'] = 'verified'
         results.append(result)
     return results
@@ -758,7 +765,7 @@ def main():
         parser.error('Provide one to four distinct catalog slugs')
     rows = run(state, slugs, OfferIngestionClient.from_env(), publish=args.publish, profiles=profiles)
     print(json.dumps(rows, ensure_ascii=False, indent=2))
-    if args.publish and any(row.get('readback') != 'verified' for row in rows):
+    if args.publish and (len(rows) != len(slugs) or any(row.get('readback') != 'verified' for row in rows)):
         raise SystemExit('One or more requested capacities have no verified publication')
 
 

@@ -9,6 +9,7 @@ from ayaz_phone_source import AYAZ_BASE, AYAZ_COMPANY, AYAZ_HOST, AYAZ_TERMS
 from comparison_phone_offers import (audit_queue, candidate_urls, capacity_priority, checked_offers, load_reviewed_profiles,
                                      hepsiburada_phone_leads, load_iphone_16_plus_profiles, n11_phone_leads,
                                      publishable_pair, published_offer_urls, run, trendyol_phone_leads)
+from offer_ingestion_client import IngestionClientError
 from ozgur_phone_source import OZGUR_HOST, OZGUR_TERMS, ozgur_offer
 
 
@@ -349,6 +350,32 @@ class ComparisonPhoneOffersTest(unittest.TestCase):
             {'url': url, 'reason': 'reviewed_gtin_mismatch', 'observedGtin': '0195949722240'} for url in (MM, PZ)])
         client.get_raw_seller_collision_proof.assert_not_called()
         client.ingest_offers.assert_not_called()
+
+    def test_post_commit_readback_failure_keeps_receipt_without_retrying_writes(self):
+        slug = 'apple-iphone-16-plus'
+        other_slug = 'apple-iphone-16-plus-8gb-256gb'
+        product = {'id': 1, 'slug': slug, 'name': NAME, 'attributes': {}}
+        products = [product, {**product, 'id': 2, 'slug': other_slug}]
+        profiles = {key: {'urls': [MM, PZ], 'gtin': GTIN} for key in (slug, other_slug)}
+        evidence = {'gtin13': GTIN, 'observed_at': datetime.now(timezone.utc).isoformat(),
+                    'availability': 'in_stock', 'currency': 'TRY', 'source_title': TITLE}
+        pair = [{**evidence, 'url': MM, 'merchant': 'Seller A', 'platform': 'MediaMarkt',
+                 '_legal_name': 'seller a', 'price': 89599},
+                {**evidence, 'url': PZ, 'merchant': 'Seller B', 'platform': 'Pazarama',
+                 '_legal_name': 'seller b', 'price': 90699}]
+        for response, reason in (({'productCoverage': []}, 'readback_missing_after_commit'),
+                                 (IngestionClientError('Readback unavailable'), 'readback_unavailable_after_commit')):
+            with self.subTest(reason=reason):
+                client = Mock()
+                client.get_raw_seller_collision_proof.return_value = {'complete': True, 'blocked': False}
+                client.ingest_offers.return_value = {'committed': True, 'accepted': 2}
+                client.get_offer_identity_readiness.side_effect = [response]
+                with patch('comparison_phone_offers.checked_offers', return_value=(pair, pair, [])):
+                    (result,) = run({}, [slug, other_slug], client, publish=True, products=products, profiles=profiles)
+                self.assertEqual((result['slug'], result['published'], result['readback'], result['publicationReason']),
+                                 (slug, 2, 'unverified', reason))
+                client.ingest_offers.assert_called_once()
+                self.assertTrue(client.ingest_offers.call_args.kwargs['require_all_accepted'])
 
     def test_reviewed_candidate_file_accepts_only_two_platforms_and_no_price(self):
         slug = 'apple-iphone-16-plus'
