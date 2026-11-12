@@ -206,5 +206,68 @@
       {"label": "Bluetooth", "value": "5.4", "source": {"name": "Nothing Bluetooth bilgisi", "url": "https://support.nothing.tech/hc/en-us/articles/38937926978833-Which-Bluetooth-version-does-Ear-3-use"}},
       {"label": "Ses kodekleri", "value": "AAC, SBC, LDAC", "source": {"name": "Nothing kodek bilgisi", "url": "https://support.nothing.tech/hc/en-us/articles/38937919714193-What-audio-formats-does-Ear-3-support"}}
     ]
+  },
+  "Xiaomi Redmi Buds 6": {
+    "summary": "Redmi Buds 6 çift sürücü, aktif gürültü engelleme ve iki cihaza eş zamanlı bağlantı sunuyor. Xiaomi, gürültü engelleme kapalıyken kutuyla 42 saate kadar müzik süresi belirtiyor.",
+    "highlights": [
+      "49 dB’ye kadar aktif gürültü engelleme",
+      "Çift akustik sürücü",
+      "Bluetooth 5.4"
+    ],
+    "specSource": "https://www.mi.com/tr/product/redmi-buds-6/",
+    "specs": [
+      {
+        "label": "Model kodu",
+        "value": "M2429E1",
+        "source": {
+          "name": "Xiaomi teknik özellikleri",
+          "url": "https://www.mi.com/tr/product/redmi-buds-6/specs/"
+        }
+      },
+      {
+        "label": "Gürültü kontrolü",
+        "value": "49 dB’ye kadar aktif gürültü engelleme"
+      },
+      {
+        "label": "Sürücüler",
+        "value": "12,4 mm dinamik ve 5,5 mm piezoelektrik seramik"
+      },
+      {
+        "label": "Tek şarjla müzik",
+        "value": "10 saate kadar (ANC kapalı)"
+      },
+      {
+        "label": "Kutuyla toplam müzik",
+        "value": "42 saate kadar (ANC kapalı)"
+      },
+      {
+        "label": "Bluetooth",
+        "value": "5.4",
+        "source": {
+          "name": "Xiaomi teknik özellikleri",
+          "url": "https://www.mi.com/tr/product/redmi-buds-6/specs/"
+        }
+      },
+      {
+        "label": "Dayanıklılık",
+        "value": "IP54",
+        "source": {
+          "name": "Xiaomi destek",
+          "url": "https://www.mi.com/tr/support/faq/details/KA-733700"
+        }
+      },
+      {
+        "label": "Çoklu cihaz bağlantısı",
+        "value": "İki cihaz"
+      },
+      {
+        "label": "Şarj",
+        "value": "USB-C",
+        "source": {
+          "name": "Xiaomi teknik özellikleri",
+          "url": "https://www.mi.com/tr/product/redmi-buds-6/specs/"
+        }
+      }
+    ]
   }
 }
