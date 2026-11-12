@@ -4,6 +4,7 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import Mock, patch
 
+from ayaz_phone_source import AYAZ_BASE, AYAZ_COMPANY, AYAZ_HOST, AYAZ_TERMS
 from comparison_phone_offers import (audit_queue, candidate_urls, capacity_priority, checked_offers, load_reviewed_profiles,
                                      hepsiburada_phone_leads, n11_phone_leads, publishable_pair, published_offer_urls, run)
 from ozgur_phone_source import OZGUR_HOST, OZGUR_TERMS, ozgur_offer
@@ -20,6 +21,40 @@ GTIN = '0195949722813'
 
 
 class ComparisonPhoneOffersTest(unittest.TestCase):
+    def test_ayaz_selected_phone_requires_live_sku_price_stock_and_legal_identity(self):
+        url = AYAZ_BASE + '/urun/samsung-galaxy-a27-5g-8-gb-256-gb-siyah'
+        title = 'Samsung Galaxy A27 5G 8 GB 256 GB Siyah'
+        gtin = '8806099359300'
+        html = f'''<link rel="canonical" href="{url}">
+          <div id="product-detail-container"><h1>{title}</h1>
+            <div class="product-list-row"><span class="product-list-title">Barkod Kodu</span>
+              <span class="product-list-content">{gtin}</span></div>
+            <div class="product-price-wrapper"><div class="product-price-new">₺22.249,00</div></div>
+            <a data-context="detail" data-selector="add-to-cart" data-product-id="1239"><span>Sepete Ekle</span></a>
+          </div>
+          <div itemscope itemtype="https://schema.org/Product">
+            <span itemprop="name">{title}</span><span itemprop="sku">575675</span>
+            <meta itemprop="gtin13" content="{gtin}">
+            <div itemprop="offers" itemscope itemtype="https://schema.org/Offer">
+              <meta itemprop="price" content="22249.00"><meta itemprop="priceCurrency" content="TRY">
+              <link itemprop="availability" href="https://schema.org/InStock"><span itemprop="url">{url}</span>
+            </div><meta itemprop="itemCondition" content="http://schema.org/NewCondition">
+          </div><script>pageParams = {{product: {{id: "1239",sku: "575675",parentId: "0"}}}};</script>'''
+        specs = {'ram_gb': 8, 'storage_gb': 256, 'network_generation': '5g'}
+        legal = f'<p>Ünvanı : <span>{AYAZ_COMPANY}</span></p>'
+        transport = Mock()
+        for page, terms, passed in ((html, legal, True),
+                                    (html.replace('InStock', 'OutOfStock'), legal, False),
+                                    (html.replace('₺22.249,00', '₺21.249,00'), legal, False),
+                                    (html.replace('data-product-id="1239"', 'data-product-id="9000"'), legal, False),
+                                    (html, '<p>Ünvanı : başka satıcı</p>', False)):
+            transport._read_document.side_effect = [(page, 'document_read', 200), (terms, 'document_read', 200)]
+            _, offers, rejects = checked_offers([url], 'Samsung Galaxy A27 5G', specs,
+                                                 Mock(), direct={AYAZ_HOST: transport})
+            self.assertEqual([(o['gtin13'], o['price']) for o in offers], [(gtin, 22249.0)] if passed else [])
+            self.assertEqual(bool(rejects), not passed)
+        transport._read_document.assert_any_call(AYAZ_TERMS, AYAZ_HOST, category=True)
+
     def test_phone_queue_uses_exact_storage_selectors_and_tb_url_hints(self):
         root = 'https://www.n11.com/urun/phone-'
         self.assertEqual(capacity_priority(root + '8gb128gb-123456', 128), 0)

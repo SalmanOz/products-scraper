@@ -3,6 +3,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 
+from ayaz_phone_source import AYAZ_BASE, AYAZ_HOST
 from competitor_catalog_gaps import (AKAKCE, CIMRI, EPEY, KARSILASTIRICI, PAHALIMI, URUNAI, akakce_limits, candidate_family, cimri_sitemap_cards, epey_earbud_title, epey_sitemap_cards, export_source_snapshot, import_source_snapshot, product_state_key, scan_product_sitemap, scan_source, urunai_market_slugs, urunai_sitemap_cards, catalog_match, category_url, comparison_cards, comparison_retailer_leads,
                                      identity_index, in_scope, merge_state, read_state)
 from competitor_catalog_gaps import (AMAHANGISI, INDIRIMLI, TUBERKARAS, UCUZYUM, comparison_lead_destination,
@@ -11,6 +12,20 @@ from ozgur_phone_source import OZGUR_HOST
 
 
 class CompetitorCatalogGapsTest(unittest.TestCase):
+    def test_ayaz_discovers_phone_routes_and_observed_category_pagination(self):
+        url = AYAZ_BASE + '/urun/samsung-galaxy-a27-5g-8-gb-256-gb-siyah'
+        title = 'Samsung Galaxy A27 5G 8 GB 256 GB (Samsung Türkiye Garantili) Siyah 256 GB'
+        html = f'''<div class="showcase-title"><a href="{url}" title="{title}">{title}</a></div>
+          <link rel="next" href="{AYAZ_BASE}/kategori/cep-telefonu?tp=2">'''
+        reader = Mock()
+        reader._read_document.return_value = (html, 'document_read', 200)
+        index = {'phone': identity_index([{'name': 'Samsung Galaxy A27 5G', 'slug': 'samsung-galaxy-a27-5g'}])}
+        with patch('competitor_catalog_gaps.comparison_reader', return_value=reader):
+            report, rows = scan_source(AYAZ_HOST, ['phone'], index, 1, 1)
+        self.assertEqual(report[0]['nextPage'], 2)
+        self.assertEqual([r['retailerLeads'] for r in rows], [[url]])
+        self.assertEqual(candidate_family('phone', rows[0]['title'], index['phone']), 'samsung-galaxy-a27-5g')
+
     def test_ucuzyum_sitemap_and_current_listing_links_are_only_discovery_hints(self):
         root = f'https://{UCUZYUM}'
         url = root + '/samsung-galaxy-a55-5g-256-gb-cep-telefonu-948492'

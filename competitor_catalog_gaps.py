@@ -14,6 +14,7 @@ from xml.etree import ElementTree
 
 from bs4 import BeautifulSoup
 
+from ayaz_phone_source import AYAZ_HOST, ayaz_phone_url
 from catalog_source_collector import catalog_document_reader
 from laptop_retailer_sources import WORDS
 from ozgur_phone_source import OZGUR_HOST, ozgur_phone_url
@@ -34,7 +35,7 @@ INDIRIMLI = 'indirimli.com'
 TUBERKARAS = 'tuberkaras.com'
 UCUZYUM = 'www.ucuzyum.com'
 SOURCES = (AKAKCE, CIMRI, EPEY, URUNAI, KARSILASTIRICI, PAHALIMI, AMAHANGISI, INDIRIMLI,
-           TUBERKARAS, OZGUR_HOST, UCUZYUM)
+           TUBERKARAS, OZGUR_HOST, UCUZYUM, AYAZ_HOST)
 URUNAI_CATEGORIES = {
     'telefon': 'phone', 'kulaklik': 'tws', 'laptop': 'laptop', 'monitor': 'monitor',
     'islemci': 'cpu', 'anakart': 'motherboard', 'ram-bellek': 'ram', 'ekran-karti': 'gpu',
@@ -54,6 +55,7 @@ ADDITIONAL_COMPARISON_CATEGORIES = {
     },
     TUBERKARAS: {'phone': '/kategori/telefon', 'tws': '/kategori/kulaklik'},
     OZGUR_HOST: {'phone': '/telefon'},
+    AYAZ_HOST: {'phone': '/kategori/cep-telefonu'},
 }
 PAHALIMI_CATEGORIES = {'phone': '/kategori/cep-telefonu', 'laptop': '/kategori/dizustu-bilgisayar',
                        'monitor': '/kategori/monitor', 'tws': '/kategori/kulaklik'}
@@ -115,6 +117,7 @@ CARD = {
     INDIRIMLI: KARSILASTIRICI_PRODUCT,
     TUBERKARAS: KARSILASTIRICI_PRODUCT,
     OZGUR_HOST: re.compile(r'/urun/([a-z0-9-]{6,250})'),
+    AYAZ_HOST: re.compile(r'/urun/([a-z0-9-]{6,250})'),
     UCUZYUM: re.compile(r'/[a-z0-9-]{3,220}-cep-telefonu-([1-9]\d{3,9})'),
 }
 CARD_SELECTOR = {
@@ -126,6 +129,7 @@ CARD_SELECTOR = {
     INDIRIMLI: 'a.product-card-refresh[href]:has(.product-card-title)',
     TUBERKARAS: 'article.urun-satir .satir-bilgi h3 > a[href]',
     OZGUR_HOST: 'h2.oi-card-title > a[href]',
+    AYAZ_HOST: '.showcase-title > a[href][title]',
 }
 MODEL_TOKEN = re.compile(r'[a-zA-Z0-9]+(?:[-./_][a-zA-Z0-9]+)*')
 STOP_SOURCE = {'http_403', 'http_429', 'challenge_page', 'source_circuit_open',
@@ -141,6 +145,8 @@ def category_url(host, path, page):
         return f'https://{host}{path}{page}/'
     if host in (PAHALIMI, INDIRIMLI):
         return f'https://{host}{path}?sayfa={page}'
+    if host == AYAZ_HOST:
+        return f'https://{host}{path}?tp={page}'
     return f'https://{host}{path}?page={page}'
 
 
@@ -184,6 +190,9 @@ def comparison_cards(html, host, url):
         title = ' '.join(title.split())
         if host == OZGUR_HOST:
             title = re.sub(r'\s+\([\w ]{1,70} Türkiye Garantili\)$', '', title, flags=re.I)
+        if host == AYAZ_HOST:
+            title = re.sub(r'\s*\(\s*[\w ]{1,70} Türkiye Garantili\s*\)', '', title, flags=re.I)
+            title = re.sub(r'(\b(\d{2,4})\s*GB)(\s+[^\d]{2,30})\s+\2\s*GB$', r'\1\3', title, flags=re.I)
         if host in ADDITIONAL_COMPARISON_CATEGORIES and re.match(r'iphone\s+\d', title, re.I):
             title = 'Apple ' + title
         if 3 <= len(title) <= 260:
@@ -197,6 +206,8 @@ def comparison_cards(html, host, url):
                 if leads:
                     card['retailerLeads'] = sorted(leads | set(card.get('retailerLeads', ())))
             elif host == OZGUR_HOST and ozgur_phone_url(card['url']):
+                card['retailerLeads'] = [card['url']]
+            elif host == AYAZ_HOST and ayaz_phone_url(card['url']):
                 card['retailerLeads'] = [card['url']]
     return cards.values(), links
 
@@ -665,7 +676,8 @@ def retailer_destination(raw):
         or route.netloc == 'www.mediamarkt.com.tr' and re.fullmatch(
             r'/tr/product/_[a-z0-9-]+-[1-9]\d{5,11}\.html', route.path)
     )
-    if product_host(url) or first_party and not selectors or pazarama_product_url(url) or ozgur_phone_url(url):
+    if (product_host(url) or first_party and not selectors or pazarama_product_url(url)
+            or ozgur_phone_url(url) or ayaz_phone_url(url)):
         return url
     if route.netloc in DIRECT_PATHS and offer_host(url):
         return url
@@ -1071,7 +1083,7 @@ def main():
             jobs = [pool.submit(scan_retailer_leads, state, host, kinds, limits[host], now,
                                 priority, set(args.prioritize_model), collection=args.collection,
                                 known_leads=known_leads)
-                    for host in hosts if host != OZGUR_HOST and host not in stopped and limits[host]]
+                    for host in hosts if host not in (OZGUR_HOST, AYAZ_HOST) and host not in stopped and limits[host]]
             lead_scans = [job.result() for job in jobs]
     if args.state is not None:
         write_json(args.state, state)

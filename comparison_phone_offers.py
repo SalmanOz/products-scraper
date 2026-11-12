@@ -12,6 +12,7 @@ from urllib.parse import parse_qs, urljoin, urlsplit
 from bs4 import BeautifulSoup
 import requests
 
+from ayaz_phone_source import AYAZ_HOST, AYAZ_TERMS, ayaz_offer, ayaz_phone_url
 from catalog_source_collector import catalog_document_reader
 
 from competitor_catalog_gaps import public_phone_catalog, read_state, retailer_destination, write_json
@@ -160,6 +161,14 @@ def checked_offers(urls, name, specs, transport, documents=None, *, direct=None,
                         rejected = str(error) if str(error).startswith('ozgur_') else 'ozgur_invalid_source_data'
                 else:
                     rejected = 'ozgur_seller_identity_' + legal_reason
+            elif ayaz_phone_url(url) and host in direct:
+                if AYAZ_TERMS not in documents:
+                    documents[AYAZ_TERMS] = reader._read_document(AYAZ_TERMS, host, category=True)
+                terms, _, _ = documents[AYAZ_TERMS]
+                if terms:
+                    offer = ayaz_offer(html, terms, url=url, name=name, specs=specs)
+                if offer is None:
+                    rejected = 'ayaz_selected_offer_or_seller_unverified'
             elif vatan_phone_url(url):
                 offer = selected_vatan_tws(html, url, name,
                     lambda title, _brand: name if matcher.is_strict_match(name, title, specs) else None)
@@ -243,6 +252,8 @@ def supported_phone_url(url, *, expanded=False):
     route = urlsplit(url)
     if route.netloc == OZGUR_HOST:
         return expanded and ozgur_phone_url(url)
+    if route.netloc == AYAZ_HOST:
+        return expanded and ayaz_phone_url(url)
     if route.netloc in ('www.n11.com', 'www.trendyol.com'):
         return product_host(url) == route.netloc
     if expanded and route.netloc == 'www.hepsiburada.com':
@@ -467,6 +478,7 @@ def run(state, slugs, client=None, *, publish=False, maximum=24, products=None, 
         direct['www.hepsiburada.com'] = PriorityRetailerTransport(maximum_per_host=maximum,
             browser_fallback=False, get=_hepsiburada_public_get)
         direct[OZGUR_HOST] = PriorityRetailerTransport(maximum_per_host=maximum, browser_fallback=False)
+        direct[AYAZ_HOST] = PriorityRetailerTransport(maximum_per_host=min(maximum, 8), browser_fallback=False)
     if public_audit:
         direct['www.vatanbilgisayar.com'] = PriorityRetailerTransport(maximum_per_host=maximum,
             browser_fallback=False)
