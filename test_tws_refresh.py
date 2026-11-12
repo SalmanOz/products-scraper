@@ -9,6 +9,19 @@ from tws_retailer_sources import selected_vatan_store_tws
 
 
 class TwsRefreshTest(TestCase):
+    def test_teknosa_uses_the_existing_unavailable_robots_policy_for_exact_earbud_pages(self):
+        host = 'www.teknosa.com'
+        url = f'https://{host}/anker-aerofit-2-siyah-p-100000063496'
+        with patch('tws_catalog_expansion.PriorityRetailerTransport') as factory:
+            transport = factory.return_value
+            transport.read_fresh_document.return_value = None, 'http_403', 403
+            transport.resolved_url.return_value = url
+            offers, reasons = reread(host, [('Anker Soundcore AeroFit 2', {'url': url})], discover=True)
+        self.assertEqual(factory.call_args.kwargs['unavailable_robots_hosts'], (host,))
+        self.assertFalse(factory.call_args.kwargs['browser_fallback'])
+        self.assertFalse(offers)
+        self.assertEqual(reasons, {'http_403': 1})
+
     def test_partial_refresh_only_changes_fully_checked_variants_with_an_independent_pair(self):
         first, second, third = ('https://shop.example/' + suffix for suffix in ('one', 'two', 'three'))
         gtin = '0194644298876'
