@@ -180,12 +180,17 @@ def parse_catalog_listing(html, url, name, specs, *, reviewed_gtin=None):
     """Require the retailer's selected physical phone variant and commerce."""
     if not isinstance(specs, dict):
         return None, 'invalid_catalog_pdp'
-    # The iPhone 16 Plus has no 4G-only variant. A reviewed manufacturer
-    # barcode can anchor this exact Apple model when the retailer omits
-    # radio. Do not serialize a radio observation that the page did not make.
+    # A reviewed GTIN can anchor a single-radio model when the selected
+    # marketplace listing omits radio. The OPPO Türkiye CPH2791 specification
+    # confirms 16/512 GB with 5G. The reviewed white retail SKU is 6932169383141.
+    # https://www.oppo.com/tr/smartphones/series-find-x/find-x9-pro/specs/
     matcher = TRPriceScraper()
+    model = matcher._normalize_words(matcher._catalog_model_name(name, specs))
     allow_missing_radio = (reviewed_gtin is not None and retailer_gtin13(reviewed_gtin) == reviewed_gtin
-        and matcher._normalize_words(matcher._catalog_model_name(name, specs)) == 'apple iphone 16 plus')
+        and (model == 'apple iphone 16 plus'
+             or (model == 'oppo find x9 pro' and reviewed_gtin == '6932169383141'
+                 and matcher._spec_int(specs.get('ram_gb')) == 16
+                 and matcher._spec_int(specs.get('storage_gb')) == 512)))
     offer, reason = _parse_selected_listing(html, url,
         lambda product, title, brand: _phone_variant(product, title, brand, name, specs,
                                                      allow_missing_radio=allow_missing_radio),
@@ -350,6 +355,11 @@ def _parse_selected_listing(html, url, read_variant, check_group, *, default_htm
         value = price_data.get(key)
         if value is not None and (not isinstance(value, dict) or _amount(value.get('value')) != price):
             return None, 'conditional_price'
+    if 'ram_gb' in physical and 'storage_gb' in physical and 'network_generation' not in physical:
+        properties = schema.get('additionalProperty', [])
+        if not isinstance(properties, list) or any(
+                isinstance(prop, dict) and prop.get('name') == 'Mobil Bağlantı Hızı' for prop in properties):
+            return None, 'schema_selected_radio_mismatch'
     if schema.get('@type') == 'ProductGroup' and not check_group(schema, identity, url, physical, brand):
         return None, 'schema_selected_group_mismatch'
     offer = schema.get('offers')

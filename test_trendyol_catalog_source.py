@@ -87,6 +87,37 @@ class TrendyolCatalogTests(unittest.TestCase):
         product['attributes'].append({'key': {'name': 'Mobil Bağlantı Hızı'}, 'value': {'name': '4G'}})
         self.assertIsNone(parse_catalog_listing(document(changes), url, name, SPECS, reviewed_gtin=gtin)[0])
 
+    def test_reviewed_oppo_white_gtin_requires_exact_capacity_and_no_conflicting_radio(self):
+        name = 'OPPO Find X9 Pro'
+        title = name + ' 16/512 GB Akıllı Telefon İpek Beyazı'
+        gtin = '6932169383141'
+        specs = {'ram_gb': 16, 'storage_gb': 512, 'network_generation': '5g'}
+        product = evidence()['state']['product']
+        product['name'] = title.removeprefix('OPPO ')
+        product['brand'] = {'name': 'OPPO'}
+        product['attributes'] = [
+            {'key': {'name': key}, 'value': {'name': amount}}
+            for key, amount in [('RAM Kapasitesi', '16 GB'), ('Dahili Hafıza', '512 GB')]
+        ]
+        for row in (product['variants'][0], product['merchantListing']['variants'][0],
+                    product['merchantListing']['winnerVariant']):
+            row['barcode'] = gtin
+        url = 'https://www.trendyol.com/oppo/find-x9-pro-16-512-gb-ipek-beyazi-p-676507062'
+        schema = {**evidence()['schema'], 'name': title, '@id': url}
+        schema['offers']['url'] = url
+        changes = {('title',): title, ('schema',): schema, ('state', 'product'): product}
+        html = document(changes)
+        offer, reason = parse_catalog_listing(html, url, name, specs, reviewed_gtin=gtin)
+        self.assertIsNotNone(offer, reason)
+        self.assertEqual(offer['gtin13'], gtin)
+        self.assertNotIn('network_generation', offer)
+        for profile_gtin in (None, '6932169383158'):
+            self.assertIsNone(parse_catalog_listing(html, url, name, specs, reviewed_gtin=profile_gtin)[0])
+        self.assertIsNone(parse_catalog_listing(html, url, name, {**specs, 'storage_gb': 256},
+                                               reviewed_gtin=gtin)[0])
+        schema['additionalProperty'] = [{'@type': 'PropertyValue', 'name': 'Mobil Bağlantı Hızı', 'unitText': '4G'}]
+        self.assertIsNone(parse_catalog_listing(document(changes), url, name, specs, reviewed_gtin=gtin)[0])
+
     def test_canonical_cash_uses_selected_buy_box_only_when_schema_and_visible_price_agree(self):
         price = {'value': 34997, 'text': '34.997 TL'}
         changes = {
