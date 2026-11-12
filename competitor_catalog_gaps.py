@@ -23,7 +23,7 @@ from pazarama_category_source import pazarama_product_url
 from pc_parts_multistore import DIRECT_PATHS, offer_host
 from public_retailer_sources import public_source
 import requests
-from pttavm_offer_source import ptt_product_url
+from pttavm_offer_source import HOST as PTTAVM, PRODUCT_PATH as PTT_PATH, ptt_product_url
 from priority_retailer_transport import PriorityRetailerTransport, compatible_get, product_host
 from serinal_phone_source import SERINAL_CATEGORY, SERINAL_HOST, SERINAL_PATH, serinal_phone_url
 
@@ -38,8 +38,8 @@ INDIRIMLI = 'indirimli.com'
 TUBERKARAS = 'tuberkaras.com'
 UCUZYUM = 'www.ucuzyum.com'
 SOURCES = (AKAKCE, CIMRI, EPEY, URUNAI, KARSILASTIRICI, PAHALIMI, AMAHANGISI, INDIRIMLI,
-           TUBERKARAS, OZGUR_HOST, UCUZYUM, AYAZ_HOST, SERINAL_HOST, BESKEN_HOST)
-DIRECT_PHONE_STORES = {OZGUR_HOST, AYAZ_HOST, SERINAL_HOST, BESKEN_HOST}
+           TUBERKARAS, OZGUR_HOST, UCUZYUM, AYAZ_HOST, SERINAL_HOST, BESKEN_HOST, PTTAVM)
+DIRECT_RETAILER_SOURCES = {OZGUR_HOST, AYAZ_HOST, SERINAL_HOST, BESKEN_HOST, PTTAVM}
 URUNAI_CATEGORIES = {
     'telefon': 'phone', 'kulaklik': 'tws', 'laptop': 'laptop', 'monitor': 'monitor',
     'islemci': 'cpu', 'anakart': 'motherboard', 'ram-bellek': 'ram', 'ekran-karti': 'gpu',
@@ -62,6 +62,7 @@ ADDITIONAL_COMPARISON_CATEGORIES = {
     AYAZ_HOST: {'phone': '/kategori/cep-telefonu'},
     SERINAL_HOST: {'phone': SERINAL_CATEGORY},
     BESKEN_HOST: {'phone': BESKEN_CATEGORY},
+    PTTAVM: {'phone': '/cep-telefonu-c-53', 'tws': '/bluetooth-kulaklik-c-315'},
 }
 PAHALIMI_CATEGORIES = {'phone': '/kategori/cep-telefonu', 'laptop': '/kategori/dizustu-bilgisayar',
                        'monitor': '/kategori/monitor', 'tws': '/kategori/kulaklik'}
@@ -125,6 +126,7 @@ CARD = {
     AYAZ_HOST: re.compile(r'/urun/([a-z0-9-]{6,250})'),
     SERINAL_HOST: SERINAL_PATH,
     BESKEN_HOST: BESKEN_PATH,
+    PTTAVM: PTT_PATH,
     UCUZYUM: re.compile(r'/[a-z0-9-]{3,220}-cep-telefonu-([1-9]\d{3,9})'),
 }
 CARD_SELECTOR = {
@@ -139,6 +141,7 @@ CARD_SELECTOR = {
     AYAZ_HOST: '.showcase-title > a[href][title]',
     SERINAL_HOST: '.card-product-inner > a.c-p-i-link[href][title]:has(> .title)',
     BESKEN_HOST: '.product-list-wrapper .item-product-name > a[href]',
+    PTTAVM: 'article[class^="compactArticle__"] > a[class^="compactCard__"][href]:has(h2[class^="compactName__"])',
 }
 MODEL_TOKEN = re.compile(r'[a-zA-Z0-9]+(?:[-./_][a-zA-Z0-9]+)*')
 STOP_SOURCE = {'http_403', 'http_429', 'challenge_page', 'source_circuit_open',
@@ -195,6 +198,11 @@ def comparison_cards(html, host, url):
             title = anchor.select_one('.product-card-title').get_text(' ', strip=True)
         elif host == KARSILASTIRICI:
             title = anchor.select_one('h3').get_text(' ', strip=True)
+        elif host == PTTAVM:
+            if not ptt_product_url(target.geturl()):
+                continue
+            title = anchor.select_one('h2[class^="compactName__"]').get_text(' ', strip=True)
+            title = re.sub(r'\s*\([^)]{1,70} garantili\)\s*$', '', title, flags=re.I)
         elif host in (PAHALIMI, TUBERKARAS, OZGUR_HOST, BESKEN_HOST):
             title = anchor.get_text(' ', strip=True)
         else:
@@ -226,6 +234,8 @@ def comparison_cards(html, host, url):
             elif host == SERINAL_HOST and serinal_phone_url(card['url']):
                 card['retailerLeads'] = [card['url']]
             elif host == BESKEN_HOST and besken_phone_url(card['url']) and not target.query:
+                card['retailerLeads'] = [card['url']]
+            elif host == PTTAVM:
                 card['retailerLeads'] = [card['url']]
     return cards.values(), links
 
@@ -1153,7 +1163,7 @@ def main():
                                 priority, set(args.prioritize_model), collection=args.collection,
                                 known_leads=known_leads, stopped_reason=stopped.get(host),
                                 site_fallback=args.site_lead_fallback)
-                    for host in hosts if host not in DIRECT_PHONE_STORES and limits[host]]
+                    for host in hosts if host not in DIRECT_RETAILER_SOURCES and limits[host]]
             lead_scans = [scan for job in jobs for scan in job.result()]
     if args.state is not None:
         write_json(args.state, state)

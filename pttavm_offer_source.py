@@ -17,7 +17,7 @@ HOST = 'www.pttavm.com'
 BASE = 'https://' + HOST
 PRODUCT_PATH = re.compile(r'/[a-z0-9-]{3,250}-p-([1-9]\d{5,11})')
 SELLER_PATH = re.compile(r'/magaza/([a-z0-9-]{2,100})')
-CATEGORIES = {'phone': {'cep-telefonu', 'android-telefonlar', 'ios-telefonlar'},
+CATEGORIES = {'phone': {'cep-telefonu', 'android-telefonlar', 'iphone-ios-telefonlar'},
               'tws': {'bluetooth-kulaklik'}}
 USED = re.compile(r'\b(?:yenilenmis|ikinci el|refurbished|outlet|teshir|muadil|replika|yedek)\b')
 CONDITIONAL = re.compile(r'\b(?:sepete ozel|sepette|kuponla|uyeye ozel|uyelere ozel|kart ile)\b')

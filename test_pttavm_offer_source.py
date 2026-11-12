@@ -2,8 +2,8 @@ import json
 import unittest
 
 from comparison_phone_offers import supported_phone_url
-from competitor_catalog_gaps import retailer_destination
-from pttavm_offer_source import BASE, ptt_seller_identity, selected_ptt_offer
+from competitor_catalog_gaps import category_url, comparison_cards, retailer_destination
+from pttavm_offer_source import BASE, HOST, ptt_seller_identity, selected_ptt_offer
 from tws_refresh import selected_host
 
 
@@ -78,6 +78,16 @@ class PttavmOfferTests(unittest.TestCase):
             with self.subTest(kwargs=kwargs):
                 self.assertIsNone(selected_ptt_offer(product_document(**kwargs), URL, 'tws')[0])
         self.assertIsNone(selected_ptt_offer(product_document(), URL, 'phone')[0])
+
+    def test_category_cards_discover_selected_urls_without_card_prices(self):
+        category = '/bluetooth-kulaklik-c-315'
+        html = f'''<article class="compactArticle__grid"><a class="compactCard__product" href="{URL}">
+          <h2 class="compactName__title">{TITLE} (Anker Türkiye Garantili)</h2>
+          <span>1 TL</span></a></article>
+          <a href="{category}?page=2">2</a>'''
+        cards, links = comparison_cards(html, HOST, BASE + category)
+        self.assertEqual(list(cards), [{'id': '1445536859', 'title': TITLE, 'url': URL, 'retailerLeads': [URL]}])
+        self.assertIn(category_url(HOST, category, 2), links)
 
     def test_routing_accepts_only_bounded_canonical_public_pdp(self):
         self.assertEqual(retailer_destination(URL), URL)
