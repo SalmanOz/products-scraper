@@ -137,7 +137,7 @@ def checked_offers(urls, name, specs, transport, documents=None, *, direct=None,
             if mediamarkt_url(url):
                 offer = mediamarkt_selected(html, url)
             elif pazarama_product_url(url):
-                offer = pazarama_selected(html, url)
+                offer = pazarama_selected(html, url, phone=True)
             elif host == 'www.teknosa.com':
                 offer = teknosa_selected(html, url, name, specs)
             elif host == 'www.trendyol.com':

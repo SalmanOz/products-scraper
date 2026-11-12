@@ -278,9 +278,10 @@ def hepsiburada_pc_seller_targets(html, url, gtin):
 
 
 class PcRetailer:
-    def __init__(self, host, budget=150):
+    def __init__(self, host, budget=150, *, document_reader=None):
         self.host = host
-        get = {HEPSIBURADA: _hepsiburada_public_get, TRENDYOL: _trendyol_pc_public_get}.get(host, compatible_get)
+        get = document_reader or {HEPSIBURADA: _hepsiburada_public_get,
+                                  TRENDYOL: _trendyol_pc_public_get}.get(host, compatible_get)
         self.transport = PriorityRetailerTransport(
             maximum_per_host=budget, browser_fallback=False, get=get,
         )
@@ -382,7 +383,7 @@ class PcRetailer:
         return offer, reason
 
 
-def collect_targets(targets, *, discover_sellers=False, alternatives_by_url=None, unavailable=None):
+def collect_targets(targets, *, discover_sellers=False, alternatives_by_url=None, unavailable=None, document_readers=None):
     alternatives_by_url = alternatives_by_url or {}
     by_host = {}
     for url, part in targets:
@@ -390,7 +391,8 @@ def collect_targets(targets, *, discover_sellers=False, alternatives_by_url=None
             by_host.setdefault(host, []).append((url, part))
 
     def collect(host, rows):
-        reader = PcRetailer(host, budget=min(400, max(150, len(rows) * 2)))
+        reader = PcRetailer(host, budget=min(400, max(150, len(rows) * 2)),
+                            document_reader=(document_readers or {}).get(host))
         results = []
         for index, (url, part) in enumerate(rows):
             if offer := reader.read(url, part, discover_sellers=discover_sellers, alternatives=alternatives_by_url.get(url, ())):

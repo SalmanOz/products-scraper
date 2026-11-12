@@ -11,6 +11,7 @@ from urllib.parse import urljoin, urlsplit
 
 from bs4 import BeautifulSoup
 
+from catalog_source_collector import catalog_document_reader
 from competitor_catalog_gaps import read_state, retailer_destination, write_json
 from laptop_pilot import _image
 from pc_parts import CATEGORIES
@@ -62,7 +63,9 @@ def selected_images(html, title):
 
 
 def stage(state, catalog, profiles, output, maximum):
-    reader = PcRetailer(INCEHESAP, budget=min(50, len(CATEGORIES) * maximum + 2))
+    budget = min(50, len(CATEGORIES) * maximum + 2)
+    site_reader = catalog_document_reader('component-discovery')
+    reader = PcRetailer(INCEHESAP, budget=budget, document_reader=site_reader)
     known = {part['gtin'] for part in catalog['parts']}
     leads = candidate_groups(state, catalog, maximum, {p['sourceUrl'] for p in profiles.values()})
     candidates, targets = {}, {}
@@ -71,6 +74,11 @@ def stage(state, catalog, profiles, output, maximum):
     checked_at = datetime.now(timezone.utc).isoformat()
     for kind, url, links in leads:
         html, reason, _ = reader.transport._read_document(url, INCEHESAP)
+        if not html and site_reader and not candidates and reason in (
+                'http_403', 'http_503', 'robots_http_403', 'robots_http_503', 'transport_error'):
+            site_reader = None
+            reader = PcRetailer(INCEHESAP, budget=budget)
+            html, reason, _ = reader.transport._read_document(url, INCEHESAP)
         attempts[url] = checked_at
         if not html:
             rejects[reason] += 1
@@ -97,7 +105,8 @@ def stage(state, catalog, profiles, output, maximum):
     routes = {url: [candidates[gtin][0] for gtin in sorted(barcodes)] for url, barcodes in targets.items()}
     verified = defaultdict(list)
     for offer in collect_targets(((url, parts[0]) for url, parts in routes.items()),
-                                 alternatives_by_url={url: parts[1:] for url, parts in routes.items() if len(parts) > 1}):
+                                 alternatives_by_url={url: parts[1:] for url, parts in routes.items() if len(parts) > 1},
+                                 document_readers={INCEHESAP: site_reader} if site_reader else None):
         verified[offer['gtin']].append(offer)
     photos = output / 'photos'
     photos.mkdir(parents=True, exist_ok=True)
@@ -125,7 +134,8 @@ def stage(state, catalog, profiles, output, maximum):
                        'sourceUrl': url, 'specSourceUrl': profile['specSourceUrl'],
                        'offer': offers[0], 'offers': offers,
                        'offerTargets': list(dict.fromkeys([url, *(o['url'] for o in offers)]))})
-    return {'checkedAt': checked_at, 'queued': len(leads), 'selected': len(candidates),
+    return {'checkedAt': checked_at, 'primaryReader': 'site' if site_reader else 'runner',
+            'queued': len(leads), 'selected': len(candidates),
             'paired': paired, 'staged': staged, 'rejections': dict(rejects)}
 
 
@@ -145,7 +155,7 @@ def main():
     report['baseSha256'] = sha256(payload).hexdigest()
     write_json(args.output / 'report.json', report)
     write_json(args.state, state)
-    print(json.dumps({'queued': report['queued'], 'selected': report['selected'], 'paired': len(report['paired']),
+    print(json.dumps({'primaryReader': report['primaryReader'], 'queued': report['queued'], 'selected': report['selected'], 'paired': len(report['paired']),
                       'staged': [r['gtin'] for r in report['staged']], 'rejections': report['rejections']},
                      ensure_ascii=False))
 

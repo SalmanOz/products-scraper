@@ -178,5 +178,39 @@
       "Ekran Kartı Bağlantısı": "1 × 16 pin PCIe (600 W), 4 × 6+2 pin PCIe"
     },
     "sourceUrl": "https://www.incehesap.com/msi-mag-a1000gl-pcie5-beyaz-1000w-80-gold-full-moduler-power-supply-fiyati-89238/"
+  },
+  "4711377337649": {
+    "kind": "gpu",
+    "brand": "MSI",
+    "mpn": "G506T-8V3C",
+    "specSourceUrl": "https://www.msi.com/Graphics-Card/GeForce-RTX-5060-Ti-8G-VENTUS-3X-OC/Specification",
+    "sourceUrl": "https://www.incehesap.com/msi-geforce-rtx-5060ti-8g-ventus-3x-oc-gddr7-128bit-dx12-dlss-4-gaming-ekran-karti-fiyati-81233/",
+    "specs": {
+      "Grafik İşlemci Modeli": "NVIDIA GeForce RTX 5060 Ti",
+      "Grafik Bellek": "8 GB GDDR7",
+      "Uzunluk": "304 mm",
+      "Güç Tüketimi": "180 W",
+      "Önerilen Güç Kaynağı": "600 W",
+      "Güç Bağlantısı": "1 × 8 pin",
+      "Çıkışlar": "3 × DisplayPort 2.1b, 1 × HDMI 2.1b"
+    }
+  },
+  "4718466017918": {
+    "kind": "case",
+    "brand": "Lian Li",
+    "mpn": "G99.V100RW.01",
+    "specSourceUrl": "https://lian-li.com/product/vector-v100/",
+    "sourceUrl": "https://www.incehesap.com/lian-li-vector-v100r-beyaz-atx-kasa-fiyati-85371/",
+    "specs": {
+      "Kasa Tipi": "Mid Tower",
+      "Anakart Desteği": "ATX, Micro-ATX, Mini-ITX",
+      "Renk": "Beyaz",
+      "Boyutlar": "446 × 235,5 × 484,65 mm",
+      "Ekran Kartı Uzunluğu (Maks)": "420 mm",
+      "Soğutucu Yüksekliği (Maks)": "178 mm",
+      "Güç Kaynağı Desteği": "ATX, 220 mm’den kısa",
+      "Takılı Fan Sayısı": "4 × 120 mm",
+      "Radyatör Desteği": "Üst 360 mm"
+    }
   }
 }

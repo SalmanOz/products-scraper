@@ -92,7 +92,38 @@ def _teknosa_selected_sku_evidence(offer):
     return {**proof, 'version': 'selected-retailer-sku-v3', 'independent_radio': witness}
 
 
+def _pazarama_selected_sku_evidence(offer):
+    from pazarama_category_source import pazarama_product_url
+    from retailer_barcode import retailer_gtin13
+
+    url = offer.get('url')
+    gtin = offer.get('gtin13')
+    product, sku, listing = (offer.get(key) for key in ('product_id', 'sku', 'listing_id'))
+    slug, name = offer.get('merchant_id'), offer.get('merchant')
+    ram, storage, radio = (offer.get(key) for key in ('ram_gb', 'storage_gb', 'network_generation'))
+    uuid = r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}'
+    if (offer.get('selected_pazarama_variant_verified') is not True or offer.get('currency') != 'TRY'
+            or offer.get('condition') != 'new' or offer.get('availability') != 'in_stock'
+            or offer.get('price_kind') is not None):
+        return None
+    if (not isinstance(url, str) or not isinstance(gtin, str) or not pazarama_product_url(url)
+            or retailer_gtin13(gtin) != gtin or retailer_gtin13(url.rsplit('-p-', 1)[-1]) != gtin
+            or not isinstance(name, str) or not name.strip() or len(name) > 100 or re.search(r'[\x00-\x1f]', name)
+            or not isinstance(slug, str) or not re.fullmatch(r'[a-z0-9]+(?:-[a-z0-9]+)*', slug) or len(slug) > 100
+            or offer.get('seller_url') != f'https://www.pazarama.com/magaza/{slug}'
+            or not isinstance(product, str) or not re.fullmatch(uuid, product)
+            or not isinstance(sku, str) or not re.fullmatch(uuid, sku) or listing != sku
+            or type(ram) is not int or not 1 <= ram <= 64
+            or type(storage) is not int or not 32 <= storage <= 4096 or radio not in ('4g', '5g')):
+        return None
+    return {'version': 'selected-retailer-sku-v1', 'platform': 'Pazarama', 'product_id': product,
+            'sku': sku, 'listing_id': listing, 'merchant_id': slug, 'merchant_name': name, 'gtin13': gtin,
+            'ram_gb': ram, 'storage_gb': storage, 'network_generation': radio}
+
+
 def selected_sku_evidence(offer):
+    if isinstance(offer, dict) and offer.get('platform') == 'Pazarama':
+        return _pazarama_selected_sku_evidence(offer)
     if isinstance(offer, dict) and offer.get('platform') == 'Teknosa':
         return _teknosa_selected_sku_evidence(offer)
     if not isinstance(offer, dict) or offer.get('platform') not in ('Trendyol', 'n11'):
