@@ -4,7 +4,8 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import Mock, patch
 
-from comparison_phone_offers import audit_queue, candidate_urls, checked_offers, load_reviewed_profiles, publishable_pair, run
+from comparison_phone_offers import (audit_queue, candidate_urls, checked_offers, load_reviewed_profiles,
+                                     publishable_pair, published_offer_urls, run)
 
 
 MM = 'https://www.mediamarkt.com.tr/tr/product/_apple-iphone-16-plus-128-gb-akilli-telefon-mavi-146562812.html'
@@ -18,6 +19,19 @@ GTIN = '0195949722813'
 
 
 class ComparisonPhoneOffersTest(unittest.TestCase):
+    def test_public_phone_page_only_contributes_supported_offer_links(self):
+        response = Mock(status_code=200)
+        response.iter_content.return_value = [f'''<a href="{PZ}">Other link</a>
+            <article data-current-offer>
+              <a href="{MM}">Store</a><a href="{MM}">Duplicate</a>
+              <a href="https://example.com/phone">Unrecognized source</a>
+            </article>'''.encode()]
+        with patch('comparison_phone_offers.requests.get') as get:
+            get.return_value.__enter__.return_value = response
+            self.assertEqual(published_offer_urls('apple-iphone-16-plus'), [MM])
+        self.assertTrue(get.call_args.kwargs['stream'])
+        self.assertFalse(get.call_args.kwargs['allow_redirects'])
+
     def test_teknosa_alternate_seller_is_verified_from_the_canonical_document(self):
         canonical = 'https://www.teknosa.com/apple-iphone-16-plus-128gb-mavi-akilli-telefon-p-125079728'
         url = canonical + '?shopId=2078'

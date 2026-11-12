@@ -3,12 +3,14 @@
 import argparse
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
+from itertools import zip_longest
 import json
 from pathlib import Path
 import re
 from urllib.parse import urljoin, urlsplit
 
 from bs4 import BeautifulSoup
+import requests
 
 from catalog_source_collector import catalog_document_reader
 
@@ -281,6 +283,28 @@ def candidate_urls(state, slug, *, expanded=False):
                               and supported_phone_url(url, expanded=expanded)))
 
 
+def published_offer_urls(slug):
+    if not re.fullmatch(r'[a-z0-9-]{1,160}', slug):
+        return []
+    url = 'https://teknoskor.com/product/' + slug
+    try:
+        with requests.get(url, timeout=(4, 10), allow_redirects=False, stream=True) as response:
+            if response.status_code != 200:
+                return []
+            body = bytearray()
+            for chunk in response.iter_content(65536):
+                if len(body) + len(chunk) > 3 * 1024 * 1024:
+                    return []
+                body.extend(chunk)
+    except requests.RequestException:
+        return []
+    soup = BeautifulSoup(body.decode('utf-8', errors='replace'), 'html.parser')
+    return list(dict.fromkeys(
+        target for link in soup.select('[data-current-offer] a[href]')
+        if (target := retailer_destination(link['href'])) and supported_phone_url(target, expanded=True)
+    ))
+
+
 def audit_queue(state, products, maximum=8):
     audited = state.get('phoneOfferAudits', {})
     candidates = []
@@ -381,9 +405,13 @@ def run(state, slugs, client=None, *, publish=False, maximum=24, products=None, 
         product = products[slug]
         specs = PriceUpdater.get_expected_specs(product.get('attributes'))
         profile = profiles[slug] if profiles else None
-        urls = list(dict.fromkeys(profile['urls'] if profile else
-            category_leads(slug, product['name'], specs, transport, documents)
-            + candidate_urls(state, slug, expanded=public_audit)))
+        if profile:
+            urls = profile['urls'][:]
+        else:
+            discovered = category_leads(slug, product['name'], specs, transport, documents)
+            discovered += candidate_urls(state, slug, expanded=public_audit)
+            known = published_offer_urls(slug) if public_audit else ()
+            urls = list(dict.fromkeys(url for pair in zip_longest(discovered, known) for url in pair if url))
         # Spend each store's budget on the capacity being audited first.
         capacity = re.compile(r'-' + str(specs.get('storage_gb')) + '-?gb(?:-|_)')
         urls.sort(key=lambda url: not bool(capacity.search(urlsplit(url).path)))
