@@ -238,12 +238,12 @@ class CompetitorCatalogGapsTest(unittest.TestCase):
                     'url': f'https://{source}/urun/{key}', 'catalogFamily': family,
                     'retailerLeads': leads, 'firstSeenAt': '2026-11-01'}
 
-        original = row(PAHALIMI, 'source', 'OPPO Find X9',
-                       leads=['https://www.n11.com/urun/oppo-find-x9-123456'])
+        original = row(PAHALIMI, 'source', 'Nothing Phone 3A 128 GB 8 GB RAM',
+                       leads=['https://www.n11.com/urun/nothing-phone-3a-123456'])
         regular = row(KARSILASTIRICI, 'a-regular', 'Samsung Galaxy S26')
         gap = row(KARSILASTIRICI, 'b-gap', 'Apple iPhone 16 Plus', family='apple-iphone-16-plus')
-        complement = row(KARSILASTIRICI, 'c-complement', 'Oppo Find X9')
-        sibling = row(KARSILASTIRICI, 'd-sibling', 'Oppo Find X9')
+        complement = row(KARSILASTIRICI, 'c-complement', 'Nothing Phone (3a)')
+        sibling = row(KARSILASTIRICI, 'd-sibling', 'Nothing Phone (3a) 256 GB')
         state = {'products': {row['id']: row for row in (original, regular, gap, complement, sibling)}}
         reader = Mock()
         reader._read_document.return_value = ('<html></html>', 'document_read', 200)

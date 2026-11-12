@@ -986,9 +986,12 @@ def epey_earbud_title(html, url):
 
 
 def lead_group(row):
-    # Match known catalog families or exact normalized names across comparison
-    # sites. This is a discovery hint; SKU and seller checks still read the store.
-    identity = row.get('catalogFamily') or WORDS(row['title'])
+    # Group phone leads even before the model is in the catalog. Store pages
+    # still have to establish exact variant, price, stock and seller identity.
+    identity = row.get('catalogFamily')
+    if row['category'] == 'phone':
+        identity = phone_catalog_family(identity) if identity else phone_family(row['title']).replace(' ', '-')
+    identity = identity or WORDS(row['title'])
     return row['category'], identity
 
 
@@ -1033,13 +1036,14 @@ def scan_retailer_leads(state, host, kinds, maximum, now, priority=(), pinned=()
     for kind, rows in candidates.items():
         rows.sort(key=lambda row: (row.get('lastLeadAttemptAt', ''), not row.get('hasMarketPage'),
                                    row['firstSeenAt'], row['id']))
-        first = [row for row in rows if row.get('catalogFamily') in pinned or row['id'] in pinned]
-        others = [row for row in rows if row.get('catalogFamily') not in pinned and row['id'] not in pinned]
-        gaps, complementary, rest = [], [], []
+        first, gaps, complementary, rest = [], [], [], []
         targeted_groups = set()
-        for row in others:
+        for row in rows:
             group = lead_group(row)
-            if row.get('catalogFamily') in priority:
+            family = row.get('catalogFamily') or group[1]
+            if family in pinned or group[1] in pinned or row['id'] in pinned:
+                first.append(row)
+            elif family in priority or group[1] in priority:
                 gaps.append(row)
             elif group in needs_second_store and group not in targeted_groups:
                 complementary.append(row)
