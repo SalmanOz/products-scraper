@@ -27,6 +27,8 @@ SPECIFICATION = OVERVIEW + 'specs/'
 BENCHMARK = 'https://www.kimovil.com/en/where-to-buy-oppo-a6-pro'
 TRENDYOL = 'https://www.trendyol.com/oppo/a6-pro-5g-8-256-gb-yildiz-mavisi-p-1056113783'
 TEKNOSA = 'https://www.teknosa.com/oppo-a6-pro-5g-8256-yildiz-mavisi-akilli-telefon-p-100000060082'
+N11 = ('https://www.n11.com/urun/oppo-a6-pro-5g-8-gb-256-gb-distributor-garantili-116349615'
+       '?magaza=mcailetisim&renk=yildiz-mavisi&dahili-hafiza=256-gb')
 CANDIDATE = {'name': NAME, 'slug': SLUG, 'brandSlug': 'oppo', 'segment': 'popular_missing', 'evidenceUrl': OVERVIEW}
 
 
@@ -76,13 +78,13 @@ def prepare():
     names = product_names(read_spec_page(OVERVIEW), OVERVIEW)
     if not any(model_key(name) == model_key(NAME) for name in names):
         raise ValueError('oppo_manufacturer_model_unverified')
-    transport = PriorityRetailerTransport(maximum_per_host=4, browser_fallback=False, get=compatible_get,
-                                          unavailable_robots_hosts=('www.teknosa.com',))
     site_reader = catalog_document_reader('phone')
+    transport = PriorityRetailerTransport(maximum_per_host=4, browser_fallback=False, get=compatible_get,
+                                          n11_collector=site_reader, unavailable_robots_hosts=('www.teknosa.com',))
     teknosa = PriorityRetailerTransport(maximum_per_host=4, browser_fallback=False, get=site_reader,
                                        unavailable_robots_hosts=('www.teknosa.com',)) if site_reader else transport
     documents = {}
-    _, observed, rejected = checked_offers((TRENDYOL, TEKNOSA), NAME, SPECS, transport, documents,
+    _, observed, rejected = checked_offers((TRENDYOL, N11, TEKNOSA), NAME, SPECS, transport, documents,
                                            direct={'www.teknosa.com': teknosa}, reviewed_gtin=GTIN)
     verified = []
     for row in observed:
@@ -93,7 +95,9 @@ def prepare():
     if not pairs:
         print(json.dumps({'typedPlatforms': [row['platform'] for row in verified], 'rejections': rejected}), flush=True)
         raise ValueError('oppo_independent_same_gtin_pair_unverified')
-    trendyol = next(offer for offer in pairs[0] if offer['url'] == TRENDYOL)
+    trendyol = next((offer for offer in verified if offer['url'] == TRENDYOL), None)
+    if not trendyol:
+        raise ValueError('oppo_selected_product_photo_unverified')
     soup = BeautifulSoup(documents[TRENDYOL][0], 'html.parser')
     products = [row for row in _schema_nodes(soup, TRENDYOL) if row.get('@type') in ('Product', 'ProductGroup')
                 and str(row.get('sku')) == str(trendyol['product_id'])]
