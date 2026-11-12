@@ -16,7 +16,7 @@ from bs4 import BeautifulSoup
 
 from catalog_source_collector import catalog_document_reader
 from laptop_retailer_sources import WORDS
-from ozgur_phone_source import ozgur_phone_url
+from ozgur_phone_source import OZGUR_HOST, ozgur_phone_url
 from pazarama_category_source import pazarama_product_url
 from pc_parts_multistore import DIRECT_PATHS, offer_host
 from public_retailer_sources import public_source
@@ -32,7 +32,7 @@ PAHALIMI = 'pahalimi.com'
 AMAHANGISI = 'amahangisi.com'
 INDIRIMLI = 'indirimli.com'
 TUBERKARAS = 'tuberkaras.com'
-SOURCES = (AKAKCE, CIMRI, EPEY, URUNAI, KARSILASTIRICI, PAHALIMI, AMAHANGISI, INDIRIMLI, TUBERKARAS)
+SOURCES = (AKAKCE, CIMRI, EPEY, URUNAI, KARSILASTIRICI, PAHALIMI, AMAHANGISI, INDIRIMLI, TUBERKARAS, OZGUR_HOST)
 URUNAI_CATEGORIES = {
     'telefon': 'phone', 'kulaklik': 'tws', 'laptop': 'laptop', 'monitor': 'monitor',
     'islemci': 'cpu', 'anakart': 'motherboard', 'ram-bellek': 'ram', 'ekran-karti': 'gpu',
@@ -51,6 +51,7 @@ ADDITIONAL_COMPARISON_CATEGORIES = {
         'cooler': '/kategori/islemci-sogutucu',
     },
     TUBERKARAS: {'phone': '/kategori/telefon', 'tws': '/kategori/kulaklik'},
+    OZGUR_HOST: {'phone': '/telefon'},
 }
 PAHALIMI_CATEGORIES = {'phone': '/kategori/cep-telefonu', 'laptop': '/kategori/dizustu-bilgisayar',
                        'monitor': '/kategori/monitor', 'tws': '/kategori/kulaklik'}
@@ -76,11 +77,11 @@ PRODUCT_SITEMAPS = {
     AMAHANGISI: ('/sitemap.xml', '/sitemap/urunler-'),
 }
 PRODUCT_SITEMAP_LIMIT = 50 * 1024 * 1024
-PHONE_MEMORY = re.compile(r'(?: [1-9]\d? gb)? (?:[1-9]\d{1,3} gb|[1-9] tb)$')
+PHONE_MEMORY = re.compile(r'(?: [1-9]\d? gb(?: ram)?)? (?:[1-9]\d{1,3} gb|[1-9] tb)$')
 PHONE_STORAGE_THEN_RAM = re.compile(r' (?:[1-9]\d{2,3} gb|[1-9] tb) [1-9]\d? gb(?: ram)?$')
 PHONE_COLOR_AFTER_MEMORY = re.compile(
     r'( [1-9]\d{0,3} (?:gb(?: ram)?|tb)) (?:[a-z]{2,16} ){0,2}'
-    r'(?:siyah|beyaz|gri|mavi|mavisi|mor|moru|yesil|yesili|kirmizi|pembe|'
+    r'(?:siyah|siyahi|beyaz|beyazi|gri|grisi|mavi|mavisi|mor|moru|yesil|yesili|kirmizi|pembe|'
     r'turuncu|sari|gumus|altin|lacivert|bej|grafit|titanyum)$'
 )
 CATEGORIES = {
@@ -111,6 +112,7 @@ CARD = {
     AMAHANGISI: AMAHANGISI_PRODUCT,
     INDIRIMLI: KARSILASTIRICI_PRODUCT,
     TUBERKARAS: KARSILASTIRICI_PRODUCT,
+    OZGUR_HOST: re.compile(r'/urun/([a-z0-9-]{6,250})'),
 }
 CARD_SELECTOR = {
     AKAKCE: '#CPL a.iC[href][title]',
@@ -120,6 +122,7 @@ CARD_SELECTOR = {
     PAHALIMI: 'a.kat-urun-ort[href]',
     INDIRIMLI: 'a.product-card-refresh[href]:has(.product-card-title)',
     TUBERKARAS: 'article.urun-satir .satir-bilgi h3 > a[href]',
+    OZGUR_HOST: 'h2.oi-card-title > a[href]',
 }
 MODEL_TOKEN = re.compile(r'[a-zA-Z0-9]+(?:[-./_][a-zA-Z0-9]+)*')
 STOP_SOURCE = {'http_403', 'http_429', 'challenge_page', 'source_circuit_open',
@@ -171,11 +174,13 @@ def comparison_cards(html, host, url):
             title = anchor.select_one('.product-card-title').get_text(' ', strip=True)
         elif host == KARSILASTIRICI:
             title = anchor.select_one('h3').get_text(' ', strip=True)
-        elif host in (PAHALIMI, TUBERKARAS):
+        elif host in (PAHALIMI, TUBERKARAS, OZGUR_HOST):
             title = anchor.get_text(' ', strip=True)
         else:
             title = anchor['title']
         title = ' '.join(title.split())
+        if host == OZGUR_HOST:
+            title = re.sub(r'\s+\([\w ]{1,70} Türkiye Garantili\)$', '', title, flags=re.I)
         if host in ADDITIONAL_COMPARISON_CATEGORIES and re.match(r'iphone\s+\d', title, re.I):
             title = 'Apple ' + title
         if 3 <= len(title) <= 260:
@@ -188,6 +193,8 @@ def comparison_cards(html, host, url):
                 leads = {store_url for link in raw if (store_url := retailer_destination(link['href']))}
                 if leads:
                     card['retailerLeads'] = sorted(leads | set(card.get('retailerLeads', ())))
+            elif host == OZGUR_HOST and ozgur_phone_url(card['url']):
+                card['retailerLeads'] = [card['url']]
     return cards.values(), links
 
 
@@ -355,7 +362,7 @@ def in_scope(kind, title):
 def additional_comparison_in_scope(kind, title):
     title = WORDS(title)
     if kind == 'phone':
-        return not re.search(r'\b(?:uyumlu|dokunmatik ekran|ekran koruyucu|yedek parca|kapak|kilif|maket)\b', title)
+        return not re.search(r'\b(?:uyumlu|dokunmatik ekran|ekran koruyucu|yedek parca|kapak|kilif|maket|tuslu cep telefonu)\b', title)
     return kind != 'tws' or bool(re.search(r'\b(?:tws|kulak ici|airpods|tam kablosuz|acik kulak)\b', title))
 
 
@@ -1024,7 +1031,7 @@ def main():
             jobs = [pool.submit(scan_retailer_leads, state, host, kinds, limits[host], now,
                                 priority, set(args.prioritize_model), collection=args.collection,
                                 known_leads=known_leads)
-                    for host in hosts if host not in stopped and limits[host]]
+                    for host in hosts if host != OZGUR_HOST and host not in stopped and limits[host]]
             lead_scans = [job.result() for job in jobs]
     if args.state is not None:
         write_json(args.state, state)

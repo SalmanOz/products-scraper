@@ -10,6 +10,8 @@ from test_hepsiburada_iphone16pm_readonly import (
     COLOR, GTIN13, PRODUCT_ID, SCHEMA_URL, SKU, URL, fixture,
 )
 from update_prices import PriceUpdater
+from audit_hepsiburada_iphone16pm_readonly import _ordinary_selected_cash
+from decimal import Decimal
 
 NAME = 'Samsung Galaxy A36 5G'
 SPECS = {'ram_gb': 8, 'storage_gb': 128, 'network_generation': '5g'}
@@ -27,6 +29,18 @@ def document(changes=None):
 
 
 class HepsiburadaCatalogTests(unittest.TestCase):
+    def test_earbud_skeleton_requires_one_ordinary_price_and_no_active_campaign(self):
+        product = {'prices': [{'value': 7599, 'formattedPrice': '7.599,00', 'currency': 0, 'discountRate': 0}],
+                   'campaignIds': [], 'campaignNote': '', 'isCampaignParticipationClosed': False,
+                   'isShowPriceRangeOfListings': False}
+        amount = Decimal('7599')
+        self.assertFalse(_ordinary_selected_cash(product, amount))
+        self.assertTrue(_ordinary_selected_cash(product, amount, earbud_skeleton=True))
+        for changes in ({'campaignIds': ['coupon']}, {'campaignNote': 'Sepette indirim'},
+                        {'isShowPriceRangeOfListings': True}, {'isCampaignParticipationClosed': None},
+                        {'prices': [{**product['prices'][0], 'discountRate': 10}]}):
+            self.assertFalse(_ordinary_selected_cash({**product, **changes}, amount, earbud_skeleton=True))
+
     def test_price_skeleton_requires_ordinary_cash_and_matching_buy_box_events(self):
         soup = BeautifulSoup(document(), 'html.parser')
         redux = soup.select_one('script#reduxStore')

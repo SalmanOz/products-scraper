@@ -165,7 +165,7 @@ def selected_hepsiburada_tws(html, url, name, model_name):
     def verify(_soup, _product, title):
         return selected if all(model_name(text, brand) == name for text in (title, selected.get('name'), schema.get('name'))) else None
 
-    offer, reason = parse_exact_buy_box(html, url, scope=scope, verify_laptop=verify)
+    offer, reason = parse_exact_buy_box(html, url, scope=scope, verify_laptop=verify, earbud_skeleton=True)
     if offer:
         photo = next((photo for raw in schema.get('image', [])
                       if (photo := selected_photo(raw, {'productimages.hepsiburada.net'}))), None)

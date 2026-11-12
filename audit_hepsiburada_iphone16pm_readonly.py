@@ -87,10 +87,13 @@ def _first_party_laptop_cash(product, price):
             and type(prices[1].get('discountRate')) is int and 0 < prices[1]['discountRate'] < 100)
 
 
-def _ordinary_selected_cash(product, price):
+def _ordinary_selected_cash(product, price, *, earbud_skeleton=False):
     prices = product.get('prices')
+    closed = product.get('isCampaignParticipationClosed')
+    no_active_earbud_campaign = (earbud_skeleton and closed is False and
+                                 product.get('isShowPriceRangeOfListings') is False)
     if (price is None or product.get('campaignIds') != [] or product.get('campaignNote') != ''
-            or product.get('isCampaignParticipationClosed') is not True
+            or (closed is not True and not no_active_earbud_campaign)
             or not isinstance(prices, list) or len(prices) != 1 or not isinstance(prices[0], dict)):
         return False
     row = prices[0]
@@ -184,7 +187,7 @@ def _selected_variant(product, scope=None):
     return variant
 
 
-def parse_exact_buy_box(html: str, final_url: str = URL, *, scope=None, verify_laptop=None):
+def parse_exact_buy_box(html: str, final_url: str = URL, *, scope=None, verify_laptop=None, earbud_skeleton=False):
     """Reconcile all selected buy-box layers; default to the reviewed audit SKU."""
     scope = DEFAULT_REVIEWED_TARGET if scope is None else scope
     if (final_url != scope['URL'] or not isinstance(html, str)
@@ -306,7 +309,7 @@ def parse_exact_buy_box(html: str, final_url: str = URL, *, scope=None, verify_l
         client_rendered_cash = not selected_prices and (
             (verify_laptop is not None and _first_party_laptop_cash(product, price))
             or (len(soup.select('[data-test-id="price-skeleton"]')) == 1
-                and _ordinary_selected_cash(product, price)))
+                and _ordinary_selected_cash(product, price, earbud_skeleton=earbud_skeleton)))
     else:
         return None, 'selected_price_region_missing'
     match = re.fullmatch(r'(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)\s*TL',

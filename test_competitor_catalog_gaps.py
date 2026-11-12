@@ -7,9 +7,27 @@ from competitor_catalog_gaps import (AKAKCE, CIMRI, EPEY, KARSILASTIRICI, PAHALI
                                      identity_index, in_scope, merge_state, read_state)
 from competitor_catalog_gaps import (AMAHANGISI, INDIRIMLI, TUBERKARAS, comparison_lead_destination,
                                      lead_inventory, phone_family, retailer_destination, scan_retailer_leads)
+from ozgur_phone_source import OZGUR_HOST
 
 
 class CompetitorCatalogGapsTest(unittest.TestCase):
+    def test_direct_phone_category_discovers_only_scoped_ozgur_product_links(self):
+        url = f'https://{OZGUR_HOST}/urun/iphone-17-pro-max-512gb-kozmik-turuncu'
+        html = f'''<h2 class="oi-card-title"><a href="{url}">
+          iPhone 17 Pro Max 512 GB Kozmik Turuncu (Apple Türkiye Garantili)</a></h2>
+          <h2 class="oi-card-title"><a href="https://example.com/urun/outside">Other</a></h2>
+          <a href="/telefon?page=2">Sonraki sayfa</a>'''
+        reader = Mock()
+        reader._read_document.return_value = (html, 'document_read', 200)
+        index = {'phone': identity_index([{'name': 'Apple iPhone 17 Pro Max', 'slug': 'apple-iphone-17-pro-max'}])}
+        with patch('competitor_catalog_gaps.comparison_reader', return_value=reader):
+            report, rows = scan_source(OZGUR_HOST, ['phone'], index, 1, 1)
+        self.assertEqual(report[0]['nextPage'], 2)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['retailerLeads'], [url])
+        self.assertEqual(candidate_family('phone', rows[0]['title'], index['phone']), 'apple-iphone-17-pro-max')
+        self.assertEqual(phone_family('Samsung Galaxy A07s 4 GB Ram 128 GB Açık Mor'), 'samsung galaxy a07s')
+
     def test_pazarama_comparison_seller_link_contributes_only_a_canonical_lead(self):
         canonical = 'https://www.pazarama.com/aerofit-2-p-0194644298876'
         selected = canonical + '?magaza=dunya-marketi'
