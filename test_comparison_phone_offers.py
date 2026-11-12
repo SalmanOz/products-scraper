@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from comparison_phone_offers import (audit_queue, candidate_urls, capacity_priority, checked_offers, load_reviewed_profiles,
-                                     publishable_pair, published_offer_urls, run)
+                                     n11_phone_leads, publishable_pair, published_offer_urls, run)
 from ozgur_phone_source import OZGUR_HOST, OZGUR_TERMS, ozgur_offer
 
 
@@ -35,6 +35,30 @@ class ComparisonPhoneOffersTest(unittest.TestCase):
         names = (families[0], families[0] + '-8gb-256gb', families[1])
         products = [{'slug': name, 'name': name, 'attributes': {}, 'fresh_offer_count': 0} for name in names]
         self.assertEqual([row['slug'] for row in audit_queue(state, products, maximum=2)], list(families))
+
+    def test_phone_queue_keeps_one_source_gaps_and_prioritizes_compatible_urls(self):
+        family = 'apple-iphone-16-plus'
+        state = {'products': {
+            'first': {'catalogFamily': family, 'category': 'phone', 'retailerLeads': [HB, VATAN]},
+            'second': {'catalogFamily': 'honor-600', 'category': 'phone', 'retailerLeads': [
+                'https://www.n11.com/urun/honor-600-512-gb-987654']}}}
+        products = [{'slug': slug, 'name': slug, 'attributes': {'storage_gb': storage}, 'fresh_offer_count': 0}
+                    for slug, storage in ((family, 256), (family + '-8gb-128gb', 128), ('honor-600', 512))]
+        self.assertEqual(audit_queue(state, products), [products[1], products[2], products[0]])
+
+    def test_phone_search_supplies_only_matching_new_destination_urls(self):
+        search = Mock()
+        cards = ''.join(f'<a href="{url}"><h2 class="product-item-title">{title}</h2></a>'
+                        for url, title in (
+                            ('/urun/iphone-16-plus-128-gb-123456', 'Apple iPhone 16 Plus 128 GB'),
+                            ('/urun/iphone-16-plus-256-gb-234567', 'Apple iPhone 16 Plus 256 GB'),
+                            ('/urun/iphone-16-128-gb-345678', 'Apple iPhone 16 128 GB')))
+        search.read_n11_phone_search.return_value = cards, 'document_read', 200
+        url = 'https://www.n11.com/urun/iphone-16-plus-128-gb-123456'
+        self.assertEqual(n11_phone_leads(NAME, SPECS, search, ()),
+                         ([url], {'reason': 'document_read', 'httpStatus': 200, 'destinations': 1}))
+        search.read_n11_phone_search.assert_called_once_with('Apple iPhone 16 Plus 128 GB')
+        self.assertEqual(n11_phone_leads(NAME, SPECS, search, [url])[0], [])
 
     def test_ozgur_uses_the_selected_upc_without_inventing_missing_sku_or_radio(self):
         url = 'https://ozguriletisimankara.com/urun/iphone-15-mavi-128-gb'

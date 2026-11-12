@@ -20,7 +20,7 @@ from laptop_pilot import _hepsiburada_public_get, verify_seller
 from laptop_retailer_sources import marketplace_seller_identity
 from mediamarkt_marketplace_audit import selected_marketplace_offer
 from mediamarkt_source import _selected_offer as mediamarkt_first_party, product_url as mediamarkt_url
-from n11_catalog_source import parse_catalog_listing as n11_listing
+from n11_catalog_source import discover_catalog_targets as n11_search_targets, parse_catalog_listing as n11_listing
 from offer_ingestion_client import IngestionClientError, OfferIngestionClient
 from ozgur_phone_source import OZGUR_HOST, OZGUR_TERMS, ozgur_offer, ozgur_phone_url
 from pazarama_category_source import pazarama_product_url
@@ -302,18 +302,21 @@ def audit_queue(state, products, maximum=8):
         for raw in row.get('retailerLeads', ()):
             if url := retailer_destination(raw):
                 if supported_phone_url(url, expanded=True):
-                    by_family[row['catalogFamily']].add(urlsplit(url).netloc)
+                    by_family[row['catalogFamily']].add(url)
     for product in products:
         slug = product['slug']
         if not product.get('name') or not isinstance(product.get('attributes'), dict):
             continue
-        family = product_family(slug)
-        if len(by_family[family]) >= 2:
-            candidates.append(product)
-    ranked = sorted(candidates, key=lambda row: (
-        audited.get(row['slug'], ''), row.get('fresh_offer_count') not in (0, '0'), row['slug']))
+        urls = by_family[product_family(slug)]
+        storage = PriceUpdater.get_expected_specs(product['attributes']).get('storage_gb')
+        compatible_hosts = {urlsplit(url).netloc for url in urls if capacity_priority(url, storage) < 2}
+        if compatible_hosts or len({urlsplit(url).netloc for url in urls}) >= 2:
+            candidates.append((product, len(compatible_hosts)))
+    ranked = sorted(candidates, key=lambda entry: (
+        audited.get(entry[0]['slug'], ''), entry[0].get('fresh_offer_count') not in (0, '0'),
+        -min(entry[1], 2), entry[0]['slug']))
     families = defaultdict(deque)
-    for row in ranked:
+    for row, _ in ranked:
         families[product_family(row['slug'])].append(row)
     queue = deque(families.values())
     selected = []
@@ -323,6 +326,18 @@ def audit_queue(state, products, maximum=8):
         if siblings:
             queue.append(siblings)
     return selected
+
+
+def n11_phone_leads(name, specs, reader, excluded_urls):
+    storage = TRPriceScraper._spec_int(specs.get('storage_gb'))
+    model = TRPriceScraper._catalog_model_name(name, specs)
+    if not storage or not model:
+        return [], {'reason': 'phone_search_identity_incomplete', 'destinations': 0}
+    model = ' '.join(re.sub(r'\b(?:4g|5g|lte)\b', '', model, flags=re.I).split())
+    capacity = f'{storage // 1024} TB' if storage >= 1024 and storage % 1024 == 0 else f'{storage} GB'
+    html, reason, status = reader.read_n11_phone_search(f'{model} {capacity}')
+    urls = [row['source_url'] for row in n11_search_targets(html, name, specs, excluded_urls=excluded_urls)]
+    return urls, {'reason': reason, 'httpStatus': status, 'destinations': len(urls)}
 
 
 def publishable_pair(observations, client, product):
@@ -408,6 +423,9 @@ def run(state, slugs, client=None, *, publish=False, maximum=24, products=None, 
     if public_audit:
         direct['www.vatanbilgisayar.com'] = PriorityRetailerTransport(maximum_per_host=maximum,
             browser_fallback=False)
+        # Category search stays public. Destination pages use the same
+        # retailer verifier and request budget as every other product lead.
+        n11_search = PriorityRetailerTransport(maximum_per_host=min(maximum, 8), browser_fallback=False)
     documents = {}
     seller_cache = {}
     for slug in slugs:
@@ -437,12 +455,23 @@ def run(state, slugs, client=None, *, publish=False, maximum=24, products=None, 
         pair, observations, rejects = checked_offers(
             urls, product['name'], specs, transport, documents, direct=direct, seller_cache=seller_cache,
             reviewed_gtin=profile['gtin'] if profile else None)
+        search = None
+        if public_audit and not pair:
+            extra_urls, search = n11_phone_leads(product['name'], specs, n11_search, urls)
+            if extra_urls:
+                _, extra_offers, extra_rejects = checked_offers(
+                    extra_urls, product['name'], specs, transport, documents, direct=direct, seller_cache=seller_cache)
+                observations.extend(extra_offers)
+                rejects.extend(extra_rejects)
+                pair = next(iter(ranked_pairs(observations)), [])
         if profile:
             observations = [row for row in observations if row['gtin13'] == profile['gtin']]
             pair = next(iter(ranked_pairs(observations)), [])
         result = {'slug': slug, 'sameGtin': pair[0]['gtin13'] if pair else None,
                   'selectedPair': [report_offer(row) for row in pair],
                   'offers': [report_offer(row) for row in observations], 'rejections': rejects}
+        if search is not None:
+            result['n11Search'] = search
         if (publish or profile) and pair:
             pair, result['sellerChecks'] = publishable_pair(observations, client, product)
             if not pair:
