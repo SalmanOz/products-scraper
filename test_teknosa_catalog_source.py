@@ -1,5 +1,6 @@
 import unittest
 
+from automatic_memory_variants import variant_selected_evidence
 from retailer_offer_refresh import RetailerOfferRefresher
 from selected_sku_evidence import selected_sku_evidence
 from teknosa_reviewed_source import TeknosaCatalogSource, parse_catalog_offer, parse_exact_first_party_offer
@@ -37,6 +38,9 @@ class TeknosaCatalogTests(unittest.TestCase):
             'sku': '100000060715', 'listing_id': '100000060715', 'merchant_id': '1001', 'merchant_name': 'Teknosa',
             'gtin13': barcode, 'ram_gb': 12, 'storage_gb': 512, 'network_generation': '5g',
         })
+        self.assertEqual(variant_selected_evidence({**offer, 'platform': 'Teknosa'}, profile['name'], profile['specs']), proof)
+        self.assertIsNone(variant_selected_evidence({**offer, 'platform': 'Teknosa'}, profile['name'],
+                                                  {**profile['specs'], 'storage_gb': 256}))
         for wrong in ({'selected_teknosa_first_party_verified': False}, {'merchant': 'Other seller'},
                       {'listing_id': '100000060716'}, {'url': url + '?shopId=1001'}):
             self.assertIsNone(selected_sku_evidence({**offer, **wrong}))

@@ -186,6 +186,10 @@ def variant_selected_evidence(offer, name, specs):
         # separate variant; expectations never fill source facts.
         table_proof = selected_sku_evidence(offer)
         if table_proof is not None:
+            if offer.get('selected_teknosa_first_party_verified') is True:
+                exact_specs = all(table_proof.get(key) == specs.get(key)
+                                  for key in ('ram_gb', 'storage_gb', 'network_generation'))
+                return table_proof if exact_specs and TRPriceScraper().has_observed_offer_evidence(name, offer, specs) else None
             return table_proof if matches(offer, name, specs) else None
         matcher = TRPriceScraper()
         title = offer.get('source_title')
