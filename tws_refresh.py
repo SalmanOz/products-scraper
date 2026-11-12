@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from catalog_source_collector import catalog_document_reader
+from idefix_tws_source import HOST as IDEFIX, idefix_product_url
 from nethouse_offer_source import HOST as NETHOUSE, nethouse_product_url
 from pazarama_category_source import HOST as PAZARAMA, pazarama_product_url
 from pttavm_offer_source import HOST as PTTAVM, ptt_product_url
@@ -38,6 +39,8 @@ def selected_host(url):
     if host == PTTAVM and ptt_product_url(url):
         return host
     if host == NETHOUSE and nethouse_product_url(url):
+        return host
+    if host == IDEFIX and idefix_product_url(url):
         return host
     if host == 'www.mediamarkt.com.tr' and _mediamarkt_tws_url(url):
         return host

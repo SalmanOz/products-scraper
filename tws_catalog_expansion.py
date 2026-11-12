@@ -14,6 +14,9 @@ from curl_cffi.requests import RequestsError
 
 from catalog_source_collector import catalog_document_reader
 from hepsiburada_catalog_discovery import discover_product_sellers as hepsiburada_seller_targets
+from idefix_tws_source import (API_HOST as IDEFIX_API, HOST as IDEFIX, IMAGE_HOSTS as IDEFIX_IMAGES,
+                               idefix_other_seller_urls, idefix_product_url, idefix_selected_seller,
+                               idefix_seller_identity, idefix_vendor_document, selected_idefix_offer)
 from laptop_pilot import IMAGE_HOSTS, _hepsiburada_public_get, _image, _public_offers, verify_seller
 from mediamarkt_source import MediaMarktSource, _selected_offer
 from nethouse_offer_source import HOST as NETHOUSE, IMAGE_HOST as NETHOUSE_IMAGE, nethouse_product_url, selected_nethouse_offer
@@ -32,7 +35,7 @@ from vatan_category_source import VatanCategorySource
 
 MARKETPLACES = {'www.n11.com', 'www.trendyol.com', 'www.hepsiburada.com', 'www.teknosa.com'}
 STORES = {'www.vatanbilgisayar.com', 'www.mediamarkt.com.tr'}
-TWS_IMAGE_HOSTS = IMAGE_HOSTS | {'productimages.hepsiburada.net', 'reimg-teknosa-cloud-prod.mncdn.com',
+TWS_IMAGE_HOSTS = IMAGE_HOSTS | IDEFIX_IMAGES | {'productimages.hepsiburada.net', 'reimg-teknosa-cloud-prod.mncdn.com',
                                'img.pzrmcdn.com', 'cdn-s3.pttavm.com', NETHOUSE_IMAGE}
 ALTERNATE_SELLER_BUDGET = 8
 COLOR_NAMES = {
@@ -107,7 +110,7 @@ def verify_media(html, url, name):
 def reread(host, rows, statuses=None, document_reader=None, *, discover=False):
     observations, failures = defaultdict(list), Counter()
     seller_budget = ALTERNATE_SELLER_BUDGET if discover and host in {
-        'www.n11.com', 'www.trendyol.com', 'www.hepsiburada.com',
+        'www.n11.com', 'www.trendyol.com', 'www.hepsiburada.com', IDEFIX,
     } else 0
     pending = deque(rows)
     queued = {target['url'] for _, target in pending}
@@ -115,7 +118,7 @@ def reread(host, rows, statuses=None, document_reader=None, *, discover=False):
     identities = {}
     transport = None
     direct_reader = {PAZARAMA: pazarama_product_url, PTTAVM: ptt_product_url,
-                     NETHOUSE: nethouse_product_url}.get(host)
+                     NETHOUSE: nethouse_product_url, IDEFIX: idefix_product_url}.get(host)
     if host in MARKETPLACES or direct_reader:
         options = {}
         if document_reader is not None:
@@ -124,11 +127,14 @@ def reread(host, rows, statuses=None, document_reader=None, *, discover=False):
             options.update(get=_hepsiburada_public_get, browser_fallback=False)
         elif host == PTTAVM:
             options.update(get=compatible_get, browser_fallback=False)
-        elif discover or host == NETHOUSE:
+        elif discover or host in (NETHOUSE, IDEFIX):
             options['browser_fallback'] = False
+        if host == IDEFIX:
+            options['missing_robots_hosts'] = (IDEFIX_API,)
         if host in ('www.teknosa.com', PAZARAMA):
             options.update(browser_fallback=False, unavailable_robots_hosts=(host,))
-        transport = PriorityRetailerTransport(maximum_per_host=min(260, len(rows) + seller_budget), **options)
+        document_budget = len(rows) * (2 if host == IDEFIX and discover else 1) + seller_budget
+        transport = PriorityRetailerTransport(maximum_per_host=min(260, document_budget), **options)
     source = None
     if host in STORES:
         source = (VatanCategorySource(fetch=document_reader) if host.startswith('www.vatan')
@@ -190,6 +196,34 @@ def reread(host, rows, statuses=None, document_reader=None, *, discover=False):
                 current, reason = selected_teknosa_tws(html, final, name, model_name)
             elif host == NETHOUSE:
                 current, reason = selected_nethouse_offer(html, final, name, model_name)
+            elif host == IDEFIX:
+                selected = {}
+                current, reason = selected_idefix_offer(html, final, name, model_name, discovery=selected)
+                if seller_hints is not None and selected and (sku := (name, selected['gtin13'])) not in expanded:
+                    alternatives = idefix_vendor_document(selected['price_id'], 'price-options')
+                    body, _, _ = transport._read_document(alternatives, IDEFIX_API, classification=True)
+                    for destination in idefix_other_seller_urls(body, selected):
+                        if destination in queued:
+                            continue
+                        pending.append((name, {'url': destination, 'gtin13': selected['gtin13']}))
+                        queued.add(destination)
+                        expanded.add(sku)
+                        seller_budget -= 1
+                        break
+                if current:
+                    vendor_url = idefix_vendor_document(current['price_id'])
+                    body, outcome, _ = transport._read_document(vendor_url, IDEFIX_API, classification=True, fresh=True)
+                    seller = idefix_selected_seller(body, current)
+                    if seller and seller not in identities:
+                        profile, outcome, _ = transport._read_document('https://' + IDEFIX + seller[2], IDEFIX, category=True)
+                        identities[seller] = (idefix_seller_identity(profile, seller) if profile else None, outcome)
+                    identity, outcome = identities.get(seller, (None, outcome))
+                    if identity:
+                        current.update(merchant_id=seller[0], merchant=seller[1], _legal_name=identity[0], _tax_key=identity[1])
+                    else:
+                        current, reason = None, 'seller_identity_unverified'
+                        if statuses is not None and outcome != 'document_read':
+                            statuses[url] = 'unavailable'
             elif host in (PAZARAMA, PTTAVM):
                 if host == PAZARAMA:
                     current = selected_pazarama_tws(html, final, name, model_name)
@@ -306,6 +340,7 @@ def stage(catalog, snapshot, specs, candidates, output, *, allow_empty=False):
                     or p.netloc == PAZARAMA and pazarama_product_url(url)
                     or p.netloc == PTTAVM and ptt_product_url(url)
                     or p.netloc == NETHOUSE and nethouse_product_url(url)
+                    or p.netloc == IDEFIX and idefix_product_url(url)
                     or p.netloc == 'www.vatanbilgisayar.com' and _vatan_url(url)
                     or p.netloc == 'www.mediamarkt.com.tr' and _mediamarkt_tws_url(url)):
                 sources[p.netloc].append((name, row))
