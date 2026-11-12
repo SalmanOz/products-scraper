@@ -77,6 +77,9 @@ EXPANSION_COHORT = (
 )
 NEW_MODELS = (
     ('Baseus', 'Bass BP1 Pro', r'bass bp1 pro'),
+    ('Baseus', 'Inspire XP1', r'inspire xp1(?! pro| plus)'),
+    ('Beats', 'Solo Buds', r'solo buds'),
+    ('SoundPEATS', 'Air6 HS', r'air ?6 hs(?! pro| plus)'),
     ('Nothing', 'CMF Buds 2a', r'(?:cmf(?: by nothing)? )?buds ?2a'),
     ('Nothing', 'Ear (a)', r'ear ?a'),
     ('Nothing', 'Ear (3)', r'ear ?3'),

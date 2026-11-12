@@ -1,4 +1,47 @@
 {
+  "Beats Solo Buds": {
+    "summary": "Beats Solo Buds, çift katmanlı sürücülere sahip tam kablosuz kulaklık. Üretici, kulaklıklarda tek şarjla 18 saate kadar dinleme süresi belirtiyor.",
+    "highlights": ["Tek şarjla 18 saate kadar dinleme", "Bluetooth 5.3", "USB-C şarj kutusu"],
+    "specSource": "https://www.beatsbydre.com/uk/earbuds/solo-buds",
+    "specs": [
+      {"label": "Sürücü", "value": "Çift katmanlı"},
+      {"label": "Tek şarjla müzik", "value": "18 saate kadar"},
+      {"label": "Bluetooth", "value": "5.3"},
+      {"label": "Şarj", "value": "USB-C bağlantılı kutu"},
+      {"label": "Hızlı şarj", "value": "5 dakika şarjla 1 saate kadar dinleme"},
+      {"label": "Kulak ucu seçenekleri", "value": "XS, S, M, L"}
+    ]
+  },
+  "Baseus Inspire XP1": {
+    "summary": "Inspire XP1, aktif gürültü engelleme ve iki cihaza bağlantı sunuyor. Üretici, gürültü engelleme kapalıyken kutuyla yaklaşık 45 saat dinleme süresi belirtiyor.",
+    "highlights": ["Aktif gürültü engelleme", "10 mm dinamik sürücü", "Bluetooth 6.1"],
+    "specSource": "https://www.baseus.com/products/inspire-xp1-true-wireless-earbuds",
+    "specs": [
+      {"label": "Gürültü kontrolü", "value": "Aktif gürültü engelleme"},
+      {"label": "Sürücü", "value": "10 mm dinamik"},
+      {"label": "Tek şarjla müzik", "value": "Yaklaşık 8 saat (ANC kapalı, %50 ses)"},
+      {"label": "Kutuyla toplam müzik", "value": "Yaklaşık 45 saat (ANC kapalı)"},
+      {"label": "Bluetooth", "value": "6.1"},
+      {"label": "Ses kodekleri", "value": "SBC ve AAC"},
+      {"label": "Dayanıklılık", "value": "IPX4"},
+      {"label": "Çoklu cihaz bağlantısı", "value": "Var"}
+    ]
+  },
+  "SoundPEATS Air6 HS": {
+    "summary": "Air6 HS, 13 mm sürücülü, yarı açık tasarımlı ve LDAC destekli bir kablosuz kulaklık. Üretici, kutuyla 45 saate kadar dinleme süresi belirtiyor.",
+    "highlights": ["LDAC", "Bluetooth 6.0", "IPX5 suya dayanıklılık"],
+    "specSource": "https://soundpeats.com/products/air6-hs-semi-in-ear-earbuds",
+    "specs": [
+      {"label": "Tasarım", "value": "Yarı kulak içi"},
+      {"label": "Sürücü", "value": "13 mm üç mıknatıslı dinamik"},
+      {"label": "Tek şarjla müzik", "value": "9 saate kadar"},
+      {"label": "Kutuyla toplam müzik", "value": "45 saate kadar"},
+      {"label": "Bluetooth", "value": "6.0"},
+      {"label": "Ses kodekleri", "value": "SBC, AAC ve LDAC"},
+      {"label": "Dayanıklılık", "value": "IPX5"},
+      {"label": "Çoklu cihaz bağlantısı", "value": "Var"}
+    ]
+  },
   "Anker Soundcore AeroClip": {
     "summary": "AeroClip, kulağı kapatmayan klipsli bir kablosuz kulaklık. Üretici, şarj kutusuyla 32 saate kadar müzik dinleme süresi belirtiyor.",
     "highlights": ["Açık kulak klipsi", "12 mm titanyum kaplamalı sürücü", "İki cihaza bağlantı"],
