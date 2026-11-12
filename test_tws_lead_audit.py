@@ -6,7 +6,8 @@ import unittest
 from unittest.mock import patch
 
 from tws_catalog_expansion import candidates_from_audit, stage
-from tws_lead_audit import KNOWN_MODELS, audit, collect_leads, identify, native_search_models, search_native_retailer
+from tws_lead_audit import (KNOWN_MODELS, audit, collect_leads, discover_native_leads, identify, native_search_models,
+                            search_native_retailer)
 
 
 class EarbudLeadAuditTest(unittest.TestCase):
@@ -60,14 +61,30 @@ class EarbudLeadAuditTest(unittest.TestCase):
     def test_native_search_rotates_bounded_model_gaps(self):
         now = datetime.now(timezone.utc)
         name, other, *remaining = sorted(KNOWN_MODELS)
+        host = 'www.n11.com'
         covered = {'models': [{'name': name, 'gtin': '4548736171824',
                               'offers': [{'platform': 'n11'}, {'platform': 'Trendyol'}]}]}
-        state = {'earbudNativeSearchAudits': {other: now.isoformat()}}
-        self.assertEqual(native_search_models(state, covered, (), now), remaining[:4])
-        self.assertEqual(native_search_models(state, covered, [name, other, 'Not a model', name], now), [name, other])
+        state = {'earbudNativeSearchAudits': {host: {other: now.isoformat()}}}
+        self.assertEqual(native_search_models(state, covered, (), now, host), remaining[:4])
+        self.assertEqual(native_search_models(state, covered, [name, other, 'Not a model', name], now, host), [name, other])
         state['earbudLeadObservations'] = {'https://www.n11.com/urun/earbuds-12345678':
             {'name': name, 'gtin13': '4548736171770', 'checkedAt': now.isoformat()}}
-        self.assertEqual(native_search_models(state, covered, (), now), [name, *remaining[:3]])
+        self.assertEqual(native_search_models(state, covered, (), now, host), [name, *remaining[:3]])
+
+    def test_denial_in_one_store_does_not_mark_its_model_as_searched(self):
+        name = 'Sony WF-1000XM6'
+        now = datetime.now(timezone.utc)
+        state = {}
+
+        def search(host, models):
+            status = 403 if host == 'www.n11.com' else 200
+            return {}, [{'model': model, 'httpStatus': status} for model in models]
+
+        with patch('tws_lead_audit.search_native_retailer', side_effect=search):
+            discover_native_leads(state, {}, [name], now)
+        self.assertEqual(state['earbudNativeSearchAudits'], {
+            'www.hepsiburada.com': {name: now.isoformat()}, 'www.n11.com': {},
+        })
 
     def test_new_product_stages_all_fresh_independent_gtins_from_audit(self):
         name = 'Nothing Ear (a)'

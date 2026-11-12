@@ -76,7 +76,7 @@ def collect_leads(state, models=(), maximum=16, *, priority=()):
     return selected
 
 
-def native_search_models(state, snapshot, models, now):
+def native_search_models(state, snapshot, models, now, host):
     if models:
         return list(dict.fromkeys(name for name in models if name in KNOWN_MODELS))[:NATIVE_SEARCH_MODELS]
     covered_variants = {(row['name'], row['gtin']) for row in snapshot.get('models', [])
@@ -84,7 +84,7 @@ def native_search_models(state, snapshot, models, now):
     unpaired_models = {row['name'] for row in recent_observations(state, now).values()
                        if (row['name'], row['gtin13']) not in covered_variants}
     covered = {name for name, _ in covered_variants} - unpaired_models
-    previous = state.get('earbudNativeSearchAudits', {})
+    previous = state.get('earbudNativeSearchAudits', {}).get(host, {})
     cutoff = (now - timedelta(hours=24)).isoformat()
     pending = KNOWN_MODELS - {name for name, checked in previous.items() if checked >= cutoff}
     return sorted(pending, key=lambda name: (name in covered, previous.get(name, ''),
@@ -111,12 +111,12 @@ def search_native_retailer(host, names):
 
 
 def discover_native_leads(state, snapshot, models, now):
-    names = native_search_models(state, snapshot, models, now)
-    if not names:
+    searches = {host: native_search_models(state, snapshot, models, now, host) for host in NATIVE_SEARCH_HOSTS}
+    if not any(searches.values()):
         return {}, set()
     leads, reports = defaultdict(list), {}
     with ThreadPoolExecutor(max_workers=len(NATIVE_SEARCH_HOSTS)) as pool:
-        jobs = {host: pool.submit(search_native_retailer, host, names) for host in NATIVE_SEARCH_HOSTS}
+        jobs = {host: pool.submit(search_native_retailer, host, names) for host, names in searches.items() if names}
         for host, job in jobs.items():
             targets, reports[host] = job.result()
             for name, urls in targets.items():
@@ -125,7 +125,9 @@ def discover_native_leads(state, snapshot, models, now):
     for name, urls in leads.items():
         if urls:
             saved[name] = list(dict.fromkeys([*urls, *saved.get(name, [])]))[:12]
-    state.setdefault('earbudNativeSearchAudits', {}).update({name: now.isoformat() for name in names})
+    audits = state.setdefault('earbudNativeSearchAudits', {})
+    for host, rows in reports.items():
+        audits.setdefault(host, {}).update({row['model']: now.isoformat() for row in rows if row['httpStatus'] == 200})
     return reports, {url for urls in leads.values() for url in urls}
 
 
