@@ -78,6 +78,8 @@ def main():
     cli.add_argument('targets', type=Path)
     cli.add_argument('catalog', type=Path)
     cli.add_argument('output', type=Path)
+    cli.add_argument('--collection', choices=('site', 'mixed'), default='site')
+    cli.add_argument('--report', type=Path)
     args = cli.parse_args()
     catalog = json.loads(args.catalog.read_text())
     gtins = {model['gtin'] for model in catalog['models']}
@@ -97,10 +99,20 @@ def main():
         with collector_slot:
             return sessions.client.monitor_document_get(url, **options)
 
-    groups, rejected = collect_observations(targets, read_document if token else None)
+    started = datetime.now(timezone.utc)
+    direct_hosts = {'www.mediamarkt.com.tr'} if args.collection == 'mixed' else ()
+    groups, rejected = collect_observations(targets, read_document if token else None, direct_hosts=direct_hosts)
     snapshot, fresh, paired = refresh(catalog, groups, datetime.now(timezone.utc))
-    print(json.dumps({'fresh_models': fresh, 'fresh_pairs': paired,
-                      'rejected': rejected}, ensure_ascii=False), flush=True)
+    discovery_gtins = {row['gtin'] for row in catalog.get('discoveryTargets', [])}
+    report = {'fresh_models': fresh, 'fresh_pairs': paired, 'rejected': rejected,
+              'discovery_models': [{'gtin': row['gtin'], 'mpn': row['mpn'],
+                                    'fresh_offers': sum(datetime.fromisoformat(offer['observed_at']) >= started
+                                                        for offer in row['offers'])}
+                                   for row in snapshot['models'] if row['gtin'] in discovery_gtins]}
+    payload = json.dumps(report, ensure_ascii=False)
+    print(payload, flush=True)
+    if args.report:
+        args.report.write_text(payload + '\n', encoding='utf-8')
     if paired < CROSS_PLATFORM_MINIMUM:
         raise SystemExit(f'Refresh stopped: only {paired} models had two newly verified independent platform offers')
     args.output.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')

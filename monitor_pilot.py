@@ -184,7 +184,7 @@ def pick_pilot(records):
     return output
 
 
-def collect_observations(targets, collector=None):
+def collect_observations(targets, collector=None, *, direct_hosts=()):
     by_host = defaultdict(list)
     seen = set()
     if not isinstance(targets, list) or not 1 <= len(targets) <= 180:
@@ -200,8 +200,11 @@ def collect_observations(targets, collector=None):
         by_host[route.netloc].append(row)
     groups, rejections = defaultdict(list), Counter()
     with ThreadPoolExecutor(max_workers=len(by_host)) as pool:
-        for (host, rows), (offers, rejected) in zip(by_host.items(), pool.map(
-                lambda pair: read_targets(*pair, collector=collector), by_host.items())):
+        jobs = {host: pool.submit(read_targets, host, rows, collector if host not in direct_hosts else None)
+                for host, rows in by_host.items()}
+        for host, job in jobs.items():
+            rows = by_host[host]
+            offers, rejected = job.result()
             for offer in offers:
                 groups[offer['code'], offer['gtin13']].append(offer)
             rejections.update(rejected)
