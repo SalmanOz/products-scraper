@@ -90,7 +90,7 @@ def _selected_group_root(schema, identity, url, brand):
     return True
 
 
-def _selected_group_schema(schema, identity, url, physical, brand):
+def _selected_group_schema(schema, identity, url, physical, brand, *, allow_missing_radio=False):
     if not _selected_group_root(schema, identity, url, brand):
         return False
     properties = schema.get('additionalProperty')
@@ -117,6 +117,8 @@ def _selected_group_schema(schema, identity, url, physical, brand):
         if actual is None or actual != physical.get(key):
             return False
     radio = fields.get('Mobil Bağlantı Hızı', '').casefold()
+    if allow_missing_radio and 'network_generation' not in physical:
+        return 'Mobil Bağlantı Hızı' not in fields
     return (radio in {'5g', '4g', '4.5g', '4,5g'}
             and ('5g' if radio == '5g' else '4g') == physical.get('network_generation'))
 
@@ -187,7 +189,8 @@ def parse_catalog_listing(html, url, name, specs, *, reviewed_gtin=None):
     offer, reason = _parse_selected_listing(html, url,
         lambda product, title, brand: _phone_variant(product, title, brand, name, specs,
                                                      allow_missing_radio=allow_missing_radio),
-        _selected_group_schema)
+        lambda schema, identity, source_url, physical, brand: _selected_group_schema(
+            schema, identity, source_url, physical, brand, allow_missing_radio=allow_missing_radio))
     if offer and reviewed_gtin is not None and offer.get('gtin13') != reviewed_gtin:
         return None, 'reviewed_gtin_mismatch'
     return offer, reason

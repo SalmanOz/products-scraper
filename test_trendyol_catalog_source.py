@@ -75,6 +75,15 @@ class TrendyolCatalogTests(unittest.TestCase):
         self.assertEqual(offer['gtin13'], gtin)
         self.assertNotIn('network_generation', offer)
         self.assertIsNone(parse_catalog_listing(html, url, name, SPECS, reviewed_gtin='0195949723193')[0])
+        group = {**schema, '@type': 'ProductGroup', 'productGroupID': schema['sku'],
+                 'brand': {'name': 'Apple'}, 'hasVariant': [{'sku': '1234567'}],
+                 'additionalProperty': [{'@type': 'PropertyValue', 'name': label, 'unitText': amount}
+                                        for label, amount in [('RAM Kapasitesi', '8 GB'), ('Dahili Hafıza', '128 GB')]]}
+        self.assertIsNotNone(parse_catalog_listing(document({**changes, ('schema',): group}),
+                                                  url, name, SPECS, reviewed_gtin=gtin)[0])
+        group['additionalProperty'].append({'@type': 'PropertyValue', 'name': 'Mobil Bağlantı Hızı', 'unitText': '4G'})
+        self.assertIsNone(parse_catalog_listing(document({**changes, ('schema',): group}),
+                                               url, name, SPECS, reviewed_gtin=gtin)[0])
         product['attributes'].append({'key': {'name': 'Mobil Bağlantı Hızı'}, 'value': {'name': '4G'}})
         self.assertIsNone(parse_catalog_listing(document(changes), url, name, SPECS, reviewed_gtin=gtin)[0])
 
