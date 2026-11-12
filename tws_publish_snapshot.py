@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from laptop_pilot import _hepsiburada_public_get
+from laptop_pilot import _hepsiburada_public_get, verify_seller
 from priority_retailer_transport import PriorityRetailerTransport
 from retailer_barcode import retailer_gtin13
 from tws_offer_pilot import (
@@ -26,7 +26,7 @@ PLATFORMS = {
 }
 
 
-def selected_marketplace_offer(transport, name, offer):
+def selected_marketplace_offer(transport, name, offer, identities=None):
     platform = offer['platform']
     url = offer['url']
     if platform == 'n11' and not parse_qs(urlparse(url).query).get('magaza'):
@@ -65,6 +65,9 @@ def selected_marketplace_offer(transport, name, offer):
     if (parse_qs(urlparse(resolved).query).get(selector) != parse_qs(urlparse(url).query).get(selector)
             or any(current.get(key) != offer.get(key) for key in ('platform', 'merchant_id', 'merchant', 'gtin13'))):
         return None, 'snapshot_selected_seller_or_gtin_changed'
+    if (platform == 'Hepsiburada' and current.get('seller_url')
+            and not verify_seller(current, None, transport, identities if identities is not None else {})):
+        return None, 'seller_identity_unverified'
     return current, None
 
 
@@ -119,10 +122,11 @@ def public_snapshot(report, catalog_names=MODEL_NAMES):
     transports = {platform: PriorityRetailerTransport(maximum_per_host=135) for platform in platforms}
     transports['Hepsiburada'] = PriorityRetailerTransport(maximum_per_host=12, get=_hepsiburada_public_get,
                                                          browser_fallback=False)
+    identities = {}
 
     def reread(platform, rows):
         transport = transports[platform]
-        return [(name, *selected_marketplace_offer(transport, name, offer)) for name, offer in rows]
+        return [(name, *selected_marketplace_offer(transport, name, offer, identities)) for name, offer in rows]
 
     def verify(queue, needed):
         with ThreadPoolExecutor(max_workers=len(platforms)) as pool:

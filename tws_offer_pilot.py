@@ -251,7 +251,8 @@ def independent_sellers(first, second):
         for retailer in ('mediamarkt', 'vatanbilgisayar'):
             if retailer in compact:
                 return retailer
-        return re.sub(r' (?:sanayi ve ticaret |ticaret )?(?:anonim|limited) sirketi$', '', company)
+        return re.sub(r' (?:sanayi ve ticaret |ticaret )?(?:(?:anonim|limited) sirketi|ltd sti|a s)$',
+                      '', company)
 
     first_identity, second_identity = identity(first), identity(second)
     return (bool(first_identity and second_identity) and first_identity != second_identity

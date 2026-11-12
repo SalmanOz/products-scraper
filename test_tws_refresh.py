@@ -6,6 +6,27 @@ from tws_refresh import refresh
 
 
 class TwsRefreshTest(TestCase):
+    def test_hepsiburada_new_marketplace_seller_requires_legal_profile(self):
+        name = 'Sony WF-1000XM6'
+        host = 'www.hepsiburada.com'
+        url = f'https://{host}/sony-wf-1000xm6-p-HBCV0001234'
+        transport = Mock()
+        transport.read_fresh_document.return_value = 'page', 'document_read', 200
+        transport.resolved_url.return_value = url
+        offer = {'gtin13': '4548736171770', 'url': url, 'merchant': 'Mağaza', 'merchant_id': 'selected-id',
+                 'seller_url': f'https://{host}/magaza/magaza', 'platform': 'Hepsiburada', 'currency': 'TRY',
+                 'price': 25000, 'availability': 'in_stock', 'condition': 'new'}
+        for verified in (False, True):
+            with self.subTest(verified=verified), \
+                 patch('tws_catalog_expansion.PriorityRetailerTransport', return_value=transport), \
+                 patch('tws_catalog_expansion.selected_hepsiburada_tws', return_value=(dict(offer), 'observed')), \
+                 patch('tws_catalog_expansion.verify_seller', return_value=verified) as identity, \
+                 patch('tws_catalog_expansion.hepsiburada_seller_targets', return_value=[]):
+                observations, failures = reread(host, [(name, {'url': url})], discover=True)
+                identity.assert_called_once()
+                self.assertEqual(observations[name], [offer] if verified else [])
+                self.assertEqual(failures['seller_identity_unverified'], not verified)
+
     def test_discovery_rereads_an_alternate_seller_for_the_original_barcode(self):
         name, gtin = 'Sony WF-1000XM6', '4548736171770'
         host = 'www.trendyol.com'

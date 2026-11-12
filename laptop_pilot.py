@@ -23,7 +23,8 @@ from requests import RequestException
 from laptop_direct_source import DIRECT_STORES, direct_company_identity, selected_direct_laptop
 from laptop_hepsiburada_source import (
     TEKNOSA_SELLER_PROFILES, hepsiburada_company_identity,
-    hepsiburada_seller_profile_matches, selected_hepsiburada,
+    hepsiburada_seller_profile_matches, hepsiburada_seller_slug,
+    read_hepsiburada_seller_identity, selected_hepsiburada,
 )
 from laptop_retailer_sources import (
     marketplace_seller_identity, selected_mediamarkt, selected_n11, selected_teknosa,
@@ -232,7 +233,9 @@ def verify_seller(offer, source, transport, identities):
 
 
 def _hepsiburada_marketplace_identity(offer, transport):
-    slug = urlparse(offer['seller_url']).path.rsplit('/', 1)[-1]
+    if identity := read_hepsiburada_seller_identity(offer, transport):
+        return {**identity, '_legal_name': WORDS(identity['_legal_name'])}
+    slug = hepsiburada_seller_slug(offer['seller_url'])
     profile = TEKNOSA_SELLER_PROFILES.get(slug)
     if not profile or offer['merchant_id'] != profile[0]:
         return None

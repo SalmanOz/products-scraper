@@ -12,7 +12,8 @@ from urllib.parse import urlsplit
 from requests import RequestException
 from curl_cffi.requests import RequestsError
 
-from laptop_pilot import IMAGE_HOSTS, _hepsiburada_public_get, _image, _public_offers
+from hepsiburada_catalog_discovery import discover_product_sellers as hepsiburada_seller_targets
+from laptop_pilot import IMAGE_HOSTS, _hepsiburada_public_get, _image, _public_offers, verify_seller
 from mediamarkt_source import MediaMarktSource, _selected_offer
 from n11_catalog_source import discover_product_sellers
 from priority_retailer_transport import PriorityRetailerTransport, compatible_get, product_host
@@ -62,10 +63,13 @@ def verify_media(html, url, name):
 
 def reread(host, rows, statuses=None, document_reader=None, *, discover=False):
     observations, failures = defaultdict(list), Counter()
-    seller_budget = ALTERNATE_SELLER_BUDGET if discover and host in {'www.n11.com', 'www.trendyol.com'} else 0
+    seller_budget = ALTERNATE_SELLER_BUDGET if discover and host in {
+        'www.n11.com', 'www.trendyol.com', 'www.hepsiburada.com',
+    } else 0
     pending = deque(rows)
     queued = {target['url'] for _, target in pending}
     expanded = set()
+    identities = {}
     transport = None
     if host in MARKETPLACES:
         options = {}
@@ -134,10 +138,15 @@ def reread(host, rows, statuses=None, document_reader=None, *, discover=False):
             continue
         matches_selection = bool(current
             and all(current.get(key) == target[key] for key in ('gtin13', 'merchant_id', 'merchant') if key in target)
-            and (retailer_gtin13(current.get('gtin13')) and current.get('_legal_name') if discover
+            and (retailer_gtin13(current.get('gtin13')) and
+                 (current.get('_legal_name') or host == 'www.hepsiburada.com' and current.get('seller_url')) if discover
                  else 'gtin13' in target and 'merchant' in target))
         if (matches_selection and current['availability'] == 'in_stock' and current['condition'] == 'new'
                 and current['currency'] == 'TRY' and 100 <= current['price'] <= 150_000):
+            if (host == 'www.hepsiburada.com' and current.get('seller_url')
+                    and not verify_seller(current, source, transport, identities)):
+                failures['seller_identity_unverified'] += 1
+                continue
             if statuses is not None:
                 statuses[url] = 'verified'
             observations[name].append(current)
@@ -148,6 +157,12 @@ def reread(host, rows, statuses=None, document_reader=None, *, discover=False):
                         (hint['source_url'], {'merchant': hint['seller_name']})
                         for hint in discover_product_sellers(html, final, maximum=3)
                         if hint['discovery_scope'] == 'public_other_seller_selector'
+                    )
+                elif host == 'www.hepsiburada.com':
+                    alternatives = (
+                        (hint['source_url'], {'merchant': hint['discovery_seller'],
+                                              'merchant_id': hint['discovery_merchant_id']})
+                        for hint in hepsiburada_seller_targets(html, final)
                     )
                 else:
                     alternatives = ((destination, {'merchant_id': seller_id})

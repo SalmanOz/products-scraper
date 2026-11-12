@@ -272,50 +272,6 @@ def hepsiburada_pc_seller_targets(html, url, gtin):
     return list(dict.fromkeys(targets))
 
 
-def hepsiburada_pc_seller_identity(html, offer):
-    """Bind the public seller profile's trade name to the selected merchant."""
-    soup = BeautifulSoup(html, 'html.parser')
-    url = offer['seller_url']
-    slug = urlsplit(url).path.rsplit('/', 1)[-1]
-    canonical = [node.get('href') for node in soup.select('link[rel="canonical"]')]
-    profiles = soup.select('div.MerchantProfile[id^="MerchantProfile_"]')
-    scripts = soup.select('script#reduxStore')
-    if canonical != [url] or len(profiles) != 1 or len(scripts) != 1:
-        return None
-    profile = profiles[0]
-    script = profile.find_previous_sibling('script')
-    if script is None:
-        return None
-    component = profile['id'].removeprefix('MerchantProfile_')
-    match = re.search(
-        r"window\.MCONTENT\.MERCHANTPROFILE\s*=\s*Object\.assign\("
-        r"window\.MCONTENT\.MERCHANTPROFILE\s*\|\|\s*\{\},\s*\{\s*'"
-        + re.escape(component) + r"':\s*\{\s*'STATE':\s*", script.get_text(),
-    )
-    if match is None:
-        return None
-    try:
-        selected = json.loads(scripts[0].get_text())['merchantState']['merchantDetail']
-        detail = json.JSONDecoder().raw_decode(script.get_text()[match.end():])[0]['data']['merchantDetail']
-        if any(row['id'] != offer['merchant_id'] or row['urlPostfix'] != slug
-               for row in (selected, detail)) or selected['name'] != offer['merchant']:
-            return None
-        properties = detail['properties']
-        fields = {}
-        for row in properties:
-            key = WORDS(row['key'])
-            if key in fields:
-                return None
-            fields[key] = row['val']
-        name = fields.get('ticaret unvani')
-        tax = fields.get('vkn')
-    except (KeyError, TypeError, ValueError, AttributeError):
-        return None
-    if not isinstance(name, str) or len(WORDS(name).split()) < 2 or len(name) > 240:
-        return None
-    return {'_legal_name': name, '_tax_key': tax if isinstance(tax, str) and re.fullmatch(r'\d{10,11}', tax) else ''}
-
-
 class PcRetailer:
     def __init__(self, host, budget=150):
         self.host = host
@@ -378,17 +334,7 @@ class PcRetailer:
         return row
 
     def verify_seller(self, raw):
-        if self.host != HEPSIBURADA or raw['merchant'] == 'Hepsiburada':
-            return verify_seller(raw, None, self.transport, self.identities)
-        url = raw['seller_url']
-        key = (url, raw['merchant_id'], raw['merchant'])
-        if key not in self.identities:
-            html, _, _ = self.transport._read_document(url + '?tab=profile', HEPSIBURADA, category=True)
-            self.identities[key] = hepsiburada_pc_seller_identity(html, raw) if html else None
-        identity = self.identities[key]
-        if identity:
-            raw.update(identity)
-        return bool(identity)
+        return verify_seller(raw, None, self.transport, self.identities)
 
     def parse(self, html, url, part):
         if self.host == GAMING:

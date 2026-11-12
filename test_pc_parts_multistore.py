@@ -2,7 +2,8 @@ import json
 from copy import deepcopy
 import unittest
 
-from pc_parts_multistore import (company_key, hepsiburada_pc_seller_identity, hepsiburada_pc_seller_targets,
+from laptop_hepsiburada_source import hepsiburada_seller_identity
+from pc_parts_multistore import (company_key, hepsiburada_pc_seller_targets,
                                  independent_offers, processor_packaging, trendyol_pc_offer,
                                  trendyol_pc_seller_targets)
 
@@ -48,10 +49,10 @@ class PcSellerIndependenceTest(unittest.TestCase):
             'component-id': {{'STATE': {profile}}}
         }})
         </script><div class="MerchantProfile" id="MerchantProfile_component-id"></div></section>"""
-        self.assertEqual(hepsiburada_pc_seller_identity(html, offer),
+        self.assertEqual(hepsiburada_seller_identity(html, offer),
                          {'_legal_name': 'Örnek Ticaret Ltd. Şti.', '_tax_key': '0123456789'})
-        self.assertIsNone(hepsiburada_pc_seller_identity(html, {**offer, 'merchant_id': 'different'}))
-        self.assertIsNone(hepsiburada_pc_seller_identity(html.replace("'component-id'", "'wrong'"), offer))
+        self.assertIsNone(hepsiburada_seller_identity(html, {**offer, 'merchant_id': 'different'}))
+        self.assertIsNone(hepsiburada_seller_identity(html.replace("'component-id'", "'wrong'"), offer))
 
     def test_trendyol_seller_urls_require_an_exact_in_stock_variant(self):
         url = 'https://www.trendyol.com/asus/prime-b850-p-123456'

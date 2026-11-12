@@ -145,3 +145,66 @@ def hepsiburada_seller_profile_matches(html, offer, slug):
             and detail.get('urlPostfix') == slug and detail.get('name') == offer['merchant']
             and [tag.get('href') for tag in soup.select('link[rel="canonical"]')] == [seller_url]
             and [tag.get_text(' ', strip=True) for tag in soup.select('h1')] == [offer['merchant']])
+
+def hepsiburada_seller_slug(url):
+    if not isinstance(url, str):
+        return None
+    match = re.fullmatch(r'https://www\.hepsiburada\.com/magaza/([a-z0-9-]{1,100})', url)
+    return match[1] if match else None
+
+
+def read_hepsiburada_seller_identity(offer, transport):
+    url = offer.get('seller_url')
+    if not hepsiburada_seller_slug(url):
+        return None
+    target = url + '?tab=profile'
+    html, _, _ = transport._read_document(target, 'www.hepsiburada.com', category=True)
+    if html and transport.resolved_url(target) == target:
+        return hepsiburada_seller_identity(html, offer)
+    return None
+
+
+def hepsiburada_seller_identity(html, offer):
+    """Bind the public seller profile's trade name to the selected merchant."""
+    url = offer.get('seller_url')
+    slug = hepsiburada_seller_slug(url)
+    if not slug or not isinstance(html, str) or len(html.encode()) > MAX_HTML_BYTES:
+        return None
+    soup = BeautifulSoup(html, 'html.parser')
+    canonical = [node.get('href') for node in soup.select('link[rel="canonical"]')]
+    profiles = soup.select('div.MerchantProfile[id^="MerchantProfile_"]')
+    scripts = soup.select('script#reduxStore')
+    if canonical != [url] or len(profiles) != 1 or len(scripts) != 1:
+        return None
+    profile = profiles[0]
+    script = profile.find_previous_sibling('script')
+    if script is None:
+        return None
+    component = profile['id'].removeprefix('MerchantProfile_')
+    match = re.search(
+        r"window\.MCONTENT\.MERCHANTPROFILE\s*=\s*Object\.assign\("
+        r"window\.MCONTENT\.MERCHANTPROFILE\s*\|\|\s*\{\},\s*\{\s*'"
+        + re.escape(component) + r"':\s*\{\s*'STATE':\s*", script.get_text(),
+    )
+    if match is None:
+        return None
+    try:
+        selected = json.loads(scripts[0].get_text())['merchantState']['merchantDetail']
+        detail = json.JSONDecoder().raw_decode(script.get_text()[match.end():])[0]['data']['merchantDetail']
+        if any(row['id'] != offer['merchant_id'] or row['urlPostfix'] != slug
+               for row in (selected, detail)) or selected['name'] != offer['merchant']:
+            return None
+        properties = detail['properties']
+        fields = {}
+        for row in properties:
+            key = WORDS(row['key'])
+            if key in fields:
+                return None
+            fields[key] = row['val']
+        name = fields.get('ticaret unvani')
+        tax = fields.get('vkn')
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return None
+    if not isinstance(name, str) or len(WORDS(name).split()) < 2 or len(name) > 240:
+        return None
+    return {'_legal_name': name, '_tax_key': tax if isinstance(tax, str) and re.fullmatch(r'\d{10,11}', tax) else ''}
