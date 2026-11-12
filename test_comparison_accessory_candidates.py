@@ -3,7 +3,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from comparison_accessory_candidates import candidate_targets, monitor_codes, stage_category
+from comparison_accessory_candidates import candidate_targets, monitor_codes, search_accessory_retailer, stage_category
 
 
 N11 = 'https://www.n11.com/urun/asus-proart-pa278cv-75hz-monitor-53683691?magaza=n11'
@@ -11,6 +11,44 @@ TRENDYOL = 'https://www.trendyol.com/asus/proart-pa278cv-75hz-monitor-p-12238194
 
 
 class ComparisonAccessoryTests(unittest.TestCase):
+    def test_native_search_pairs_comparison_candidates_without_any_retailer_urls(self):
+        hb = 'https://www.hepsiburada.com/asus-proart-pa278cv-monitor-p-HBCV00000ABC1'
+        state = {'products': {
+            'first': {'category': 'monitor', 'title': 'ASUS PA278CV Monitor', 'source': 'akakce'},
+            'second': {'category': 'monitor', 'title': 'ASUS PA278CV 75Hz', 'source': 'epey'},
+            'one_source': {'category': 'monitor', 'title': 'ASUS PA279CV', 'source': 'epey'},
+            'already_listed': {'category': 'monitor', 'title': 'ASUS PA280CV', 'source': 'cimri',
+                               'retailerLeads': [TRENDYOL.replace('pa278cv', 'pa280cv')]},
+        }}
+
+        def search(host, models):
+            self.assertEqual(models, [('monitor', 'pa278cv')])
+            return {models[0]: [hb if host == 'www.hepsiburada.com' else N11]}, [
+                {'category': 'monitor', 'code': 'pa278cv', 'httpStatus': 200, 'parser': 'parsed'}]
+
+        with patch('comparison_accessory_candidates.search_accessory_retailer', side_effect=search) as reader:
+            kwargs = {'existing_codes': {'monitor': {'pa280cv'}}, 'native_search': 2}
+            groups = candidate_targets(state, ['monitor'], 2, **kwargs)
+            self.assertEqual(dict(groups), {'www.hepsiburada.com': [('monitor', hb, 'pa278cv')],
+                                            'www.n11.com': [('monitor', N11, 'pa278cv')]})
+            self.assertEqual(dict(candidate_targets(state, ['monitor'], 2, **kwargs)), dict(groups))
+            self.assertEqual(reader.call_count, 2)
+        self.assertEqual(set(state['accessoryNativeLeads']['monitor/pa278cv']), {N11, hb})
+
+    def test_native_cards_require_matching_code_in_title_and_original_retailer_url(self):
+        with patch('comparison_accessory_candidates.PriorityRetailerTransport') as transport, \
+                patch('comparison_accessory_candidates.public_search_cards') as cards:
+            transport.return_value.read_n11_search.return_value = ('public document', 'document_read', 200)
+            cards.return_value = [
+                {'source_url': N11, 'discovery_title': 'ASUS PA278CV Monitor'},
+                {'source_url': TRENDYOL, 'discovery_title': 'ASUS PA278CV Monitor'},
+                {'source_url': N11.replace('pa278cv', 'pa278qv'), 'discovery_title': 'ASUS PA278CV Monitor'},
+                {'source_url': N11, 'discovery_title': 'ASUS PA278QV Monitor'},
+            ]
+            links, report = search_accessory_retailer('www.n11.com', [('monitor', 'pa278cv')])
+        self.assertEqual(links, {('monitor', 'pa278cv'): [N11]})
+        self.assertEqual(report[0]['destinations'], 1)
+
     def test_shared_model_is_scheduled_on_two_hosts_when_oldest_urls_differ(self):
         other_n11 = N11.replace('pa278cv', 'pa279cv').replace('53683691', '53683692')
         other_trendyol = TRENDYOL.replace('pa278cv', 'pa279cv').replace('1223819436', '1223819437')
