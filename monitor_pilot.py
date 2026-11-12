@@ -129,7 +129,8 @@ def materialize(offers, sources):
         if value is False:
             continue
         shown = ('Var' if value is True else f'{value:g}'.replace('.', ',') if key == 'size' else str(value))
-        specs.append({'label': label, 'value': shown + unit, 'source': source})
+        display_value = manufacturer.get('specValues', {}).get(key) if key in official_facts else None
+        specs.append({'label': label, 'value': display_value or shown + unit, 'source': source})
     photo_offer = next((o for o in records if o.get('_image')
                         and (photo := _image(o['_image'], allowed_hosts=PHOTO_HOSTS))), None)
     if photo_offer is None:

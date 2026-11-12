@@ -9,6 +9,7 @@ from threading import Lock, local
 
 from laptop_pilot import _public_offers
 from monitor_pilot import CORE, CROSS_PLATFORM_MINIMUM, MANUFACTURER_SPECS, PILOT_SIZE, candidates, collect_observations
+from monitor_sources import code_key
 from offer_ingestion_client import OfferIngestionClient
 from retailer_barcode import retailer_gtin13
 
@@ -54,6 +55,24 @@ def refresh(catalog, groups, now):
     return {**catalog, 'checkedAt': now.isoformat(), 'models': updated}, fresh, paired
 
 
+def targets_for_catalog(catalog, legacy):
+    by_gtin = {model['gtin']: model for model in catalog['models']}
+    targets = {}
+    for row in legacy:
+        if row['gtin'] in by_gtin:
+            if row['url'] in targets and targets[row['url']]['gtin'] != row['gtin']:
+                raise ValueError('Monitor source URL is assigned to more than one barcode')
+            targets[row['url']] = row
+    for row in catalog.get('discoveryTargets', []):
+        model = by_gtin.get(row['gtin'])
+        if model is None or row['code'] != code_key(model['mpn']):
+            raise ValueError('Discovered target does not identify a published monitor')
+        if row['url'] in targets and targets[row['url']]['gtin'] != row['gtin']:
+            raise ValueError('Monitor source URL is assigned to more than one barcode')
+        targets.setdefault(row['url'], row)
+    return list(targets.values())
+
+
 def main():
     cli = argparse.ArgumentParser(description=__doc__)
     cli.add_argument('targets', type=Path)
@@ -65,7 +84,7 @@ def main():
     if (len(gtins) < PILOT_SIZE or len(gtins) != len(catalog['models'])
             or any(retailer_gtin13(gtin) != gtin for gtin in gtins)):
         raise ValueError('Expected unique, valid GTINs for the published monitor catalog')
-    targets = [row for row in json.loads(args.targets.read_text()) if row['gtin'] in gtins]
+    targets = targets_for_catalog(catalog, json.loads(args.targets.read_text()))
     token = os.getenv('MONITOR_READER_OIDC')
     sessions = local()
     collector_slot = Lock()

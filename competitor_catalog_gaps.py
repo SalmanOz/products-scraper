@@ -17,6 +17,7 @@ from bs4 import BeautifulSoup
 from catalog_source_collector import catalog_document_reader
 from laptop_retailer_sources import WORDS
 from pazarama_category_source import pazarama_product_url
+from pc_parts_multistore import DIRECT_PATHS, offer_host
 from public_retailer_sources import public_source
 import requests
 from priority_retailer_transport import PriorityRetailerTransport, compatible_get, product_host
@@ -547,6 +548,8 @@ def retailer_destination(raw):
             r'/tr/product/_[a-z0-9-]+-[1-9]\d{5,11}\.html', route.path)
     )
     if product_host(url) or first_party and not selectors or pazarama_product_url(url):
+        return url
+    if route.netloc in DIRECT_PATHS and offer_host(url):
         return url
     if public_source(url) and re.fullmatch(r'/[a-z0-9_-]+', route.path):
         return url

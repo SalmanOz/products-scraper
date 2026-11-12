@@ -1,4 +1,23 @@
 {
+  "0198155418945": {
+    "code": "64a4marxtk",
+    "url": "https://psref.lenovo.com/syspool/Sys/PDF/ThinkVision/ThinkVision_T24_40/ThinkVision_T24_40_Spec.pdf",
+    "facts": {
+      "size": 23.8,
+      "resolution": "1920 × 1080",
+      "panel": "IPS",
+      "refresh": 120,
+      "hdmi": true,
+      "dp": true,
+      "usb_c": true
+    },
+    "specValues": {
+      "hdmi": "1 × HDMI 1.4",
+      "dp": "1 × DisplayPort 1.2",
+      "usb_c": "1 × USB-C, yalnızca veri aktarımı ve 15 W güç çıkışı"
+    },
+    "name": "ThinkVision T24-40"
+  },
   "8806097322344": {
     "code": "ls32fm700uuxuf",
     "url": "https://www.samsung.com/tr/monitors/smart/smart-monitor-m7-32-inch-smart-tv-apps-4k-uhd-ls32fm700uuxuf/",

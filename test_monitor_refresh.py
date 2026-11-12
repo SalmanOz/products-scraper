@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from unittest import TestCase
 
-from monitor_refresh import matches_model, refresh
+from monitor_refresh import matches_model, refresh, targets_for_catalog
 
 
 class MonitorRefreshTests(TestCase):
@@ -37,3 +37,12 @@ class MonitorRefreshTests(TestCase):
     def test_rejects_other_barcode_and_incompatible_panel(self):
         self.assertFalse(matches_model({**self.observation, 'gtin13': '6977295259083'}, self.model))
         self.assertFalse(matches_model({**self.observation, 'facts': {**self.facts, 'panel': 'VA'}}, self.model))
+
+    def test_automatically_discovered_targets_survive_even_without_published_prices(self):
+        model = {**self.model, 'mpn': 'MB166C', 'offers': []}
+        first = {'gtin': model['gtin'], 'code': 'mb166c', 'url': self.n11['url']}
+        second = {**first, 'url': self.vatan['url']}
+        snapshot = {'models': [model], 'discoveryTargets': [first, second]}
+        self.assertEqual(targets_for_catalog(snapshot, [first]), [first, second])
+        with self.assertRaisesRegex(ValueError, 'does not identify'):
+            targets_for_catalog({**snapshot, 'discoveryTargets': [{**first, 'code': 'other'}]}, [])
