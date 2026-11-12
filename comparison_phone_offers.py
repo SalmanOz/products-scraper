@@ -30,6 +30,7 @@ from offer_ingestion_client import IngestionClientError, OfferIngestionClient
 from ozgur_phone_source import OZGUR_HOST, OZGUR_TERMS, ozgur_offer, ozgur_phone_url
 from pazarama_category_source import pazarama_product_url
 from pazarama_offer_source import native_script, pazarama_selected
+from pttavm_offer_source import HOST as PTTAVM, ptt_product_url, ptt_seller_identity, selected_ptt_offer
 from priority_retailer_transport import PriorityRetailerTransport, compatible_get, product_host
 from selected_sku_evidence import selected_sku_evidence
 from serinal_phone_source import SERINAL_HOST, SERINAL_TERMS, serinal_offer, serinal_phone_url
@@ -106,6 +107,8 @@ def trendyol_selected(html, url, name, specs, *, reviewed_gtin=None):
 
 
 def seller_identity(html, offer):
+    if offer['platform'] == 'PttAVM':
+        return ptt_seller_identity(html, offer)
     if offer['platform'] == 'Teknosa':
         identity = marketplace_seller_identity(html, offer)
         return (identity['_legal_name'], identity['_tax_key']) if identity else None
@@ -198,6 +201,8 @@ def checked_offers(urls, name, specs, transport, documents=None, *, direct=None,
                     rejected = 'besken_selected_offer_or_seller_unverified'
                 else:
                     rejected = 'besken_seller_identity_' + legal_reason
+            elif ptt_product_url(url) and host in direct:
+                offer, rejected = selected_ptt_offer(html, url, 'phone')
             elif vatan_phone_url(url):
                 offer = selected_vatan_tws(html, url, name,
                     lambda title, _brand: name if matcher.is_strict_match(name, title, specs) else None)
@@ -210,7 +215,8 @@ def checked_offers(urls, name, specs, transport, documents=None, *, direct=None,
         identity = (offer['_legal_name'], offer.get('_tax_key', '')) if offer.get('_legal_name') else None
         if not identity and (seller_url := offer.get('seller_url')):
             if seller_url not in documents:
-                documents[seller_url] = reader._read_document(seller_url, host)
+                options = {'category': True} if host == PTTAVM else {}
+                documents[seller_url] = reader._read_document(seller_url, host, **options)
             seller_document, _, _ = documents[seller_url]
             identity = seller_identity(seller_document, offer) if seller_document else None
         if not identity or not identity[0]:
@@ -281,6 +287,8 @@ def supported_phone_url(url, *, expanded=False):
         return expanded and ozgur_phone_url(url)
     if route.netloc == AYAZ_HOST:
         return expanded and ayaz_phone_url(url)
+    if route.netloc == PTTAVM:
+        return expanded and ptt_product_url(url)
     if route.netloc == BESKEN_HOST:
         return expanded and besken_phone_url(url)
     if route.netloc == SERINAL_HOST:
@@ -588,6 +596,8 @@ def run(state, slugs, client=None, *, publish=False, maximum=24, products=None, 
             browser_fallback=False, get=phone_reader)
         direct[SERINAL_HOST] = PriorityRetailerTransport(maximum_per_host=min(maximum, 12),
             browser_fallback=False)
+        direct[PTTAVM] = PriorityRetailerTransport(maximum_per_host=min(maximum, 16),
+            browser_fallback=False, get=compatible_get)
         direct[BESKEN_HOST] = PriorityRetailerTransport(maximum_per_host=min(maximum, 12),
             browser_fallback=False, get=compatible_get)
     if public_audit:

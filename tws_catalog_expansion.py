@@ -19,6 +19,7 @@ from mediamarkt_source import MediaMarktSource, _selected_offer
 from n11_catalog_source import discover_product_sellers
 from pazarama_category_source import HOST as PAZARAMA, pazarama_product_url
 from pazarama_offer_source import pazarama_seller_identity
+from pttavm_offer_source import HOST as PTTAVM, ptt_product_url, ptt_seller_identity, selected_ptt_offer
 from priority_retailer_transport import PriorityRetailerTransport, compatible_get, product_host
 from retailer_barcode import retailer_gtin13
 from tws_offer_pilot import NEW_MODEL_NAMES, _mediamarkt_tws_url, independent_sellers, model_name, selected_tws_offer
@@ -30,7 +31,7 @@ from vatan_category_source import VatanCategorySource
 
 MARKETPLACES = {'www.n11.com', 'www.trendyol.com', 'www.hepsiburada.com', 'www.teknosa.com'}
 STORES = {'www.vatanbilgisayar.com', 'www.mediamarkt.com.tr'}
-TWS_IMAGE_HOSTS = IMAGE_HOSTS | {'productimages.hepsiburada.net', 'reimg-teknosa-cloud-prod.mncdn.com', 'img.pzrmcdn.com'}
+TWS_IMAGE_HOSTS = IMAGE_HOSTS | {'productimages.hepsiburada.net', 'reimg-teknosa-cloud-prod.mncdn.com', 'img.pzrmcdn.com', 'cdn-s3.pttavm.com'}
 ALTERNATE_SELLER_BUDGET = 8
 COLOR_NAMES = {
     'beyaz': 'Beyaz', 'bej': 'Bej', 'gri': 'Gri', 'gumus': 'Gümüş', 'kirmizi': 'Kırmızı',
@@ -111,12 +112,14 @@ def reread(host, rows, statuses=None, document_reader=None, *, discover=False):
     expanded = set()
     identities = {}
     transport = None
-    if host in MARKETPLACES or host == PAZARAMA:
+    if host in MARKETPLACES or host in (PAZARAMA, PTTAVM):
         options = {}
         if document_reader is not None:
             options.update(get=document_reader, browser_fallback=False)
         elif host == 'www.hepsiburada.com':
             options.update(get=_hepsiburada_public_get, browser_fallback=False)
+        elif host == PTTAVM:
+            options.update(get=compatible_get, browser_fallback=False)
         elif discover:
             options['browser_fallback'] = False
         if host in ('www.teknosa.com', PAZARAMA):
@@ -143,8 +146,9 @@ def reread(host, rows, statuses=None, document_reader=None, *, discover=False):
         if statuses is not None:
             statuses[url] = 'unavailable'
         try:
-            if host == PAZARAMA:
-                if not pazarama_product_url(url):
+            if host in (PAZARAMA, PTTAVM):
+                valid = pazarama_product_url if host == PAZARAMA else ptt_product_url
+                if not valid(url):
                     failures['source_policy'] += 1
                     continue
                 html, reason, _ = transport._read_document(url, host, fresh=True)
@@ -181,15 +185,23 @@ def reread(host, rows, statuses=None, document_reader=None, *, discover=False):
                 current, reason = selected_hepsiburada_tws(html, final, name, model_name)
             elif host == 'www.teknosa.com':
                 current, reason = selected_teknosa_tws(html, final, name, model_name)
-            elif host == PAZARAMA:
-                current = selected_pazarama_tws(html, final, name, model_name)
-                reason = 'selected_pazarama_offer_unverified'
+            elif host in (PAZARAMA, PTTAVM):
+                if host == PAZARAMA:
+                    current = selected_pazarama_tws(html, final, name, model_name)
+                    reason = 'selected_pazarama_offer_unverified'
+                else:
+                    current, reason = selected_ptt_offer(html, final, 'tws')
+                    if current and model_name(current['source_title'], current['brand']) != name:
+                        current, reason = None, 'ptt_selected_tws_model_mismatch'
+                    if current:
+                        current['_image'] = selected_photo(current['_source_image'], {'cdn-s3.pttavm.com'})
                 if current:
                     seller = current['seller_url']
-                    key = (seller, current['merchant'])
+                    key = (seller, current.get('merchant_id'), current['merchant'])
                     if key not in identities:
                         profile, outcome, _ = transport._read_document(seller, host, category=True)
-                        identity = pazarama_seller_identity(profile, current) if profile else None
+                        verify = pazarama_seller_identity if host == PAZARAMA else ptt_seller_identity
+                        identity = verify(profile, current) if profile else None
                         identities[key] = (identity, outcome)
                     identity, outcome = identities[key]
                     if identity:
@@ -287,6 +299,7 @@ def stage(catalog, snapshot, specs, candidates, output, *, allow_empty=False):
                 continue
             if (p.netloc in MARKETPLACES and product_host(url) == p.netloc
                     or p.netloc == PAZARAMA and pazarama_product_url(url)
+                    or p.netloc == PTTAVM and ptt_product_url(url)
                     or p.netloc == 'www.vatanbilgisayar.com' and _vatan_url(url)
                     or p.netloc == 'www.mediamarkt.com.tr' and _mediamarkt_tws_url(url)):
                 sources[p.netloc].append((name, row))

@@ -23,6 +23,7 @@ from pazarama_category_source import pazarama_product_url
 from pc_parts_multistore import DIRECT_PATHS, offer_host
 from public_retailer_sources import public_source
 import requests
+from pttavm_offer_source import ptt_product_url
 from priority_retailer_transport import PriorityRetailerTransport, compatible_get, product_host
 from serinal_phone_source import SERINAL_CATEGORY, SERINAL_HOST, SERINAL_PATH, serinal_phone_url
 
@@ -75,7 +76,6 @@ AMAHANGISI_PRODUCT = re.compile(
     r'/(' + '|'.join(map(re.escape, AMAHANGISI_CATEGORIES)) + r')/([a-z0-9-]{3,220})')
 ADDITIONAL_RETAILER_PATHS = {
     'www.idefix.com': r'/[a-z0-9-]+-p-[1-9]\d{4,11}',
-    'www.pttavm.com': r'/[a-z0-9-]+-p-[1-9]\d{5,11}',
     'www.amazon.com.tr': r'/(?:[\w%-]+/)?(?:dp|gp/product)/[A-Z0-9]{10}',
     'www.a101.com.tr': r'/elektronik/[a-z0-9-]+_p-[1-9]\d{5,11}',
     'www.gurgencler.com.tr': r'/iphone-[a-z0-9-]+',
@@ -708,7 +708,7 @@ def retailer_destination(raw):
             r'/tr/product/_[a-z0-9-]+-[1-9]\d{5,11}\.html', route.path)
     )
     if (product_host(url) or first_party and not selectors or pazarama_product_url(url)
-            or ozgur_phone_url(url) or ayaz_phone_url(url) or serinal_phone_url(url) or besken_phone_url(url)):
+            or ozgur_phone_url(url) or ayaz_phone_url(url) or serinal_phone_url(url) or besken_phone_url(url) or ptt_product_url(url)):
         return url
     if route.netloc in DIRECT_PATHS and offer_host(url):
         return url

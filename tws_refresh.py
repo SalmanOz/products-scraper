@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 
 from catalog_source_collector import catalog_document_reader
 from pazarama_category_source import HOST as PAZARAMA, pazarama_product_url
+from pttavm_offer_source import HOST as PTTAVM, ptt_product_url
 from priority_retailer_transport import n11_product_selectors, product_host
 from retailer_barcode import retailer_gtin13
 from tws_catalog_expansion import MARKETPLACES, exact_tws_sellers, public_tws_offers, reread, tws_source_target
@@ -32,6 +33,8 @@ def selected_host(url):
     if host in MARKETPLACES and product_host(url) == host:
         return host
     if host == PAZARAMA and pazarama_product_url(url):
+        return host
+    if host == PTTAVM and ptt_product_url(url):
         return host
     if host == 'www.mediamarkt.com.tr' and _mediamarkt_tws_url(url):
         return host
