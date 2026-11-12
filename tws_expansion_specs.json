@@ -1,4 +1,18 @@
 {
+  "Apple AirPods Pro 2 USB-C": {
+    "summary": "AirPods Pro 2’nin USB-C şarj kutulu sürümü, aktif gürültü engelleme ve şeffaf mod sunuyor. Apple, kutuyla 30 saate kadar dinleme süresi belirtiyor.",
+    "highlights": ["Aktif gürültü engelleme", "USB-C ve MagSafe şarj", "IP54 koruma"],
+    "specSource": "https://support.apple.com/tr-tr/111834",
+    "specs": [
+      {"label": "Gürültü kontrolü", "value": "Aktif gürültü engelleme, uyarlanabilir ses ve şeffaf mod"},
+      {"label": "İşlemci", "value": "Apple H2"},
+      {"label": "Tek şarjla müzik", "value": "6 saate kadar, uzamsal ses ve kafa takibiyle 5,5 saate kadar"},
+      {"label": "Kutuyla toplam müzik", "value": "30 saate kadar"},
+      {"label": "Bluetooth", "value": "5.3"},
+      {"label": "Dayanıklılık", "value": "IP54 (kulaklıklar ve kutu)"},
+      {"label": "Şarj", "value": "USB-C, MagSafe, Apple Watch şarj aygıtı veya Qi"}
+    ]
+  },
   "Nothing CMF Buds 2a": {
     "summary": "CMF Buds 2a, 12,4 mm sürücülü ve ortam sesi modu bulunan tam kablosuz bir kulaklık. AAC ile gürültü engelleme kapalıyken kutuyla 35,5 saate kadar müzik çalıyor.",
     "highlights": ["42 dB’ye kadar aktif gürültü engelleme", "Bluetooth 5.4", "İki cihaza aynı anda bağlantı"],

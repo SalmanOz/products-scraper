@@ -49,6 +49,9 @@ class TwsOfferPilotTests(unittest.TestCase):
         self.assertEqual(model_name('Apple AirPods 4 Aktif Gürültü Engelleme MXP93TU/A', 'Apple'), 'Apple AirPods 4 ANC')
         self.assertIsNone(model_name('Apple AirPods 4. Nesil (MXP63TU/A) Yenilenmiş', 'Apple'))
         self.assertIsNone(model_name('AirPods 4. Nesil (MXP63TU/A)', 'TARÇIN'))
+        self.assertEqual(model_name('Apple AirPods Pro 2. Nesil MTJV3TU/A', 'Apple'), 'Apple AirPods Pro 2 USB-C')
+        self.assertIsNone(model_name('Apple AirPods Pro 2. Nesil Lightning MQD83TU/A', 'Apple'))
+        self.assertIsNone(model_name('Apple AirPods Pro 2 Uyumlu USB-C Şarj Kutusu', 'Apple'))
         self.assertEqual(model_name('HUAWEI FreeBuds 6 Siyah Bluetooth Kulaklık', 'Huawei'),
                          'Huawei FreeBuds 6')
         self.assertEqual(model_name('HUAWEI FreeBuds 6i Bluetooth Kulaklık Beyaz', 'Huawei'),

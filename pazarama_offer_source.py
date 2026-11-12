@@ -13,12 +13,44 @@ from tr_price_scraper import TRPriceScraper
 
 NORMALIZE = TRPriceScraper._normalize_words
 SELLER_ROOT = f'https://{HOST}/magaza/'
+NUXT_IDENTIFIER = r'[A-Za-z_$][A-Za-z0-9_$]{0,20}'
+NUXT_STRING = r'"(?:[^"\\]|\\.)*"'
 
 
 def native_script(soup):
     scripts = [node.get_text() for node in soup.select('script')
                if node.get_text().startswith('window.__NUXT__=(function(')]
     return scripts[0] if len(scripts) == 1 else ''
+
+
+def native_string(token, document):
+    if token.startswith('"'):
+        try:
+            return json.loads(token)
+        except ValueError:
+            return None
+    # Nuxt's serializer may pass repeated strings as positional arguments.
+    # Decode the JSON argument list without evaluating the inline script.
+    header = re.match(r'window\.__NUXT__=\(function\(([^)]{1,8000})\)\{', document)
+    end = document.rfind('}(')
+    if not header or not document.endswith('));') or end < header.end():
+        return None
+    arguments = document[end + 2:-3]
+    keys = header[1].split(',')
+    if (len(arguments) > 64_000 or len(keys) != len(set(keys)) or
+            any(not re.fullmatch(NUXT_IDENTIFIER, key) for key in keys) or token not in keys):
+        return None
+    prefix = document[header.end():].split('UI_PRODUCT_DETAIL:{', 1)[0]
+    if re.search(r'(?<![\w$])' + re.escape(token) + r'\s*(?:[+*/%-]?=(?!=)|\+\+|--)', prefix):
+        return None
+    try:
+        values = json.loads('[' + arguments + ']')
+    except (ValueError, RecursionError):
+        return None
+    if len(values) != len(keys):
+        return None
+    value = values[keys.index(token)]
+    return value if isinstance(value, str) else None
 
 
 def pazarama_selected(html, url, *, verify_product=None):
@@ -42,11 +74,12 @@ def pazarama_selected(html, url, *, verify_product=None):
     detail = selected[1][:30000]
     identities = re.match(r'name:\w+,displayName:\w+,sellerName:("(?:[^"\\]|\\.)+"),'
                           r'sellerSeoName:"([a-z0-9-]+)",[^{}]{0,1000}?'
-                          r'\bcode:"(\d{12,13})",stockCount:', detail)
+                          r'\bcode:(' + NUXT_STRING + '|' + NUXT_IDENTIFIER + r'),stockCount:', detail)
     if not identities or NORMALIZE(json.loads(identities[1])) != NORMALIZE(seller):
         return None
-    gtin = retailer_gtin13(identities[3])
-    if not gtin or not url.endswith('-p-' + identities[3]):
+    code = native_string(identities[3], document)
+    gtin = retailer_gtin13(code)
+    if not gtin or not re.fullmatch(r'\d{12,13}', code) or not url.endswith('-p-' + code):
         return None
     if re.search(r'\bproductSellerId:"' + re.escape(listing_id) + r'"', detail) is None:
         return None

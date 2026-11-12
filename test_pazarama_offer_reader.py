@@ -6,7 +6,7 @@ import unittest
 
 from bs4 import BeautifulSoup
 
-from pazarama_offer_source import pazarama_seller_identity
+from pazarama_offer_source import pazarama_selected, pazarama_seller_identity
 from retailer_offer_refresh import RetailerOfferRefresher, _product_offer
 
 
@@ -51,6 +51,24 @@ class Response:
 
 
 class PazaramaOfferReaderTests(unittest.TestCase):
+    def test_selected_offer_resolves_nuxt_barcode_argument_without_executing_script(self):
+        listing = '2f65afde-5970-4c14-1a80-08df228b708b'
+        product = {**schema(), 'sku': listing}
+        detail = (f'{{name:n,displayName:n,sellerName:{json.dumps(SELLER)},sellerSeoName:"emre-iletisim",'
+                  f'code:c,stockCount:s,productSellerId:"{listing}"}}')
+
+        def html(argument):
+            return page(product, extra=(f'<a href="/magaza/emre-iletisim">Satıcı: {SELLER}</a>'
+                        f'<script>window.__NUXT__=(function(n,c,s){{s.updated=true;return {{UI_PRODUCT_DETAIL:{detail}}}}}'
+                        f'("Phone",{argument},2));</script>'))
+
+        selected = pazarama_selected(html('"8806097100638"'), URL)
+        self.assertEqual((selected['gtin13'], selected['merchant'], selected['price']),
+                         ('8806097100638', SELLER, 20000))
+        self.assertIsNone(pazarama_selected(html('"8806097100676"'), URL))
+        self.assertIsNone(pazarama_selected(html('String("8806097100638")'), URL))
+        self.assertIsNone(pazarama_selected(html('"8806097100638"').replace('s.updated=true;', 'c="other";'), URL))
+
     def test_seller_identity_uses_selected_public_profile_with_or_without_mersis(self):
         url = 'https://www.pazarama.com/magaza/ornek-magaza'
         offer = {'seller_url': url, 'merchant': 'Örnek Mağaza', 'merchant_id': 'ornek-magaza'}

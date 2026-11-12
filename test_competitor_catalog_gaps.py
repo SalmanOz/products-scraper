@@ -5,10 +5,19 @@ from unittest.mock import Mock, patch
 
 from competitor_catalog_gaps import (AKAKCE, CIMRI, EPEY, KARSILASTIRICI, PAHALIMI, URUNAI, akakce_limits, candidate_family, cimri_sitemap_cards, epey_earbud_title, epey_sitemap_cards, export_source_snapshot, import_source_snapshot, product_state_key, scan_product_sitemap, scan_source, urunai_market_slugs, urunai_sitemap_cards, catalog_match, category_url, comparison_cards, comparison_retailer_leads,
                                      identity_index, in_scope, merge_state, read_state)
-from competitor_catalog_gaps import AMAHANGISI, INDIRIMLI, TUBERKARAS, lead_inventory, phone_family, scan_retailer_leads
+from competitor_catalog_gaps import (AMAHANGISI, INDIRIMLI, TUBERKARAS, comparison_lead_destination,
+                                     lead_inventory, phone_family, retailer_destination, scan_retailer_leads)
 
 
 class CompetitorCatalogGapsTest(unittest.TestCase):
+    def test_pazarama_comparison_seller_link_contributes_only_a_canonical_lead(self):
+        canonical = 'https://www.pazarama.com/aerofit-2-p-0194644298876'
+        selected = canonical + '?magaza=dunya-marketi'
+        self.assertIsNone(retailer_destination(selected))
+        self.assertEqual(comparison_lead_destination(selected), canonical)
+        self.assertIsNone(comparison_lead_destination(selected + '&magaza=second-seller'))
+        self.assertIsNone(comparison_lead_destination(selected + '#offers'))
+
     def test_indirimli_reads_catalog_titles_and_embedded_original_store_links(self):
         from urllib.parse import urlencode
 

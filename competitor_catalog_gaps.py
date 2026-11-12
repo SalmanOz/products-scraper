@@ -678,7 +678,22 @@ def comparison_retailer_leads(html, host, source_url):
             listings = aggregate.get('offers')
             if isinstance(listings, list):
                 raw_links.extend(offer.get('url') for offer in listings if isinstance(offer, dict))
-    return sorted({url for raw in raw_links if (url := retailer_destination(raw))})
+    return sorted({url for raw in raw_links if (url := comparison_lead_destination(raw))})
+
+
+def comparison_lead_destination(raw):
+    direct = retailer_destination(raw)
+    if direct or not isinstance(raw, str) or len(raw) > 600 or re.search(r'[\x00-\x20\\]', raw):
+        return direct
+    try:
+        route = urlsplit(raw)
+        if (route.netloc != 'www.pazarama.com' or route.fragment
+                or not re.fullmatch(r'magaza=[a-z0-9]+(?:-[a-z0-9]+)*', route.query)):
+            return None
+        # Treat the canonical PDP as a new lead. It must prove its own seller.
+        return retailer_destination(route._replace(query='').geturl())
+    except ValueError:
+        return None
 
 
 def indirimli_retailer_link(raw, source_url):

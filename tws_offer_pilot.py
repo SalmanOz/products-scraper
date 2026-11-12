@@ -80,6 +80,8 @@ NEW_MODELS = (
     ('Nothing', 'CMF Buds 2a', r'(?:cmf(?: by nothing)? )?buds ?2a'),
     ('Nothing', 'Ear (a)', r'ear ?a'),
     ('Nothing', 'Ear (3)', r'ear ?3'),
+    ('Apple', 'AirPods Pro 2 USB-C',
+     r'airpods pro 2\b(?!.*\b(?:lightning|mqd83tu|uyumlu|sadece sarj kutusu)\b).*\b(?:mtjv3tu|usb c|type c)'),
     ('Apple', 'AirPods 5', r'airpods 5(?! .*\b(?:mkft4tu|kablosuz sarj kutusu|magsafe)\b)'),
     ('Xiaomi', 'Redmi Buds 6', r'redmi buds 6(?! play| active| lite| pro| plus)'),
     ('Xiaomi', 'Buds 5', r'xiaomi buds 5(?! pro| lite| plus)'),
