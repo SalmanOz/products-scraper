@@ -19,9 +19,10 @@ from laptop_direct_source import DIRECT_STORES, selected_direct_laptop
 from laptop_pilot import _hepsiburada_public_get, verify_seller
 from laptop_retailer_sources import WORDS, _legal
 from n11_catalog_source import _parse_selected_listing as n11_selected_listing
-from pc_parts import ROOT, parse_part
+from pc_parts import CATEGORIES, ROOT, parse_part
 from priority_retailer_transport import PriorityRetailerTransport, compatible_get, product_host
 from retailer_barcode import retailer_gtin13
+from tebilon_component_source import TEBILON, selected_tebilon_component
 from teknosa_marketplace_source import _selected_marketplace_commerce
 from trendyol_catalog_source import _parse_selected_listing, _product_id, _selected_group_root, selected_product_state
 
@@ -40,6 +41,7 @@ DIRECT_PATHS = {
     'www.lowell.com.tr': r'/[a-z0-9-]+-\d+',
     'www.teknostim.com': r'/urun/[a-z0-9-]+',
     'www.sinerji.gen.tr': r'/[a-z0-9-]+-p-\d+',
+    TEBILON: r'/[a-z0-9-]+/',
 }
 HOSTS = DIRECT_PATHS.keys() | {HEPSIBURADA, TRENDYOL, N11, TEKNOSA}
 STOP = {'source_circuit_open', 'challenge_page', 'http_403', 'http_429', 'transport_error'}
@@ -291,6 +293,7 @@ class PcRetailer:
         self.rejected = Counter()
         self.seller_targets = {}
         self.trendyol_default_document = (None, None)
+        self.tebilon_feed = None
 
     def read(self, url, part, *, discover_sellers=False, alternatives=()):
         if offer_host(url) != self.host or self.stop:
@@ -320,6 +323,8 @@ class PcRetailer:
                     self.seller_targets.update((row['source_url'], part) for row in discover_product_sellers(html, final))
         if raw is None:
             self.rejected[reason] += 1
+            if reason == 'tebilon_feed_unavailable':
+                self.unavailable.add(url)
             return None
         if (raw['gtin13'] != part['gtin'] or WORDS(raw.get('brand')) != WORDS(part['brand'])
                 or raw.get('price_kind') == 'basket'):
@@ -348,6 +353,15 @@ class PcRetailer:
         return verify_seller(raw, None, self.transport, self.identities)
 
     def parse(self, html, url, part):
+        if self.host == TEBILON:
+            from retailer_catalog_feeds import scan_feed
+            if self.tebilon_feed is None:
+                reports, rows = scan_feed(TEBILON, CATEGORIES)
+                self.tebilon_feed = ({row['url']: row for row in rows}
+                                     if any(row['status'] == 'feed_read' for row in reports) else False)
+            if self.tebilon_feed is False:
+                return None, 'tebilon_feed_unavailable'
+            return selected_tebilon_component(html, url, self.tebilon_feed.get(url), part['kind'])
         if self.host == GAMING:
             actual = parse_part(html, url, part['kind'])
             if part.get('sourceUrl') == url and (

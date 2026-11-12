@@ -29,6 +29,10 @@ DIRECT_STORES = {
     'www.sinerji.gen.tr': (
         'Sinerji', '.productDetail .priceWrapper > .price', '.productDetail button.addToCart[type="submit"]',
         '/degisim-iptal-ve-iade-politikasi-cp-480', 'Sinerji Bilgisayar Elektronik ve Sanal Mağazacılık Limited Şirketi'),
+    'www.tebilon.com': (
+        'Tebilon', '.productDetail__topPrice .price > .disc',
+        'a#sepeteEkleTagMng.sepeteEkleAdet[data-id][role="button"]',
+        '/mesafeli-satis-sozlesmesi/', 'TEBİLON BİLİŞİM TEKNOLOJİLERİ SAN. VE TİC. A.Ş.'),
     'pitrap.com': (
         'Pitrap', '.pdp .buybox .prices > .price',
         '.pdp .buybox form[method="post"][action^="/sepet/ekle/"] button',
