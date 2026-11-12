@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 from ayaz_phone_source import AYAZ_BASE, AYAZ_COMPANY, AYAZ_HOST, AYAZ_TERMS
 from comparison_phone_offers import (audit_queue, candidate_urls, capacity_priority, checked_offers, load_reviewed_profiles,
                                      hepsiburada_phone_leads, load_iphone_16_plus_profiles, n11_phone_leads,
-                                     publishable_pair, published_offer_urls, run)
+                                     publishable_pair, published_offer_urls, run, trendyol_phone_leads)
 from ozgur_phone_source import OZGUR_HOST, OZGUR_TERMS, ozgur_offer
 
 
@@ -22,6 +22,28 @@ GTIN = '0195949722813'
 
 
 class ComparisonPhoneOffersTest(unittest.TestCase):
+    def test_trendyol_category_recovery_uses_observed_exact_capacity_links(self):
+        root = 'https://www.trendyol.com/cep-telefonu-x-c103498'
+        model = 'https://www.trendyol.com/iphone-17e-cep-telefonu-x-c103498-a292-v10651727'
+        base = 'https://www.trendyol.com/apple/iphone-17e-'
+        black = base + '512gb-siyah-p-1113019279'
+        white = base + '512gb-beyaz-p-1113019295'
+        smaller = base + '256gb-siyah-p-1113019214'
+        def card(url, capacity):
+            return f'<a class="product-card" href="{url}"><h2 class="title">Apple iPhone 17e {capacity}GB</h2></a>'
+        root_html = f'<h1 class="title">Cep Telefonu</h1><a href="{model}">iPhone 17e Cep Telefonu</a>'
+        model_html = ('<h1 class="title">iPhone 17e Cep Telefonu</h1>'
+                      '<input type="checkbox" id="checkbox-web-aggregations-checkbox-292-10651727-10651727" '
+                      'aria-label="iPhone 17e" checked value="10651727">'
+                      + card(black, 512) + card(white, 512) + card(smaller, 256))
+        reader = Mock()
+        reader.read_trendyol_category.side_effect = lambda url: ({root: root_html, model: model_html}[url], 'document_read', 200)
+        cache = {}
+        specs = {'storage_gb': 512, 'ram_gb': 8}
+        self.assertEqual(trendyol_phone_leads('Apple iPhone 17e', specs, reader, {white}, cache)[0], [black])
+        self.assertEqual(trendyol_phone_leads('Apple iPhone 17e', specs, reader, {black}, cache)[0], [white])
+        self.assertEqual([call.args[0] for call in reader.read_trendyol_category.call_args_list], [root, model])
+
     def test_ayaz_selected_phone_requires_live_sku_price_stock_and_legal_identity(self):
         url = AYAZ_BASE + '/urun/samsung-galaxy-a27-5g-8-gb-256-gb-siyah'
         title = 'Samsung Galaxy A27 5G 8 GB 256 GB Siyah'

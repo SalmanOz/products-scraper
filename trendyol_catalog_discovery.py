@@ -173,8 +173,7 @@ def _public_state_pagination(soup, url, identity, card_count):
             or TRPriceScraper._normalize_words(data['title']) != TRPriceScraper._normalize_words(identity['heading'])
             or not isinstance(data.get('_links'), dict)):
         return False, None
-    fixed = {'promotionSearch': 'false', 'stickyShellNavigation': 'true',
-             'isDynamicRenderingAgent': 'false', 'channelId': '1',
+    fixed = {'promotionSearch': 'false', 'stickyShellNavigation': 'true', 'channelId': '1',
              'subPathStrategy': 'no-subpath', 'isTyPlusIncluded': 'false',
              'pageSize': '36', 'pathModel': identity['path'].lstrip('/')}
     def matches(raw, index):
@@ -183,11 +182,13 @@ def _public_state_pagination(soup, url, identity, card_count):
         try:
             parsed = urlparse(raw)
             pairs = parse_qsl(parsed.query, keep_blank_values=True, max_num_fields=9)
+            params = dict(pairs)
             return (parsed.scheme == 'https' and parsed.netloc == 'apigw.trendyol.com'
                     and parsed.path == '/discovery-sfint-search-service/api/search/products/'
                     and not parsed.fragment and not parsed.params
-                    and len(pairs) == len(dict(pairs)) == 9
-                    and dict(pairs) == {**fixed, 'pi': str(index)})
+                    and len(pairs) == len(params) == 9
+                    and params.pop('isDynamicRenderingAgent', '') in ('true', 'false')
+                    and params == {**fixed, 'pi': str(index)})
         except ValueError:
             return False
     links = data['_links']
@@ -217,11 +218,21 @@ def parse_category_document(html, url, diagnostic=None):
             diagnostic['status'] = 'category_identity_missing'
         return [], None
     if identity.get('model'):
-        selected = soup.select('input[type="checkbox"][id^="checkbox-web-aggregations-checkbox-292-"][checked]')
+        selected = soup.select('input[type="checkbox"][id^="checkbox-web-aggregations-checkbox-292-"][checked], '
+                               'input[type="checkbox"][name^="web-aggregations-checkbox-292-"][checked]')
         model_id = identity['model_id']
-        if (len(selected) != 1 or selected[0].get('id') != f'checkbox-web-aggregations-checkbox-292-{model_id}-{model_id}'
-                or selected[0].get('value') != model_id
-                or _model_key(selected[0].get('aria-label', '')) != _model_key(identity['model'])):
+        label = ''
+        if len(selected) == 1 and selected[0].get('value') == model_id:
+            control = selected[0]
+            name = f'web-aggregations-checkbox-292-{model_id}'
+            if control.get('id') == f'checkbox-{name}-{model_id}':
+                label = control.get('aria-label', '')
+            elif control.get('name') == name:
+                wrapper = control.find_parent('label', attrs={'for': name})
+                button = wrapper.find('button', attrs={'id': name, 'role': 'checkbox', 'aria-checked': 'true'}) if wrapper else None
+                if button and button.get('value') == model_id:
+                    label = button.get('aria-label', '')
+        if _model_key(label) != _model_key(identity['model']):
             if isinstance(diagnostic, dict):
                 diagnostic['status'] = 'category_model_filter_missing'
             return [], None

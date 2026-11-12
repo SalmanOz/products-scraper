@@ -33,6 +33,9 @@ from selected_sku_evidence import selected_sku_evidence
 from teknosa_reviewed_source import parse_catalog_offer as parse_teknosa_offer
 from teknosa_seller_cards import canonical_document_url as teknosa_document_url
 from tr_price_scraper import TRPriceScraper
+from trendyol_catalog_discovery import (CATEGORY_URL as TRENDYOL_PHONE_CATEGORY, category_identity as trendyol_category,
+                                       discovery_links as trendyol_category_links,
+                                       parse_category_document as trendyol_category_cards)
 from trendyol_catalog_source import parse_catalog_listing as trendyol_listing, selected_product_state
 from tws_offer_pilot import independent_sellers
 from tws_retailer_sources import selected_vatan_tws
@@ -407,6 +410,50 @@ def hepsiburada_phone_leads(name, specs, reader, excluded_urls, cache=None):
     return urls[:2], {'reason': reason, 'httpStatus': status, 'parser': parser_status, 'destinations': min(2, len(urls))}
 
 
+def trendyol_phone_leads(name, specs, reader, excluded_urls, cache=None):
+    storage = TRPriceScraper._spec_int(specs.get('storage_gb'))
+    if not storage or not TRPriceScraper._catalog_model_name(name, specs):
+        return [], {'reason': 'phone_search_identity_incomplete', 'destinations': 0}
+    cache = cache if cache is not None else {}
+
+    def read(url):
+        key = ('Trendyol category', url)
+        if key not in cache:
+            html, reason, status = reader.read_trendyol_category(url)
+            diagnostic = {}
+            cards, _ = trendyol_category_cards(html, url, diagnostic)
+            cache[key] = html, cards, reason, status, diagnostic['status'] if html else None
+        return cache[key]
+
+    html, cards, reason, status, parsed = read(TRENDYOL_PHONE_CATEGORY)
+    if not html:
+        return [], {'reason': reason, 'httpStatus': status, 'destinations': 0}
+    product = {'name': name, 'attributes': specs}
+    links = trendyol_category_links(html, TRENDYOL_PHONE_CATEGORY, [product])
+    model = next((url for url in links if trendyol_category(url).get('model')), None)
+    brand = next((url for url in links if trendyol_category(url).get('brand')), None)
+    matcher = TRPriceScraper()
+
+    def matches(rows):
+        return [row['source_url'] for row in sorted(rows, key=lambda row: (
+            capacity_priority(row['source_url'], storage), not row['stock_priority']))
+            if row['source_url'] not in excluded_urls and capacity_priority(row['source_url'], storage) < 2
+            and matcher.is_strict_match(name, row['discovery_title'], specs)]
+
+    urls = matches(cards)
+    if not model and brand and not urls:
+        brand_html, cards, reason, status, parsed = read(brand)
+        urls = matches(cards)
+        if brand_html and not urls:
+            model = next((url for url in trendyol_category_links(brand_html, brand, [product])
+                          if trendyol_category(url).get('model')), None)
+    if model:
+        _, cards, reason, status, parsed = read(model)
+        urls = matches(cards) + urls
+    urls = list(dict.fromkeys(urls))[:4]
+    return urls, {'reason': reason, 'httpStatus': status, 'parser': parsed, 'destinations': len(urls)}
+
+
 def publishable_pair(observations, client, product):
     decisions, diagnostics = {}, []
     for pair in ranked_pairs(observations):
@@ -539,7 +586,8 @@ def run(state, slugs, client=None, *, publish=False, maximum=24, products=None, 
         searches, native_leads = {}, []
         if public_audit:
             sources = (('n11Search', n11_phone_leads, n11_search),
-                       ('hepsiburadaSearch', hepsiburada_phone_leads, direct['www.hepsiburada.com']))
+                       ('hepsiburadaSearch', hepsiburada_phone_leads, direct['www.hepsiburada.com']),
+                       ('trendyolCategory', trendyol_phone_leads, transport))
             for label, discover, reader in sources:
                 if pair:
                     break

@@ -27,6 +27,22 @@ def document(body=None, page=1):
 
 
 class TrendyolDiscoveryTests(unittest.TestCase):
+    def test_observed_model_category_binds_new_checkbox_controls(self):
+        url = 'https://www.trendyol.com/iphone-17e-cep-telefonu-x-c103498-a292-v10651727'
+        key = 'web-aggregations-checkbox-292-10651727'
+        html = ('<h1 class="title">iPhone 17e Cep Telefonu</h1>'
+                f'<label for="{key}"><button id="{key}" role="checkbox" aria-checked="true" '
+                'aria-label="iPhone 17e Cep Telefonu" value="10651727"></button>'
+                f'<input type="checkbox" name="{key}" value="10651727" checked></label>'
+                + card('Apple iPhone 17e 512GB Siyah',
+                       'https://www.trendyol.com/apple/iphone-17e-512gb-siyah-p-1113019279'))
+        self.assertEqual(len(parse_category_document(html, url)[0]), 1)
+        for altered in (html.replace('aria-checked="true"', 'aria-checked="false"'),
+                        html.replace('aria-label="iPhone 17e', 'aria-label="iPhone 17'),
+                        html.replace('value="10651727"', 'value="10651728"', 1),
+                        html.replace(f'for="{key}"', 'for="another-model"')):
+            self.assertEqual(parse_category_document(altered, url)[0], [])
+
     def test_observed_anchorless_xiaomi_state_reaches_second_public_html_page_without_api_or_prices(self):
         base = 'https://www.trendyol.com/xiaomi-android-cep-telefonu-x-b101939-c164461'
         pages = [Path('fixtures/trendyol-xiaomi-public-'+part+'-page-routing.html').read_text()
