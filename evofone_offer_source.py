@@ -118,6 +118,7 @@ def selected_offer(html, url, company, *, kind):
     brand = 'Nothing' if NORMALIZE(brand) in ('nothing r', 'cmf by nothing') else brand
     photo = selected_photo(value(soup, 'meta[property="og:image"]'), {IMAGE_HOST})
     return {'platform': MERCHANT, 'merchant': MERCHANT, 'merchant_id': HOST, '_legal_name': company,
+            'product_id': str(model['productId']), 'sku': str(sku['id']),
             'price': float(price), 'currency': 'TRY', 'availability': 'in_stock', 'condition': 'new',
             'brand': brand, 'gtin13': barcode, 'source_title': title, 'url': url, '_image': photo,
             'observed_at': datetime.now(timezone.utc).isoformat()}, 'verified'

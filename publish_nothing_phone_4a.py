@@ -9,6 +9,8 @@ from daily_discovery import PublicReader, model_key, product_names
 from priority_retailer_transport import PriorityRetailerTransport, compatible_get
 from publish_s26_fe_queue import publish_verified
 from selected_sku_evidence import selected_sku_evidence
+from tr_price_scraper import TRPriceScraper
+from tws_offer_pilot import independent_sellers
 
 
 NAME = 'Nothing Phone (4a)'
@@ -45,6 +47,26 @@ def sourced_specifications():
              'confidence': 'medium', 'value': value} for key, value in facts.items()]
 
 
+def evofone_with_radio_witness(offer, other):
+    proof = other['source_variant_evidence']
+    ram, storage, ambiguous = TRPriceScraper._unambiguous_listing_capacities(offer['source_title'])
+    radio = TRPriceScraper._radio_generation(offer['source_title'])
+    if (ambiguous or ram != proof['ram_gb'] or storage != proof['storage_gb']
+            or radio not in (None, proof['network_generation']) or offer['gtin13'] != proof['gtin13']
+            or not independent_sellers(offer, other)):
+        return None
+    observed = datetime.fromisoformat(other['observed_at']).isoformat(timespec='milliseconds').replace('+00:00', 'Z')
+    return {**offer, 'source_variant_evidence': {
+        'version': 'selected-retailer-sku-v3', 'platform': 'Evofone', 'merchant_name': 'Evofone',
+        'merchant_id': offer['merchant_id'], 'product_id': offer['product_id'], 'sku': offer['sku'],
+        'gtin13': offer['gtin13'], 'ram_gb': ram, 'storage_gb': storage,
+        'network_generation': proof['network_generation'], 'independent_radio': {
+            'source_url': other['url'], 'source_title': other['source_title'],
+            'observed_at': observed, 'sku_evidence': proof,
+        },
+    }}
+
+
 def prepare():
     names = product_names(PublicReader().read(MANUFACTURER), MANUFACTURER)
     if not any(model_key(name) in {model_key(NAME), 'phone4a'} for name in names):
@@ -57,8 +79,16 @@ def prepare():
         proof = selected_sku_evidence(offer)
         if proof and proof['gtin13'] == GTIN and all(proof.get(key) == value for key, value in SPECS.items()):
             offers.append({**offer, 'source_variant_evidence': proof})
+    direct = next((offer for offer in observed if offer['url'] == EVOFONE and offer['gtin13'] == GTIN), None)
+    photo = direct.get('_image') if direct else None
     pairs = ranked_pairs(offers)
-    photo = next((offer.get('_image') for offer in observed if offer['url'] == EVOFONE and offer['gtin13'] == GTIN), None)
+    if direct and not pairs:
+        for other in sorted(offers, key=lambda row: row['price']):
+            fallback = evofone_with_radio_witness(direct, other)
+            if fallback:
+                pairs = ranked_pairs([fallback, other])
+                if pairs:
+                    break
     if not pairs or not photo:
         print(json.dumps({'qualified_platforms': [offer['platform'] for offer in offers], 'rejections': rejected}), flush=True)
         raise ValueError('nothing_independent_same_gtin_pair_or_photo_unverified')
