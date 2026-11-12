@@ -43,6 +43,11 @@ from retailer_barcode import retailer_gtin13
 RETAILER_CATEGORIES = {'apple-iphone-16-plus': (
     'https://www.mediamarkt.com.tr/tr/category/iphone-16-plus-903529.html',
 )}
+IPHONE_16_PLUS_PROFILES = Path(__file__).with_name('offer_batches') / 'comparison-iphone-16-plus.json'
+IPHONE_16_PLUS_SCOPE = {
+    'apple-iphone-16-plus': '0195949723001',
+    'apple-iphone-16-plus-8gb-256gb': '0195949723193',
+}
 MM_SELLERS = 'https://www.mediamarkt.com.tr/tr/marketplace/seller/'
 NORMALIZE = TRPriceScraper._normalize_words
 
@@ -468,6 +473,13 @@ def load_reviewed_profiles(path):
     return profiles
 
 
+def load_iphone_16_plus_profiles(path=IPHONE_16_PLUS_PROFILES):
+    profiles = load_reviewed_profiles(path)
+    if {slug: row['gtin'] for slug, row in profiles.items()} != IPHONE_16_PLUS_SCOPE:
+        raise ValueError('The daily iPhone 16 Plus refresh requires exactly the approved slugs and GTINs')
+    return profiles
+
+
 def run(state, slugs, client=None, *, publish=False, maximum=24, products=None, public_audit=False, profiles=None):
     if publish and public_audit:
         raise ValueError('Public queue verification is read-only')
@@ -592,9 +604,10 @@ def main():
     mode.add_argument('--slug', action='append')
     mode.add_argument('--audit-queue', type=Path, metavar='REPORT')
     mode.add_argument('--reviewed-pairs', type=Path, metavar='PROFILES')
+    mode.add_argument('--iphone-16-plus', action='store_true')
     parser.add_argument('--publish', action='store_true')
     args = parser.parse_args()
-    if args.reviewed_pairs is None and (not args.state or not args.state.is_file()):
+    if not (args.iphone_16_plus or args.reviewed_pairs) and (not args.state or not args.state.is_file()):
         parser.error('Provide a saved discovery state')
     state = read_state(args.state)
     if args.audit_queue is not None:
@@ -614,7 +627,11 @@ def main():
         write_json(args.audit_queue, {'checkedAt': now, 'catalogAvailable': bool(public), 'rows': rows})
         print(json.dumps({'phonesAudited': len(rows), 'verifiedPairs': sum(bool(row['sameGtin']) for row in rows)}))
         return
-    profiles = load_reviewed_profiles(args.reviewed_pairs) if args.reviewed_pairs else None
+    profiles = None
+    if args.iphone_16_plus:
+        profiles = load_iphone_16_plus_profiles()
+    elif args.reviewed_pairs:
+        profiles = load_reviewed_profiles(args.reviewed_pairs)
     slugs = list(profiles) if profiles else args.slug
     if not 1 <= len(slugs) <= 4 or len(set(slugs)) != len(slugs):
         parser.error('Provide one to four distinct catalog slugs')

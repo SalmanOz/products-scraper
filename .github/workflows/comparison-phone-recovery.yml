@@ -73,7 +73,8 @@ jobs:
           args=()
           if [[ "$PUBLISH" == true ]]; then args+=(--publish); fi
           case "$TARGET" in
-            iphone-16-plus|galaxy-foldables|vivo-x300-pro)
+            iphone-16-plus) args+=(--iphone-16-plus) ;;
+            galaxy-foldables|vivo-x300-pro)
               args+=(--reviewed-pairs "offer_batches/comparison-${TARGET}.json") ;;
             reviewed-candidates)
               test "${#REVIEWED_PAIRS}" -gt 0 && test "${#REVIEWED_PAIRS}" -le 12000

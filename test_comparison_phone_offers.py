@@ -6,7 +6,8 @@ from unittest.mock import Mock, patch
 
 from ayaz_phone_source import AYAZ_BASE, AYAZ_COMPANY, AYAZ_HOST, AYAZ_TERMS
 from comparison_phone_offers import (audit_queue, candidate_urls, capacity_priority, checked_offers, load_reviewed_profiles,
-                                     hepsiburada_phone_leads, n11_phone_leads, publishable_pair, published_offer_urls, run)
+                                     hepsiburada_phone_leads, load_iphone_16_plus_profiles, n11_phone_leads,
+                                     publishable_pair, published_offer_urls, run)
 from ozgur_phone_source import OZGUR_HOST, OZGUR_TERMS, ozgur_offer
 
 
@@ -322,3 +323,15 @@ class ComparisonPhoneOffersTest(unittest.TestCase):
                 path.write_text(json.dumps([invalid]))
                 with self.assertRaises(ValueError):
                     load_reviewed_profiles(path)
+
+    def test_daily_iphone_refresh_rejects_an_expanded_or_changed_scope(self):
+        profiles = list(load_iphone_16_plus_profiles().values())
+        self.assertEqual(len(profiles), 2)
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / 'pairs.json'
+            extra = {**profiles[0], 'slug': 'another-phone'}
+            changed = {**profiles[0], 'gtin': GTIN}
+            for rows in (profiles[:1], [*profiles, extra], [changed, profiles[1]]):
+                path.write_text(json.dumps(rows))
+                with self.assertRaisesRegex(ValueError, 'exactly the approved slugs and GTINs'):
+                    load_iphone_16_plus_profiles(path)
