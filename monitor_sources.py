@@ -245,4 +245,5 @@ def selected_hepsiburada(html, url, code):
 PARSERS = {'www.n11.com': selected_n11, 'www.vatanbilgisayar.com': selected_vatan,
            'www.mediamarkt.com.tr': selected_mediamarkt, 'www.trendyol.com': selected_trendyol,
            'www.teknosa.com': selected_teknosa, 'www.gaming.gen.tr': selected_direct,
-           'www.incehesap.com': selected_direct, 'www.hepsiburada.com': selected_hepsiburada}
+           'www.incehesap.com': selected_direct, 'www.sinerji.gen.tr': selected_direct,
+           'www.hepsiburada.com': selected_hepsiburada}

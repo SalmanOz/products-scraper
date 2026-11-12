@@ -1,4 +1,23 @@
 {
+  "4711377150255": {
+    "code": "321upx",
+    "model": "MAG 321UPX QD-OLED",
+    "url": "https://tr.msi.com/Monitor/MAG-321UPX-QD-OLED/Specification",
+    "facts": {
+      "size": 31.5,
+      "resolution": "3840 × 2160",
+      "panel": "QD-OLED",
+      "refresh": 240,
+      "hdmi": true,
+      "dp": true,
+      "usb_c": true
+    },
+    "specValues": {
+      "hdmi": "2 × HDMI 2.1, 4K 240 Hz’e kadar",
+      "dp": "1 × DisplayPort 1.4a, 4K 240 Hz’e kadar",
+      "usb_c": "1 × USB-C, DisplayPort Alt Mode ve 15 W güç çıkışı"
+    }
+  },
   "4038986143103": {
     "code": "25g4kur",
     "url": "https://www.aoc.com/is/gaming/monitors/25g4kur",

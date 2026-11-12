@@ -24,6 +24,7 @@ from ozgur_phone_source import OZGUR_HOST, ozgur_phone_url
 from pazarama_category_source import pazarama_product_url
 from pc_parts_multistore import DIRECT_PATHS, offer_host
 from public_retailer_sources import public_source
+from retailer_catalog_feeds import FEEDS, scan_feed
 import requests
 from pttavm_offer_source import HOST as PTTAVM, PRODUCT_PATH as PTT_PATH, ptt_product_url
 from nethouse_offer_source import (HOST as NETHOUSE, CATEGORY as NETHOUSE_CATEGORY,
@@ -45,8 +46,8 @@ UCUZYUM = 'www.ucuzyum.com'
 COKUYGUN = 'cokuygun.com.tr'
 SOURCES = (AKAKCE, CIMRI, EPEY, URUNAI, KARSILASTIRICI, PAHALIMI, AMAHANGISI, INDIRIMLI,
            TUBERKARAS, OZGUR_HOST, UCUZYUM, AYAZ_HOST, SERINAL_HOST, BESKEN_HOST, PTTAVM, NETHOUSE,
-           KARSILASTIRMA_IO, onual.HOST, COKUYGUN, METTO_HOST)
-DIRECT_RETAILER_SOURCES = {OZGUR_HOST, AYAZ_HOST, SERINAL_HOST, BESKEN_HOST, PTTAVM, NETHOUSE, METTO_HOST}
+           KARSILASTIRMA_IO, onual.HOST, COKUYGUN, METTO_HOST, *FEEDS)
+DIRECT_RETAILER_SOURCES = {OZGUR_HOST, AYAZ_HOST, SERINAL_HOST, BESKEN_HOST, PTTAVM, NETHOUSE, METTO_HOST, *FEEDS}
 URUNAI_CATEGORIES = {
     'telefon': 'phone', 'kulaklik': 'tws', 'laptop': 'laptop', 'monitor': 'monitor',
     'islemci': 'cpu', 'anakart': 'motherboard', 'ram-bellek': 'ram', 'ekran-karti': 'gpu',
@@ -471,6 +472,8 @@ def comparison_reader(host, *, collection='runner', **options):
 
 def scan_source(host, kinds, indexes, start_page, pages, cursors=None, *, collection='runner',
                 cimri_sitemap=False, sitemap_only=0):
+    if host in FEEDS:
+        return scan_feed(host, kinds)
     reader = comparison_reader(host, collection=collection)
     reports, observations = [], []
     if host == URUNAI:
@@ -786,7 +789,7 @@ def merge_state(state, reports, observations, indexes, now):
             **row,
             'lastAttemptAt': now,
             'completedPasses': previous.get('completedPasses', 0) + (
-                row['nextPage'] is None and row['status'] in ('sitemap_read', 'no_next_page_link')),
+                row['nextPage'] is None and row['status'] in ('sitemap_read', 'no_next_page_link', 'feed_read')),
         }
     for row in observations:
         key = product_state_key(row)
