@@ -15,6 +15,7 @@ from priority_retailer_transport import PriorityRetailerTransport, compatible_ge
 from publish_redmi_a7_pro_queue import read_spec_page
 from publish_s26_fe_queue import publish_verified
 from retailer_offer_refresh import _schema_nodes
+from source_ingestion import SourceIngestionError
 from tws_retailer_sources import selected_photo
 
 
@@ -29,7 +30,7 @@ TRENDYOL = 'https://www.trendyol.com/oppo/a6-pro-5g-8-256-gb-yildiz-mavisi-p-105
 TEKNOSA = 'https://www.teknosa.com/oppo-a6-pro-5g-8256-yildiz-mavisi-akilli-telefon-p-100000060082'
 N11 = ('https://www.n11.com/urun/oppo-a6-pro-5g-8-gb-256-gb-distributor-garantili-116349615'
        '?magaza=mcailetisim&renk=yildiz-mavisi&dahili-hafiza=256-gb')
-CANDIDATE = {'name': NAME, 'slug': SLUG, 'brandSlug': 'oppo', 'segment': 'popular_missing', 'evidenceUrl': OVERVIEW}
+CANDIDATE = {'name': NAME, 'slug': SLUG, 'brandSlug': 'oppo', 'segment': 'popular_missing', 'evidenceUrl': SPECIFICATION}
 
 
 def benchmark_observation():
@@ -119,7 +120,14 @@ def main():
     offers, photo = prepare()
     print(json.dumps({'gtin': GTIN, 'offers': [report_offer(row) for row in offers], 'photo': photo}, ensure_ascii=False), flush=True)
     if args.validate or args.publish:
-        result = publish_verified(CANDIDATE, sources, offers, photo, publish=args.publish)
+        try:
+            result = publish_verified(CANDIDATE, sources, offers, photo, publish=args.publish)
+        except SourceIngestionError as error:
+            print(json.dumps({'serverStatus': error.status_code,
+                              'issues': error.response_body.get('issues', []),
+                              'missingFields': error.response_body.get('missing_fields', []),
+                              'committed': error.response_body.get('committed') is True}), flush=True)
+            raise
         if args.validate:
             print(json.dumps(result), flush=True)
 
