@@ -16,6 +16,7 @@ from bs4 import BeautifulSoup
 
 from catalog_source_collector import catalog_document_reader
 from laptop_retailer_sources import WORDS
+from ozgur_phone_source import ozgur_phone_url
 from pazarama_category_source import pazarama_product_url
 from pc_parts_multistore import DIRECT_PATHS, offer_host
 from public_retailer_sources import public_source
@@ -547,7 +548,7 @@ def retailer_destination(raw):
         or route.netloc == 'www.mediamarkt.com.tr' and re.fullmatch(
             r'/tr/product/_[a-z0-9-]+-[1-9]\d{5,11}\.html', route.path)
     )
-    if product_host(url) or first_party and not selectors or pazarama_product_url(url):
+    if product_host(url) or first_party and not selectors or pazarama_product_url(url) or ozgur_phone_url(url):
         return url
     if route.netloc in DIRECT_PATHS and offer_host(url):
         return url

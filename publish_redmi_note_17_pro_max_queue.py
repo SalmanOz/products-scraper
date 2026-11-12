@@ -7,7 +7,7 @@ from urllib.robotparser import RobotFileParser
 
 from daily_discovery import MAX_BODY, PublicReader, model_key, product_names
 from priority_retailer_transport import compatible_get
-from publish_galaxy_a07s_queue import OZGUR_BASE, OZGUR_TERMS, ozgur_offer
+from ozgur_phone_source import OZGUR_BASE, OZGUR_TERMS, ozgur_offer
 from publish_redmi_note_17_pro_queue import selected_mediamarkt_phone_offer
 from publish_s26_fe_queue import publish_verified
 from source_ingestion import SourceIngestionClient

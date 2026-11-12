@@ -22,6 +22,7 @@ from mediamarkt_marketplace_audit import selected_marketplace_offer
 from mediamarkt_source import _selected_offer as mediamarkt_first_party, product_url as mediamarkt_url
 from n11_catalog_source import parse_catalog_listing as n11_listing
 from offer_ingestion_client import IngestionClientError, OfferIngestionClient
+from ozgur_phone_source import OZGUR_HOST, OZGUR_TERMS, ozgur_offer, ozgur_phone_url
 from pazarama_category_source import pazarama_product_url
 from priority_retailer_transport import PriorityRetailerTransport, product_host
 from retailer_offer_refresh import _product_offer, _schema_nodes
@@ -190,6 +191,17 @@ def checked_offers(urls, name, specs, transport, documents=None, *, direct=None,
                 offer, rejected = parse_catalog_buy_box(html, url, name, specs)
                 if offer and not verify_seller(offer, None, reader, seller_cache):
                     offer, rejected = None, 'seller_identity_unverified'
+            elif ozgur_phone_url(url) and host in direct:
+                if OZGUR_TERMS not in documents:
+                    documents[OZGUR_TERMS] = reader._read_document(OZGUR_TERMS, host, category=True)
+                terms, legal_reason, _ = documents[OZGUR_TERMS]
+                if terms:
+                    try:
+                        offer, _ = ozgur_offer(html, terms, url=url, name=name, specs=specs)
+                    except (ValueError, TypeError, KeyError, AttributeError) as error:
+                        rejected = str(error) if str(error).startswith('ozgur_') else 'ozgur_invalid_source_data'
+                else:
+                    rejected = 'ozgur_seller_identity_' + legal_reason
             elif vatan_phone_url(url):
                 offer = selected_vatan_tws(html, url, name,
                     lambda title, _brand: name if matcher.is_strict_match(name, title, specs) else None)
@@ -255,6 +267,8 @@ def vatan_phone_url(url):
 
 def supported_phone_url(url, *, expanded=False):
     route = urlsplit(url)
+    if route.netloc == OZGUR_HOST:
+        return expanded and ozgur_phone_url(url)
     if route.netloc in ('www.n11.com', 'www.trendyol.com'):
         return product_host(url) == route.netloc
     if expanded and route.netloc == 'www.hepsiburada.com':
@@ -407,6 +421,7 @@ def run(state, slugs, client=None, *, publish=False, maximum=24, products=None, 
     if public_audit or profiles:
         direct['www.hepsiburada.com'] = PriorityRetailerTransport(maximum_per_host=maximum,
             browser_fallback=False, get=_hepsiburada_public_get)
+        direct[OZGUR_HOST] = PriorityRetailerTransport(maximum_per_host=maximum, browser_fallback=False)
     if public_audit:
         direct['www.vatanbilgisayar.com'] = PriorityRetailerTransport(maximum_per_host=maximum,
             browser_fallback=False)

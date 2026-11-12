@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 
 from comparison_phone_offers import (audit_queue, candidate_urls, checked_offers, load_reviewed_profiles,
                                      publishable_pair, published_offer_urls, run)
+from ozgur_phone_source import OZGUR_HOST, OZGUR_TERMS, ozgur_offer
 
 
 MM = 'https://www.mediamarkt.com.tr/tr/product/_apple-iphone-16-plus-128-gb-akilli-telefon-mavi-146562812.html'
@@ -19,6 +20,44 @@ GTIN = '0195949722813'
 
 
 class ComparisonPhoneOffersTest(unittest.TestCase):
+    def test_ozgur_uses_the_selected_upc_without_inventing_missing_sku_or_radio(self):
+        url = 'https://ozguriletisimankara.com/urun/iphone-15-mavi-128-gb'
+        photo = 'https://ozguriletisimankara.com/uploads/photo.jpg'
+        title = 'iPhone 15 128 GB Mavi'
+        product = {'@type': 'Product', 'url': url, 'name': title, 'brand': {'name': 'Apple'},
+                   'mpn': 'MTP43TU/A', 'gtin12': '195949036583', 'image': [photo],
+                   'offers': {'@type': 'Offer', 'url': url, 'priceCurrency': 'TRY', 'price': '59999.00',
+                              'seller': {'name': 'Özgür İletişim'},
+                              'availability': 'https://schema.org/InStock',
+                              'itemCondition': 'https://schema.org/NewCondition'}}
+        html = f'''
+        <link rel="canonical" href="{url}">
+        <script type="application/ld+json">{json.dumps(product)}</script>
+        <div class="oi-product-detail" data-product-id="145" data-oi-view-variant="853">
+          <img id="oi-product-main-img" src="{photo}">
+          <div class="oi-pd-buybox">
+            <h1 class="oi-pd-title">{title}</h1><div class="oi-pd-model"><span>MTP43TU/A</span></div>
+            <span class="oi-pd-stockline is-in">Stokta</span>
+            <span data-oi-price>59.999,00 TL</span>
+            <button data-oi-add-cart data-id="145">Sepete Ekle</button>
+          </div>
+        </div>'''
+        legal = '<p>Satıcı: Örnek İletişim Ticaret Limited Şirketi Vergi dairesi: Örnek</p>'
+        direct = Mock()
+        direct._read_document.side_effect = [(html, 'document_read', 200), (legal, 'document_read', 200)]
+        specs = {'ram_gb': 6, 'storage_gb': 128, 'network_generation': '5g'}
+        _, offers, rejections = checked_offers([url], 'Apple iPhone 15', specs, Mock(), direct={OZGUR_HOST: direct})
+        self.assertFalse(rejections)
+        self.assertEqual([(o['gtin13'], o['price']) for o in offers], [('0195949036583', 59999)])
+        self.assertNotIn('source_variant_evidence', offers[0])
+        direct._read_document.assert_any_call(OZGUR_TERMS, OZGUR_HOST, category=True)
+        for invalid in (html.replace('195949036583', '195949036589'),
+                        html.replace('195949036583', '195949036583", "gtin13": "0195949723001'),
+                        html.replace('data-id="145"', 'data-id="146"'),
+                        html.replace('59.999,00 TL', '59.990,00 TL')):
+            with self.assertRaises(ValueError):
+                ozgur_offer(invalid, legal, url=url, name='Apple iPhone 15', specs=specs)
+
     def test_public_phone_page_only_contributes_supported_offer_links(self):
         response = Mock(status_code=200)
         response.iter_content.return_value = [f'''<a href="{PZ}">Other link</a>

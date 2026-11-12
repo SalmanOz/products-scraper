@@ -3,8 +3,6 @@
 import argparse
 from datetime import datetime, timezone
 import json
-import re
-from urllib.parse import urljoin
 from urllib.robotparser import RobotFileParser
 
 from bs4 import BeautifulSoup
@@ -13,12 +11,10 @@ from automatic_memory_variants import variant_selected_evidence
 from daily_discovery import PublicReader, model_key, product_names
 from priority_retailer_transport import PriorityRetailerTransport, compatible_get
 from publish_s26_fe_queue import publish_verified
-from retailer_offer_refresh import _schema_nodes
-from teknosa_reviewed_source import _amount, _cash_price
+from ozgur_phone_source import OZGUR_BASE, OZGUR_TERMS, ozgur_offer
 from tr_price_scraper import TRPriceScraper
 from trendyol_catalog_source import parse_catalog_listing, selected_product_state
 from tws_offer_pilot import independent_sellers
-from tws_retailer_sources import selected_photo
 
 NAME = 'Samsung Galaxy A07s'
 SLUG = 'samsung-galaxy-a07s'
@@ -28,9 +24,7 @@ SPECS = {'ram_gb': 4, 'storage_gb': 128, 'network_generation': '4g'}
 MANUFACTURER = ('https://www.samsung.com/tr/smartphones/galaxy-a/'
                 'galaxy-a07s-light-violet-128gb-sm-a077flvgtur/')
 SPEC_DATABASE = 'https://www.kimovil.com/en/where-to-buy-samsung-galaxy-a07s'
-OZGUR_BASE = 'https://ozguriletisimankara.com'
 OZGUR = OZGUR_BASE + '/urun/samsung-galaxy-a07s-4-gb-ram-acik-mor-128-gb'
-OZGUR_TERMS = OZGUR_BASE + '/mesafeli-satis'
 TRENDYOL = 'https://www.trendyol.com/samsung/galaxy-a07s-4-128-gb-acik-mor-cep-telefonu-p-1210300556'
 CANDIDATE = {'name': NAME, 'slug': SLUG, 'brandSlug': 'samsung', 'segment': 'new_release',
              'evidenceUrl': MANUFACTURER}
@@ -58,53 +52,6 @@ def specifications():
             for key, value, origin, url in sources]
 
 
-def ozgur_offer(html, legal_html, *, url=OZGUR, name=NAME, specs=SPECS, mpn=MPN,
-                gtin=GTIN, brand='Samsung'):
-    soup = BeautifulSoup(html, 'html.parser')
-    canonical = soup.select_one('link[rel="canonical"]')
-    roots = soup.select('.oi-product-detail[data-product-id][data-oi-view-variant]')
-    products = [item for item in _schema_nodes(soup, url) if item.get('@type') == 'Product']
-    if not canonical or canonical.get('href') != url or len(products) != 1 or len(roots) != 1:
-        raise ValueError('ozgur_selected_page_unverified')
-    product, root = products[0], roots[0]
-    offer = product.get('offers') or {}
-    box = root.select_one('.oi-pd-buybox')
-    if box is None:
-        raise ValueError('ozgur_buybox_missing')
-    heading = box.select_one('h1.oi-pd-title')
-    title = heading.get_text(' ', strip=True) if heading else ''
-    model = box.select_one('.oi-pd-model span')
-    stock = box.select_one('.oi-pd-stockline.is-in')
-    visible = box.select_one('[data-oi-price]')
-    cart = box.select_one('[data-oi-add-cart]')
-    photo = root.select_one('img#oi-product-main-img[src]')
-    photo_url = selected_photo(urljoin(OZGUR_BASE + '/', photo['src']), {OZGUR_BASE.split('//')[1]}) if photo else None
-    legal = BeautifulSoup(legal_html, 'html.parser').get_text(' ', strip=True)
-    company = re.search(r'Satıcı:\s*(.+?)\s+Vergi dairesi:', legal)
-    price = _amount(offer.get('price'))
-    if (not company or not title or product.get('name') != title or product.get('url') != url
-            or not TRPriceScraper().is_strict_match(name, title, specs) or product.get('mpn') != mpn
-            or not model or model.get_text(strip=True) != mpn or product.get('gtin13') != gtin
-            or (product.get('brand') or {}).get('name') != brand or not photo_url
-            or photo_url not in product.get('image', []) or offer.get('url') != url
-            or (offer.get('seller') or {}).get('name') != 'Özgür İletişim'
-            or offer.get('availability') != 'https://schema.org/InStock'
-            or offer.get('itemCondition') != 'https://schema.org/NewCondition' or offer.get('priceCurrency') != 'TRY'
-            or not stock or stock.get_text(' ', strip=True) != 'Stokta' or not cart
-            or cart.get('data-id') != root['data-product-id'] or cart.get_text(' ', strip=True) != 'Sepete Ekle'
-            or cart.has_attr('disabled') or cart.get('aria-disabled') == 'true'
-            or price is None or not visible or _cash_price(visible.get_text(' ', strip=True)) != price):
-        raise ValueError('ozgur_exact_sku_cash_offer_unverified')
-    merchant = 'Özgür İletişim'
-    proof = {'version': 'selected-retailer-sku-v1', 'platform': merchant, 'merchant_id': 'ozgur-iletisim',
-             'merchant_name': merchant, 'product_id': root['data-product-id'], 'listing_id': root['data-oi-view-variant'],
-             'sku': product['sku'], 'gtin13': gtin, **specs}
-    return {'merchant': merchant, 'platform': merchant, '_legal_name': TRPriceScraper._normalize_words(company[1]),
-            'price': float(price), 'currency': 'TRY', 'availability': 'in_stock', 'gtin13': gtin,
-            'source_title': title, 'url': url, 'observed_at': datetime.now(timezone.utc).isoformat(),
-            'source_variant_evidence': proof}, photo_url
-
-
 def prepare():
     reader = PublicReader()
     page = reader.read(MANUFACTURER)
@@ -119,7 +66,8 @@ def prepare():
     robots.parse(reader.read(OZGUR_BASE + '/robots.txt').splitlines())
     if any(not robots.can_fetch('TeknoskorPriceBot', url) for url in (OZGUR, OZGUR_TERMS)):
         raise ValueError('ozgur_robots_disallowed')
-    direct, photo = ozgur_offer(reader.read(OZGUR), reader.read(OZGUR_TERMS))
+    direct, photo = ozgur_offer(reader.read(OZGUR), reader.read(OZGUR_TERMS), url=OZGUR, name=NAME,
+                               specs=SPECS, mpn=MPN, gtin=GTIN, brand='Samsung')
 
     transport = PriorityRetailerTransport(maximum_per_host=4, browser_fallback=False, get=compatible_get)
     html, reason, _ = transport.read_document(TRENDYOL)
