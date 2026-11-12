@@ -274,15 +274,28 @@ def supported_phone_url(url, *, expanded=False):
     return pazarama_product_url(url) and bool(re.fullmatch(r'/[a-z0-9-]+-p-\d{12,13}', route.path))
 
 
-def candidate_urls(state, slug, *, expanded=False):
-    variants = []
-    family = product_family(slug)
+def phone_lead_index(state, *, expanded=False):
+    by_family, by_slug = defaultdict(dict), defaultdict(dict)
     for row in state['products'].values():
-        if row.get('category') != 'phone' or family != row.get('catalogFamily') and slug != row.get('catalogSlug'):
+        family, slug = row.get('catalogFamily'), row.get('catalogSlug')
+        if row.get('category') != 'phone' or not (family or slug):
             continue
-        variants.extend(row.get('retailerLeads', ()))
-    return list(dict.fromkeys(url for raw in variants if (url := retailer_destination(raw))
-                              and supported_phone_url(url, expanded=expanded)))
+        urls = {url: None for raw in row.get('retailerLeads', ())
+                if (url := retailer_destination(raw)) and supported_phone_url(url, expanded=expanded)}
+        if family:
+            by_family[family].update(urls)
+        if slug:
+            by_slug[slug].update(urls)
+    return by_family, by_slug
+
+
+def indexed_phone_leads(index, slug):
+    by_family, by_slug = index
+    return list(dict.fromkeys([*by_slug.get(slug, ()), *by_family.get(product_family(slug), ())]))
+
+
+def candidate_urls(state, slug, *, expanded=False):
+    return indexed_phone_leads(phone_lead_index(state, expanded=expanded), slug)
 
 
 def published_offer_urls(slug):
@@ -329,19 +342,12 @@ def round_robin_phone_families(rows, maximum):
 def audit_queue(state, products, maximum=8):
     audited = state.get('phoneOfferAudits', {})
     candidates, unrouted = [], []
-    by_family = defaultdict(set)
-    for row in state['products'].values():
-        if row.get('category') != 'phone' or not row.get('catalogFamily'):
-            continue
-        for raw in row.get('retailerLeads', ()):
-            if url := retailer_destination(raw):
-                if supported_phone_url(url, expanded=True):
-                    by_family[row['catalogFamily']].add(url)
+    index = phone_lead_index(state, expanded=True)
     for product in products:
         slug = product['slug']
         if not product.get('name') or not isinstance(product.get('attributes'), dict):
             continue
-        urls = by_family[product_family(slug)] | set(saved_phone_leads(state, slug))
+        urls = [*indexed_phone_leads(index, slug), *saved_phone_leads(state, slug)]
         storage = PriceUpdater.get_expected_specs(product['attributes']).get('storage_gb')
         compatible_hosts = {urlsplit(url).netloc for url in urls if capacity_priority(url, storage) < 2}
         if compatible_hosts:
@@ -492,6 +498,7 @@ def run(state, slugs, client=None, *, publish=False, maximum=24, products=None, 
     documents = {}
     seller_cache = {}
     search_cache = {}
+    lead_index = phone_lead_index(state, expanded=public_audit) if not profiles else None
     for slug in slugs:
         product = products[slug]
         specs = PriceUpdater.get_expected_specs(product.get('attributes'))
@@ -500,7 +507,7 @@ def run(state, slugs, client=None, *, publish=False, maximum=24, products=None, 
             urls = profile['urls'][:]
         else:
             discovered = category_leads(slug, product['name'], specs, transport, documents)
-            discovered += candidate_urls(state, slug, expanded=public_audit)
+            discovered += indexed_phone_leads(lead_index, slug)
             if public_audit:
                 discovered += saved_phone_leads(state, slug)
             known = published_offer_urls(slug) if public_audit else ()

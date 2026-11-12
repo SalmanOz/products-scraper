@@ -212,5 +212,23 @@
       "Takılı Fan Sayısı": "4 × 120 mm",
       "Radyatör Desteği": "Üst 360 mm"
     }
+  },
+  "4718466017901": {
+    "kind": "case",
+    "brand": "Lian Li",
+    "mpn": "G99.V100RX.01",
+    "specSourceUrl": "https://lian-li.com/product/vector-v100/",
+    "sourceUrl": "https://www.incehesap.com/lian-li-vector-v100r-siyah-atx-kasa-fiyati-85374/",
+    "specs": {
+      "Kasa Tipi": "Mid Tower",
+      "Anakart Desteği": "ATX, Micro-ATX, Mini-ITX",
+      "Renk": "Siyah",
+      "Boyutlar": "446 × 235,5 × 484,65 mm",
+      "Ekran Kartı Uzunluğu (Maks)": "420 mm",
+      "Soğutucu Yüksekliği (Maks)": "178 mm",
+      "Güç Kaynağı Desteği": "ATX, 220 mm’den kısa",
+      "Takılı Fan Sayısı": "4 × 120 mm",
+      "Radyatör Desteği": "Üst 360 mm"
+    }
   }
 }

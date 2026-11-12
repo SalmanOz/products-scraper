@@ -196,6 +196,18 @@ class ComparisonPhoneOffersTest(unittest.TestCase):
                                    'retailerLeads': ['https://urunai.com/telefon/apple/iphone-16-plus', MM, PZ, PZ]}}}
         self.assertEqual(candidate_urls(state, 'apple-iphone-16-plus-8gb-256gb'), [MM, PZ])
 
+    def test_phone_discovery_prioritizes_exact_capacity_links_and_keeps_family_fallbacks(self):
+        slug = 'apple-iphone-16-plus-8gb-256gb'
+        state = {'products': {
+            'family': {'category': 'phone', 'catalogFamily': 'apple-iphone-16-plus',
+                       'retailerLeads': [MM, PZ]},
+            'exact': {'category': 'phone', 'catalogFamily': 'apple-iphone-16-plus', 'catalogSlug': slug,
+                      'retailerLeads': [PZ, HB]},
+            'other-capacity': {'category': 'phone', 'catalogSlug': 'apple-iphone-16-plus-8gb-512gb',
+                               'retailerLeads': [VATAN]},
+        }}
+        self.assertEqual(candidate_urls(state, slug, expanded=True), [PZ, HB, MM])
+
     def test_public_queue_admits_new_direct_sources_and_requires_their_exact_barcodes(self):
         slug = 'apple-iphone-16-plus'
         product = {'slug': slug, 'name': NAME, 'attributes': {}}
