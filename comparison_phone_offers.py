@@ -448,22 +448,38 @@ def hepsiburada_phone_leads(name, specs, reader, excluded_urls, cache=None):
     if not storage or not model:
         return [], {'reason': 'phone_search_identity_incomplete', 'destinations': 0}
     radio = specs.get('network_generation')
-    if radio and TRPriceScraper._dual_radio_family(model) and not TRPriceScraper._radio_generation(model):
+    dual_radio = TRPriceScraper._dual_radio_family(model)
+    if radio and dual_radio and not TRPriceScraper._radio_generation(model):
         model = f'{model} {radio.upper()}'
-    key = ('Hepsiburada', model)
-    if cache is not None and key in cache:
-        cards, reason, status, parser_status = cache[key], 'same_run_search_hints', 200, 'parsed'
-    else:
-        html, reason, status = reader.read_hepsiburada_search(model)
-        cards, parser_status = public_model_search_cards(html, model) if html else ([], None)
-        if cache is not None and parser_status == 'parsed' and status == 200:
-            cache[key] = cards
     matcher = TRPriceScraper()
-    urls = [card['source_url'] for card in cards
-            if card['source_url'] not in excluded_urls and capacity_priority(card['source_url'], storage) < 2
-            and matcher.is_strict_match(name, card['discovery_title'], specs)]
+
+    def read(query):
+        key = ('Hepsiburada', query, model)
+        if cache is not None and key in cache:
+            cards, reason, status, parser_status = cache[key], 'same_run_search_hints', 200, 'parsed'
+        else:
+            html, reason, status = reader.read_hepsiburada_search(query)
+            cards, parser_status = public_model_search_cards(html, query, model=model) if html else ([], None)
+            if cache is not None and parser_status == 'parsed' and status == 200:
+                cache[key] = cards
+        compatible = [card['source_url'] for card in cards
+                      if capacity_priority(card['source_url'], storage) < 2
+                      and matcher.is_strict_match(name, card['discovery_title'], specs)]
+        return compatible, reason, status, parser_status
+
+    query = model
+    urls, reason, status, parser_status = read(query)
+    if not urls and status == 200 and parser_status == 'parsed':
+        # Some generic model searches rank accessories above the phone. Use
+        # the exact capacity for discovery, preserving radio on dual families.
+        capacity = f'{storage // 1024} TB' if storage >= 1024 and storage % 1024 == 0 else f'{storage} GB'
+        search_model = model if dual_radio else ' '.join(re.sub(r'\b(?:4g|5g|lte)\b', '', model, flags=re.I).split())
+        query = f'{search_model} {capacity}'
+        urls, reason, status, parser_status = read(query)
+    urls = [url for url in urls if url not in excluded_urls]
     urls.sort(key=lambda url: capacity_priority(url, storage))
-    return urls[:2], {'reason': reason, 'httpStatus': status, 'parser': parser_status, 'destinations': min(2, len(urls))}
+    return urls[:2], {'reason': reason, 'httpStatus': status, 'parser': parser_status,
+                      'query': query, 'destinations': min(2, len(urls))}
 
 
 def trendyol_phone_leads(name, specs, reader, excluded_urls, cache=None):

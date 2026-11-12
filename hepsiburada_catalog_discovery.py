@@ -214,12 +214,13 @@ def organic_search_cards(html, query):
     return _product_cards(soup, include_promoted=False), 'parsed'
 
 
-def public_model_search_cards(html, query):
+def public_model_search_cards(html, query, *, model=None):
     """Route organic cards only when the visible search echoes the model."""
     cards, reason = organic_search_cards(html, query)
     matcher = TRPriceScraper()
-    return [card for card in cards if matcher.is_strict_match(query, card['discovery_title'], {})
-            and matcher.is_strict_match(query, urlparse(card['source_url']).path.replace('-', ' '), {})], reason
+    model = model or query
+    return [card for card in cards if matcher.is_strict_match(model, card['discovery_title'], {})
+            and matcher.is_strict_match(model, urlparse(card['source_url']).path.replace('-', ' '), {})], reason
 
 
 def public_sku_search_urls(html, sku):

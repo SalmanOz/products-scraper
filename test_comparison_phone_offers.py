@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 from ayaz_phone_source import AYAZ_BASE, AYAZ_COMPANY, AYAZ_HOST, AYAZ_TERMS
 from comparison_phone_offers import (audit_queue, candidate_urls, capacity_priority, checked_offers, load_reviewed_profiles,
@@ -169,6 +169,28 @@ class ComparisonPhoneOffersTest(unittest.TestCase):
         search.read_hepsiburada_search.assert_not_called()
         search.read_hepsiburada_search.return_value = html.replace('<h1>', '<h1>wrong '), 'document_read', 200
         self.assertEqual(hepsiburada_phone_leads(NAME, SPECS, search, ())[0], [])
+
+    def test_hepsiburada_recovers_phone_with_capacity_search_after_accessory_results(self):
+        model = 'Samsung Galaxy A55 5G'
+        query = 'Samsung Galaxy A55 256 GB'
+        url = ('https://www.hepsiburada.com/samsung-galaxy-a55-256-gb-8-gb-ram-samsung-turkiye-'
+               'garantili-siyah-p-HBCV000062N7C3')
+        title = 'Samsung Galaxy A55 256 GB 8 GB Ram (Samsung Türkiye Garantili) Siyah'
+        search = Mock()
+        accessory = 'Samsung Galaxy A15 A25 A35 A55 5G Hızlı Şarj Adaptörü'
+        accessory_url = 'https://www.hepsiburada.com/samsung-galaxy-a55-5g-sarj-adaptoru-p-HBCV0000000001'
+        def html(echo, label, destination):
+            return (f'<h1>"{echo}" araması (1 ürün)</h1><h2 data-test-id="title-1">'
+                    f'<a href="{destination}" title="{label}">{label}</a></h2>')
+        search.read_hepsiburada_search.side_effect = [
+            (html(model, accessory, accessory_url), 'document_read', 200),
+            (html(query, title, url), 'document_read', 200),
+        ]
+        specs = {'ram_gb': 8, 'storage_gb': 256, 'network_generation': '5g'}
+        urls, diagnostics = hepsiburada_phone_leads(model + ' 8GB 256GB', specs, search, ())
+        self.assertEqual(urls, [url])
+        self.assertEqual(diagnostics['query'], query)
+        self.assertEqual(search.read_hepsiburada_search.call_args_list, [call(model), call(query)])
 
     def test_ozgur_uses_the_selected_upc_without_inventing_missing_sku_or_radio(self):
         url = 'https://ozguriletisimankara.com/urun/iphone-15-mavi-128-gb'
