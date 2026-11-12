@@ -439,7 +439,7 @@ def additional_comparison_in_scope(kind, title):
 
 
 def comparison_reader(host, *, collection='runner', **options):
-    use_gateway = host == PTTAVM or collection == 'site' and host in (CIMRI, EPEY)
+    use_gateway = host == PTTAVM or collection == 'site' and host in (CIMRI, EPEY, onual.HOST)
     gateway = catalog_document_reader('competitor') if use_gateway else None
     unavailable = (EPEY,) if host == EPEY and collection == 'runner' else ()
     return PriorityRetailerTransport(browser_fallback=False, get=gateway or compatible_get,
@@ -455,7 +455,8 @@ def scan_source(host, kinds, indexes, start_page, pages, cursors=None, *, collec
     if host == UCUZYUM:
         return scan_ucuzyum(reader, indexes['phone']) if 'phone' in kinds else ([], [])
     if host in (AMAHANGISI, onual.HOST):
-        return scan_product_sitemap(host, kinds, indexes, cursors or {}, reader=reader, maximum=pages)
+        reports, rows = scan_product_sitemap(host, kinds, indexes, cursors or {}, reader=reader, maximum=pages)
+        return [{**report, 'collection': collection} for report in reports], rows
     if host == KARSILASTIRMA_IO:
         return scan_karsilastirma_io(reader, kinds, indexes)
     stopped = None
@@ -668,20 +669,27 @@ def amahangisi_sitemap_cards(xml, kinds, indexes):
     return list(cards.values())
 
 
+def onual_product_identity(url):
+    if not url.startswith(onual.BASE + '/') or not (match := onual.PRODUCT.fullmatch(url.removeprefix(onual.BASE))):
+        return None
+    slug, product_id = match.groups()
+    title = slug.replace('-', ' ')
+    kind = onual.category(title)
+    if not kind or not in_scope(kind, title) or not additional_comparison_in_scope(kind, title):
+        return None
+    # Retailer warranty text otherwise obscures the catalog family.
+    if kind == 'phone':
+        title = re.sub(r'\b(?:[a-z0-9]+ )?turkiye garantili\b *', '', title).strip()
+    return kind, product_id, title
+
+
 def onual_sitemap_cards(xml, kinds, indexes):
     cards = {}
     for url in sitemap_locations(xml, 'urlset'):
-        if not url.startswith(onual.BASE + '/') or not (match := onual.PRODUCT.fullmatch(url.removeprefix(onual.BASE))):
+        identity = onual_product_identity(url)
+        if not identity or identity[0] not in kinds:
             continue
-        slug, product_id = match.groups()
-        title = slug.replace('-', ' ')
-        if not (kind := onual.category(title)) or kind not in kinds:
-            continue
-        if not in_scope(kind, title) or not additional_comparison_in_scope(kind, title):
-            continue
-        # Retailer warranty text otherwise obscures the catalog family.
-        if kind == 'phone':
-            title = re.sub(r'\b(?:[a-z0-9]+ )?turkiye garantili\b *', '', title).strip()
+        kind, product_id, title = identity
         cards.setdefault((kind, product_id), {'id': product_id, 'title': title, 'url': url,
             'source': onual.HOST, 'category': kind, 'catalogSlug': catalog_match(title, indexes[kind]),
             'titleFromSitemap': True})
@@ -1040,13 +1048,20 @@ def source_snapshot_row(row, host):
     match = CARD[host].fullmatch(route.path)
     if not match or route.query or route.fragment:
         return None
+    title = row.get('title')
     if host == UCUZYUM:
         kind, identity = 'phone', match[1]
+    elif host == onual.HOST:
+        product = onual_product_identity(url)
+        if not product:
+            return None
+        kind, identity, expected_title = product
+        if title != expected_title:
+            return None
     else:
         path_category, product = route.path.split('/')[1:]
         kind = SNAPSHOT_CATEGORIES[host].get(path_category)
         identity = product.removesuffix('.html') if host == EPEY else match[1]
-    title = row.get('title')
     if (not kind or row.get('category') != kind or not isinstance(title, str) or
             not 3 <= len(title) <= 260 or not in_scope(kind, title) or
             host == UCUZYUM and not additional_comparison_in_scope(kind, title)):
@@ -1177,6 +1192,8 @@ def main():
     parser.add_argument('--export-cimri-snapshot', type=Path, help='Export Cimri discovery links without prices')
     parser.add_argument('--export-akakce-snapshot', type=Path, help='Export Akakçe discovery links without prices')
     parser.add_argument('--export-ucuzyum-snapshot', type=Path, help='Export Ucuzyum discovery links without prices')
+    parser.add_argument('--import-onual-snapshot', type=Path, help='Import OnuAl product and retailer URLs')
+    parser.add_argument('--export-onual-snapshot', type=Path, help='Export OnuAl product and retailer URLs without prices')
     parser.add_argument('--lead-only', action='store_true', help='Continue retailer-link discovery from saved candidates')
     parser.add_argument('--state', type=Path, help='Resume category cursors and retain deduplicated candidate IDs')
     parser.add_argument('--prioritize-model', action='append', default=[])
@@ -1211,7 +1228,8 @@ def main():
     state = read_state(args.state)
     source_snapshots = {}
     for host, path in ((AKAKCE, args.import_akakce_snapshot), (EPEY, args.import_epey_snapshot),
-                       (CIMRI, args.import_cimri_snapshot), (UCUZYUM, args.import_ucuzyum_snapshot)):
+                       (CIMRI, args.import_cimri_snapshot), (UCUZYUM, args.import_ucuzyum_snapshot),
+                       (onual.HOST, args.import_onual_snapshot)):
         if path is None:
             continue
         try:
@@ -1223,12 +1241,15 @@ def main():
         unpriced = {row['slug'] for row in public_phone_catalog() if row.get('fresh_offer_count') in (0, '0')}
         priority.update(unpriced, map(phone_catalog_family, unpriced))
     hosts = list(dict.fromkeys(args.source or SOURCES))
+    def source_collection(host):
+        return 'site' if host == onual.HOST and args.site_lead_fallback else args.collection
+
     batches = []
     if not args.lead_only:
         with ThreadPoolExecutor(max_workers=len(hosts)) as pool:
             tasks = [pool.submit(scan_source, host, kinds, indexes, args.start_page,
                                  akakce_pages if host == AKAKCE else args.pages, state['sources'],
-                                 collection=args.collection,
+                                 collection=source_collection(host),
                                  cimri_sitemap=args.cimri_sitemap and args.collection == 'runner',
                                  sitemap_only=sitemap_limits.get(host, 0)) for host in hosts]
             batches = [task.result() for task in tasks]
@@ -1249,7 +1270,7 @@ def main():
         known_leads = lead_inventory(state)
         with ThreadPoolExecutor(max_workers=len(hosts)) as pool:
             jobs = [pool.submit(scan_source_leads, state, host, kinds, limits[host], now,
-                                priority, set(args.prioritize_model), collection=args.collection,
+                                priority, set(args.prioritize_model), collection=source_collection(host),
                                 known_leads=known_leads, stopped_reason=stopped.get(host),
                                 site_fallback=args.site_lead_fallback)
                     for host in hosts if host not in DIRECT_RETAILER_SOURCES and limits[host]]
@@ -1257,7 +1278,8 @@ def main():
     if args.state is not None:
         write_json(args.state, state)
     for host, path in ((AKAKCE, args.export_akakce_snapshot), (EPEY, args.export_epey_snapshot),
-                       (CIMRI, args.export_cimri_snapshot), (UCUZYUM, args.export_ucuzyum_snapshot)):
+                       (CIMRI, args.export_cimri_snapshot), (UCUZYUM, args.export_ucuzyum_snapshot),
+                       (onual.HOST, args.export_onual_snapshot)):
         if path is not None:
             export_source_snapshot(path, state, host)
     candidates = [row for row in state['products'].values() if row['catalogSlug'] is None]

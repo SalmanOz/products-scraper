@@ -42,6 +42,26 @@ class CompetitorCatalogGapsTest(unittest.TestCase):
         self.assertEqual(onual.public_links(html, url), [alias])
         self.assertEqual(onual.public_links(html, accessory), [])
 
+    def test_onual_snapshot_restores_discovery_without_offer_data(self):
+        stamp = '2026-11-12T12:00:00+00:00'
+        title = 'samsung galaxy a37 5g 8 gb 256 gb beyaz'
+        url = onual.BASE + '/urun/' + title.replace(' ', '-') + '-p-12345'
+        retailer = 'https://www.teknosa.com/samsung-galaxy-a37-5g-8256gb-beyaz-akilli-telefon-p-100000062339'
+        row = {'source': onual.HOST, 'id': '12345', 'category': 'phone', 'title': title, 'url': url,
+               'firstSeenAt': stamp, 'lastSeenAt': stamp, 'lastLeadAttemptAt': stamp, 'titleFromSitemap': True,
+               'retailerLeads': [retailer, 'https://other.example/phone'], 'price': 1, 'stock': 50}
+        valid = {'products': {'valid': row, 'invalid': {**row, 'title': 'other model'}}}
+        with TemporaryDirectory() as folder:
+            snapshot = Path(folder) / 'onual.json.gz'
+            self.assertEqual(export_source_snapshot(snapshot, valid, onual.HOST), 1)
+            restored = {'products': {}}
+            report = import_source_snapshot(snapshot, restored, onual.HOST)
+        self.assertEqual((report['rows'], report['withRetailerLinks']), (1, 1))
+        imported = restored['products']['onual.com/phone/12345']
+        self.assertEqual(imported['retailerLeads'], [retailer])
+        self.assertNotIn('price', imported)
+        self.assertNotIn('stock', imported)
+
     def test_karsilastirma_io_category_sitemap_and_scoped_retailer_links(self):
         url = 'https://karsilastirma.io/kulaklik/anker-soundcore-aerofit-2'
         retailer = 'https://www.n11.com/urun/anker-soundcore-aerofit-2-123456?magaza=sample'
