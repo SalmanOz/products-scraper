@@ -91,7 +91,8 @@ def stage(snapshot, catalog, report, selected_models=()):
         if not ({o['url'] for o in offers} - {o['url'] for o in previous}):
             reasons['new_target_unverified'] += 1
             continue
-        if len(offers) < len(previous):
+        if (len(offers) < len(previous) or
+                len({selected_host(o['url']) for o in offers}) < len({selected_host(o['url']) for o in previous})):
             reasons['current_offer_coverage_reduced'] += 1
             continue
         variants = [row for row in updated['models'] if row['name'] == name]

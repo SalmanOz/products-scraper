@@ -110,6 +110,27 @@ class TwsStageUpdatesTest(unittest.TestCase):
             updated, _ = stage(self.snapshot, self.catalog, report)
         self.assertEqual(len(updated['models'][0]['offers']), 2)
 
+    def test_discovery_does_not_reduce_the_number_of_platforms(self):
+        other_n11 = N11.replace('gelalbe', 'distinct')
+        self.snapshot['models'][0]['offers'].append({'url': N11, 'merchant': 'gelalbe'})
+        report = {'verified': [{'name': MODEL, 'observations': [
+            {'url': other_n11, 'merchant': 'distinct', 'gtin13': BLACK},
+        ]}]}
+
+        def collect(host, targets, *, document_reader=None):
+            if host == 'www.hepsiburada.com':
+                return {}, {'http_403': 1}
+            offers, failures = read(host, targets)
+            for offer in offers[MODEL]:
+                offer['_legal_name'] = offer['merchant']
+                offer['merchant_id'] = offer['merchant']
+            return offers, failures
+
+        with patch('tws_stage_updates.reread', side_effect=collect):
+            updated, result = stage(self.snapshot, self.catalog, report)
+        self.assertIs(updated, self.snapshot)
+        self.assertEqual(result['rejections']['current_offer_coverage_reduced'], 1)
+
     def test_cheaper_channel_wins_when_the_same_seller_has_two_offers(self):
         vatan = 'https://www.vatanbilgisayar.com/huawei-freebuds-se-2-kulaklik-siyah.html'
         self.snapshot['models'][0]['offers'].append({'url': TY, 'merchant': 'Vatan'})
