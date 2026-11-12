@@ -187,7 +187,8 @@ def parse_manufacturer_specifications(html, source_url, candidate, observed_at):
         attributes = _general_mobile_sections(soup, candidate)
     elif brand == 'apple':
         # Establish all column identities from actual capacity headings first.
-        model_names = [tag.get_text(' ', strip=True) for tag in soup.select('.techspecs-column strong.techspecs-small-heading')]
+        model_names = [text for tag in soup.select('.techspecs-column strong.techspecs-small-heading')
+                       if (text := tag.get_text(' ', strip=True)) and re.match(r'^iPhone\s', text, re.I)]
         headings = [re.sub(r'\s+Teknik\s+Özellikler$', '', name, flags=re.I)
                     for name in official_model_names(soup)]
         names = headings + model_names
@@ -206,9 +207,19 @@ def parse_manufacturer_specifications(html, source_url, candidate, observed_at):
                 note.decompose()
             title = heading.get_text(' ', strip=True)
             group = groups.get(key(title))
+            columns = row.select('.techspecs-column')
+            if key(title) == 'ekranlar' and not model_names and len(columns) == 3:
+                panels = {}
+                for column in columns:
+                    panel = column.select_one('li:first-child > strong, strong.techspecs-small-heading')
+                    label = key(panel.get_text(' ', strip=True)) if panel else ''
+                    panels[label] = column.get_text(' ', strip=True)
+                if set(panels) == {'ic ekran', 'dis ekran', 'her iki ekran'}:
+                    attributes.setdefault('Design & Materials', {}).update(panels)
+                    _scalars(attributes, screen=panels['ic ekran'])
+                continue
             if not group:
                 continue
-            columns = row.select('.techspecs-column')
             selected = []
             for column in columns:
                 model = column.select_one('strong.techspecs-small-heading')

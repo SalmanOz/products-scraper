@@ -86,10 +86,19 @@ class ManufacturerSpecsTests(unittest.TestCase):
         page = 'https://www.apple.com/tr/iphone-duo/specs/'
         candidate = {'name': 'Apple iPhone Duo', 'slug': 'apple-iphone-duo',
                      'brandSlug': 'apple', 'evidenceUrl': page}
-        html = '<h1>iPhone\xa0Duo Teknik\xa0Özellikler</h1><div class="techspecs-row">' \
-            '<div class="techspecs-rowheader">Çip</div><div class="techspecs-column">A20 Pro</div></div>'
+        html = ('<h1>iPhone\xa0Duo Teknik\xa0Özellikler</h1><div class="techspecs-row">'
+                '<div class="techspecs-rowheader">Çip</div><div class="techspecs-column">A20 Pro</div></div>'
+                '<div class="techspecs-row"><div class="techspecs-rowheader">Ekranlar</div>'
+                '<div class="techspecs-column"><ul><li><strong>İç ekran</strong></li><li>7.6 inç</li></ul></div>'
+                '<div class="techspecs-column"><ul><li><strong>Dış ekran</strong></li><li>5.4 inç</li></ul></div>'
+                '<div class="techspecs-column"><strong class="techspecs-small-heading">Her iki ekran</strong>'
+                '<p>120 Hz</p></div></div>')
         records = parse_manufacturer_specifications(html, page, candidate, '2026-11-12T20:17:00Z')
-        self.assertEqual(records[0]['value'], {'Çip': 'A20 Pro'})
+        values = {row['attribute_key']: row['value'] for row in records}
+        self.assertEqual(values['Performance & Hardware'], {'Çip': 'A20 Pro'})
+        self.assertEqual(values['screen_size_inch'], 7.6)
+        self.assertIn('5.4 inç', values['Design & Materials']['dis ekran'])
+        self.assertNotIn('storage_gb', values)
         with self.assertRaisesRegex(ValueError, 'identity_not_confirmed'):
             parse_manufacturer_specifications(html.replace('Duo', 'Air'), page, candidate, '2026-11-12T20:17:00Z')
 
