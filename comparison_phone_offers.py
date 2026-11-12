@@ -311,6 +311,8 @@ def report_offer(row):
 
 
 def load_reviewed_profiles(path):
+    if path.stat().st_size > 12_000:
+        raise ValueError('Reviewed capacity file exceeds the input limit')
     rows = json.loads(path.read_text(encoding='utf-8'))
     if not isinstance(rows, list) or not 1 <= len(rows) <= 4:
         raise ValueError('Provide one to four reviewed capacities')
@@ -323,6 +325,7 @@ def load_reviewed_profiles(path):
                 not isinstance(gtin, str) or retailer_gtin13(gtin) != gtin or
                 not isinstance(urls, list) or not 2 <= len(urls) <= 6 or
                 any(not url or retailer_destination(url) != url or not supported_phone_url(url) for url in urls) or
+                len(set(urls)) != len(urls) or
                 len({urlsplit(url).netloc for url in urls}) < 2):
             raise ValueError('Invalid reviewed capacity or original retailer URLs')
         profiles[slug] = row

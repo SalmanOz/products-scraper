@@ -8,8 +8,12 @@ on:
       target:
         description: Reviewed phone group for this run
         type: choice
-        options: [iphone-16-plus, galaxy-foldables, vivo-x300-pro]
+        options: [iphone-16-plus, galaxy-foldables, vivo-x300-pro, reviewed-candidates]
         default: iphone-16-plus
+      reviewed_pairs:
+        description: Reviewed candidates as JSON containing only slug, gtin, and retailer URLs
+        type: string
+        required: false
       collection:
         description: Network for the public retailer document reads
         type: choice
@@ -62,6 +66,7 @@ jobs:
           PUBLISH: ${{ github.event_name == 'schedule' || inputs.publish }}
           COLLECTION: ${{ github.event_name == 'schedule' && 'runner' || inputs.collection }}
           TARGET: ${{ github.event_name == 'schedule' && 'iphone-16-plus' || inputs.target }}
+          REVIEWED_PAIRS: ${{ inputs.reviewed_pairs }}
         run: |
           set -euo pipefail
           if [[ "$COLLECTION" == site ]]; then
@@ -78,6 +83,10 @@ jobs:
           case "$TARGET" in
             galaxy-foldables|vivo-x300-pro)
               args+=(--reviewed-pairs "offer_batches/comparison-${TARGET}.json") ;;
+            reviewed-candidates)
+              test "${#REVIEWED_PAIRS}" -gt 0 && test "${#REVIEWED_PAIRS}" -le 12000
+              printf '%s' "$REVIEWED_PAIRS" > "$RUNNER_TEMP/reviewed-pairs.json"
+              args+=(--reviewed-pairs "$RUNNER_TEMP/reviewed-pairs.json") ;;
             iphone-16-plus)
               args+=(--state "$RUNNER_TEMP/comparison-state.json" \
                 --slug apple-iphone-16-plus --slug apple-iphone-16-plus-8gb-256gb) ;;

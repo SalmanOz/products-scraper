@@ -1,7 +1,10 @@
+import json
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import Mock, patch
 
-from comparison_phone_offers import audit_queue, candidate_urls, checked_offers, publishable_pair, run
+from comparison_phone_offers import audit_queue, candidate_urls, checked_offers, load_reviewed_profiles, publishable_pair, run
 
 
 MM = 'https://www.mediamarkt.com.tr/tr/product/_apple-iphone-16-plus-128-gb-akilli-telefon-mavi-146562812.html'
@@ -94,3 +97,15 @@ class ComparisonPhoneOffersTest(unittest.TestCase):
         self.assertIsNone(report[0]['sameGtin'])
         client.get_raw_seller_collision_proof.assert_not_called()
         client.ingest_offers.assert_not_called()
+
+    def test_reviewed_candidate_file_accepts_only_two_platforms_and_no_price(self):
+        slug = 'apple-iphone-16-plus'
+        profile = {'slug': slug, 'gtin': GTIN, 'urls': [MM, PZ]}
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / 'pairs.json'
+            path.write_text(json.dumps([profile]))
+            self.assertEqual(load_reviewed_profiles(path), {slug: profile})
+            for invalid in ({**profile, 'price': 1}, {**profile, 'urls': [MM, MM, PZ]}):
+                path.write_text(json.dumps([invalid]))
+                with self.assertRaises(ValueError):
+                    load_reviewed_profiles(path)
