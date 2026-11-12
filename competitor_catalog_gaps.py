@@ -32,7 +32,9 @@ PAHALIMI = 'pahalimi.com'
 AMAHANGISI = 'amahangisi.com'
 INDIRIMLI = 'indirimli.com'
 TUBERKARAS = 'tuberkaras.com'
-SOURCES = (AKAKCE, CIMRI, EPEY, URUNAI, KARSILASTIRICI, PAHALIMI, AMAHANGISI, INDIRIMLI, TUBERKARAS, OZGUR_HOST)
+UCUZYUM = 'www.ucuzyum.com'
+SOURCES = (AKAKCE, CIMRI, EPEY, URUNAI, KARSILASTIRICI, PAHALIMI, AMAHANGISI, INDIRIMLI,
+           TUBERKARAS, OZGUR_HOST, UCUZYUM)
 URUNAI_CATEGORIES = {
     'telefon': 'phone', 'kulaklik': 'tws', 'laptop': 'laptop', 'monitor': 'monitor',
     'islemci': 'cpu', 'anakart': 'motherboard', 'ram-bellek': 'ram', 'ekran-karti': 'gpu',
@@ -113,6 +115,7 @@ CARD = {
     INDIRIMLI: KARSILASTIRICI_PRODUCT,
     TUBERKARAS: KARSILASTIRICI_PRODUCT,
     OZGUR_HOST: re.compile(r'/urun/([a-z0-9-]{6,250})'),
+    UCUZYUM: re.compile(r'/[a-z0-9-]{3,220}-cep-telefonu-([1-9]\d{3,9})'),
 }
 CARD_SELECTOR = {
     AKAKCE: '#CPL a.iC[href][title]',
@@ -379,6 +382,8 @@ def scan_source(host, kinds, indexes, start_page, pages, cursors=None, *, collec
     reports, observations = [], []
     if host == URUNAI:
         return scan_urunai(reader, kinds, indexes)
+    if host == UCUZYUM:
+        return scan_ucuzyum(reader, indexes['phone']) if 'phone' in kinds else ([], [])
     if host == AMAHANGISI:
         return scan_product_sitemap(host, kinds, indexes, cursors or {}, reader=reader, maximum=pages)
     stopped = None
@@ -462,6 +467,33 @@ def sitemap_locations(xml, expected):
             location = entry.findtext(namespace + 'loc', '').strip()
             if location:
                 yield location
+
+
+def scan_ucuzyum(reader, index):
+    root = f'https://{UCUZYUM}'
+    xml, reason, _ = reader._read_document(root + '/sitemap.xml', UCUZYUM, category=True, sitemap=True)
+    cards = {}
+    if xml:
+        try:
+            for url in sitemap_locations(xml, 'urlset'):
+                if not url.startswith(root + '/'):
+                    continue
+                route = urlsplit(url)
+                match = CARD[UCUZYUM].fullmatch(route.path)
+                if not match or route.query or route.fragment:
+                    continue
+                title = route.path[1:].rsplit('-cep-telefonu-', 1)[0].replace('-', ' ')
+                if not in_scope('phone', title) or not additional_comparison_in_scope('phone', title):
+                    continue
+                cards.setdefault(match[1], {'id': match[1], 'title': title, 'url': url, 'source': UCUZYUM,
+                    'category': 'phone', 'catalogSlug': catalog_match(title, index), 'titleFromSitemap': True})
+            reason = 'sitemap_read'
+        except (ElementTree.ParseError, ValueError):
+            return [{'source': UCUZYUM, 'category': 'phone', 'status': 'invalid_product_sitemap',
+                     'pages': 0, 'nextPage': None}], []
+    matched = sum(bool(card['catalogSlug']) for card in cards.values())
+    return [{'source': UCUZYUM, 'category': 'phone', 'status': reason, 'pages': int(reason == 'sitemap_read'),
+             'nextPage': None, 'cards': len(cards), 'matched': matched, 'unmatched': len(cards) - matched}], list(cards.values())
 
 
 def cimri_sitemap_cards(xml, kinds, indexes):
@@ -651,13 +683,15 @@ def comparison_retailer_leads(html, host, source_url):
     soup = BeautifulSoup(html, 'html.parser')
     if host == EPEY:
         raw_links = [unquote(anchor['data-link']) for anchor in soup.select('a.git[data-link]:has(.urun_adi)')]
-    elif host in (AMAHANGISI, INDIRIMLI, TUBERKARAS):
+    elif host in (AMAHANGISI, INDIRIMLI, TUBERKARAS, UCUZYUM):
         canonical = [node.get('href') for node in soup.select('link[rel=canonical]')]
         if canonical != [source_url]:
             return []
         if host == AMAHANGISI:
             raw_links = [anchor['href'] for anchor in soup.select(
                 'section#offers #price-panel-offers a[target="_blank"][rel~=noopener][href]')]
+        elif host == UCUZYUM:
+            raw_links = [anchor['href'] for anchor in soup.select('#t1List a[rel~=sponsored][href]')]
         else:
             raw_links = [anchor['href'] for anchor in soup.select('a[rel~=sponsored][href]')]
             if host == INDIRIMLI:
@@ -1025,7 +1059,7 @@ def main():
         if args.lead_only and args.akakce_budget:
             akakce_leads = min(args.lead_limit, args.akakce_budget)
         limits = {host: akakce_leads if host == AKAKCE else min(args.lead_limit, 16)
-                  if host in ADDITIONAL_COMPARISON_CATEGORIES else args.lead_limit for host in hosts}
+                  if host in ADDITIONAL_COMPARISON_CATEGORIES or host == UCUZYUM else args.lead_limit for host in hosts}
         known_leads = lead_inventory(state)
         with ThreadPoolExecutor(max_workers=len(hosts)) as pool:
             jobs = [pool.submit(scan_retailer_leads, state, host, kinds, limits[host], now,

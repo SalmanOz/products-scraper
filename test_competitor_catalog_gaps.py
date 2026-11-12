@@ -5,12 +5,35 @@ from unittest.mock import Mock, patch
 
 from competitor_catalog_gaps import (AKAKCE, CIMRI, EPEY, KARSILASTIRICI, PAHALIMI, URUNAI, akakce_limits, candidate_family, cimri_sitemap_cards, epey_earbud_title, epey_sitemap_cards, export_source_snapshot, import_source_snapshot, product_state_key, scan_product_sitemap, scan_source, urunai_market_slugs, urunai_sitemap_cards, catalog_match, category_url, comparison_cards, comparison_retailer_leads,
                                      identity_index, in_scope, merge_state, read_state)
-from competitor_catalog_gaps import (AMAHANGISI, INDIRIMLI, TUBERKARAS, comparison_lead_destination,
+from competitor_catalog_gaps import (AMAHANGISI, INDIRIMLI, TUBERKARAS, UCUZYUM, comparison_lead_destination,
                                      lead_inventory, phone_family, retailer_destination, scan_retailer_leads)
 from ozgur_phone_source import OZGUR_HOST
 
 
 class CompetitorCatalogGapsTest(unittest.TestCase):
+    def test_ucuzyum_sitemap_and_current_listing_links_are_only_discovery_hints(self):
+        root = f'https://{UCUZYUM}'
+        url = root + '/samsung-galaxy-a55-5g-256-gb-cep-telefonu-948492'
+        xml = f'''<urlset><url><loc>{url}</loc></url><url><loc>{url}</loc></url>
+          <url><loc>{root}/a55-uyumlu-kilif-cep-telefonu-948493</loc></url>
+          <url><loc>{root}/kategoriler</loc></url>
+          <url><loc>{url.replace(UCUZYUM, 'example.com')}</loc></url></urlset>'''
+        reader = Mock()
+        reader._read_document.return_value = (xml, 'document_read', 200)
+        index = {'phone': identity_index([{'name': 'Samsung Galaxy A55 5G', 'slug': 'samsung-galaxy-a55-5g'}])}
+        with patch('competitor_catalog_gaps.comparison_reader', return_value=reader):
+            report, rows = scan_source(UCUZYUM, ['phone', 'tws'], index, 1, 1)
+        self.assertEqual(report[0]['cards'], 1)
+        self.assertEqual(candidate_family('phone', rows[0]['title'], index['phone']), 'samsung-galaxy-a55-5g')
+        self.assertNotIn('retailerLeads', rows[0])
+        retailer = 'https://www.n11.com/urun/samsung-galaxy-a55-5g-52955999?magaza=grand&renk=siyah'
+        html = f'''<link rel="canonical" href="{url}">
+          <div id="t1List"><a rel="sponsored noopener" href="{retailer}">33.000 TL</a>
+          <a rel="sponsored" href="https://example.com/a55">Foreign store</a></div>
+          <a rel="sponsored" href="https://www.n11.com/urun/other-phone-123456">Related phone</a>'''
+        self.assertEqual(comparison_retailer_leads(html, UCUZYUM, url), [retailer])
+        self.assertEqual(comparison_retailer_leads(html, UCUZYUM, url + '-other'), [])
+
     def test_direct_phone_category_discovers_only_scoped_ozgur_product_links(self):
         url = f'https://{OZGUR_HOST}/urun/iphone-17-pro-max-512gb-kozmik-turuncu'
         html = f'''<h2 class="oi-card-title"><a href="{url}">
