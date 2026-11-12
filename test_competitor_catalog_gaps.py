@@ -3,7 +3,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 
-from competitor_catalog_gaps import (AKAKCE, CIMRI, EPEY, KARSILASTIRICI, PAHALIMI, URUNAI, akakce_limits, candidate_family, cimri_sitemap_cards, epey_earbud_title, epey_sitemap_cards, export_epey_snapshot, import_epey_snapshot, product_state_key, scan_product_sitemap, scan_source, urunai_market_slugs, urunai_sitemap_cards, catalog_match, category_url, comparison_cards, comparison_retailer_leads,
+from competitor_catalog_gaps import (AKAKCE, CIMRI, EPEY, KARSILASTIRICI, PAHALIMI, URUNAI, akakce_limits, candidate_family, cimri_sitemap_cards, epey_earbud_title, epey_sitemap_cards, export_source_snapshot, import_source_snapshot, product_state_key, scan_product_sitemap, scan_source, urunai_market_slugs, urunai_sitemap_cards, catalog_match, category_url, comparison_cards, comparison_retailer_leads,
                                      identity_index, in_scope, merge_state, read_state)
 
 
@@ -25,14 +25,34 @@ class CompetitorCatalogGapsTest(unittest.TestCase):
         state = {'products': {key: live}}
         with TemporaryDirectory() as tmp:
             snapshot = Path(tmp) / 'epey.json.gz'
-            self.assertEqual(export_epey_snapshot(snapshot, {'products': {key: product}}), 1)
-            report = import_epey_snapshot(snapshot, state)
-            self.assertEqual(import_epey_snapshot(snapshot, state), report)
+            self.assertEqual(export_source_snapshot(snapshot, {'products': {key: product}}, EPEY), 1)
+            report = import_source_snapshot(snapshot, state, EPEY)
+            self.assertEqual(import_source_snapshot(snapshot, state, EPEY), report)
         self.assertEqual(report['withRetailerLinks'], 1)
         self.assertEqual(state['products'][key]['retailerLeads'], [retailer])
         self.assertEqual(state['products'][key]['lastLeadAttemptAt'], new)
         self.assertEqual(state['products'][key]['leadStatus'], 'http_403')
         self.assertNotIn('price', state['products'][key])
+
+    def test_cimri_snapshot_derives_product_identity_and_discards_misclassified_rows(self):
+        stamp = '2026-11-11T18:00:00+00:00'
+        retailer = 'https://www.n11.com/urun/sony-wf-1000xm6-12345678'
+        product = {'source': CIMRI, 'category': 'tws', 'title': 'Sony WF-1000XM6 Tam Kablosuz Kulaklık',
+                   'url': f'https://{CIMRI}/bluetooth-kulaklik/en-ucuz-sony-wf-1000xm6-fiyatlari,a12345',
+                   'id': 'incorrect', 'firstSeenAt': stamp, 'lastSeenAt': stamp, 'lastLeadAttemptAt': stamp,
+                   'retailerLeads': [retailer, 'https://evil.example/sony'], 'stock': True, 'price': 1}
+        state = {'products': {}}
+        with TemporaryDirectory() as tmp:
+            snapshot = Path(tmp) / 'cimri.json.gz'
+            original = {'products': {'product': product, 'wrongCategory': {**product, 'category': 'phone'}}}
+            self.assertEqual(export_source_snapshot(snapshot, original, CIMRI), 1)
+            self.assertEqual(import_source_snapshot(snapshot, state, CIMRI)['withRetailerLinks'], 1)
+            with self.assertRaises(ValueError):
+                import_source_snapshot(snapshot, state, EPEY)
+        row = state['products'][f'{CIMRI}/tws/a12345']
+        self.assertEqual(row['retailerLeads'], [retailer])
+        self.assertNotIn('price', row)
+        self.assertNotIn('stock', row)
 
     def test_akakce_deduplicates_product_ids_and_keeps_native_pagination(self):
         url = 'https://' + AKAKCE + '/ssd.html'

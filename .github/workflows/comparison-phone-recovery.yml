@@ -5,13 +5,18 @@ on:
     - cron: '17 5 * * *'
   workflow_dispatch:
     inputs:
+      target:
+        description: Reviewed phone group for this run
+        type: choice
+        options: [iphone-16-plus, galaxy-foldables]
+        default: iphone-16-plus
       collection:
         description: Network for the public retailer document reads
         type: choice
         options: [site, runner, macos]
         default: site
       publish:
-        description: Publish both independently verified prices for each iPhone 16 Plus capacity
+        description: Publish both independently verified prices for each selected capacity
         type: boolean
         required: true
         default: false
@@ -43,6 +48,7 @@ jobs:
       - run: python -m pip install -r requirements.txt
       - run: python -m unittest -q test_competitor_catalog_gaps test_comparison_phone_offers
       - name: Discover original retailer links
+        if: github.event_name == 'schedule' || inputs.target != 'galaxy-foldables'
         run: |
           curl -fsS --max-time 25 https://teknoskor.com/sitemap.xml -o "$RUNNER_TEMP/phone-sitemap.xml"
           python competitor_catalog_gaps.py --phone-sitemap "$RUNNER_TEMP/phone-sitemap.xml" \
@@ -55,6 +61,7 @@ jobs:
           SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
           PUBLISH: ${{ github.event_name == 'schedule' || inputs.publish }}
           COLLECTION: ${{ github.event_name == 'schedule' && 'runner' || inputs.collection }}
+          TARGET: ${{ github.event_name == 'schedule' && 'iphone-16-plus' || inputs.target }}
         run: |
           set -euo pipefail
           if [[ "$COLLECTION" == site ]]; then
@@ -68,9 +75,13 @@ jobs:
           fi
           args=()
           if [[ "$PUBLISH" == true ]]; then args+=(--publish); fi
-          python comparison_phone_offers.py --state "$RUNNER_TEMP/comparison-state.json" \
-            --slug apple-iphone-16-plus --slug apple-iphone-16-plus-8gb-256gb \
-            "${args[@]}" | tee "$RUNNER_TEMP/comparison-recovery.json"
+          if [[ "$TARGET" == galaxy-foldables ]]; then
+            args+=(--reviewed-pairs offer_batches/comparison-galaxy-foldables.json)
+          else
+            args+=(--state "$RUNNER_TEMP/comparison-state.json" \
+              --slug apple-iphone-16-plus --slug apple-iphone-16-plus-8gb-256gb)
+          fi
+          python comparison_phone_offers.py "${args[@]}" | tee "$RUNNER_TEMP/comparison-recovery.json"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

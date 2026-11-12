@@ -90,6 +90,25 @@ class TwsStageUpdatesTest(unittest.TestCase):
             updated, _ = stage(self.snapshot, self.catalog, report)
         self.assertEqual(len(updated['models'][0]['offers']), 2)
 
+    def test_cheaper_channel_wins_when_the_same_seller_has_two_offers(self):
+        vatan = 'https://www.vatanbilgisayar.com/huawei-freebuds-se-2-kulaklik-siyah.html'
+        self.snapshot['models'][0]['offers'].append({'url': TY, 'merchant': 'Vatan'})
+        report = {'verified': [{'name': MODEL, 'observations': [
+            {'url': vatan, 'merchant': 'Vatan', 'gtin13': BLACK},
+        ]}]}
+
+        def collect(host, targets, *, document_reader=None):
+            offers, failures = read(host, targets)
+            for offer in offers[MODEL]:
+                offer['_legal_name'] = offer['merchant']
+                offer['price'] = {HB: 1300.0, TY: 1500.0, vatan: 1800.0}[offer['url']]
+            return offers, failures
+
+        with patch('tws_stage_updates.reread', side_effect=collect):
+            updated, report = stage(self.snapshot, self.catalog, report)
+        self.assertIs(updated, self.snapshot)
+        self.assertEqual(report['rejections'], {'new_target_unverified': 1})
+
     def test_shared_barcode_or_stale_second_seller_cannot_supply_a_pair(self):
         report = {'verified': [{'name': MODEL, 'observations': [
             {'url': TY, 'merchant': 'Trendyol', 'gtin13': BLACK},

@@ -1,0 +1,26 @@
+[
+  {
+    "slug": "samsung-galaxy-z-flip8",
+    "gtin": "8806099359492",
+    "urls": [
+      "https://www.n11.com/urun/samsung-galaxy-z-flip8-12-gb-256-gb-samsung-turkiye-garantili-132730185",
+      "https://www.trendyol.com/samsung/galaxy-z-flip8-12gb-256gb-krem-cep-telefonu-p-1173672294"
+    ]
+  },
+  {
+    "slug": "samsung-galaxy-z-flip8-12gb-512gb",
+    "gtin": "8806099359485",
+    "urls": [
+      "https://www.n11.com/urun/samsung-galaxy-z-flip8-12-gb-512-gb-samsung-turkiye-garantili-132729080",
+      "https://www.trendyol.com/samsung/galaxy-z-flip8-12gb-512gb-krem-cep-telefonu-p-1173672298"
+    ]
+  },
+  {
+    "slug": "samsung-galaxy-z-fold8-12gb-512gb",
+    "gtin": "8806099355616",
+    "urls": [
+      "https://www.n11.com/urun/samsung-galaxy-z-fold8-12-gb-512-gb-samsung-turkiye-garantili-132731146",
+      "https://www.trendyol.com/samsung/galaxy-z-fold8-12gb-512gb-grafit-gri-cep-telefonu-p-1173671737"
+    ]
+  }
+]

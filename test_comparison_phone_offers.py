@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import Mock, patch
 
-from comparison_phone_offers import audit_queue, candidate_urls, checked_offers, publishable_pair
+from comparison_phone_offers import audit_queue, candidate_urls, checked_offers, publishable_pair, run
 
 
 MM = 'https://www.mediamarkt.com.tr/tr/product/_apple-iphone-16-plus-128-gb-akilli-telefon-mavi-146562812.html'
@@ -82,3 +82,15 @@ class ComparisonPhoneOffersTest(unittest.TestCase):
         client.get_raw_seller_collision_proof.side_effect = [
             {**history, 'proposed_seller_historical_other_url_rows': 2}, clean]
         self.assertEqual(publishable_pair(offers, client, {'id': 1})[0], offers)
+
+    def test_reviewed_capacity_rejects_a_pair_with_a_different_barcode(self):
+        slug = 'apple-iphone-16-plus'
+        product = {'id': 1, 'slug': slug, 'name': NAME, 'attributes': {}}
+        profiles = {slug: {'urls': [MM, PZ], 'gtin': GTIN}}
+        wrong = [{'gtin13': '0195949722240'}, {'gtin13': '0195949722240'}]
+        client = Mock()
+        with patch('comparison_phone_offers.checked_offers', return_value=(wrong, wrong, [])):
+            report = run({}, [slug], client, publish=True, products=[product], profiles=profiles)
+        self.assertIsNone(report[0]['sameGtin'])
+        client.get_raw_seller_collision_proof.assert_not_called()
+        client.ingest_offers.assert_not_called()

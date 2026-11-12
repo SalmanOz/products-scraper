@@ -41,8 +41,9 @@ def exact_tws_sellers(offers, *, maximum=3):
         groups[offer['gtin13']].append(offer)
     candidates = (rows for group in groups.values() for size in range(2, maximum + 1)
                   for rows in combinations(group, size) if all(distinct(a, b) for a, b in combinations(rows, 2)))
-    best = max(candidates, key=lambda rows: (len({row['platform'] for row in rows}), len(rows),
-               -min(row['price'] for row in rows), tuple(row['url'] for row in rows)), default=())
+    best = max(candidates, key=lambda rows: (len(rows), len({row['platform'] for row in rows}),
+               tuple(-price for price in sorted(row['price'] for row in rows)),
+               tuple(row['url'] for row in rows)), default=())
     return sorted(best, key=lambda offer: (offer['price'], offer['url']))
 
 

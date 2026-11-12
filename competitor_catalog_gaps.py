@@ -69,6 +69,9 @@ CATEGORIES = {
     'cooler': ('/islemci-sogutucu.html', '/islemci-sogutucu', '/islemci-sogutucu/'),
 }
 EPEY_CATEGORIES = {paths[2].strip('/'): kind for kind, paths in CATEGORIES.items()}
+CIMRI_CATEGORIES = {paths[1].rsplit('/', 1)[-1]: kind for kind, paths in CATEGORIES.items()}
+CIMRI_CATEGORIES['bluetooth-kulaklik'] = 'tws'
+SNAPSHOT_CATEGORIES = {CIMRI: CIMRI_CATEGORIES, EPEY: EPEY_CATEGORIES}
 CARD = {
     AKAKCE: re.compile(r'/[a-z0-9-]+/en-ucuz-[a-z0-9-]+-fiyati,(\d{4,12})\.html'),
     CIMRI: re.compile(r'/[a-z0-9-]+/en-ucuz-[a-z0-9-]+-fiyatlari,(a?\d{4,12})'),
@@ -396,8 +399,6 @@ def sitemap_locations(xml, expected):
 
 
 def cimri_sitemap_cards(xml, kinds, indexes):
-    categories = {paths[1].strip('/').rsplit('/', 1)[-1]: kind for kind, paths in CATEGORIES.items()}
-    categories['bluetooth-kulaklik'] = 'tws'
     cards = {}
     for url in sitemap_locations(xml, 'urlset'):
         if not url.startswith(f'https://{CIMRI}/'):
@@ -408,7 +409,7 @@ def cimri_sitemap_cards(xml, kinds, indexes):
         if not match or route.query or route.fragment:
             continue
         category, product = path.split('/')[1:]
-        kind = categories.get(category)
+        kind = CIMRI_CATEGORIES.get(category)
         if kind not in kinds:
             continue
         title = product.split('-fiyatlari,', 1)[0].removeprefix('en-ucuz-').replace('-', ' ')
@@ -664,17 +665,19 @@ def write_json(path, payload):
     pending.replace(path)
 
 
-def epey_snapshot_row(row):
-    if not isinstance(row, dict) or row.get('source') != EPEY or not isinstance(row.get('url'), str):
+def source_snapshot_row(row, host):
+    if not isinstance(row, dict) or row.get('source') != host or not isinstance(row.get('url'), str):
         return None
     url = row['url']
-    if not url.startswith(f'https://{EPEY}/') or len(url) > 400:
+    if not url.startswith(f'https://{host}/') or len(url) > 600:
         return None
     route = urlsplit(url)
-    if not CARD[EPEY].fullmatch(route.path) or route.query or route.fragment:
+    match = CARD[host].fullmatch(route.path)
+    if not match or route.query or route.fragment:
         return None
-    path_category, slug = route.path.removesuffix('.html').split('/')[1:]
-    kind = EPEY_CATEGORIES.get(path_category)
+    path_category, product = route.path.split('/')[1:]
+    kind = SNAPSHOT_CATEGORIES[host].get(path_category)
+    identity = match[1] if host == CIMRI else product.removesuffix('.html')
     title = row.get('title')
     if (not kind or row.get('category') != kind or not isinstance(title, str) or
             not 3 <= len(title) <= 260 or not in_scope(kind, title)):
@@ -686,9 +689,11 @@ def epey_snapshot_row(row):
             return None
     except (TypeError, ValueError):
         return None
-    result = {'source': EPEY, 'category': kind, 'id': slug, 'url': url, 'title': title,
+    result = {'source': host, 'category': kind, 'id': identity, 'url': url, 'title': title,
               'firstSeenAt': first.astimezone(timezone.utc).isoformat(),
               'lastSeenAt': last.astimezone(timezone.utc).isoformat()}
+    if host == CIMRI:
+        result['hasMarketPage'] = True
     if row.get('titleFromSitemap') is True:
         result['titleFromSitemap'] = True
     leads = row.get('retailerLeads')
@@ -705,11 +710,11 @@ def epey_snapshot_row(row):
     return result
 
 
-def export_epey_snapshot(path, state):
-    rows = [clean for row in state['products'].values() if (clean := epey_snapshot_row(row))]
+def export_source_snapshot(path, state, host):
+    rows = [clean for row in state['products'].values() if (clean := source_snapshot_row(row, host))]
     if not rows:
-        raise ValueError('No verified Epey discovery rows to export')
-    payload = json.dumps({'version': 1, 'source': EPEY, 'products': rows},
+        raise ValueError(f'No verified {host} discovery rows to export')
+    payload = json.dumps({'version': 1, 'source': host, 'products': rows},
                          ensure_ascii=False, separators=(',', ':')).encode('utf-8')
     path.parent.mkdir(parents=True, exist_ok=True)
     pending = path.with_suffix(path.suffix + '.tmp')
@@ -718,19 +723,19 @@ def export_epey_snapshot(path, state):
     return len(rows)
 
 
-def import_epey_snapshot(path, state):
+def import_source_snapshot(path, state, host):
     limit = 64 * 1024 * 1024
     with gzip.open(path, 'rb') as source:
         body = source.read(limit + 1)
     if len(body) > limit:
-        raise ValueError('Epey snapshot exceeds the discovery input limit')
+        raise ValueError(f'{host} snapshot exceeds the discovery input limit')
     data = json.loads(body)
-    if (not isinstance(data, dict) or data.get('version') != 1 or data.get('source') != EPEY
+    if (not isinstance(data, dict) or data.get('version') != 1 or data.get('source') != host
             or not isinstance(data.get('products'), list)):
-        raise ValueError('Invalid Epey discovery snapshot')
+        raise ValueError(f'Invalid {host} discovery snapshot')
     seen, linked = set(), 0
     for record in data['products']:
-        row = epey_snapshot_row(record)
+        row = source_snapshot_row(record, host)
         if not row:
             continue
         key = product_state_key(row)
@@ -750,7 +755,7 @@ def import_epey_snapshot(path, state):
             previous['retailerLeads'] = row['retailerLeads']
         if row.get('lastLeadAttemptAt', '') > previous.get('lastLeadAttemptAt', ''):
             previous.update({k: row[k] for k in ('lastLeadAttemptAt', 'leadStatus', 'retailerLeads')})
-    return {'source': EPEY, 'status': 'imported', 'rows': len(seen), 'withRetailerLinks': linked}
+    return {'source': host, 'status': 'imported', 'rows': len(seen), 'withRetailerLinks': linked}
 
 
 def public_phone_catalog():
@@ -797,6 +802,8 @@ def main():
                         metavar='SHARDS', help='Resume up to eight Epey sitemap shards and skip category pages')
     parser.add_argument('--import-epey-snapshot', type=Path, help='Import Epey discovery links from a verified source run')
     parser.add_argument('--export-epey-snapshot', type=Path, help='Export Epey discovery links without prices')
+    parser.add_argument('--import-cimri-snapshot', type=Path, help='Import Cimri discovery links from a verified source run')
+    parser.add_argument('--export-cimri-snapshot', type=Path, help='Export Cimri discovery links without prices')
     parser.add_argument('--lead-only', action='store_true', help='Continue retailer-link discovery from saved candidates')
     parser.add_argument('--state', type=Path, help='Resume category cursors and retain deduplicated candidate IDs')
     parser.add_argument('--prioritize-model', action='append', default=[])
@@ -824,12 +831,14 @@ def main():
     inventory = load_inventory(args.site_data, args.phone_sitemap)
     indexes = {kind: identity_index(inventory[kind]) for kind in kinds}
     state = read_state(args.state)
-    source_snapshot = None
-    if args.import_epey_snapshot:
+    source_snapshots = {}
+    for host, path in ((EPEY, args.import_epey_snapshot), (CIMRI, args.import_cimri_snapshot)):
+        if path is None:
+            continue
         try:
-            source_snapshot = import_epey_snapshot(args.import_epey_snapshot, state)
+            source_snapshots[host] = import_source_snapshot(path, state, host)
         except (EOFError, OSError, ValueError):
-            source_snapshot = {'source': EPEY, 'status': 'snapshot_unavailable_or_invalid'}
+            source_snapshots[host] = {'source': host, 'status': 'snapshot_unavailable_or_invalid'}
     priority = set(args.prioritize_model)
     if args.lead_limit and 'phone' in kinds:
         priority.update(row['slug'] for row in public_phone_catalog()
@@ -861,13 +870,15 @@ def main():
             lead_scans = [job.result() for job in jobs]
     if args.state is not None:
         write_json(args.state, state)
-    if args.export_epey_snapshot:
-        export_epey_snapshot(args.export_epey_snapshot, state)
+    for host, path in ((EPEY, args.export_epey_snapshot), (CIMRI, args.export_cimri_snapshot)):
+        if path is not None:
+            export_source_snapshot(path, state, host)
     candidates = [row for row in state['products'].values() if row['catalogSlug'] is None]
     existing_with_leads = [row for row in state['products'].values()
                            if row.get('catalogFamily') and row.get('retailerLeads')]
     report = {'checkedAt': now, 'inventory': {kind: len(inventory[kind]) for kind in kinds},
-              'sources': sources, 'sourceSnapshot': source_snapshot, 'retailerLeadScans': lead_scans,
+              'sources': sources, 'sourceSnapshot': source_snapshots.get(EPEY),
+              'sourceSnapshots': list(source_snapshots.values()), 'retailerLeadScans': lead_scans,
               'candidates': candidates, 'existingWithRetailerLeads': existing_with_leads}
     write_json(args.output, report)
     print(json.dumps({
@@ -878,7 +889,7 @@ def main():
         'candidateRows': len(candidates),
         'candidateRowsWithRetailerLinks': sum(bool(row.get('retailerLeads')) for row in candidates),
         'existingRowsWithRetailerLinks': len(existing_with_leads),
-        'importedEpeyProductUrls': source_snapshot.get('rows', 0) if source_snapshot else 0,
+        'importedProductUrls': {host: result.get('rows', 0) for host, result in source_snapshots.items()},
         'output': str(args.output),
     }, ensure_ascii=False))
 

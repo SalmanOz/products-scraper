@@ -310,7 +310,26 @@ def report_offer(row):
     return {key: row[key] for key in ('url', 'platform', 'merchant', 'price', 'gtin13')}
 
 
-def run(state, slugs, client=None, *, publish=False, maximum=24, products=None, public_audit=False):
+def load_reviewed_profiles(path):
+    rows = json.loads(path.read_text(encoding='utf-8'))
+    if not isinstance(rows, list) or not 1 <= len(rows) <= 4:
+        raise ValueError('Provide one to four reviewed capacities')
+    profiles = {}
+    for row in rows:
+        if not isinstance(row, dict) or set(row) != {'slug', 'gtin', 'urls'}:
+            raise ValueError('Review profiles must contain only a slug, GTIN and retailer URLs')
+        slug, gtin, urls = row['slug'], row['gtin'], row['urls']
+        if (not isinstance(slug, str) or not re.fullmatch(r'[a-z0-9-]{1,160}', slug) or slug in profiles or
+                not isinstance(gtin, str) or retailer_gtin13(gtin) != gtin or
+                not isinstance(urls, list) or not 2 <= len(urls) <= 6 or
+                any(not url or retailer_destination(url) != url or not supported_phone_url(url) for url in urls) or
+                len({urlsplit(url).netloc for url in urls}) < 2):
+            raise ValueError('Invalid reviewed capacity or original retailer URLs')
+        profiles[slug] = row
+    return profiles
+
+
+def run(state, slugs, client=None, *, publish=False, maximum=24, products=None, public_audit=False, profiles=None):
     if publish and public_audit:
         raise ValueError('Public queue verification is read-only')
     if publish and client is None:
@@ -335,8 +354,10 @@ def run(state, slugs, client=None, *, publish=False, maximum=24, products=None, 
     for slug in slugs:
         product = products[slug]
         specs = PriceUpdater.get_expected_specs(product.get('attributes'))
-        urls = list(dict.fromkeys(category_leads(slug, product['name'], specs, transport, documents)
-                                 + candidate_urls(state, slug, expanded=public_audit)))
+        profile = profiles[slug] if profiles else None
+        urls = list(dict.fromkeys(profile['urls'] if profile else
+            category_leads(slug, product['name'], specs, transport, documents)
+            + candidate_urls(state, slug, expanded=public_audit)))
         # Spend each store's budget on the capacity being audited first.
         capacity = re.compile(r'-' + str(specs.get('storage_gb')) + '-?gb(?:-|_)')
         urls.sort(key=lambda url: not bool(capacity.search(urlsplit(url).path)))
@@ -351,10 +372,13 @@ def run(state, slugs, client=None, *, publish=False, maximum=24, products=None, 
             urls = limited_urls
         pair, observations, rejects = checked_offers(urls, product['name'], specs, transport, documents,
                                                     direct=direct, seller_cache=seller_cache)
+        if profile:
+            observations = [row for row in observations if row['gtin13'] == profile['gtin']]
+            pair = next(iter(ranked_pairs(observations)), [])
         result = {'slug': slug, 'sameGtin': pair[0]['gtin13'] if pair else None,
                   'selectedPair': [report_offer(row) for row in pair],
                   'offers': [report_offer(row) for row in observations], 'rejections': rejects}
-        if publish and pair:
+        if (publish or profile) and pair:
             pair, result['sellerChecks'] = publishable_pair(observations, client, product)
             if not pair:
                 result['publicationReason'] = 'existing_seller_collision_or_incomplete_proof'
@@ -365,6 +389,10 @@ def run(state, slugs, client=None, *, publish=False, maximum=24, products=None, 
                 raise ValueError('Verified retailer pair expired before publication')
             result['sameGtin'] = pair[0]['gtin13']
             result['selectedPair'] = [report_offer(row) for row in pair]
+            if not publish:
+                result['publicationReady'] = True
+                results.append(result)
+                continue
             records = []
             for offer in pair:
                 record = PriceUpdater(ingestion_client=client).prepare_product_offers(
@@ -387,13 +415,14 @@ def run(state, slugs, client=None, *, publish=False, maximum=24, products=None, 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--state', required=True, type=Path)
+    parser.add_argument('--state', type=Path)
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument('--slug', action='append')
     mode.add_argument('--audit-queue', type=Path, metavar='REPORT')
+    mode.add_argument('--reviewed-pairs', type=Path, metavar='PROFILES')
     parser.add_argument('--publish', action='store_true')
     args = parser.parse_args()
-    if not args.state.is_file():
+    if args.reviewed_pairs is None and (not args.state or not args.state.is_file()):
         parser.error('Provide a saved discovery state')
     state = read_state(args.state)
     if args.audit_queue is not None:
@@ -408,9 +437,11 @@ def main():
         write_json(args.audit_queue, {'checkedAt': now, 'catalogAvailable': bool(public), 'rows': rows})
         print(json.dumps({'phonesAudited': len(rows), 'verifiedPairs': sum(bool(row['sameGtin']) for row in rows)}))
         return
-    if not 1 <= len(args.slug) <= 4 or len(set(args.slug)) != len(args.slug):
+    profiles = load_reviewed_profiles(args.reviewed_pairs) if args.reviewed_pairs else None
+    slugs = list(profiles) if profiles else args.slug
+    if not 1 <= len(slugs) <= 4 or len(set(slugs)) != len(slugs):
         parser.error('Provide one to four distinct catalog slugs')
-    rows = run(state, args.slug, OfferIngestionClient.from_env(), publish=args.publish)
+    rows = run(state, slugs, OfferIngestionClient.from_env(), publish=args.publish, profiles=profiles)
     print(json.dumps(rows, ensure_ascii=False, indent=2))
     if args.publish and any(row.get('readback') != 'verified' for row in rows):
         raise SystemExit('One or more requested capacities have no verified publication')
