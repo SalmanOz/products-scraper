@@ -32,10 +32,10 @@ def canonical_product_url(url):
     return urlparse(url)._replace(query='').geturl() if catalog_request_url(url) else None
 
 
-def public_search_card_document(html):
-    """Keep same-run routing hints for sibling SKUs, without prices or state."""
+def public_search_cards(html):
+    """Read the public product links and titles without offer data."""
     if not isinstance(html, str) or len(html.encode()) > 5 * 1024 * 1024:
-        return ''
+        return []
     cards, seen = [], set()
     for anchor in BeautifulSoup(html, 'html.parser').select('a[href]'):
         headings = anchor.select('h2.product-item-title')
@@ -46,11 +46,16 @@ def public_search_card_document(html):
         if url is None or url in seen or not title or len(title) > 500:
             continue
         seen.add(url)
-        cards.append('<a href="' + escape(url, quote=True) + '"><h2 class="product-item-title">' +
-                     escape(title) + '</h2></a>')
+        cards.append({'source_url': url, 'discovery_title': title})
         if len(cards) >= 200:
             break
-    return ''.join(cards)
+    return cards
+
+
+def public_search_card_document(html):
+    """Keep same-run routing hints for sibling SKUs, without prices or state."""
+    return ''.join('<a href="' + escape(card['source_url'], quote=True) + '"><h2 class="product-item-title">' +
+                   escape(card['discovery_title']) + '</h2></a>' for card in public_search_cards(html))
 
 
 def discover_catalog_targets(html, name, specs, maximum=2, *, excluded_urls=()):

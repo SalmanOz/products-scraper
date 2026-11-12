@@ -202,7 +202,7 @@ def _product_cards(soup, *, include_promoted=True):
     return cards
 
 
-def _organic_search_cards(html, query):
+def organic_search_cards(html, query):
     if not isinstance(html, str) or len(html.encode()) > MAX_HTML_BYTES:
         return [], 'invalid_search_document'
     soup = BeautifulSoup(html, 'html.parser')
@@ -216,7 +216,7 @@ def _organic_search_cards(html, query):
 
 def public_model_search_cards(html, query):
     """Route organic cards only when the visible search echoes the model."""
-    cards, reason = _organic_search_cards(html, query)
+    cards, reason = organic_search_cards(html, query)
     matcher = TRPriceScraper()
     return [card for card in cards if matcher.is_strict_match(query, card['discovery_title'], {})
             and matcher.is_strict_match(query, urlparse(card['source_url']).path.replace('-', ' '), {})], reason
@@ -226,7 +226,7 @@ def public_sku_search_urls(html, sku):
     """Resolve a native Hepsiburada search link by its exact selected SKU."""
     if not isinstance(sku, str) or not re.fullmatch(r'HBCV[A-Z0-9]{5,30}', sku):
         return []
-    cards, _ = _organic_search_cards(html, sku)
+    cards, _ = organic_search_cards(html, sku)
     return sorted({card['source_url'] for card in cards
                    if urlparse(card['source_url']).path.endswith('-p-' + sku)})
 

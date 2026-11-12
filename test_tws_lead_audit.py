@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from tws_catalog_expansion import candidates_from_audit, stage
-from tws_lead_audit import audit, collect_leads, identify
+from tws_lead_audit import KNOWN_MODELS, audit, collect_leads, identify, native_search_models, search_native_retailer
 
 
 class EarbudLeadAuditTest(unittest.TestCase):
@@ -35,6 +35,34 @@ class EarbudLeadAuditTest(unittest.TestCase):
         }}
         self.assertEqual([name for name, _ in collect_leads(state, maximum=2)[host]],
                          ['Sony WF-1000XM6', 'Nothing Ear (a)'])
+
+    def test_native_search_uses_exact_earbud_cards_and_only_retains_url_hints(self):
+        name = 'Sony WF-1000XM6'
+        route = '/urun/sony-wf-1000xm6-siyah-12345678'
+        url = 'https://www.n11.com' + route
+        def card(path, title):
+            return f'<a href="{path}"><h2 class="product-item-title">{title}</h2><span>1 TL</span></a>'
+        html = card(route, name + ' Siyah') + card(route.replace('78', '79'), name + ' Kılıf')
+        html += card('https://example.org' + route, name + ' Gümüş')
+        with patch('tws_lead_audit.PriorityRetailerTransport') as transport:
+            transport.return_value.read_n11_search.return_value = html, 'document_read', 200
+            leads, report = search_native_retailer('www.n11.com', [name])
+        self.assertEqual(leads, {name: [url]})
+        self.assertEqual(report[0]['destinations'], 1)
+        state = {'products': {}, 'earbudNativeLeads': leads}
+        self.assertEqual(collect_leads(state), {'www.n11.com': [(name, {'url': url})]})
+
+    def test_native_search_rotates_bounded_model_gaps(self):
+        now = datetime.now(timezone.utc)
+        name, other, *remaining = sorted(KNOWN_MODELS)
+        covered = {'models': [{'name': name, 'gtin': '4548736171824',
+                              'offers': [{'platform': 'n11'}, {'platform': 'Trendyol'}]}]}
+        state = {'earbudNativeSearchAudits': {other: now.isoformat()}}
+        self.assertEqual(native_search_models(state, covered, (), now), remaining[:4])
+        self.assertEqual(native_search_models(state, covered, [name, other, 'Not a model', name], now), [name, other])
+        state['earbudLeadObservations'] = {'https://www.n11.com/urun/earbuds-12345678':
+            {'name': name, 'gtin13': '4548736171770', 'checkedAt': now.isoformat()}}
+        self.assertEqual(native_search_models(state, covered, (), now), [name, *remaining[:3]])
 
     def test_new_product_stages_all_fresh_independent_gtins_from_audit(self):
         name = 'Nothing Ear (a)'
