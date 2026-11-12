@@ -5,10 +5,62 @@ from unittest.mock import Mock, patch
 
 from competitor_catalog_gaps import (AKAKCE, CIMRI, EPEY, KARSILASTIRICI, PAHALIMI, URUNAI, akakce_limits, candidate_family, cimri_sitemap_cards, epey_earbud_title, epey_sitemap_cards, export_source_snapshot, import_source_snapshot, product_state_key, scan_product_sitemap, scan_source, urunai_market_slugs, urunai_sitemap_cards, catalog_match, category_url, comparison_cards, comparison_retailer_leads,
                                      identity_index, in_scope, merge_state, read_state)
-from competitor_catalog_gaps import AMAHANGISI
+from competitor_catalog_gaps import AMAHANGISI, INDIRIMLI, TUBERKARAS, lead_inventory, phone_family, scan_retailer_leads
 
 
 class CompetitorCatalogGapsTest(unittest.TestCase):
+    def test_indirimli_reads_catalog_titles_and_embedded_original_store_links(self):
+        from urllib.parse import urlencode
+
+        source = f'https://{INDIRIMLI}/urun/iphone-15-plus-128-gb'
+        store = 'https://www.trendyol.com/apple/iphone-15-plus-128gb-p-12345678?merchantId=17'
+        route = '/api/affiliate/redirect?' + urlencode({'product_url': store})
+        html = f'''<link rel="canonical" href="{source}">
+          <a class="product-card-refresh" href="{source}"><p class="product-card-title">iPhone 15 Plus 128 GB</p>
+          40.000 TL</a><a rel="sponsored" href="{route}">Buy</a>
+          <a rel="sponsored" href="https://example.com{route}">External wrapper</a>
+          <a rel="sponsored" href="{route}&amp;product_url=https://example.com">Ambiguous wrapper</a>'''
+        cards, _ = comparison_cards(html, INDIRIMLI, category_url(INDIRIMLI, '/kategori/cep-telefonu', 1))
+        self.assertEqual(list(cards), [{'id': 'iphone-15-plus-128-gb', 'title': 'Apple iPhone 15 Plus 128 GB', 'url': source}])
+        self.assertEqual(category_url(INDIRIMLI, '/kategori/cep-telefonu', 2),
+                         f'https://{INDIRIMLI}/kategori/cep-telefonu?sayfa=2')
+        self.assertEqual(comparison_retailer_leads(html, INDIRIMLI, source), [store])
+        self.assertEqual(comparison_retailer_leads(html, INDIRIMLI, source + '-wrong'), [])
+        self.assertEqual(phone_family('Samsung Galaxy S26 Ultra 1 TB 16 GB Beyaz'), 'samsung galaxy s26 ultra')
+
+    def test_tuberkaras_cards_bind_links_to_their_own_product_rows(self):
+        store = 'https://www.n11.com/urun/sony-wf-1000xm6-123456'
+        html = f'''<article class="urun-satir"><div class="satir-bilgi"><h3>
+          <a href="/urun/sony-wf-1000xm6">Sony WF-1000XM6 TWS</a></h3></div>
+          <a rel="sponsored" href="{store}">Buy</a></article>
+          <article class="urun-satir"><div class="satir-bilgi"><h3>
+          <a href="/urun/other-earbud">Other Earbud TWS</a></h3></div></article>'''
+        cards, _ = comparison_cards(html, TUBERKARAS, f'https://{TUBERKARAS}/kategori/kulaklik')
+        first, second = cards
+        self.assertEqual(first['retailerLeads'], [store])
+        self.assertNotIn('retailerLeads', second)
+
+    def test_lead_queue_looks_for_second_store_and_keeps_regular_rotation(self):
+        def row(source, key, title, *, family=None, leads=()):
+            return {'source': source, 'category': 'phone', 'id': key, 'title': title,
+                    'url': f'https://{source}/urun/{key}', 'catalogFamily': family,
+                    'retailerLeads': leads, 'firstSeenAt': '2026-11-01'}
+
+        original = row(PAHALIMI, 'source', 'OPPO Find X9',
+                       leads=['https://www.n11.com/urun/oppo-find-x9-123456'])
+        regular = row(KARSILASTIRICI, 'a-regular', 'Samsung Galaxy S26')
+        gap = row(KARSILASTIRICI, 'b-gap', 'Apple iPhone 16 Plus', family='apple-iphone-16-plus')
+        complement = row(KARSILASTIRICI, 'c-complement', 'Oppo Find X9')
+        sibling = row(KARSILASTIRICI, 'd-sibling', 'Oppo Find X9')
+        state = {'products': {row['id']: row for row in (original, regular, gap, complement, sibling)}}
+        reader = Mock()
+        reader._read_document.return_value = ('<html></html>', 'document_read', 200)
+        with patch('competitor_catalog_gaps.comparison_reader', return_value=reader):
+            scan_retailer_leads(state, KARSILASTIRICI, ['phone'], 3, '2026-11-12',
+                                priority={'apple-iphone-16-plus'}, known_leads=lead_inventory(state))
+        self.assertEqual([call.args[0] for call in reader._read_document.call_args_list],
+                         [gap['url'], complement['url'], regular['url']])
+
     def test_amahangisi_discovers_only_native_sitemap_products_and_direct_offer_links(self):
         root = f'https://{AMAHANGISI}'
         product = root + '/akilli-telefon/iphone/apple-iphone-16-plus'

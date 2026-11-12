@@ -30,7 +30,9 @@ URUNAI = 'urunai.com'
 KARSILASTIRICI = 'karsilastirici.com'
 PAHALIMI = 'pahalimi.com'
 AMAHANGISI = 'amahangisi.com'
-SOURCES = (AKAKCE, CIMRI, EPEY, URUNAI, KARSILASTIRICI, PAHALIMI, AMAHANGISI)
+INDIRIMLI = 'indirimli.com'
+TUBERKARAS = 'tuberkaras.com'
+SOURCES = (AKAKCE, CIMRI, EPEY, URUNAI, KARSILASTIRICI, PAHALIMI, AMAHANGISI, INDIRIMLI, TUBERKARAS)
 URUNAI_CATEGORIES = {
     'telefon': 'phone', 'kulaklik': 'tws', 'laptop': 'laptop', 'monitor': 'monitor',
     'islemci': 'cpu', 'anakart': 'motherboard', 'ram-bellek': 'ram', 'ekran-karti': 'gpu',
@@ -39,6 +41,10 @@ URUNAI_CATEGORIES = {
 KARSILASTIRICI_CATEGORIES = {'phone': '/kategori/cep-telefonu', 'laptop': '/kategori/laptop'}
 URUNAI_PRODUCT = re.compile(r'/([a-z0-9-]+)/([a-z0-9-]+)/([a-z0-9-]{1,220})')
 KARSILASTIRICI_PRODUCT = re.compile(r'/urun/([a-z0-9-]{1,220})')
+ADDITIONAL_COMPARISON_CATEGORIES = {
+    INDIRIMLI: {'phone': '/kategori/cep-telefonu', 'tws': '/kategori/bluetooth-kulaklik'},
+    TUBERKARAS: {'phone': '/kategori/telefon', 'tws': '/kategori/kulaklik'},
+}
 PAHALIMI_CATEGORIES = {'phone': '/kategori/cep-telefonu', 'laptop': '/kategori/dizustu-bilgisayar',
                        'monitor': '/kategori/monitor', 'tws': '/kategori/kulaklik'}
 PAHALIMI_PRODUCT = re.compile(r'/kategori/[a-z0-9-]+/[a-z0-9-]{1,220}-p-([a-f0-9]{8})')
@@ -64,6 +70,7 @@ PRODUCT_SITEMAPS = {
 }
 PRODUCT_SITEMAP_LIMIT = 50 * 1024 * 1024
 PHONE_MEMORY = re.compile(r'(?: [1-9]\d? gb)? (?:[1-9]\d{1,3} gb|[1-9] tb)$')
+PHONE_STORAGE_THEN_RAM = re.compile(r' (?:[1-9]\d{2,3} gb|[1-9] tb) [1-9]\d? gb(?: ram)?$')
 PHONE_COLOR_AFTER_MEMORY = re.compile(
     r'( [1-9]\d{0,3} (?:gb(?: ram)?|tb)) (?:[a-z]{2,16} ){0,2}'
     r'(?:siyah|beyaz|gri|mavi|mavisi|mor|moru|yesil|yesili|kirmizi|pembe|'
@@ -94,6 +101,8 @@ CARD = {
     KARSILASTIRICI: KARSILASTIRICI_PRODUCT,
     PAHALIMI: PAHALIMI_PRODUCT,
     AMAHANGISI: AMAHANGISI_PRODUCT,
+    INDIRIMLI: KARSILASTIRICI_PRODUCT,
+    TUBERKARAS: KARSILASTIRICI_PRODUCT,
 }
 CARD_SELECTOR = {
     AKAKCE: '#CPL a.iC[href][title]',
@@ -101,6 +110,8 @@ CARD_SELECTOR = {
     EPEY: '#listele ul.metin.row[id] a.urunadi[href][title]',
     KARSILASTIRICI: 'a.product-card-link[href]:has(h3)',
     PAHALIMI: 'a.kat-urun-ort[href]',
+    INDIRIMLI: 'a.product-card-refresh[href]:has(.product-card-title)',
+    TUBERKARAS: 'article.urun-satir .satir-bilgi h3 > a[href]',
 }
 MODEL_TOKEN = re.compile(r'[a-zA-Z0-9]+(?:[-./_][a-zA-Z0-9]+)*')
 STOP_SOURCE = {'http_403', 'http_429', 'challenge_page', 'source_circuit_open',
@@ -114,7 +125,7 @@ def category_url(host, path, page):
         return f'https://{host}{path.removesuffix(".html")},{page}.html'
     if host == EPEY:
         return f'https://{host}{path}{page}/'
-    if host == PAHALIMI:
+    if host in (PAHALIMI, INDIRIMLI):
         return f'https://{host}{path}?sayfa={page}'
     return f'https://{host}{path}?page={page}'
 
@@ -148,18 +159,27 @@ def comparison_cards(html, host, url):
                 continue
         else:
             source_id = CARD[host].fullmatch(path)[1]
-        if host == KARSILASTIRICI:
+        if host == INDIRIMLI:
+            title = anchor.select_one('.product-card-title').get_text(' ', strip=True)
+        elif host == KARSILASTIRICI:
             title = anchor.select_one('h3').get_text(' ', strip=True)
-        elif host == PAHALIMI:
+        elif host in (PAHALIMI, TUBERKARAS):
             title = anchor.get_text(' ', strip=True)
         else:
             title = anchor['title']
         title = ' '.join(title.split())
+        if host in ADDITIONAL_COMPARISON_CATEGORIES and re.match(r'iphone\s+\d', title, re.I):
+            title = 'Apple ' + title
         if 3 <= len(title) <= 260:
-            cards.setdefault(source_id, {
+            card = cards.setdefault(source_id, {
                 'id': source_id, 'title': title,
                 'url': target._replace(path=path, query='', fragment='').geturl(),
             })
+            if host == TUBERKARAS:
+                raw = anchor.find_parent('article', class_='urun-satir').select('a[rel~=sponsored][href]')
+                leads = {store_url for link in raw if (store_url := retailer_destination(link['href']))}
+                if leads:
+                    card['retailerLeads'] = sorted(leads | set(card.get('retailerLeads', ())))
     return cards.values(), links
 
 
@@ -206,6 +226,7 @@ def catalog_match(title, index):
 def phone_family(title):
     label = WORDS(re.sub(r'(\d+)(gb|tb)\b', r'\1 \2', title, flags=re.I))
     label = PHONE_COLOR_AFTER_MEMORY.sub(r'\1', label)
+    label = PHONE_STORAGE_THEN_RAM.sub('', label)
     label = re.sub(r' [1-9]\d? gb ram$', '', label)
     return PHONE_MEMORY.sub('', label)
 
@@ -323,6 +344,13 @@ def in_scope(kind, title):
     return True
 
 
+def additional_comparison_in_scope(kind, title):
+    title = WORDS(title)
+    if kind == 'phone':
+        return not re.search(r'\b(?:uyumlu|dokunmatik ekran|ekran koruyucu|yedek parca|kapak|kilif|maket)\b', title)
+    return bool(re.search(r'\b(?:tws|kulak ici|airpods|tam kablosuz|acik kulak)\b', title))
+
+
 def comparison_reader(host, *, collection='runner', **options):
     gateway = catalog_document_reader('competitor') if collection == 'site' and host in (CIMRI, EPEY) else None
     unavailable = (EPEY,) if host == EPEY and collection == 'runner' else ()
@@ -350,7 +378,11 @@ def scan_source(host, kinds, indexes, start_page, pages, cursors=None, *, collec
         if state in STOP_SOURCE or state.startswith('robots_') and state != 'robots_disallowed':
             stopped = state
     for kind in kinds:
-        if host in (KARSILASTIRICI, PAHALIMI):
+        if host in ADDITIONAL_COMPARISON_CATEGORIES:
+            path = ADDITIONAL_COMPARISON_CATEGORIES[host].get(kind)
+            if path is None:
+                continue
+        elif host in (KARSILASTIRICI, PAHALIMI):
             paths = KARSILASTIRICI_CATEGORIES if host == KARSILASTIRICI else PAHALIMI_CATEGORIES
             path = paths.get(kind)
             if path is None:
@@ -387,7 +419,8 @@ def scan_source(host, kinds, indexes, start_page, pages, cursors=None, *, collec
             seen.update(card['id'] for card in distinct)
             stats['cards'] += len(distinct)
             for card in distinct:
-                if not in_scope(kind, card['title']) or (
+                if (not in_scope(kind, card['title']) or
+                        host in ADDITIONAL_COMPARISON_CATEGORIES and not additional_comparison_in_scope(kind, card['title']) or
                         host == EPEY and kind == 'tws' and 'tam kablosuz' not in WORDS(card['title'])):
                     stats['excluded'] += 1
                     continue
@@ -603,12 +636,17 @@ def comparison_retailer_leads(html, host, source_url):
     soup = BeautifulSoup(html, 'html.parser')
     if host == EPEY:
         raw_links = [unquote(anchor['data-link']) for anchor in soup.select('a.git[data-link]:has(.urun_adi)')]
-    elif host == AMAHANGISI:
+    elif host in (AMAHANGISI, INDIRIMLI, TUBERKARAS):
         canonical = [node.get('href') for node in soup.select('link[rel=canonical]')]
         if canonical != [source_url]:
             return []
-        raw_links = [anchor['href'] for anchor in soup.select(
-            'section#offers #price-panel-offers a[target="_blank"][rel~=noopener][href]')]
+        if host == AMAHANGISI:
+            raw_links = [anchor['href'] for anchor in soup.select(
+                'section#offers #price-panel-offers a[target="_blank"][rel~=noopener][href]')]
+        else:
+            raw_links = [anchor['href'] for anchor in soup.select('a[rel~=sponsored][href]')]
+            if host == INDIRIMLI:
+                raw_links = [target for raw in raw_links if (target := indirimli_retailer_link(raw, source_url))]
     else:
         selectors = {URUNAI: 'a[rel~=sponsored][href]',
                      KARSILASTIRICI: '#fiyatlar a.store-link[rel~=sponsored][href]',
@@ -636,6 +674,18 @@ def comparison_retailer_leads(html, host, source_url):
     return sorted({url for raw in raw_links if (url := retailer_destination(raw))})
 
 
+def indirimli_retailer_link(raw, source_url):
+    try:
+        route = urlsplit(urljoin(source_url, raw))
+        if (route.scheme != 'https' or route.netloc != INDIRIMLI or route.fragment
+                or route.path != '/api/affiliate/redirect'):
+            return None
+        targets = [value for key, value in parse_qsl(route.query, max_num_fields=8) if key == 'product_url']
+        return targets[0] if len(targets) == 1 else None
+    except ValueError:
+        return None
+
+
 def epey_earbud_title(html, url):
     soup = BeautifulSoup(html, 'html.parser')
     canonical = [node.get('href') for node in soup.select('link[rel=canonical]')]
@@ -649,8 +699,28 @@ def epey_earbud_title(html, url):
     return None, 'epey_tws_category_unverified'
 
 
-def scan_retailer_leads(state, host, kinds, maximum, now, priority=(), pinned=(), *, collection='runner'):
+def lead_group(row):
+    # Match known catalog families or exact normalized names across comparison
+    # sites. This is a discovery hint; SKU and seller checks still read the store.
+    identity = row.get('catalogFamily') or WORDS(row['title'])
+    return row['category'], identity
+
+
+def lead_inventory(state):
+    groups = defaultdict(lambda: defaultdict(set))
+    for row in state['products'].values():
+        if not row.get('retailerLeads'):
+            continue
+        for url in row['retailerLeads']:
+            groups[lead_group(row)][row['source']].add(urlsplit(url).netloc)
+    return groups
+
+
+def scan_retailer_leads(state, host, kinds, maximum, now, priority=(), pinned=(), *,
+                        collection='runner', known_leads=None):
     candidates = defaultdict(list)
+    needs_second_store = {group for group, sources in (known_leads or {}).items()
+                          if host not in sources and len(set().union(*sources.values())) == 1}
     for row in state['products'].values():
         if row['source'] != host or row['category'] not in kinds:
             continue
@@ -664,9 +734,19 @@ def scan_retailer_leads(state, host, kinds, maximum, now, priority=(), pinned=()
                                    row['firstSeenAt'], row['id']))
         first = [row for row in rows if row.get('catalogFamily') in pinned or row['id'] in pinned]
         others = [row for row in rows if row.get('catalogFamily') not in pinned and row['id'] not in pinned]
-        gaps = (row for row in others if row.get('catalogFamily') in priority)
-        rest = (row for row in others if row.get('catalogFamily') not in priority)
-        candidates[kind] = first + [row for pair in zip_longest(gaps, rest) for row in pair if row is not None]
+        gaps, complementary, rest = [], [], []
+        targeted_groups = set()
+        for row in others:
+            group = lead_group(row)
+            if row.get('catalogFamily') in priority:
+                gaps.append(row)
+            elif group in needs_second_store and group not in targeted_groups:
+                complementary.append(row)
+                targeted_groups.add(group)
+            else:
+                rest.append(row)
+        candidates[kind] = first + [row for cycle in zip_longest(gaps, complementary, rest)
+                                    for row in cycle if row is not None]
     reader = comparison_reader(host, collection=collection, maximum_per_host=maximum)
     offsets = Counter()
     outcomes = Counter()
@@ -699,8 +779,10 @@ def scan_retailer_leads(state, host, kinds, maximum, now, priority=(), pinned=()
                     continue
                 row['title'] = title
                 row.pop('titleFromSitemap')
-            row['retailerLeads'] = comparison_retailer_leads(html, host, row['url'])
-            row['leadStatus'] = 'direct_retailer_links' if row['retailerLeads'] else 'direct_retailer_links_missing'
+            leads = comparison_retailer_leads(html, host, row['url'])
+            if leads or host != TUBERKARAS:
+                row['retailerLeads'] = leads
+            row['leadStatus'] = 'direct_retailer_links' if leads else 'direct_retailer_links_missing'
             outcomes[row['leadStatus']] += 1
     return {'source': host, 'requests': sum(offsets.values()), 'outcomes': dict(outcomes)}
 
@@ -909,10 +991,13 @@ def main():
         stopped = {row['source'] for row in sources if row['status'] in STOP_SOURCE}
         if args.lead_only and args.akakce_budget:
             akakce_leads = min(args.lead_limit, args.akakce_budget)
-        limits = {host: akakce_leads if host == AKAKCE else args.lead_limit for host in hosts}
+        limits = {host: akakce_leads if host == AKAKCE else min(args.lead_limit, 16)
+                  if host in ADDITIONAL_COMPARISON_CATEGORIES else args.lead_limit for host in hosts}
+        known_leads = lead_inventory(state)
         with ThreadPoolExecutor(max_workers=len(hosts)) as pool:
             jobs = [pool.submit(scan_retailer_leads, state, host, kinds, limits[host], now,
-                                priority, set(args.prioritize_model), collection=args.collection)
+                                priority, set(args.prioritize_model), collection=args.collection,
+                                known_leads=known_leads)
                     for host in hosts if host not in stopped and limits[host]]
             lead_scans = [job.result() for job in jobs]
     if args.state is not None:
