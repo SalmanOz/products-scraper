@@ -64,6 +64,23 @@
       {"label": "Kulaklık ağırlığı", "value": "4,8 g (her biri)"}
     ]
   },
+  "Samsung Galaxy Buds3 Pro": {
+    "summary": "Galaxy Buds3 Pro, iki yönlü sürücü ve adaptif gürültü engelleme sunuyor. Samsung, ANC açıkken kutuyla 26 saate kadar müzik dinleme süresi belirtiyor.",
+    "highlights": ["Adaptif gürültü engelleme", "Bluetooth 5.4 ve LE Audio", "Kulaklıklarda IP57"],
+    "specSource": "https://www.samsung.com/tr/audio-sound/galaxy-buds/galaxy-buds3-pro-white-sm-r630nzwatur/",
+    "specs": [
+      {"label": "Gürültü kontrolü", "value": "Adaptif aktif gürültü engelleme ve ortam sesi modu"},
+      {"label": "Sürücü", "value": "İki yönlü hoparlör"},
+      {"label": "Tek şarjla müzik", "value": "7 saate kadar (ANC kapalı), 6 saate kadar (ANC açık)"},
+      {"label": "Kutuyla toplam müzik", "value": "30 saate kadar (ANC kapalı)"},
+      {"label": "Kutuyla toplam müzik (ANC açık)", "value": "26 saate kadar"},
+      {"label": "Bluetooth", "value": "5.4, LE Audio"},
+      {"label": "Ses kodekleri", "value": "AAC, SBC, Samsung Seamless Codec ve SSC-UHQ"},
+      {"label": "Dayanıklılık", "value": "IP57 (kulaklıklar)"},
+      {"label": "Kulaklık ağırlığı", "value": "5,4 g (her biri)"},
+      {"label": "Mikrofon", "value": "Toplam 6 mikrofon"}
+    ]
+  },
   "Nothing Ear (3)": {
     "summary": "Nothing Ear (3), adaptif gürültü engelleme ve LDAC destekli tam kablosuz bir kulaklık. Şarj kutusundaki mikrofon konuşmalar için kullanılabiliyor.",
     "highlights": ["45 dB’ye kadar aktif gürültü engelleme", "Kutuda Super Mic", "LDAC desteği"],
