@@ -2,7 +2,7 @@
 
 import argparse
 from collections import Counter, defaultdict, deque
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from itertools import zip_longest
 import json
 import os
@@ -376,10 +376,14 @@ def round_robin_phone_families(rows, maximum):
     return selected
 
 
-def audit_queue(state, products, maximum=8):
+def audit_queue(state, products, maximum=8, *, now=None):
     audited = state.get('phoneOfferAudits', {})
     unpriced, priced, unrouted = [], [], []
     index = phone_lead_index(state, expanded=True)
+    now = now or datetime.now(timezone.utc)
+    # Leave a full daily cycle before the site's 72-hour offer cutoff.
+    recheck_before = (now - timedelta(hours=48)).isoformat()
+    audited_today = (now - timedelta(hours=24)).isoformat()
     for product in products:
         slug = product['slug']
         if not product.get('name') or not isinstance(product.get('attributes'), dict):
@@ -393,14 +397,21 @@ def audit_queue(state, products, maximum=8):
         elif TRPriceScraper._spec_int(storage) and needs_price:
             unrouted.append(product)
 
-    def ranked(rows):
+    def ranked(rows, *, protect_coverage=False):
+        def priority(row):
+            slug = row['slug']
+            last_audit = audited.get(slug, '')
+            checked = (row.get('latest_offer_checked_at') or '').replace('Z', '+00:00')
+            return (checked if protect_coverage and checked and checked <= recheck_before
+                    and last_audit < audited_today else '~', last_audit)
+
         return [row for row, _ in sorted(rows, key=lambda entry: (
-            audited.get(entry[0]['slug'], ''), -min(entry[1], 2), entry[0]['slug']))]
+            *priority(entry[0]), -min(entry[1], 2), entry[0]['slug']))]
 
     # Keep discovery slots for variants with no retailer routes and reserve
     # some capacity for finding additional independent sellers on priced models.
     unpriced = ranked(unpriced)
-    priced = ranked(priced)
+    priced = ranked(priced, protect_coverage=True)
     unrouted.sort(key=lambda row: (audited.get(row['slug'], ''), row['slug']))
     discovery_slots = min(len(unrouted), maximum // 4)
     priced_slots = min(len(priced), maximum // 4)

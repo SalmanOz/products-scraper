@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -137,6 +138,17 @@ class ComparisonPhoneOffersTest(unittest.TestCase):
         self.assertEqual(audit_queue(state, products, maximum=4), [*products[:2], products[10], products[4]])
         self.assertEqual(set(row['slug'] for row in audit_queue(state, products, maximum=24)),
                          set(row['slug'] for row in products))
+
+    def test_priced_slot_prioritizes_offers_near_expiry_without_repeating_todays_audit(self):
+        products = [{'slug': slug, 'name': slug, 'attributes': {}, 'fresh_offer_count': int(checked is not None),
+                     'latest_offer_checked_at': checked}
+                    for slug, checked in (('unpriced', None), ('newer', '2026-11-11T10:00:00Z'),
+                                          ('expiring', '2026-11-10T10:00:00Z'),
+                                          ('already-checked', '2026-11-10T06:00:00Z'))]
+        state = {'products': {}, 'phoneNativeLeads': {row['slug']: [HB] for row in products},
+                 'phoneOfferAudits': {'already-checked': '2026-11-12T08:00:00+00:00'}}
+        now = datetime(2026, 11, 12, 11, tzinfo=timezone.utc)
+        self.assertEqual(audit_queue(state, products, maximum=4, now=now)[:2], [products[0], products[2]])
 
     def test_hepsiburada_phone_search_requires_the_exact_echo_and_catalog_memory(self):
         search = Mock()
