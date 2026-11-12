@@ -792,6 +792,21 @@ def lead_inventory(state):
     return groups
 
 
+def source_coverage(state, kinds):
+    coverage = defaultdict(Counter)
+    for row in state['products'].values():
+        if row['category'] not in kinds:
+            continue
+        count = coverage[row['source'], row['category']]
+        hosts = {urlsplit(url).netloc for url in row.get('retailerLeads', ())}
+        count['records'] += 1
+        count['recordsWithCatalogFamily'] += bool(row.get('catalogFamily'))
+        count['recordsWithRetailerLinks'] += bool(hosts)
+        count['recordsWithTwoRetailerHosts'] += len(hosts) >= 2
+    return [{'source': host, 'category': kind, **counts}
+            for (host, kind), counts in sorted(coverage.items())]
+
+
 def scan_retailer_leads(state, host, kinds, maximum, now, priority=(), pinned=(), *,
                         collection='runner', known_leads=None):
     candidates = defaultdict(list)
@@ -1097,6 +1112,7 @@ def main():
     report = {'checkedAt': now, 'inventory': {kind: len(inventory[kind]) for kind in kinds},
               'sources': sources, 'sourceSnapshot': source_snapshots.get(EPEY),
               'sourceSnapshots': list(source_snapshots.values()), 'retailerLeadScans': lead_scans,
+              'sourceCoverage': source_coverage(state, kinds),
               'candidates': candidates, 'existingWithRetailerLeads': existing_with_leads}
     write_json(args.output, report)
     print(json.dumps({

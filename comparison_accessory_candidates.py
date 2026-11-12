@@ -40,8 +40,9 @@ def monitor_codes(title):
             and not FEATURE_TOKEN.fullmatch(code)}
 
 
-def candidate_targets(state, categories, maximum):
+def candidate_targets(state, categories, maximum, diagnostics=None, *, existing_codes=None):
     prior = state.get('accessoryLeadAudits', {})
+    existing_codes = existing_codes or {}
     targets = defaultdict(dict)
     model_links = defaultdict(set)
     for key, row in state['products'].items():
@@ -55,9 +56,10 @@ def candidate_targets(state, categories, maximum):
             continue
         codes = (monitor_codes(row['title']) if kind == 'monitor'
                  else {code_key(code) for code in model_codes(row['title'])})
-        for code in codes:
+        unknown_codes = codes - existing_codes.get(kind, set())
+        for code in unknown_codes:
             model_links[kind, code, True].update(url for url in urls if mentions(urlsplit(url).path, code))
-        if kind == 'laptop':
+        if kind == 'laptop' and (unknown_codes or not codes):
             # Some retailer URLs omit the MPN. A single comparison page can
             # still supply leads, and the selected PDP has to prove the MPN.
             model_links[kind, key, False].update(urls)
@@ -70,17 +72,51 @@ def candidate_targets(state, categories, maximum):
             identity = (len(model) if kind == 'monitor' else 0, sources, exact_code, model)
             if identity > candidates.get(url, (0, 0, False, '')):
                 candidates[url] = identity
-    result = defaultdict(list)
+    models = defaultdict(dict)
     for (kind, host), targets_by_url in targets.items():
+        for url, (_, _, _, model) in targets_by_url.items():
+            key = (prior.get(f'{kind}/{url}', ''), url)
+            options = models[kind, model]
+            options[host] = min(key, options.get(host, key))
+
+    # Reserve part of each source's allowance for reading both sides of the
+    # same model in one run. Other listings keep their usual per-host rotation.
+    selected = defaultdict(list)
+    reserve = max(1, maximum // 2)
+    matched = [(kind, model, options) for (kind, model), options in models.items() if len(options) >= 2]
+    matched.sort(key=lambda row: (sorted(row[2].values())[1][0], -len(row[2]), row[0], row[1]))
+    for kind, model, options in matched:
+        available = [(host, hint) for host, hint in options.items() if len(selected[kind, host]) < reserve]
+        if len(available) < 2:
+            continue
+        available.sort(key=lambda row: (len(selected[kind, row[0]]), row[1], row[0]))
+        for host, (_, url) in available[:2]:
+            selected[kind, host].append((url, model))
+
+    result = defaultdict(list)
+    planned = defaultdict(set)
+    for (kind, host), targets_by_url in targets.items():
+        paired = selected[kind, host]
+        chosen = {url for url, _ in paired}
         ordered = sorted(targets_by_url.items(), key=lambda row: (prior.get(f'{kind}/{row[0]}', ''),
                                                                   -row[1][1], row[1][3], row[0]))
-        counts = Counter()
+        counts = Counter(model for _, model in paired)
         ranked = []
         for url, (_, _, _, model) in ordered:
-            ranked.append((counts[model], kind, url, model if kind == 'monitor' else ''))
+            if url in chosen:
+                continue
+            ranked.append((counts[model], url, model))
             counts[model] += 1
         ranked.sort(key=lambda row: row[0])
-        result[host].extend((kind, url, code) for _, kind, url, code in ranked[:maximum])
+        routes = paired + [(url, model) for _, url, model in ranked[:maximum - len(paired)]]
+        result[host].extend((kind, url, model if kind == 'monitor' else '') for url, model in routes)
+        for _, model in routes:
+            planned[kind, model].add(host)
+    if diagnostics is not None:
+        for kind in categories:
+            counts = [len(hosts) for (category, _), hosts in planned.items() if category == kind]
+            diagnostics[kind] = {'modelGroupsQueued': len(counts),
+                                 'modelGroupsQueuedOnTwoHosts': sum(n >= 2 for n in counts)}
     return result
 
 
@@ -182,7 +218,11 @@ def stage_category(kind, catalog, grouped, output, maximum_models):
 
 
 def run(state, catalogs, output, maximum_requests, maximum_models):
-    groups = candidate_targets(state, catalogs, maximum_requests)
+    diagnostics = {}
+    inventory = {kind: json.loads(payload) for kind, payload in catalogs.items()}
+    existing_codes = {kind: {code_key(row['mpn']) for row in catalog['models']}
+                      for kind, catalog in inventory.items()}
+    groups = candidate_targets(state, catalogs, maximum_requests, diagnostics, existing_codes=existing_codes)
     observed, sources = defaultdict(lambda: defaultdict(list)), {}
     with ThreadPoolExecutor(max_workers=6) as pool:
         jobs = {host: pool.submit(read_host, host, rows) for host, rows in groups.items()}
@@ -198,9 +238,10 @@ def run(state, catalogs, output, maximum_requests, maximum_models):
     for kind, payload in catalogs.items():
         directory = output / kind
         directory.mkdir(parents=True, exist_ok=True)
-        rows, rejected = stage_category(kind, json.loads(payload), observed[kind], directory, maximum_models)
+        rows, rejected = stage_category(kind, inventory[kind], observed[kind], directory, maximum_models)
         report['categories'][kind] = {'baseSha256': sha256(payload).hexdigest(), 'staged': rows,
-                                      'observedVariants': len(observed[kind]), 'rejections': rejected}
+                                      'observedVariants': len(observed[kind]), 'rejections': rejected,
+                                      **diagnostics[kind]}
     return report
 
 
@@ -221,7 +262,8 @@ def main():
     write_json(args.output / 'report.json', report)
     write_json(args.state, state)
     print(json.dumps({'sources': report['sources'], 'categories': {kind: {
-        'observedVariants': row['observedVariants'], 'staged': [item['model']['name'] for item in row['staged']],
+        'observedVariants': row['observedVariants'], 'modelGroupsQueuedOnTwoHosts': row['modelGroupsQueuedOnTwoHosts'],
+        'staged': [item['model']['name'] for item in row['staged']],
         'rejections': row['rejections']} for kind, row in report['categories'].items()}}, ensure_ascii=False))
 
 

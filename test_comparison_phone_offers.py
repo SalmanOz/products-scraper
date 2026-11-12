@@ -62,6 +62,10 @@ class ComparisonPhoneOffersTest(unittest.TestCase):
         self.assertEqual(capacity_priority(root + '128-gb-123456?dahili-hafiza=256-gb', 256), 0)
         self.assertEqual(capacity_priority(root + '12-gb-128-gb-123456', 256), 2)
         self.assertEqual(capacity_priority(root + '8gb-123456', 128), 1)
+        mm = ('https://www.mediamarkt.com.tr/tr/product/'
+              '_samsung-galaxy-a27-5g-8256gb-akilli-telefon-siyah-1255283.html')
+        self.assertEqual(capacity_priority(mm, 256), 0)
+        self.assertEqual(capacity_priority(mm, 128), 2)
 
     def test_phone_queue_services_distinct_families_before_sibling_capacities(self):
         families = ('apple-iphone-16-plus', 'honor-600')

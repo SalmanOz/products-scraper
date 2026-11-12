@@ -215,6 +215,8 @@ def capacity_priority(url, storage_gb):
     route = urlsplit(url)
     selector = parse_qs(route.query).get('dahili-hafiza', [])
     text = selector[0] if len(selector) == 1 else route.path
+    if route.netloc in ('www.mediamarkt.com.tr', 'www.teknosa.com'):
+        text = TRPriceScraper.split_joined_retailer_url_capacity(text)
     values = {
         int(amount) * (1024 if unit == 'tb' else 1)
         for amount, unit in re.findall(r'(?<!\d)([1-9]\d{0,3})[-_ ]?(gb|tb)(?=$|[-_.\d])', text.casefold())

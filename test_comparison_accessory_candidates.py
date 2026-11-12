@@ -11,6 +11,25 @@ TRENDYOL = 'https://www.trendyol.com/asus/proart-pa278cv-75hz-monitor-p-12238194
 
 
 class ComparisonAccessoryTests(unittest.TestCase):
+    def test_shared_model_is_scheduled_on_two_hosts_when_oldest_urls_differ(self):
+        other_n11 = N11.replace('pa278cv', 'pa279cv').replace('53683691', '53683692')
+        other_trendyol = TRENDYOL.replace('pa278cv', 'pa279cv').replace('1223819436', '1223819437')
+        state = {'products': {
+            'first': {'category': 'monitor', 'title': 'ASUS PA278CV', 'retailerLeads': [N11, TRENDYOL]},
+            'second': {'category': 'monitor', 'title': 'ASUS PA279CV', 'retailerLeads': [other_n11, other_trendyol]},
+        }, 'accessoryLeadAudits': {
+            f'monitor/{other_n11}': '2026-11-12T06:00:00Z',
+            f'monitor/{TRENDYOL}': '2026-11-12T05:00:00Z',
+        }}
+        diagnostics = {}
+        groups = candidate_targets(state, ['monitor'], 1, diagnostics)
+        self.assertEqual(dict(groups), {'www.n11.com': [('monitor', N11, 'pa278cv')],
+                                        'www.trendyol.com': [('monitor', TRENDYOL, 'pa278cv')]})
+        self.assertEqual(diagnostics['monitor'], {'modelGroupsQueued': 1, 'modelGroupsQueuedOnTwoHosts': 1})
+        groups = candidate_targets(state, ['monitor'], 1, existing_codes={'monitor': {'pa278cv'}})
+        self.assertEqual(dict(groups), {'www.n11.com': [('monitor', other_n11, 'pa279cv')],
+                                        'www.trendyol.com': [('monitor', other_trendyol, 'pa279cv')]})
+
     def test_monitor_joins_the_same_model_code_across_comparison_pages(self):
         first = {'category': 'monitor', 'title': 'ASUS PA278CV 75Hz DisplayPort Monitör', 'retailerLeads': [N11]}
         second = {'category': 'monitor', 'title': 'ASUS PA278CV Monitör', 'retailerLeads': [TRENDYOL]}
