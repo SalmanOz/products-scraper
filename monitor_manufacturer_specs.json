@@ -18,6 +18,24 @@
       "dp": "1 × DisplayPort 1.4, 400 Hz doğal ve 420 Hz hız aşırtma ile"
     }
   },
+  "4038986642606": {
+    "code": "q27g42xe",
+    "url": "https://www.aoc.com/uk/gaming/monitors/q27g42xe",
+    "facts": {
+      "size": 27,
+      "resolution": "2560 × 1440",
+      "panel": "IPS",
+      "refresh": 180,
+      "hdmi": true,
+      "dp": true,
+      "usb_c": false
+    },
+    "specValues": {
+      "panel": "Fast IPS",
+      "hdmi": "2 × HDMI 2.0, 144 Hz’e kadar",
+      "dp": "1 × DisplayPort 1.4, 180 Hz’e kadar"
+    }
+  },
   "4711377298919": {
     "code": "274qpfx30mv",
     "model": "274QPF X30MV",
