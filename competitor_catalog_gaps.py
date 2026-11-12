@@ -868,12 +868,16 @@ def source_snapshot_row(row, host):
     match = CARD[host].fullmatch(route.path)
     if not match or route.query or route.fragment:
         return None
-    path_category, product = route.path.split('/')[1:]
-    kind = SNAPSHOT_CATEGORIES[host].get(path_category)
-    identity = product.removesuffix('.html') if host == EPEY else match[1]
+    if host == UCUZYUM:
+        kind, identity = 'phone', match[1]
+    else:
+        path_category, product = route.path.split('/')[1:]
+        kind = SNAPSHOT_CATEGORIES[host].get(path_category)
+        identity = product.removesuffix('.html') if host == EPEY else match[1]
     title = row.get('title')
     if (not kind or row.get('category') != kind or not isinstance(title, str) or
-            not 3 <= len(title) <= 260 or not in_scope(kind, title)):
+            not 3 <= len(title) <= 260 or not in_scope(kind, title) or
+            host == UCUZYUM and not additional_comparison_in_scope(kind, title)):
         return None
     try:
         first = datetime.fromisoformat(row.get('firstSeenAt', ''))
@@ -997,8 +1001,10 @@ def main():
     parser.add_argument('--import-epey-snapshot', type=Path, help='Import Epey discovery links from a verified source run')
     parser.add_argument('--export-epey-snapshot', type=Path, help='Export Epey discovery links without prices')
     parser.add_argument('--import-cimri-snapshot', type=Path, help='Import Cimri discovery links from a verified source run')
+    parser.add_argument('--import-ucuzyum-snapshot', type=Path, help='Import Ucuzyum discovery links from a verified source run')
     parser.add_argument('--export-cimri-snapshot', type=Path, help='Export Cimri discovery links without prices')
     parser.add_argument('--export-akakce-snapshot', type=Path, help='Export Akakçe discovery links without prices')
+    parser.add_argument('--export-ucuzyum-snapshot', type=Path, help='Export Ucuzyum discovery links without prices')
     parser.add_argument('--lead-only', action='store_true', help='Continue retailer-link discovery from saved candidates')
     parser.add_argument('--state', type=Path, help='Resume category cursors and retain deduplicated candidate IDs')
     parser.add_argument('--prioritize-model', action='append', default=[])
@@ -1028,7 +1034,7 @@ def main():
     state = read_state(args.state)
     source_snapshots = {}
     for host, path in ((AKAKCE, args.import_akakce_snapshot), (EPEY, args.import_epey_snapshot),
-                       (CIMRI, args.import_cimri_snapshot)):
+                       (CIMRI, args.import_cimri_snapshot), (UCUZYUM, args.import_ucuzyum_snapshot)):
         if path is None:
             continue
         try:
@@ -1070,7 +1076,7 @@ def main():
     if args.state is not None:
         write_json(args.state, state)
     for host, path in ((AKAKCE, args.export_akakce_snapshot), (EPEY, args.export_epey_snapshot),
-                       (CIMRI, args.export_cimri_snapshot)):
+                       (CIMRI, args.export_cimri_snapshot), (UCUZYUM, args.export_ucuzyum_snapshot)):
         if path is not None:
             export_source_snapshot(path, state, host)
     candidates = [row for row in state['products'].values() if row['catalogSlug'] is None]

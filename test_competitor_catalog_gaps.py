@@ -33,6 +33,17 @@ class CompetitorCatalogGapsTest(unittest.TestCase):
           <a rel="sponsored" href="https://www.n11.com/urun/other-phone-123456">Related phone</a>'''
         self.assertEqual(comparison_retailer_leads(html, UCUZYUM, url), [retailer])
         self.assertEqual(comparison_retailer_leads(html, UCUZYUM, url + '-other'), [])
+        now = '2026-11-12T05:00:00+00:00'
+        product = {**rows[0], 'firstSeenAt': now, 'lastSeenAt': now, 'lastLeadAttemptAt': now,
+                   'price': 33000, 'retailerLeads': [retailer]}
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / 'ucuzyum.json.gz'
+            state = {'products': {}}
+            self.assertEqual(export_source_snapshot(path, {'products': {'a': product}}, UCUZYUM), 1)
+            self.assertEqual(import_source_snapshot(path, state, UCUZYUM)['withRetailerLinks'], 1)
+        imported = next(iter(state['products'].values()))
+        self.assertEqual(imported['retailerLeads'], [retailer])
+        self.assertNotIn('price', imported)
 
     def test_direct_phone_category_discovers_only_scoped_ozgur_product_links(self):
         url = f'https://{OZGUR_HOST}/urun/iphone-17-pro-max-512gb-kozmik-turuncu'
