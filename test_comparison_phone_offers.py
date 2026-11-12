@@ -18,6 +18,21 @@ GTIN = '0195949722813'
 
 
 class ComparisonPhoneOffersTest(unittest.TestCase):
+    def test_teknosa_alternate_seller_is_verified_from_the_canonical_document(self):
+        canonical = 'https://www.teknosa.com/apple-iphone-16-plus-128gb-mavi-akilli-telefon-p-125079728'
+        url = canonical + '?shopId=2078'
+        transport = Mock()
+        transport._read_document.return_value = 'document', 'document_read', 200
+        offer = {'url': url, 'platform': 'Teknosa', 'merchant': 'Gençpa', 'gtin13': GTIN,
+                 '_legal_name': 'gencpa', 'price': 85000, 'availability': 'in_stock',
+                 'currency': 'TRY', 'source_title': TITLE}
+        with patch('comparison_phone_offers.teknosa_selected', return_value=offer) as selected:
+            _, found, rejected = checked_offers([url], NAME, SPECS, transport)
+        transport._read_document.assert_called_once_with(canonical, 'www.teknosa.com')
+        selected.assert_called_once_with('document', url, NAME, SPECS)
+        self.assertEqual([o['url'] for o in found], [url])
+        self.assertFalse(rejected)
+
     def test_comparison_urls_never_reach_retailer_verifier(self):
         state = {'products': {'x': {'catalogFamily': 'apple-iphone-16-plus', 'category': 'phone',
                                    'retailerLeads': ['https://urunai.com/telefon/apple/iphone-16-plus', MM, PZ, PZ]}}}

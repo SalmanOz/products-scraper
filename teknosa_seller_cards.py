@@ -79,6 +79,7 @@ def public_seller_offers(html, document_url, profile, maximum=3):
             'selected_teknosa_variant_verified': True, 'sku': sku, 'listing_id': listing[1],
             'gtin13': base['gtin13'], 'observed_barcode': cart.get('data-product-ean'),
             'source_title': base['source_title'], 'url': destination,
+            'seller_url': urljoin(document_url, link['href']),
             'source_document_url': document_url, 'source_offer_scope': 'public_other_seller_row',
             'source_render_state': 'pending_seller_card' if pending else 'enabled_seller_card',
             'price': float(price), 'currency': 'TRY', 'condition': 'new', 'availability': 'in_stock',

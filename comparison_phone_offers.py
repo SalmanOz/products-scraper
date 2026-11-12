@@ -17,13 +17,14 @@ from hepsiburada_catalog_source import parse_catalog_buy_box
 from laptop_pilot import _hepsiburada_public_get, verify_seller
 from laptop_retailer_sources import marketplace_seller_identity
 from mediamarkt_marketplace_audit import selected_marketplace_offer
-from mediamarkt_source import product_url as mediamarkt_url
+from mediamarkt_source import _selected_offer as mediamarkt_first_party, product_url as mediamarkt_url
 from n11_catalog_source import parse_catalog_listing as n11_listing
 from offer_ingestion_client import IngestionClientError, OfferIngestionClient
 from pazarama_category_source import pazarama_product_url
 from priority_retailer_transport import PriorityRetailerTransport, product_host
 from retailer_offer_refresh import _product_offer, _schema_nodes
-from teknosa_marketplace_source import parse_selected_marketplace
+from teknosa_reviewed_source import parse_catalog_offer as parse_teknosa_offer
+from teknosa_seller_cards import canonical_document_url as teknosa_document_url
 from tr_price_scraper import TRPriceScraper
 from trendyol_catalog_source import parse_catalog_listing as trendyol_listing, selected_product_state
 from tws_offer_pilot import independent_sellers
@@ -90,13 +91,23 @@ def mediamarkt_selected(html, url):
         if offer:
             return {**offer, 'merchant': offer['seller_name'], 'merchant_id': offer['seller_id'],
                     'seller_url': MM_SELLERS + offer['seller_id']}
-    return None
+
+    def variant(product, _title, _brand):
+        gtin = retailer_gtin13(product.get('gtin13'))
+        return ({'gtin13': gtin, 'platform': 'MediaMarkt',
+                 '_legal_name': 'media markt turkey ticaret limited sirketi'} if gtin else None)
+
+    return mediamarkt_first_party(html, url, verify_product=variant)
 
 
 def teknosa_selected(html, url, name, specs):
-    offer, _ = parse_selected_marketplace(html, url, {'name': name, 'specs': specs})
+    offer, _ = parse_teknosa_offer(html, url, {'name': name, 'specs': specs})
     if not offer:
         return None
+    if offer.get('selected_teknosa_first_party_verified') is True:
+        return {**offer, '_legal_name': 'teknosa ic ve dis ticaret anonim sirketi'}
+    if offer.get('seller_url'):
+        return offer
     soup = BeautifulSoup(html, 'html.parser')
     links = soup.select('.pdp-seller-info > a[href]')
     if len(links) != 1 or not re.fullmatch(r'/magaza/[a-z0-9-]+', links[0]['href']):
@@ -151,9 +162,12 @@ def checked_offers(urls, name, specs, transport, documents=None, *, direct=None,
     for url in urls:
         host = urlsplit(url).netloc
         reader = direct.get(host, transport)
-        if url not in documents:
-            documents[url] = reader._read_document(url, host)
-        html, reason, _ = documents[url]
+        document_url = teknosa_document_url(url) if host == 'www.teknosa.com' else url
+        if not document_url:
+            continue
+        if document_url not in documents:
+            documents[document_url] = reader._read_document(document_url, host)
+        html, reason, _ = documents[document_url]
         offer = None
         rejected = 'selected_offer_unverified'
         if html:
@@ -242,6 +256,9 @@ def supported_phone_url(url, *, expanded=False):
         return product_host(url) == route.netloc
     if expanded and route.netloc == 'www.hepsiburada.com':
         return product_host(url) == route.netloc and 'yenilenmis' not in route.path
+    if route.netloc == 'www.teknosa.com':
+        return product_host(url) == route.netloc and any(
+            token in route.path for token in ('iphone', 'akilli-telefon', 'cep-telefonu'))
     if route.query:
         return False
     if route.netloc == 'www.mediamarkt.com.tr':
@@ -250,8 +267,6 @@ def supported_phone_url(url, *, expanded=False):
         return False
     if expanded and route.netloc == 'www.vatanbilgisayar.com':
         return vatan_phone_url(url)
-    if route.netloc == 'www.teknosa.com':
-        return product_host(url) == route.netloc
     return pazarama_product_url(url) and bool(re.fullmatch(r'/[a-z0-9-]+-p-\d{12,13}', route.path))
 
 
