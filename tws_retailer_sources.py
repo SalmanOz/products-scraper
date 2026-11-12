@@ -10,6 +10,7 @@ from urllib.parse import parse_qs, urlencode, urljoin, urlsplit, urlunsplit
 from bs4 import BeautifulSoup
 
 from n11_catalog_source import _parse_selected_listing, discover_product_sellers, public_search_card_document
+from pazarama_offer_source import pazarama_selected
 from retailer_barcode import retailer_gtin13
 from retailer_offer_refresh import _is_conditional_price, _schema_nodes, _type_is
 from teknosa_reviewed_source import _amount, _cash_price, parse_exact_first_party_offer
@@ -81,6 +82,21 @@ def selected_teknosa_tws(html, url, name, model_name):
                 '_legal_name': 'teknosa ic ve dis ticaret anonim sirketi'}
 
     return parse_exact_first_party_offer(html, url, verify_product=verify)
+
+
+def selected_pazarama_tws(html, url, name, model_name):
+    def verify(product, nodes):
+        brand = product.get('brand')
+        brand = brand.get('name') if isinstance(brand, dict) else brand
+        category = 'https://www.pazarama.com/bluetooth-kulaklik-k-K03009'
+        categories = [item.get('item') for node in nodes if _type_is(node, 'BreadcrumbList')
+                      for item in node.get('itemListElement', []) if isinstance(item, dict)]
+        if (category not in categories or product.get('itemCondition') != 'https://schema.org/NewCondition'
+                or model_name(product.get('name'), brand) != name):
+            return None
+        return {'model': name, 'condition': 'new',
+                '_image': selected_photo(product.get('image'), {'img.pzrmcdn.com'})}
+    return pazarama_selected(html, url, verify_product=verify)
 
 
 def selected_hepsiburada_tws(html, url, name, model_name):

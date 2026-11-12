@@ -4,11 +4,32 @@ from unittest.mock import Mock, patch
 
 from tws_catalog_expansion import reread
 from tws_offer_pilot import model_name
-from tws_refresh import refresh
+from tws_refresh import merge_snapshot, refresh
 from tws_retailer_sources import selected_vatan_store_tws
 
 
 class TwsRefreshTest(TestCase):
+    def test_partial_refresh_only_changes_fully_checked_variants_with_an_independent_pair(self):
+        first, second, third = ('https://shop.example/' + suffix for suffix in ('one', 'two', 'three'))
+        gtin = '0194644298876'
+        a = {'url': first, 'merchant': 'Satıcı A', 'platform': 'Trendyol', 'price': 5000, 'observed_at': 'old'}
+        b = {'url': second, 'merchant': 'Satıcı B', 'platform': 'n11', 'price': 5100, 'observed_at': 'old'}
+        c = {'url': third, 'merchant': 'Satıcı C', 'platform': 'Teknosa', 'price': 5200, 'observed_at': 'old'}
+        snapshot = {'checked_at': 'old', 'models': [
+            {'name': 'Covered', 'gtin': gtin, 'offers': [a, b]},
+            {'name': 'Unavailable', 'gtin': gtin, 'offers': [a, b, c]},
+            {'name': 'Single', 'gtin': gtin, 'offers': [a]},
+        ]}
+        catalog = {'models': [{'name': row['name']} for row in snapshot['models']]}
+        current = [{**row, 'price': row['price'] - 100, 'observed_at': 'new', 'gtin13': gtin,
+                    '_legal_name': row['merchant']} for row in (a, b)]
+        statuses = {first: 'verified', second: 'verified', third: 'unavailable'}
+        observations = {'Covered': current, 'Unavailable': current, 'Single': current[:1]}
+        updated, counts = merge_snapshot(snapshot, catalog, observations, statuses, 'new', partial=True)
+        self.assertEqual(counts, {'refreshed': 1, 'deferred': 2})
+        self.assertEqual(updated['models'][1:], snapshot['models'][1:])
+        self.assertEqual([row['price'] for row in updated['models'][0]['offers']], [4900, 5000])
+
     def test_vatan_store_inventory_requires_exact_sku_price_and_sellable_stock(self):
         url = 'https://www.vatanbilgisayar.com/sony-wf1000xm6s-kulaklik-gumus.html'
         name = 'Sony WF-1000XM6'

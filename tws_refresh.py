@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from catalog_source_collector import catalog_document_reader
+from pazarama_category_source import HOST as PAZARAMA, pazarama_product_url
 from priority_retailer_transport import n11_product_selectors, product_host
 from retailer_barcode import retailer_gtin13
 from tws_catalog_expansion import MARKETPLACES, exact_tws_sellers, public_tws_offers, reread, tws_source_target
@@ -30,6 +31,8 @@ def selected_host(url):
         return host if len(url) <= 500 and selectors is not None and 'dahili-hafiza' not in selectors else None
     if host in MARKETPLACES and product_host(url) == host:
         return host
+    if host == PAZARAMA and pazarama_product_url(url):
+        return host
     if host == 'www.mediamarkt.com.tr' and _mediamarkt_tws_url(url):
         return host
     if host == 'www.vatanbilgisayar.com' and _vatan_url(url):
@@ -37,7 +40,7 @@ def selected_host(url):
     return None
 
 
-def merge_snapshot(snapshot, catalog, observations, statuses, now):
+def merge_snapshot(snapshot, catalog, observations, statuses, now, *, partial=False):
     models = {row['name']: row for row in catalog['models']}
     output = []
     counts = Counter()
@@ -48,8 +51,15 @@ def merge_snapshot(snapshot, catalog, observations, statuses, now):
             raise ValueError(f'Missing detail page for {name}')
         current = [offer for offer in observations.get(name, []) if offer['gtin13'] == row['gtin']]
         required = row.get('requiresIndependentPair') is True or models[name].get('requiresIndependentPair') is True
-        fresh = (exact_tws_sellers(current, maximum=MAX_CURRENT_OFFERS) if required
+        fresh = (exact_tws_sellers(current, maximum=MAX_CURRENT_OFFERS) if required or partial
                  else select_sku_offers(current, maximum=MAX_CURRENT_OFFERS))
+        if partial and (not fresh or any(statuses.get(offer['url']) not in ('verified', 'unverified')
+                                          for offer in previous)):
+            # During a source outage, only change variants with a live pair
+            # and a completed recheck of every offer previously shown.
+            output.append(row)
+            counts['deferred'] += 1
+            continue
         if fresh:
             offers = public_tws_offers(fresh)
             counts['refreshed'] += 1
@@ -69,7 +79,7 @@ def merge_snapshot(snapshot, catalog, observations, statuses, now):
     return ({**snapshot, 'checked_at': now, 'models': output} if changed else snapshot), counts
 
 
-def refresh(snapshot, catalog, *, collection='site'):
+def refresh(snapshot, catalog, *, collection='site', allow_partial=False):
     groups = defaultdict(list)
     targets = {}
     previous_targets = dict(snapshot.get('sourceTargets', {}))
@@ -116,14 +126,20 @@ def refresh(snapshot, catalog, *, collection='site'):
             }
             for name, offers in found.items():
                 observations[name].extend(offers)
+    configured = sum(map(len, groups.values()))
+    completed = sum(status != 'unavailable' for status in statuses.values())
+    sufficient = configured > 0 and completed * 5 >= configured * 4
+    partial = allow_partial and not sufficient
     now = datetime.now(timezone.utc).isoformat()
-    updated, counts = merge_snapshot(snapshot, catalog, observations, statuses, now)
-    if targets != snapshot.get('sourceTargets', {}):
+    updated, counts = merge_snapshot(snapshot, catalog, observations, statuses, now, partial=partial)
+    if targets != snapshot.get('sourceTargets', {}) and (not partial or counts['refreshed']):
         updated = {**updated, 'sourceTargets': targets}
+    publication_mode = ('full' if sufficient else 'verified_variants_only'
+                        if partial and counts['refreshed'] else 'held')
     return updated, {**counts, 'rejections': dict(rejected), 'sourceCoverage': source_coverage,
                      'verifiedOffers': sum(map(len, observations.values())),
-                     'completedTargetReads': sum(status != 'unavailable' for status in statuses.values()),
-                     'configuredTargets': sum(map(len, groups.values())),
+                     'completedTargetReads': completed, 'configuredTargets': configured,
+                     'publicationMode': publication_mode,
                      'changed': updated is not snapshot}
 
 
@@ -132,10 +148,11 @@ def main():
     for arg in ('catalog', 'snapshot', 'output'):
         parser.add_argument(arg, type=Path)
     parser.add_argument('--collection', choices=('site', 'runner', 'mixed'), default='site')
+    parser.add_argument('--allow-partial', action='store_true')
     args = parser.parse_args()
     catalog = json.loads(args.catalog.read_text(encoding='utf-8'))
     snapshot = json.loads(args.snapshot.read_text(encoding='utf-8'))
-    updated, report = refresh(snapshot, catalog, collection=args.collection)
+    updated, report = refresh(snapshot, catalog, collection=args.collection, allow_partial=args.allow_partial)
     args.output.write_text(json.dumps(updated, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     print(json.dumps(report, ensure_ascii=False))
 

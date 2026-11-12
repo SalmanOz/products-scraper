@@ -6,6 +6,7 @@ import unittest
 
 from bs4 import BeautifulSoup
 
+from pazarama_offer_source import pazarama_seller_identity
 from retailer_offer_refresh import RetailerOfferRefresher, _product_offer
 
 
@@ -50,6 +51,18 @@ class Response:
 
 
 class PazaramaOfferReaderTests(unittest.TestCase):
+    def test_seller_identity_uses_selected_public_profile_with_or_without_mersis(self):
+        url = 'https://www.pazarama.com/magaza/ornek-magaza'
+        offer = {'seller_url': url, 'merchant': 'Örnek Mağaza', 'merchant_id': 'ornek-magaza'}
+        for registration, expected in (('a', ''), ('"0123456789012345"', '1234567890')):
+            html = (f'<link rel="canonical" href="{url}"><h1>Örnek Mağaza</h1>'
+                    '<script>window.__NUXT__=(function(a){return {UI_STORE_INFO:{sellerId:b,'
+                    f'sellerMersisNumber:{registration},sellerTradeName:"Örnek Ticaret",sellerAddress:c,'
+                    'sellerTags:[{name:d}]}}})()</script>')
+            self.assertEqual(pazarama_seller_identity(html, offer), ('ornek ticaret', expected))
+            self.assertIsNone(pazarama_seller_identity(html, {**offer, 'merchant': 'Başka Satıcı'}))
+            self.assertIsNone(pazarama_seller_identity(html.replace(url, url + '-other'), offer))
+
     def test_four_reviewed_live_shapes_use_only_selected_visible_cash_price(self):
         cases = [
             (URL, TITLE, SELLER, '20.000,00 TL', 'Sepette 19.000,00 TL', 19000, 20000),

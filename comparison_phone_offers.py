@@ -24,8 +24,8 @@ from n11_catalog_source import parse_catalog_listing as n11_listing
 from offer_ingestion_client import IngestionClientError, OfferIngestionClient
 from ozgur_phone_source import OZGUR_HOST, OZGUR_TERMS, ozgur_offer, ozgur_phone_url
 from pazarama_category_source import pazarama_product_url
+from pazarama_offer_source import native_script, pazarama_selected
 from priority_retailer_transport import PriorityRetailerTransport, product_host
-from retailer_offer_refresh import _product_offer, _schema_nodes
 from selected_sku_evidence import selected_sku_evidence
 from teknosa_reviewed_source import parse_catalog_offer as parse_teknosa_offer
 from teknosa_seller_cards import canonical_document_url as teknosa_document_url
@@ -42,50 +42,6 @@ RETAILER_CATEGORIES = {'apple-iphone-16-plus': (
 )}
 MM_SELLERS = 'https://www.mediamarkt.com.tr/tr/marketplace/seller/'
 NORMALIZE = TRPriceScraper._normalize_words
-
-
-def native_script(soup):
-    scripts = [node.get_text() for node in soup.select('script')
-               if node.get_text().startswith('window.__NUXT__=(function(')]
-    return scripts[0] if len(scripts) == 1 else ''
-
-
-def pazarama_selected(html, url):
-    if not pazarama_product_url(url):
-        return None
-    soup = BeautifulSoup(html, 'html.parser')
-    cash = _product_offer(soup, url)
-    products = [p for p in _schema_nodes(soup, url) if p.get('@type') == 'Product' and p.get('url') == url]
-    if not cash or len(products) != 1 or cash['availability'] != 'in_stock':
-        return None
-    product = products[0]
-    seller = product['offers'].get('seller')
-    listing_id = str(product.get('sku', ''))
-    if not isinstance(seller, str) or not re.fullmatch(r'[0-9a-f-]{36}', listing_id):
-        return None
-    document = native_script(soup)
-    selected = document.split('UI_PRODUCT_DETAIL:{', 1)
-    if len(selected) != 2:
-        return None
-    detail = selected[1][:30000]
-    identities = re.match(r'name:\w+,displayName:\w+,sellerName:("(?:[^"\\]|\\.)+"),'
-                          r'sellerSeoName:"([a-z0-9-]+)",[^{}]{0,1000}?'
-                          r'\bcode:"(\d{12,13})",stockCount:', detail)
-    if not identities or NORMALIZE(json.loads(identities[1])) != NORMALIZE(seller):
-        return None
-    gtin = retailer_gtin13(identities[3])
-    if not gtin or not url.endswith('-p-' + identities[3]):
-        return None
-    if re.search(r'\bproductSellerId:"' + re.escape(listing_id) + r'"', detail) is None:
-        return None
-    seller_path = '/magaza/' + identities[2]
-    anchors = soup.select('.product-detail a[href]')
-    if not any(a['href'] == seller_path and
-               NORMALIZE(a.get_text(' ', strip=True)).startswith('satici ' + NORMALIZE(seller))
-               for a in anchors):
-        return None
-    return {**cash, 'merchant': seller, 'platform': 'Pazarama', 'gtin13': gtin,
-            'merchant_id': identities[2], 'seller_url': 'https://www.pazarama.com' + seller_path}
 
 
 def mediamarkt_selected(html, url):

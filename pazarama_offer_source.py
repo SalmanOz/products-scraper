@@ -1,0 +1,90 @@
+"""Verify the selected public Pazarama offer and its seller profile."""
+
+import json
+import re
+
+from bs4 import BeautifulSoup
+
+from pazarama_category_source import HOST, pazarama_product_url
+from retailer_barcode import retailer_gtin13
+from retailer_offer_refresh import _product_offer, _schema_nodes
+from tr_price_scraper import TRPriceScraper
+
+
+NORMALIZE = TRPriceScraper._normalize_words
+SELLER_ROOT = f'https://{HOST}/magaza/'
+
+
+def native_script(soup):
+    scripts = [node.get_text() for node in soup.select('script')
+               if node.get_text().startswith('window.__NUXT__=(function(')]
+    return scripts[0] if len(scripts) == 1 else ''
+
+
+def pazarama_selected(html, url, *, verify_product=None):
+    if not pazarama_product_url(url):
+        return None
+    soup = BeautifulSoup(html, 'html.parser')
+    cash = _product_offer(soup, url)
+    nodes = _schema_nodes(soup, url)
+    products = [p for p in nodes if p.get('@type') == 'Product' and p.get('url') == url]
+    if not cash or len(products) != 1 or cash['availability'] != 'in_stock':
+        return None
+    product = products[0]
+    seller = product['offers'].get('seller')
+    listing_id = str(product.get('sku', ''))
+    if not isinstance(seller, str) or not re.fullmatch(r'[0-9a-f-]{36}', listing_id):
+        return None
+    document = native_script(soup)
+    selected = document.split('UI_PRODUCT_DETAIL:{', 1)
+    if len(selected) != 2:
+        return None
+    detail = selected[1][:30000]
+    identities = re.match(r'name:\w+,displayName:\w+,sellerName:("(?:[^"\\]|\\.)+"),'
+                          r'sellerSeoName:"([a-z0-9-]+)",[^{}]{0,1000}?'
+                          r'\bcode:"(\d{12,13})",stockCount:', detail)
+    if not identities or NORMALIZE(json.loads(identities[1])) != NORMALIZE(seller):
+        return None
+    gtin = retailer_gtin13(identities[3])
+    if not gtin or not url.endswith('-p-' + identities[3]):
+        return None
+    if re.search(r'\bproductSellerId:"' + re.escape(listing_id) + r'"', detail) is None:
+        return None
+    seller_path = '/magaza/' + identities[2]
+    anchors = soup.select('.product-detail a[href]')
+    if not any(a['href'] == seller_path and
+               NORMALIZE(a.get_text(' ', strip=True)).startswith('satici ' + NORMALIZE(seller))
+               for a in anchors):
+        return None
+    evidence = verify_product(product, nodes) if verify_product else {}
+    if evidence is None:
+        return None
+    return {**cash, **evidence, 'merchant': seller, 'platform': 'Pazarama', 'gtin13': gtin,
+            'merchant_id': identities[2], 'seller_url': SELLER_ROOT + identities[2]}
+
+
+def pazarama_seller_identity(html, offer):
+    slug = offer.get('merchant_id')
+    if not isinstance(slug, str) or not re.fullmatch(r'[a-z0-9-]{1,100}', slug):
+        return None
+    url = SELLER_ROOT + slug
+    if offer.get('seller_url') != url:
+        return None
+    soup = BeautifulSoup(html, 'html.parser')
+    canonical = [node.get('href') for node in soup.select('link[rel=canonical]')]
+    headers = soup.select('h1')
+    if (canonical != [url] or len(headers) != 1
+            or NORMALIZE(headers[0].get_text(' ', strip=True)) != NORMALIZE(offer['merchant'])):
+        return None
+    states = native_script(soup).split('UI_STORE_INFO:{')
+    if len(states) != 2:
+        return None
+    profile = re.match(r'(sellerId:\w+,[^{}]{1,1800}?),sellerAddress:', states[1])
+    if not profile:
+        return None
+    names = re.findall(r'\bsellerTradeName:("(?:[^"\\]|\\.){3,200}")', profile[1])
+    registrations = re.findall(r'\bsellerMersisNumber:"(\d{16})"', profile[1])
+    if len(names) != 1 or len(registrations) > 1:
+        return None
+    name = NORMALIZE(json.loads(names[0]))
+    return (name, registrations[0][1:11] if registrations else '') if len(name.split()) >= 2 else None

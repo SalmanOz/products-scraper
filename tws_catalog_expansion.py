@@ -16,18 +16,20 @@ from hepsiburada_catalog_discovery import discover_product_sellers as hepsiburad
 from laptop_pilot import IMAGE_HOSTS, _hepsiburada_public_get, _image, _public_offers, verify_seller
 from mediamarkt_source import MediaMarktSource, _selected_offer
 from n11_catalog_source import discover_product_sellers
+from pazarama_category_source import HOST as PAZARAMA, pazarama_product_url
+from pazarama_offer_source import pazarama_seller_identity
 from priority_retailer_transport import PriorityRetailerTransport, compatible_get, product_host
 from retailer_barcode import retailer_gtin13
 from tws_offer_pilot import NEW_MODEL_NAMES, _mediamarkt_tws_url, independent_sellers, model_name, selected_tws_offer
 from tws_retailer_sources import (BOT, STOP_REASONS, _vatan_url, selected_hepsiburada_tws,
-                                  selected_n11_tws, selected_photo, selected_teknosa_tws,
+                                  selected_n11_tws, selected_pazarama_tws, selected_photo, selected_teknosa_tws,
                                   selected_vatan_store_tws, selected_vatan_tws)
 from tr_price_scraper import TRPriceScraper
 from vatan_category_source import VatanCategorySource
 
 MARKETPLACES = {'www.n11.com', 'www.trendyol.com', 'www.hepsiburada.com', 'www.teknosa.com'}
 STORES = {'www.vatanbilgisayar.com', 'www.mediamarkt.com.tr'}
-TWS_IMAGE_HOSTS = IMAGE_HOSTS | {'productimages.hepsiburada.net', 'reimg-teknosa-cloud-prod.mncdn.com'}
+TWS_IMAGE_HOSTS = IMAGE_HOSTS | {'productimages.hepsiburada.net', 'reimg-teknosa-cloud-prod.mncdn.com', 'img.pzrmcdn.com'}
 ALTERNATE_SELLER_BUDGET = 8
 
 
@@ -89,7 +91,7 @@ def reread(host, rows, statuses=None, document_reader=None, *, discover=False):
     expanded = set()
     identities = {}
     transport = None
-    if host in MARKETPLACES:
+    if host in MARKETPLACES or host == PAZARAMA:
         options = {}
         if document_reader is not None:
             options.update(get=document_reader, browser_fallback=False)
@@ -119,7 +121,13 @@ def reread(host, rows, statuses=None, document_reader=None, *, discover=False):
         if statuses is not None:
             statuses[url] = 'unavailable'
         try:
-            if transport:
+            if host == PAZARAMA:
+                if not pazarama_product_url(url):
+                    failures['source_policy'] += 1
+                    continue
+                html, reason, _ = transport._read_document(url, host, fresh=True)
+                final = url
+            elif transport:
                 html, reason, _ = transport.read_fresh_document(url)
                 if reason == 'source_cooldown' and transport.wait_for_cooldown(url):
                     html, reason, _ = transport.read_fresh_document(url)
@@ -151,6 +159,23 @@ def reread(host, rows, statuses=None, document_reader=None, *, discover=False):
                 current, reason = selected_hepsiburada_tws(html, final, name, model_name)
             elif host == 'www.teknosa.com':
                 current, reason = selected_teknosa_tws(html, final, name, model_name)
+            elif host == PAZARAMA:
+                current = selected_pazarama_tws(html, final, name, model_name)
+                reason = 'selected_pazarama_offer_unverified'
+                if current:
+                    seller = current['seller_url']
+                    key = (seller, current['merchant'])
+                    if key not in identities:
+                        profile, outcome, _ = transport._read_document(seller, host, category=True)
+                        identity = pazarama_seller_identity(profile, current) if profile else None
+                        identities[key] = (identity, outcome)
+                    identity, outcome = identities[key]
+                    if identity:
+                        current.update(_legal_name=identity[0], _tax_key=identity[1])
+                    else:
+                        current, reason = None, 'seller_identity_unverified'
+                        if statuses is not None and outcome != 'document_read':
+                            statuses[url] = 'unavailable'
             elif host == 'www.vatanbilgisayar.com':
                 current = selected_vatan_tws(html, final, name, model_name)
                 reason = 'first_party_evidence_missing'
@@ -226,6 +251,7 @@ def stage(catalog, snapshot, specs, candidates, output):
                     or not retailer_gtin13(row.get('gtin13')) or row['gtin13'] in owned):
                 continue
             if (p.netloc in MARKETPLACES and product_host(url) == p.netloc
+                    or p.netloc == PAZARAMA and pazarama_product_url(url)
                     or p.netloc == 'www.vatanbilgisayar.com' and _vatan_url(url)
                     or p.netloc == 'www.mediamarkt.com.tr' and _mediamarkt_tws_url(url)):
                 sources[p.netloc].append((name, row))
