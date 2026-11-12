@@ -32,7 +32,7 @@ from n11_catalog_source import (discover_catalog_targets as n11_search_targets, 
 from offer_ingestion_client import IngestionClientError, OfferIngestionClient
 from ozgur_phone_source import OZGUR_HOST, OZGUR_TERMS, ozgur_offer, ozgur_phone_url
 from pazarama_category_source import pazarama_product_url
-from pazarama_offer_source import native_script, pazarama_selected
+from pazarama_offer_source import pazarama_selected, pazarama_seller_identity
 from pttavm_offer_source import HOST as PTTAVM, ptt_product_url, ptt_seller_identity, selected_ptt_offer
 from priority_retailer_transport import PriorityRetailerTransport, compatible_get, product_host
 from selected_sku_evidence import selected_sku_evidence
@@ -110,6 +110,8 @@ def trendyol_selected(html, url, name, specs, *, reviewed_gtin=None):
 
 
 def seller_identity(html, offer):
+    if offer['platform'] == 'Pazarama':
+        return pazarama_seller_identity(html, offer)
     if offer['platform'] == 'PttAVM':
         return ptt_seller_identity(html, offer)
     if offer['platform'] == 'Teknosa':
@@ -124,13 +126,7 @@ def seller_identity(html, offer):
         match = re.search(r'Firma adı:\s*(.{3,160}?)\s+Şehir:.*?MERSİS No:\s*([0-9]{15,16})\b'
                           r'.*?Vergi No:\s*(\d{10,11})\b', text)
         return (NORMALIZE(match[1]), match[3]) if match else None
-    state = native_script(soup)
-    matches = re.findall(r'sellerMersisNumber:"(\d{16})"[^{}]{0,1400}?'
-                         r'sellerTradeName:("(?:[^"\\]|\\.)+")', state)
-    if len(matches) != 1:
-        return None
-    mersis, name = matches[0]
-    return NORMALIZE(json.loads(name)), mersis[1:11]
+    return None
 
 
 def checked_offers(urls, name, specs, transport, documents=None, *, direct=None, seller_cache=None, reviewed_gtin=None,
@@ -242,14 +238,17 @@ def checked_offers(urls, name, specs, transport, documents=None, *, direct=None,
                             'catalog_variant_or_cash_mismatch' if html else reason})
             continue
         identity = (offer['_legal_name'], offer.get('_tax_key', '')) if offer.get('_legal_name') else None
+        seller_failure = 'seller_identity_unverified'
         if not identity and (seller_url := offer.get('seller_url')):
             if seller_url not in documents:
                 options = {'category': True} if host == PTTAVM else {}
                 documents[seller_url] = reader._read_document(seller_url, host, **options)
-            seller_document, _, _ = documents[seller_url]
+            seller_document, reason, _ = documents[seller_url]
             identity = seller_identity(seller_document, offer) if seller_document else None
+            if not seller_document:
+                seller_failure = 'seller_document_' + reason
         if not identity or not identity[0]:
-            rejects.append({'url': url, 'reason': 'seller_identity_unverified'})
+            rejects.append({'url': url, 'reason': seller_failure})
             continue
         observed.append({**offer, '_legal_name': identity[0], '_tax_key': identity[1],
                          'observed_at': datetime.now(timezone.utc).isoformat()})
