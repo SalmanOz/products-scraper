@@ -350,7 +350,8 @@ class PcRetailer:
     def parse(self, html, url, part):
         if self.host == GAMING:
             actual = parse_part(html, url, part['kind'])
-            if actual['mpn'] != part['mpn'] or actual['specs'] != part['specs']:
+            if part.get('sourceUrl') == url and (
+                    actual['mpn'] != part['mpn'] or actual['specs'] != part['specs']):
                 return None, 'manufacturer_specifications_changed'
             offer = actual['offer']
             _, _, _, legal_path, _ = DIRECT_STORES[GAMING]

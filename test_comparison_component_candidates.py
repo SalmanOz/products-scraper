@@ -11,6 +11,20 @@ SIBLING = 'https://www.sinerji.gen.tr/board-p-56789'
 
 
 class ComponentDiscoveryTest(unittest.TestCase):
+    def test_joins_independent_feed_destinations_on_category_and_valid_barcode(self):
+        gaming = 'https://www.gaming.gen.tr/urun/12345/board/'
+        gtin = '4718466017901'
+        state = {'products': {
+            'a': {'category': 'motherboard', 'source': SINERJI, 'url': SIBLING,
+                  'feedGtin': gtin, 'retailerLeads': [SIBLING]},
+            'b': {'category': 'motherboard', 'source': 'www.gaming.gen.tr', 'url': gaming,
+                  'feedGtin': gtin, 'retailerLeads': [gaming]},
+        }}
+        self.assertEqual(candidate_groups(state, {'parts': []}, 2), [('motherboard', SIBLING, [gaming])])
+        for wrong in ({'category': 'gpu'}, {'feedGtin': '4718466017902'}, {'source': 'www.epey.com'}):
+            revised = {'products': {**state['products'], 'b': state['products']['b'] | wrong}}
+            self.assertEqual(candidate_groups(revised, {'parts': []}, 2), [])
+
     def test_rotation_and_reviewed_profiles_keep_two_source_candidates(self):
         state = {'products': {
             'first': {'category': 'motherboard', 'retailerLeads': [PRIMARY, SIBLING]},

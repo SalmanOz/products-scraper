@@ -296,5 +296,342 @@
       "dp": true,
       "usb_c": false
     }
+  },
+  "4544438015695": {
+    "code": "gw3290qt",
+    "model": "GW3290QT",
+    "name": "GW3290QT",
+    "url": "https://www.benq.com/en-ca/monitor/home/gw3290qt/spec.html",
+    "facts": {
+      "size": 31.5,
+      "resolution": "2560 × 1440",
+      "panel": "IPS",
+      "refresh": 75,
+      "hdmi": true,
+      "dp": true,
+      "usb_c": true
+    },
+    "specValues": {
+      "hdmi": "1 × HDMI 1.4",
+      "dp": "1 × DisplayPort 1.2 giriş, 1 × MST çıkış",
+      "usb_c": "1 × USB-C, DisplayPort Alt Mode ve 65 W güç çıkışı"
+    }
+  },
+  "4711377192279": {
+    "code": "mp273u",
+    "model": "MP273U",
+    "name": "PRO MP273U",
+    "url": "https://www.msi.com/Business-Productivity-Monitor/PRO-MP273U/Specification",
+    "facts": {
+      "size": 27.0,
+      "resolution": "3840 × 2160",
+      "panel": "IPS",
+      "refresh": 60,
+      "hdmi": true,
+      "dp": true,
+      "usb_c": false
+    },
+    "specValues": {
+      "hdmi": "2 × HDMI 2.0b",
+      "dp": "1 × DisplayPort 1.4a"
+    }
+  },
+  "4711377211062": {
+    "code": "mp245pg",
+    "model": "MP245PG",
+    "name": "PRO MP245PG",
+    "url": "https://www.msi.com/Business-Productivity-Monitor/PRO-MP245PG/Specification",
+    "facts": {
+      "size": 23.8,
+      "resolution": "1920 × 1080",
+      "panel": "IPS",
+      "refresh": 100,
+      "hdmi": true,
+      "dp": true,
+      "usb_c": false
+    },
+    "specValues": {
+      "hdmi": "1 × HDMI 1.4b",
+      "dp": "1 × DisplayPort 1.2"
+    }
+  },
+  "4711377238182": {
+    "code": "mp275qpdg",
+    "model": "MP275QPDG",
+    "name": "PRO MP275QPDG",
+    "url": "https://www.msi.com/Business-Productivity-Monitor/PRO-MP275QPDG/Specification",
+    "facts": {
+      "size": 27.0,
+      "resolution": "2560 × 1440",
+      "panel": "IPS",
+      "refresh": 100,
+      "hdmi": true,
+      "dp": true,
+      "usb_c": true
+    },
+    "specValues": {
+      "hdmi": "2 × HDMI 2.0b",
+      "dp": "1 × DisplayPort 1.2a giriş, 1 × çıkış",
+      "usb_c": "1 × USB-C, DisplayPort Alt Mode ve 98 W güç çıkışı"
+    }
+  },
+  "4711377248167": {
+    "code": "mp251we2",
+    "model": "MP251W E2",
+    "name": "PRO MP251W E2",
+    "url": "https://www.msi.com/Business-Productivity-Monitor/PRO-MP251W-E2/Specification",
+    "facts": {
+      "size": 24.5,
+      "resolution": "1920 × 1080",
+      "panel": "IPS",
+      "refresh": 120,
+      "hdmi": true,
+      "dp": true,
+      "usb_c": false
+    },
+    "specValues": {
+      "hdmi": "1 × HDMI 2.0",
+      "dp": "1 × DisplayPort 1.4a"
+    }
+  },
+  "4711377250634": {
+    "code": "321cupqdoled",
+    "model": "321CUP QD-OLED",
+    "name": "MAG 321CUP QD-OLED",
+    "url": "https://www.msi.com/Monitor/MAG-321CUP-QD-OLED/Specification",
+    "facts": {
+      "size": 31.5,
+      "resolution": "3840 × 2160",
+      "panel": "QD-OLED",
+      "refresh": 165,
+      "hdmi": true,
+      "dp": true,
+      "usb_c": true
+    },
+    "specValues": {
+      "hdmi": "2 × HDMI 2.1",
+      "dp": "1 × DisplayPort 1.4a",
+      "usb_c": "1 × USB-C, DisplayPort Alt Mode ve 15 W güç çıkışı"
+    }
+  },
+  "4711377261197": {
+    "code": "322urxqdoled",
+    "model": "322URX QD-OLED",
+    "name": "MPG 322URX QD-OLED",
+    "url": "https://www.msi.com/Monitor/MPG-322URX-QD-OLED/Specification",
+    "facts": {
+      "size": 31.5,
+      "resolution": "3840 × 2160",
+      "panel": "QD-OLED",
+      "refresh": 240,
+      "hdmi": true,
+      "dp": true,
+      "usb_c": true
+    },
+    "specValues": {
+      "hdmi": "2 × HDMI 2.1",
+      "dp": "1 × DisplayPort 2.1a (UHBR20)",
+      "usb_c": "1 × USB-C, DisplayPort Alt Mode ve 98 W güç çıkışı"
+    }
+  },
+  "4711377299008": {
+    "code": "274updfe16m",
+    "model": "274UPDF E16M",
+    "name": "MAG 274UPDF E16M",
+    "url": "https://www.msi.com/Monitor/MAG-274UPDF-E16M/Specification",
+    "facts": {
+      "size": 27.0,
+      "resolution": "3840 × 2160",
+      "panel": "IPS",
+      "refresh": 160,
+      "hdmi": true,
+      "dp": true,
+      "usb_c": true
+    },
+    "specValues": {
+      "hdmi": "2 × HDMI 2.1",
+      "dp": "1 × DisplayPort 1.4a (HBR3)",
+      "usb_c": "1 × USB-C, DisplayPort Alt Mode ve 15 W güç çıkışı",
+      "panel": "Mini LED Rapid IPS",
+      "refresh": "4K 160 Hz veya Full HD 320 Hz"
+    }
+  },
+  "4711377300322": {
+    "code": "274urdfwe16m",
+    "model": "274URDFW E16M",
+    "name": "MPG 274URDFW E16M",
+    "url": "https://www.msi.com/Monitor/MPG-274URDFW-E16M/Specification",
+    "facts": {
+      "size": 27.0,
+      "resolution": "3840 × 2160",
+      "panel": "IPS",
+      "refresh": 160,
+      "hdmi": true,
+      "dp": true,
+      "usb_c": true
+    },
+    "specValues": {
+      "hdmi": "2 × HDMI 2.1",
+      "dp": "1 × DisplayPort 1.4a (HBR3)",
+      "usb_c": "1 × USB-C, DisplayPort Alt Mode ve 98 W güç çıkışı",
+      "panel": "Mini LED Rapid IPS",
+      "refresh": "4K 160 Hz veya Full HD 320 Hz"
+    }
+  },
+  "4711377319751": {
+    "code": "272qpwqdoledx28",
+    "model": "272QPW QD-OLED X28",
+    "name": "MAG 272QPW QD-OLED X28",
+    "url": "https://www.msi.com/Monitor/MAG-272QPW-QD-OLED-X28/Specification",
+    "facts": {
+      "size": 26.5,
+      "resolution": "2560 × 1440",
+      "panel": "QD-OLED",
+      "refresh": 280,
+      "hdmi": true,
+      "dp": true,
+      "usb_c": true
+    },
+    "specValues": {
+      "hdmi": "2 × HDMI 2.1",
+      "dp": "1 × DisplayPort 1.4a (HBR3)",
+      "usb_c": "1 × USB-C, DisplayPort Alt Mode ve 15 W güç çıkışı"
+    }
+  },
+  "4711377337236": {
+    "code": "272pfx24",
+    "model": "272PF X24",
+    "name": "MAG 272PF X24",
+    "url": "https://www.msi.com/Monitor/MAG-272PF-X24/Specification",
+    "facts": {
+      "size": 27.0,
+      "resolution": "1920 × 1080",
+      "panel": "IPS",
+      "refresh": 240,
+      "hdmi": true,
+      "dp": true,
+      "usb_c": false
+    },
+    "specValues": {
+      "hdmi": "2 × HDMI 2.0b",
+      "dp": "1 × DisplayPort 1.2a",
+      "panel": "Rapid IPS"
+    }
+  },
+  "4711377349284": {
+    "code": "mp273e14a",
+    "model": "MP273 E14A",
+    "name": "PRO MP273 E14A",
+    "url": "https://www.msi.com/Business-Productivity-Monitor/PRO-MP273-E14A/Specification",
+    "facts": {
+      "size": 27.0,
+      "resolution": "1920 × 1080",
+      "panel": "IPS",
+      "refresh": 144,
+      "hdmi": true,
+      "dp": true,
+      "usb_c": false
+    },
+    "specValues": {
+      "hdmi": "1 × HDMI 2.0",
+      "dp": "1 × DisplayPort 1.2a"
+    }
+  },
+  "4711377349550": {
+    "code": "mp273we14a",
+    "model": "MP273W E14A",
+    "name": "PRO MP273W E14A",
+    "url": "https://www.msi.com/Business-Productivity-Monitor/PRO-MP273W-E14A/Specification",
+    "facts": {
+      "size": 27.0,
+      "resolution": "1920 × 1080",
+      "panel": "IPS",
+      "refresh": 144,
+      "hdmi": true,
+      "dp": true,
+      "usb_c": false
+    },
+    "specValues": {
+      "hdmi": "1 × HDMI 2.0",
+      "dp": "1 × DisplayPort 1.2a"
+    }
+  },
+  "4711377353298": {
+    "code": "272qrfx36",
+    "model": "272QRF X36",
+    "name": "MPG 272QRF X36",
+    "url": "https://www.msi.com/Monitor/MPG-272QRF-X36/Specification",
+    "facts": {
+      "size": 27.0,
+      "resolution": "2560 × 1440",
+      "panel": "IPS",
+      "refresh": 360,
+      "hdmi": true,
+      "dp": true,
+      "usb_c": false
+    },
+    "specValues": {
+      "hdmi": "2 × HDMI 2.1, 1440p 120 Hz’e kadar",
+      "dp": "1 × DisplayPort 1.4a, 1440p 360 Hz’e kadar",
+      "panel": "Rapid IPS"
+    }
+  },
+  "4711377361217": {
+    "code": "mp242e14c",
+    "model": "MP242 E14C",
+    "name": "PRO MP242 E14C",
+    "url": "https://www.msi.com/Business-Productivity-Monitor/PRO-MP242-E14C/Specification",
+    "facts": {
+      "size": 23.8,
+      "resolution": "1920 × 1080",
+      "panel": "IPS",
+      "refresh": 144,
+      "hdmi": true,
+      "dp": false,
+      "usb_c": true
+    },
+    "specValues": {
+      "hdmi": "1 × HDMI 2.0",
+      "usb_c": "1 × USB-C, DisplayPort Alt Mode ve 15 W güç çıkışı"
+    }
+  },
+  "4711377379311": {
+    "code": "272qpqdoledx24",
+    "model": "272QP QD-OLED X24",
+    "name": "MAG 272QP QD-OLED X24",
+    "url": "https://www.msi.com/Monitor/MAG-272QP-QD-OLED-X24/Specification",
+    "facts": {
+      "size": 26.5,
+      "resolution": "2560 × 1440",
+      "panel": "QD-OLED",
+      "refresh": 240,
+      "hdmi": true,
+      "dp": true,
+      "usb_c": true
+    },
+    "specValues": {
+      "hdmi": "2 × HDMI 2.1 (FRL 10G)",
+      "dp": "1 × DisplayPort 1.4a (HBR3)",
+      "usb_c": "1 × USB-C, DisplayPort Alt Mode ve 15 W güç çıkışı"
+    }
+  },
+  "4711377392785": {
+    "code": "mp275qe14",
+    "model": "MP275Q E14",
+    "name": "PRO MP275Q E14",
+    "url": "https://www.msi.com/Business-Productivity-Monitor/PRO-MP275Q-E14/Specification",
+    "facts": {
+      "size": 27.0,
+      "resolution": "2560 × 1440",
+      "panel": "IPS",
+      "refresh": 144,
+      "hdmi": true,
+      "dp": true,
+      "usb_c": false
+    },
+    "specValues": {
+      "hdmi": "2 × HDMI 2.0b",
+      "dp": "1 × DisplayPort 1.2a"
+    }
   }
 }

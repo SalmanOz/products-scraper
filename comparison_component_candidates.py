@@ -15,7 +15,9 @@ from catalog_source_collector import catalog_document_reader
 from competitor_catalog_gaps import read_state, retailer_destination, write_json
 from laptop_pilot import _image
 from pc_parts import CATEGORIES
-from pc_parts_multistore import GAMING, INCEHESAP, PcRetailer, collect_targets, independent_offers, offer_host
+from pc_parts_multistore import INCEHESAP, PcRetailer, collect_targets, independent_offers, offer_host
+from retailer_barcode import retailer_gtin13
+from retailer_catalog_feeds import FEEDS
 
 
 SINERJI = 'www.sinerji.gen.tr'
@@ -27,12 +29,22 @@ def candidate_groups(state, catalog, maximum, preferred=()):
     known = {url for row in catalog['parts'] for url in [row['sourceUrl'], *row.get('offerTargets', [])]}
     attempts = state.get('componentLeadAudits', {})
     groups = defaultdict(set)
+    feeds_by_barcode = defaultdict(set)
     for row in state['products'].values():
         kind = row['category']
         if kind not in CATEGORIES:
             continue
         urls = {url for lead in row.get('retailerLeads', ())
                 if (url := retailer_destination(lead)) and url not in known and offer_host(url)}
+        barcode = retailer_gtin13(row.get('feedGtin'))
+        feed_url = row.get('url')
+        if barcode and feed_url in urls and offer_host(feed_url) in FEEDS and offer_host(feed_url) == row.get('source'):
+            feeds_by_barcode[kind, barcode].add(feed_url)
+        if len({offer_host(url) for url in urls}) >= 2:
+            for url in urls:
+                if offer_host(url) in PRIMARY_HOSTS:
+                    groups[kind, url].update(urls - {url})
+    for (kind, _), urls in feeds_by_barcode.items():
         if len({offer_host(url) for url in urls}) < 2:
             continue
         for url in urls:
@@ -112,7 +124,7 @@ def stage(state, catalog, profiles, output, maximum):
         per_host = Counter()
         for link in [url, *links]:
             host = offer_host(link)
-            if host == GAMING or per_host[host] >= 2:
+            if per_host[host] >= 2:
                 continue
             per_host[host] += 1
             targets.setdefault(link, set()).add(gtin)

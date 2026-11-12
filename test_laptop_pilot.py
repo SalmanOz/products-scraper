@@ -68,6 +68,39 @@ def laptop_document(change=None):
 
 
 class LaptopPilotTests(TestCase):
+    def test_gaming_bundle_requires_a_purchasable_standalone_product_at_the_visible_price(self):
+        url = 'https://www.gaming.gen.tr/urun/12345/lenovo-ideapad-slim-3/'
+        schema = {
+            '@type': 'Product', 'name': TITLE, 'brand': 'Lenovo', 'gtin': EAN,
+            'offers': {'@type': 'Offer', 'url': url, 'price': 30000, 'priceCurrency': 'TRY',
+                       'availability': 'https://schema.org/InStock'},
+        }
+        html = f'''<link rel="canonical" href="{url}">
+        <script type="application/ld+json">{json.dumps(schema)}</script>
+        <div class="summary entry-summary"><h1>{TITLE}</h1><span class="bss-avail">Stoktan gönderim</span>
+        <p class="price"><span class="from">En Düşük: </span>
+        <span class="woocommerce-Price-amount"><bdi>30.000,00 ₺</bdi></span></p>
+        <form class="cart bundle_form" method="post">
+        <div class="bundled_product bundled_item_optional">
+          <input type="checkbox" class="bundled_product_checkbox" value=""></div>
+        <div id="main_price_include_tax" data-initial="30000">30000</div>
+        <input name="quantity" min="1" value="1">
+        <div class="bundle_data" data-bundle_id="12345"
+          data-bundle_form_data='{{"zero_items_allowed":"yes","is_purchasable":"yes",
+          "availability_class":"in-stock","raw_bundle_price_min":30000}}'>
+          <button name="add-to-cart" value="12345" class="single_add_to_cart_button">Sepete Ekle</button>
+        </div></form></div>'''
+        offer, reason = selected_direct_laptop(html, url)
+        self.assertIsNotNone(offer, reason)
+        self.assertEqual(offer['price'], 30000)
+        for original, wrong in (('bundled_item_optional', 'required'), ('type="checkbox"', 'type="checkbox" checked'),
+                                ('"zero_items_allowed":"yes"', '"zero_items_allowed":"no"'),
+                                ('30.000,00 ₺', '31.000,00 ₺'), ('data-initial="30000"', 'data-initial="31000"'),
+                                ('name="add-to-cart" value="12345"', 'name="add-to-cart" value="12346"'),
+                                ('<button name=', '<button disabled name=')):
+            with self.subTest(wrong=wrong):
+                self.assertIsNone(selected_direct_laptop(html.replace(original, wrong), url)[0])
+
     def test_neva_reads_current_price_and_checks_enabled_cart(self):
         url = 'https://nevavm.com/urun/lenovo-ideapad-slim-3/'
         schema = {

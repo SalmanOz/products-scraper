@@ -151,6 +151,8 @@ def selected_direct_laptop(html, url, *, read_facts=None):
     price = amount(offer.get('price'))
     if host == 'www.netsiparis.com':
         price = _netsiparis_cash(soup, prices, price)
+    elif host == 'www.gaming.gen.tr' and len(prices) == 1 and prices[0].select('.from'):
+        price = _gaming_base_cash(prices[0], carts, url, price)
     elif len(prices) != 1 or _visible_cash(prices[0]) != price:
         price = None
     if host == 'tasozbilgisayar.com' and len(carts) == 1:
@@ -191,6 +193,45 @@ def _visible_cash(node):
     match = re.fullmatch(r'(?:₺\s*)?(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)\s*(?:TL|₺)?',
                          node.get_text(' ', strip=True))
     return amount(match[1].replace('.', '').replace(',', '.')) if match else None
+
+
+def _gaming_base_cash(block, carts, url, listed):
+    """A WooCommerce bundle may sell its parent alone with zero optional items."""
+    labels = block.select(':scope > .from')
+    prices = block.select(':scope > .woocommerce-Price-amount > bdi')
+    if (listed is None or len(labels) != 1 or WORDS(labels[0].get_text()) != 'en dusuk'
+            or len(prices) != 1 or _visible_cash(prices[0]) != listed or len(carts) != 1):
+        return None
+    route = re.fullmatch(r'/urun/(\d+)/[a-z0-9-]+/', urlparse(url).path)
+    form = carts[0].find_parent('form', class_='bundle_form')
+    if not form or not route or carts[0].get('name') != 'add-to-cart' or carts[0].get('value') != route[1]:
+        return None
+    if form.get('action') not in (None, '', url) or form.get('method', '').lower() != 'post':
+        return None
+    data = form.select(':scope > .bundle_data[data-bundle_form_data]')
+    quantities = form.select('input[name="quantity"]')
+    amounts = form.select('#main_price_include_tax')
+    products = form.select('.bundled_product')
+    if (len(data) != 1 or data[0].get('data-bundle_id') != route[1]
+            or len(quantities) != 1 or quantities[0].get('value') != '1' or quantities[0].get('min') != '1'
+            or len(amounts) != 1 or amount(amounts[0].get('data-initial')) != listed
+            or amount(amounts[0].get_text(strip=True)) != listed or not products
+            or form.select('input[checked]:not([value=""]), select')):
+        return None
+    try:
+        state = json.loads(data[0]['data-bundle_form_data'])
+    except ValueError:
+        return None
+    if (not isinstance(state, dict) or state.get('zero_items_allowed') != 'yes'
+            or state.get('is_purchasable') != 'yes' or state.get('availability_class') != 'in-stock'
+            or amount(state.get('raw_bundle_price_min')) != listed):
+        return None
+    for product in products:
+        choices = product.select('input.bundled_product_checkbox[type="checkbox"]')
+        if ('bundled_item_optional' not in product.get('class', []) or len(choices) != 1
+                or choices[0].has_attr('checked')):
+            return None
+    return listed
 
 
 def _tasoz_gtin(soup, schema_gtin):

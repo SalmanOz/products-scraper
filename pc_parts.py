@@ -14,6 +14,9 @@ from bs4 import BeautifulSoup
 from PIL import Image, ImageOps
 import requests
 
+from laptop_direct_source import _gaming_base_cash
+from trendyol_basket_price import amount
+
 ROOT='https://www.gaming.gen.tr'
 CATEGORIES={'cpu':'islemci','motherboard':'anakart','ram':'ram-bellek','gpu':'ekran-karti','ssd':'ssd',
             'case':'kasa','psu':'guc-kaynagi-psu','cooler':'sogutma-sistemleri'}
@@ -70,8 +73,13 @@ def parse_part(html, url, kind):
     if not barcode or barcode!=gtin(product.get('gtin')) or not specs.get('Üretici Kodu'):
         raise ValueError('gtin_or_mpn')
     current=soup.select('.summary .price ins .amount bdi') or soup.select('.summary .price > .amount bdi')
-    price=float(offer['price'])
-    if len(current)!=1 or float(re.sub(r'[^\d,]','',current[0].get_text()).replace(',','.'))!=price:
+    price=amount(offer['price'])
+    price_blocks=soup.select('.summary.entry-summary > p.price')
+    if len(price_blocks)==1 and price_blocks[0].select('.from'):
+        visible=_gaming_base_cash(price_blocks[0], cart, url, price)
+    else:
+        visible=amount(re.sub(r'[^\d,]','',current[0].get_text()).replace(',','.')) if len(current)==1 else None
+    if not price or visible!=price:
         raise ValueError('visible_price')
     image=product.get('image')
     if not isinstance(image,str) or not image.startswith(ROOT+'/wp-content/uploads/'): raise ValueError('image_source')
@@ -79,7 +87,7 @@ def parse_part(html, url, kind):
             'kind':kind,'name':product['name'],'mpn':specs['Üretici Kodu'],'gtin':barcode,
             'brand':specs.get('Marka',product.get('brand',{}).get('name','')),
             'image':'/media/pc-parts/'+barcode+'.webp','specs':specs,'sourceUrl':url, '_photo':image,
-            'offer':{'price':price,'currency':'TRY','platform':'Gaming.Gen.TR','seller':'Gaming.Gen.TR',
+            'offer':{'price':float(price),'currency':'TRY','platform':'Gaming.Gen.TR','seller':'Gaming.Gen.TR',
                      'stock':'in_stock','checkedAt':datetime.now(timezone.utc).isoformat(),'url':url}}
 
 def main():
