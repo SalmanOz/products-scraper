@@ -27,45 +27,64 @@ def metto_phone_url(url):
             and METTO_PATH.fullmatch(url.removeprefix(METTO_BASE)) is not None)
 
 
-def variant_data(soup):
+def page_offer_data(soup):
     found = []
     for script in soup.select('script:not([src])'):
         body = script.get_text()
-        if not re.search(r'\bconst PRODUCT_PAGE_DATA\s*=\s*\{', body):
+        start = re.search(r"\bconst PRODUCT_PAGE_DATA\s*=\s*\{\s*price:\s*'([^']{1,40})'", body)
+        if not start:
             continue
-        match = re.search(r'\bvariants:\s*(?=\{)', body)
-        if not match:
-            continue
+        match = re.match(r"\s*,\s*(?:eftPrice:\s*'[^']{1,40}'\s*,\s*)?variants:\s*(?=\{)", body[start.end():])
         try:
-            found.append(json.JSONDecoder().raw_decode(body[match.end():])[0])
+            variants = json.JSONDecoder().raw_decode(body[start.end() + match.end():])[0] if match else None
         except ValueError:
             return None
+        found.append((_cash_price(start[1]), variants))
     return found[0] if len(found) == 1 else None
 
 
-def verified_radio_variant(soup, price_box, specs, barcode, price):
-    storage = TRPriceScraper._spec_int(specs.get('storage_gb'))
-    storage_label = f'{storage} GB'
-    radio = {'4g': '4G (LTE)', '5g': '5G'}.get(specs.get('network_generation'))
-    selectors = price_box.select('.variant-box select[data-variant-name]')
-    fields = {select['data-variant-name']: select for select in selectors}
-    if not storage or not radio or len(selectors) != 2 or fields.keys() != {'Depolama', 'Mobil Telefon Standardı'}:
+def verified_product_selection(soup, price_box, cart, title, specs, barcode, price):
+    data = page_offer_data(soup)
+    if not data or data[0] != price:
         return False
-    for name, label in (('Depolama', storage_label), ('Mobil Telefon Standardı', radio)):
-        choices = fields[name].select(f'option[value="{label}"]:not([disabled])')
-        selected = [option.get('value') for option in fields[name].select('option[selected]')]
-        if len(choices) != 1 or selected not in ([], [label]):
-            return False
+    variants = data[1]
+    selectors = price_box.select('.variant-box select[data-variant-name]')
+    if not selectors:
+        return variants is None and not re.search(r'\b(?:checkVariant|variantCount)\b', cart['onclick'])
+    storage = TRPriceScraper._spec_int(specs.get('storage_gb'))
+    if not storage or len(selectors) != 2 or not isinstance(variants, dict) or variants.get('count') != 2:
+        return False
+    storage_label = f'{storage} GB'
+    fields = {select['data-variant-name']: select for select in selectors}
     try:
-        data = variant_data(soup)
-        row = data['summary'][storage_label][radio]
+        summary = variants['summary']
+        if tuple(fields) == ('Depolama', 'Mobil Telefon Standardı'):
+            radio = {'4g': '4G (LTE)', '5g': '5G'}.get(specs.get('network_generation'))
+            labels = (storage_label, radio)
+        elif tuple(fields) == ('Renk', 'Depolama') and isinstance(summary, dict):
+            normalize = TRPriceScraper._normalize_words
+            colors = [color for color, by_storage in summary.items() if isinstance(by_storage, dict)
+                      and isinstance(candidate := by_storage.get(storage_label), dict)
+                      and retailer_gtin13(candidate.get('barcode')) == barcode
+                      and f' {normalize(color)} ' in f' {normalize(title)} ']
+            if len(colors) != 1:
+                return False
+            labels = (colors[0], storage_label)
+        else:
+            return False
+        for select, label in zip(fields.values(), labels, strict=True):
+            choices = [option for option in select.select('option[value]:not([disabled])') if option['value'] == label]
+            selected = [option.get('value') for option in select.select('option[selected]')]
+            if len(choices) != 1 or selected not in ([], [label]):
+                return False
+        row = summary[labels[0]][labels[1]]
         prices = row['price_list']
         discounts = prices['indirimli_fiyatlar']
         quantity = row['quantity']
-        return (data['count'] == 2 and row['in_stock'] is True and isinstance(quantity, str)
+        return (row['in_stock'] is True and isinstance(quantity, str)
                 and re.fullmatch(r'[1-9]\d{0,7}', quantity) is not None
                 and retailer_gtin13(row['barcode']) == barcode
-                and prices['ID'] == f'{storage_label}_{radio}' and _amount(prices['fiyat_format_0']) == price
+                and prices['ID'] == '_'.join(labels) and _amount(prices['fiyat_format_0']) == price
                 and _cash_price(prices['fiyat']) == price
                 and all(discounts[key]['aktif'] is False for key in ('sabit_indirim', 'promosyon')))
     except (KeyError, TypeError):
@@ -119,7 +138,7 @@ def metto_offer(html, legal_html, *, url, name, specs):
             or cart.get_text(' ', strip=True) != 'Sepete Ekle' or not re.fullmatch(r'[1-9]\d{0,10}', root['data-product-id'])
             or not re.match(r"^\s*addCart\(\s*" + root['data-product-id'] + r"\s*,\s*'product'\s*,", cart['onclick'])
             or price is None or _cash_price(value(price_box, '.price-group .sale-variant-price')) != price
-            or not verified_radio_variant(soup, price_box, specs, barcode, price)):
+            or not verified_product_selection(soup, price_box, cart, title, specs, barcode, price)):
         return None
     return {'platform': MERCHANT, 'merchant': MERCHANT, '_legal_name': COMPANY,
             'price': float(price), 'currency': 'TRY', 'availability': 'in_stock', 'gtin13': barcode,

@@ -1,8 +1,12 @@
 import json
 import unittest
+from decimal import Decimal
+
+from bs4 import BeautifulSoup, Script
 
 from competitor_catalog_gaps import comparison_cards, phone_family, retailer_destination
-from metto_phone_source import METTO_BASE, METTO_CATEGORY, METTO_HOST, METTO_TERMS, metto_offer
+from metto_phone_source import (METTO_BASE, METTO_CATEGORY, METTO_HOST, METTO_TERMS, metto_offer,
+                                verified_product_selection)
 
 
 URL = METTO_BASE + '/oppo-a6-pro-4g-8/256gb-akilli-telefon-gul-kizili'
@@ -37,7 +41,7 @@ def product_document():
             <button class="btn-cart" onclick="addCart(13396, 'product', {{}})">Sepete Ekle</button>
         </div></div>
       </div><script type="application/ld+json">{json.dumps(schema, ensure_ascii=False)}</script>
-      <script>const PRODUCT_PAGE_DATA = {{variants: {json.dumps(variants, ensure_ascii=False)}}};</script>'''
+      <script>const PRODUCT_PAGE_DATA = {{price: '20.999,00 TL', variants: {json.dumps(variants, ensure_ascii=False)}}};</script>'''
 
 
 class MettoPhoneTests(unittest.TestCase):
@@ -54,10 +58,32 @@ class MettoPhoneTests(unittest.TestCase):
             ('20.999,00 TL</div>', '20.998,00 TL</div>'), ('"fiyat_format_0": "20999.00"', '"fiyat_format_0": "20998.00"'),
             ('"promosyon": {"aktif": false}', '"promosyon": {"aktif": true}'), ('addCart(13396', 'addCart(13395'),
             (f'"barcode": "{GTIN}"', '"barcode": "6932169383844"'),
+            ("price: '20.999,00 TL'", "price: '20.998,00 TL'"),
         ):
             self.assertIsNone(parse(html.replace(original, changed, 1)), original)
         self.assertIsNone(parse(html, TERMS.replace(SELLER, 'Başka Mağaza')))
         self.assertIsNone(parse(html, specs={**SPECS, 'network_generation': '5g'}))
+
+    def test_same_barcode_color_selection_and_single_sku_do_not_accept_hidden_choices(self):
+        html = product_document().replace('Mobil Telefon Standardı', 'Renk').replace('4G (LTE)', 'Kızılı')
+        soup = BeautifulSoup(html, 'html.parser')
+        boxes = soup.select('.variant-box select')
+        boxes[0].insert_before(boxes[1].extract())
+        script = soup.find('script', string=lambda body: body and 'const PRODUCT_PAGE_DATA' in body)
+        variants = json.JSONDecoder().raw_decode(script.string.split('variants: ', 1)[1])[0]
+        entry = variants['summary']['256 GB']['Kızılı']
+        entry['price_list']['ID'] = 'Kızılı_256 GB'
+        variants['summary'] = {'Kızılı': {'256 GB': entry}}
+        script.string = Script("const PRODUCT_PAGE_DATA = {price: '20.999,00 TL', variants: " + json.dumps(variants) + '};')
+        price_box = soup.select_one('.product-price-group')
+        cart = price_box.select_one('button')
+        price = Decimal('20999')
+        self.assertTrue(verified_product_selection(soup, price_box, cart, TITLE, SPECS, GTIN, price))
+        self.assertFalse(verified_product_selection(soup, price_box, cart, TITLE.replace('Kızılı', 'Siyah'), SPECS, GTIN, price))
+        price_box.select_one('.variant-box').decompose()
+        self.assertFalse(verified_product_selection(soup, price_box, cart, TITLE, SPECS, GTIN, price))
+        script.string = Script("const PRODUCT_PAGE_DATA = {price: '20.999,00 TL'};")
+        self.assertTrue(verified_product_selection(soup, price_box, cart, TITLE, SPECS, GTIN, price))
 
     def test_category_keeps_canonical_product_link_and_capacity_folds_into_family(self):
         html = f'''<div class="card-product-inner"><a class="c-p-i-link" href="{URL}" title="{TITLE}">
