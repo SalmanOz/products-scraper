@@ -173,7 +173,7 @@ def checked_offers(urls, name, specs, transport, documents=None, *, direct=None,
                 offer, rejected = parse_catalog_buy_box(html, url, name, specs)
                 if offer and not verify_seller(offer, None, reader, seller_cache):
                     offer, rejected = None, 'seller_identity_unverified'
-            elif host == 'www.vatanbilgisayar.com' and host in direct:
+            elif vatan_phone_url(url):
                 offer = selected_vatan_tws(html, url, name,
                     lambda title, _brand: name if matcher.is_strict_match(name, title, specs) else None)
         if (not offer or not retailer_gtin13(offer.get('gtin13')) or offer.get('price_kind') == 'basket' or
@@ -229,6 +229,13 @@ def category_leads(slug, name, specs, transport, documents):
     return sorted(leads)
 
 
+def vatan_phone_url(url):
+    route = urlsplit(url)
+    return (route.netloc == 'www.vatanbilgisayar.com' and not route.query
+            and any(token in route.path for token in ('iphone', 'akilli-telefon', 'cep-telefonu'))
+            and bool(re.fullmatch(r'/[a-z0-9-]+\.html', route.path)))
+
+
 def supported_phone_url(url, *, expanded=False):
     route = urlsplit(url)
     if route.netloc in ('www.n11.com', 'www.trendyol.com'):
@@ -242,7 +249,7 @@ def supported_phone_url(url, *, expanded=False):
     if not any(token in route.path for token in ('iphone', 'akilli-telefon', 'cep-telefonu')):
         return False
     if expanded and route.netloc == 'www.vatanbilgisayar.com':
-        return bool(re.fullmatch(r'/[a-z0-9-]+\.html', route.path))
+        return vatan_phone_url(url)
     if route.netloc == 'www.teknosa.com':
         return product_host(url) == route.netloc
     return pazarama_product_url(url) and bool(re.fullmatch(r'/[a-z0-9-]+-p-\d{12,13}', route.path))
@@ -324,7 +331,8 @@ def load_reviewed_profiles(path):
         if (not isinstance(slug, str) or not re.fullmatch(r'[a-z0-9-]{1,160}', slug) or slug in profiles or
                 not isinstance(gtin, str) or retailer_gtin13(gtin) != gtin or
                 not isinstance(urls, list) or not 2 <= len(urls) <= 6 or
-                any(not url or retailer_destination(url) != url or not supported_phone_url(url) for url in urls) or
+                any(not url or retailer_destination(url) != url
+                    or not (supported_phone_url(url) or vatan_phone_url(url)) for url in urls) or
                 len(set(urls)) != len(urls) or
                 len({urlsplit(url).netloc for url in urls}) < 2):
             raise ValueError('Invalid reviewed capacity or original retailer URLs')

@@ -247,13 +247,14 @@ def _hepsiburada_marketplace_identity(offer, transport):
     return identity if identity and identity['_legal_name'] == profile[3] else None
 
 
-def read_retailer(host, rows):
+def read_retailer(host, rows, *, document_reader=None):
     failures, output = Counter(), []
     identities = {}
     parser = PARSERS[host]
     hb = host == 'www.hepsiburada.com'
     transport = PriorityRetailerTransport(maximum_per_host=min(MAX_URLS, max(1, len(rows))),
-        get=_hepsiburada_public_get if hb else None, browser_fallback=not (hb or host in DIRECT_STORES))
+        get=document_reader or (_hepsiburada_public_get if hb else None),
+        browser_fallback=not (document_reader or hb or host in DIRECT_STORES))
     source = None
     if host in FIRST_PARTY:
         source = (VatanCategorySource() if host.startswith('www.vatan') else
@@ -317,7 +318,7 @@ def read_retailer(host, rows):
     return output, failures
 
 
-def collect_offers(targets, minimum_targets):
+def collect_offers(targets, minimum_targets, *, n11_document_reader=None):
     by_host, grouped, skipped = defaultdict(list), defaultdict(list), Counter()
     if not isinstance(targets, list) or not minimum_targets <= len(targets) <= MAX_URLS:
         raise ValueError(f'Expected {minimum_targets}–{MAX_URLS} read-only candidate URLs')
@@ -331,7 +332,9 @@ def collect_offers(targets, minimum_targets):
         seen.add(url)
         by_host[route.netloc].append(row)
     with ThreadPoolExecutor(max_workers=len(by_host)) as pool:
-        jobs = {host: pool.submit(read_retailer, host, rows) for host, rows in by_host.items()}
+        jobs = {host: pool.submit(read_retailer, host, rows,
+                                  document_reader=n11_document_reader if host == 'www.n11.com' else None)
+                for host, rows in by_host.items()}
         for host, job in jobs.items():
             offers, reasons = job.result()
             for o in offers:
