@@ -2,13 +2,14 @@
 //! reader — plus `_is_conditional_price` and `_challenge_page`.
 //!
 //! Deferred to the per-source milestone (documented in `MIGRATION.md`):
-//! `_vatan_selected_variant`, `_pazarama_visible_cash_price` and
+//! `_pazarama_visible_cash_price` and
 //! `_public_retailer_product`. Those hosts fail closed here (`None`), never
 //! with an unverified offer.
 
-use crate::jsonld::{is_truthy, py_number_string, schema_nodes, type_is, VIVO_X300_VATAN_PDP};
+use crate::jsonld::{is_truthy, py_number_string, schema_nodes_with_vatan_reviews, type_is, VIVO_X300_VATAN_PDP};
+use crate::vatan::selected_variant;
 use psr_core::purl::{parse_url, urljoin_str};
-use psr_core::url::{pazarama_product_url, public_source, UrlTrust};
+use psr_core::url::{pazarama_product_url, public_source, vatan_product_url, UrlTrust};
 use psr_core::utc_now_iso;
 use psr_core::OfferObservation;
 use scraper::{Html, Selector};
@@ -94,7 +95,7 @@ pub fn unescape_html(input: &str) -> String {
 }
 
 /// BS4 `get_text(' ', strip=True)` for an element subtree.
-fn element_text_stripped(element: scraper::ElementRef) -> String {
+pub(crate) fn element_text_stripped(element: scraper::ElementRef) -> String {
     element
         .text()
         .map(|piece| piece.trim().to_string())
@@ -355,7 +356,7 @@ fn product_offer_doc(
     merchant: &str,
     trust: UrlTrust,
 ) -> Option<OfferObservation> {
-    let nodes = schema_nodes(doc);
+    let nodes = schema_nodes_with_vatan_reviews(doc, vatan_product_url(final_url));
     let products: Vec<&Value> = nodes
         .iter()
         .filter(|node| type_is(node, "Product"))
@@ -494,10 +495,8 @@ fn product_offer_doc(
         return None;
     }
 
-    // hasVariant products require the dedicated Vatan selected-SKU reader
-    // (deferred); the generic path rejects them exactly like Python does when
-    // `_vatan_selected_variant` returns False for a non-Vatan host.
-    if is_truthy(product.get("hasVariant")) {
+    let has_variant = is_truthy(product.get("hasVariant"));
+    if has_variant && !selected_variant(doc, product, &offer, final_url, price, availability) {
         return None;
     }
     // Pazarama's Sepette Offer.price requires the dedicated visible-cash
@@ -507,7 +506,6 @@ fn product_offer_doc(
         return None;
     }
 
-    let has_variant = is_truthy(product.get("hasVariant"));
     let source_title = if has_variant {
         unescape_html(title.trim())
     } else {
