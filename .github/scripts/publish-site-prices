@@ -16,7 +16,7 @@ for attempt in 1 2 3; do
   # Rebase onto the current private branch by rebuilding the data-only commit.
   # If this particular catalog changed, a fresh scrape must use its new inputs.
   git_remote fetch --depth=1 origin master
-  git -C site reset --hard FETCH_HEAD
+  git_remote reset --hard FETCH_HEAD
   if [[ $(sha256sum "site/$file" | cut -d ' ' -f 1) != "$3" ]]; then
     echo "::notice::The source snapshot changed during collection. The next run will refresh the current catalog."
     exit 0

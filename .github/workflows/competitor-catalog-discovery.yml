@@ -60,7 +60,7 @@ jobs:
           if bash .github/scripts/site-git ls-remote --exit-code origin refs/heads/scraper-discovery > /dev/null; then
             bash .github/scripts/site-git fetch --depth=1 origin refs/heads/scraper-discovery
             mkdir -p .competitor-discovery
-            git -C site show FETCH_HEAD:state.json.gz | gzip -dc > .competitor-discovery/state.json
+            bash .github/scripts/site-git show FETCH_HEAD:state.json.gz | gzip -dc > .competitor-discovery/state.json
           else
             status=$?
             test "$status" -eq 2
