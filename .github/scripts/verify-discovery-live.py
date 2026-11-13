@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 import json
 from pathlib import Path
 import sys
+from time import sleep
 
 from bs4 import BeautifulSoup
 import requests
@@ -19,7 +20,12 @@ ROUTES = {
 
 
 def get(path):
-    response = requests.get(BASE + path, headers=HEADERS, timeout=20)
+    for delay in (0, 2, 5):
+        if delay:
+            sleep(delay)
+        response = requests.get(BASE + path, headers=HEADERS, timeout=20)
+        if response.status_code not in (502, 503, 504):
+            break
     response.raise_for_status()
     return response
 
