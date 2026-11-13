@@ -23,7 +23,7 @@ from laptop_pilot import (PARSERS as LAPTOP_PARSERS, _hepsiburada_public_get, _i
                           build_model, compatible as laptop_compatible, select_offers, verify_seller)
 from laptop_retailer_sources import model_codes
 from monitor_pilot import PHOTO_HOSTS, candidates as monitor_candidates, compatible as monitor_compatible, materialize
-from monitor_sources import PARSERS as MONITOR_PARSERS, code_key, mentions
+from monitor_sources import PARSERS as MONITOR_PARSERS, code_key, mentions, selected_feed_monitor
 from n11_catalog_source import public_search_cards
 from pc_parts_multistore import DIRECT_PATHS, offer_host
 from priority_retailer_transport import PriorityRetailerTransport
@@ -262,7 +262,12 @@ def read_host(host, targets):
                 rejections['seller_selector_changed'] += 1
                 continue
             parser = PARSERS[kind][host]
-            offer, reason = parser(html, final, code) if code else parser(html, final)
+            manufacturer_code = None
+            if kind == 'monitor' and host == 'www.gaming.gen.tr' and feed_gtin:
+                offer, reason, manufacturer_code = selected_feed_monitor(html, final, code, feed_gtin)
+                code = manufacturer_code or code
+            else:
+                offer, reason = parser(html, final, code) if code else parser(html, final)
             if not offer:
                 rejections[reason or 'selected_offer_unverified'] += 1
                 continue
@@ -280,7 +285,8 @@ def read_host(host, targets):
                 rejections['seller_identity_unverified'] += 1
                 continue
             offers.append((kind, {**offer, **({'code': code} if code else {}),
-                                  **({'_feed_gtin': feed_gtin} if feed_gtin else {})}))
+                                  **({'_feed_gtin': feed_gtin} if feed_gtin else {}),
+                                  **({'_manufacturer_code': manufacturer_code} if manufacturer_code else {})}))
         except (RequestsError, RequestException, OSError, ValueError, TypeError, KeyError, AttributeError):
             rejections['read_or_parse_error'] += 1
     return offers, dict(rejections), attempted
@@ -371,6 +377,18 @@ def run(state, catalogs, output, maximum_requests, maximum_models, *, native_sea
             for kind, offer in offers:
                 code = offer['code'] if kind == 'monitor' else offer['facts']['mpn']
                 observed[kind][code, offer['gtin13']].append(offer)
+    monitor_groups = observed['monitor']
+    exact_codes = defaultdict(set)
+    for (code, gtin), offers in monitor_groups.items():
+        if any(o.get('_manufacturer_code') for o in offers):
+            exact_codes[gtin].add(code)
+    for (alias, gtin), matches in list(monitor_groups.items()):
+        alternatives = exact_codes[gtin]
+        if len(alternatives) == 1:
+            code = next(iter(alternatives))
+            if alias != code and code.startswith(alias):
+                monitor_groups[code, gtin].extend({**offer, 'code': code} for offer in matches)
+                del monitor_groups[alias, gtin]
     report = {'sources': sources, 'nativeSearch': native_reports, 'categories': {}}
     for kind, payload in catalogs.items():
         directory = output / kind

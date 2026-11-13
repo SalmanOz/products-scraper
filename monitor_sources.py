@@ -72,8 +72,8 @@ PANEL = re.compile(r'\b(qd[ -]?oled|oled|ips|va|tn)\b', re.I)
 LABELS = {
     'size': ('ekran boyutu', 'ekran boyutu inc', 'ekran boyutu inch', 'ekran boyut araligi'),
     'resolution': ('cozunurluk', 'ekran cozunurlugu', 'maksimum cozunurluk', 'max ekran cozunurlugu'),
-    'refresh': ('yenileme hizi', 'ekran yenileme hizi', 'tarama hizi'),
-    'panel': ('panel tipi', 'ekran panel tipi', 'panel teknolojisi', 'ekran teknolojisi'),
+    'refresh': ('yenileme hizi', 'ekran yenileme hizi', 'tazeleme hizi', 'tarama hizi'),
+    'panel': ('panel tipi', 'ekran panel tipi', 'panel turu', 'panel teknolojisi', 'ekran teknolojisi'),
 }
 
 
@@ -113,10 +113,11 @@ def monitor_facts(title, brand, code, attrs=None, *, category_verified=False):
         resolution = '3440 × 1440'
     refresh = read('refresh', REFRESH, lambda m: int(m[1]))
     panel = read('panel', PANEL, lambda m: re.sub(r'[- ]', '', m[1].upper()).replace('QDOLED', 'QD-OLED'))
+    port_text = ' '.join([words, WORDS(attrs.get('destekledigi giris cikislar', ''))])
     return {'brand': brand, 'size': size, 'resolution': resolution, 'refresh': refresh, 'panel': panel,
-            'hdmi': bool(re.search(r'\b(?:\d+x)?hdmi\b', words)),
-            'dp': bool(re.search(r'\b(?:dp|display ?port)\b', words)),
-            'usb_c': bool(re.search(r'\b(?:usb|type) c\b', words))}
+            'hdmi': bool(re.search(r'\b(?:\d+x)?hdmi\b', port_text)),
+            'dp': bool(re.search(r'\b(?:dp|display ?port)\b', port_text)),
+            'usb_c': bool(re.search(r'\b(?:usb(?: tip)?|type) c\b', port_text))}
 
 
 def _evidence(title, brand, code, attrs, images, hosts, *, category_verified=False):
@@ -229,6 +230,25 @@ def selected_teknosa(html, url, code):
 
 def selected_direct(html, url, code):
     return selected_direct_laptop(html, url, read_facts=lambda title, brand, attrs: monitor_facts(title, brand, code, attrs))
+
+
+def selected_feed_monitor(html, url, code, gtin):
+    selected_code = None
+
+    def read_facts(title, brand, attrs):
+        nonlocal selected_code
+        manufacturer_code = attrs.get('uretici kodu', '')
+        if retailer_gtin13(attrs.get('ean')) == gtin:
+            # MSI prefixes some codes with a series label in the specification
+            # table. The exact model suffix still has to appear in the title.
+            manufacturer_code = re.sub(r'^(?:MAG|MPG|MEG|PRO(?: MAX)?|MODERN)\s+', '', manufacturer_code, flags=re.I)
+            exact = code_key(manufacturer_code)
+            if 5 <= len(exact) <= 26 and mentions(title, exact):
+                selected_code = exact
+        return monitor_facts(title, brand, selected_code or code, attrs)
+
+    offer, reason = selected_direct_laptop(html, url, read_facts=read_facts)
+    return offer, reason, selected_code
 
 
 def asempi_product_id(url):

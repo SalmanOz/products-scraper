@@ -118,6 +118,11 @@ def selected_direct_laptop(html, url, *, read_facts=None):
     gtin = retailer_gtin13(product.get('gtin13') or product.get('gtin'))
     if host == 'tasozbilgisayar.com':
         gtin = _tasoz_gtin(soup, gtin)
+    elif host == 'www.gaming.gen.tr' and read_facts:
+        for row in soup.select('table.woocommerce-product-attributes tr'):
+            label, value = row.find('th'), row.find('td')
+            if label and value:
+                attrs[WORDS(label.get_text(' ', strip=True))] = value.get_text(' ', strip=True)
     elif host == 'www.sinerji.gen.tr':
         barcodes = []
         for row in soup.select('#nav-technical-specs table tr'):

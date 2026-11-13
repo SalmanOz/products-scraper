@@ -6,6 +6,9 @@ from unittest.mock import patch
 from comparison_accessory_candidates import candidate_targets, monitor_codes, search_accessory_retailer, stage_category
 
 
+from monitor_sources import selected_feed_monitor
+
+
 N11 = 'https://www.n11.com/urun/asus-proart-pa278cv-75hz-monitor-53683691?magaza=n11'
 TRENDYOL = 'https://www.trendyol.com/asus/proart-pa278cv-75hz-monitor-p-1223819436'
 
@@ -121,6 +124,21 @@ class ComparisonAccessoryTests(unittest.TestCase):
         })
         self.assertFalse(candidate_targets(state, ['monitor'], 5, allow_single=True,
                                            existing_barcodes={'monitor': {barcode}}))
+
+    def test_feed_monitor_uses_the_full_manufacturer_variant_proven_by_its_barcode(self):
+        gtin = '4711081273981'
+
+        def parse(_html, _url, *, read_facts):
+            facts = read_facts('MSI MAG 274QPF E20 27 inç QHD 200Hz IPS Monitör', 'MSI',
+                               {'ean': gtin, 'uretici kodu': 'MAG 274QPF E20'})
+            return {'facts': facts}, 'verified'
+
+        with patch('monitor_sources.selected_direct_laptop', side_effect=parse):
+            offer, _, code = selected_feed_monitor('document', 'url', '274qpf', gtin)
+            self.assertEqual(code, '274qpfe20')
+            self.assertEqual(offer['facts']['refresh'], 200)
+            offer, _, code = selected_feed_monitor('document', 'url', '274qpf', '4718466017901')
+            self.assertIsNone(code)
 
     def test_feed_signal_stays_bound_to_its_own_store(self):
         bogus = {'category': 'monitor', 'title': 'ASUS PA278CV', 'source': 'www.gaming.gen.tr',
