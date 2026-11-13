@@ -153,6 +153,7 @@ class Expansion:
         catalog = self.catalog(name)
         added = []
         for model in read(root / 'report.json')['staged']:
+            model['slug'] = re.sub(r'-+', '-', model['slug']).strip('-')
             feed_verified = model.pop('feedGtin', None) == model['gtin'] and offer_host(model['sourceUrl']) == GAMING
             offers = model['offers']
             if (retailer_gtin13(model['gtin']) == model['gtin'] and fresh_offers(offers, 'checkedAt', self.now, 'seller', minimum=1 if feed_verified else 2)

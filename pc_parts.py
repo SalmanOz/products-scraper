@@ -82,7 +82,7 @@ def parse_part(html, url, kind):
         raise ValueError('visible_price')
     image=product.get('image')
     if not isinstance(image,str) or not image.startswith(ROOT+'/wp-content/uploads/'): raise ValueError('image_source')
-    return {'id':barcode,'slug':re.sub(r'[^a-z0-9]+','-',product['name'].lower()).strip('-')[:100]+'-'+barcode,
+    return {'id':barcode,'slug':re.sub(r'[^a-z0-9]+','-',product['name'].lower()).strip('-')[:100].rstrip('-')+'-'+barcode,
             'kind':kind,'name':product['name'],'mpn':specs['Üretici Kodu'],'gtin':barcode,
             'brand':specs.get('Marka',product.get('brand',{}).get('name','')),
             'image':'/media/pc-parts/'+barcode+'.webp','specs':specs,'sourceUrl':url, '_photo':image,
