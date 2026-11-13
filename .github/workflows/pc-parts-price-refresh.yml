@@ -2,7 +2,7 @@ name: PC parts price refresh
 
 on:
   schedule:
-    - cron: '43 4 * * *'
+    - cron: '43 4,16 * * *'
   workflow_dispatch:
     inputs:
       dry_run:

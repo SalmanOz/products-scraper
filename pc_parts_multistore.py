@@ -50,6 +50,7 @@ TEMPORARY_READ_FAILURES = STOP | {
     'http_500', 'http_502', 'http_503', 'http_504', 'pdp_budget_exhausted',
 }
 OFFER_MAX_AGE = timedelta(hours=72)
+MAX_REFRESH_TARGETS_PER_HOST = 350
 
 
 def offer_host(url):
@@ -468,7 +469,16 @@ def refresh(snapshot, output, *, discovery=None):
     last_check = {offer['url']: offer['checkedAt'] for part in snapshot['parts'] for offer in part.get('offers', [])}
     ordered = sorted(targets.items(), key=lambda row: (last_check.get(row[0], ''), row[0]))
     unavailable = set()
-    verified = collect_targets(ordered, discover_sellers=discovery is not None, unavailable=unavailable)
+    checked = []
+    host_counts = Counter()
+    for url, part in ordered:
+        host = offer_host(url)
+        if host_counts[host] >= MAX_REFRESH_TARGETS_PER_HOST:
+            unavailable.add(url)
+            continue
+        host_counts[host] += 1
+        checked.append((url, part))
+    verified = collect_targets(checked, discover_sellers=discovery is not None, unavailable=unavailable)
     now = datetime.now(timezone.utc)
     if not verified:
         raise SystemExit('No component prices verified')
@@ -489,7 +499,8 @@ def refresh(snapshot, output, *, discovery=None):
             part['offer'] = offers[0]
     snapshot['checkedAt'] = now.isoformat()
     output.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2) + '\n')
-    print(json.dumps({'parts': len(snapshot['parts']), 'verified_offers': len(verified),
+    print(json.dumps({'parts': len(snapshot['parts']), 'queued_targets': len(checked),
+                      'deferred_targets': len(ordered) - len(checked), 'verified_offers': len(verified),
                       'retained_unavailable_offers': retained_count,
                       'with_two_sellers': sum(len(part['offers']) >= 2 for part in snapshot['parts'])}))
 

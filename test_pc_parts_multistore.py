@@ -135,6 +135,28 @@ class PcSellerIndependenceTest(unittest.TestCase):
             self.assertIsNone(trendyol_pc_offer(html, url, default_html=document(different, '6.900 TL'))[0])
         self.assertIsNone(trendyol_pc_offer(document(scoped, '8.501 TL'), url, default_html=witness)[0])
 
+    def test_host_limit_prioritizes_older_prices_without_discarding_fresh_offers(self):
+        now = datetime.now(timezone.utc)
+        gtin = '4711387981016'
+        offers = [{
+            'url': f'https://www.gaming.gen.tr/urun/{index}/part/', 'gtin': gtin,
+            'sellerKey': f'seller-{index}', 'stock': 'in_stock', 'platform': 'Gaming.Gen.TR',
+            'price': 100 + index, 'checkedAt': (now - timedelta(hours=index)).isoformat(),
+        } for index in (1, 2)]
+        part = {'gtin': gtin, 'sourceUrl': offers[0]['url'], 'offer': offers[0], 'offers': offers,
+                'offerTargets': [row['url'] for row in offers]}
+
+        def fetch(targets, *, discover_sellers, unavailable):
+            self.assertEqual([url for url, _ in targets], [offers[1]['url']])
+            self.assertEqual(unavailable, {offers[0]['url']})
+            return [{**offers[1], 'checkedAt': now.isoformat()}]
+
+        with TemporaryDirectory() as directory, patch('pc_parts_multistore.MAX_REFRESH_TARGETS_PER_HOST', 1), \
+                patch('pc_parts_multistore.collect_targets', side_effect=fetch):
+            path = Path(directory) / 'catalog.json'
+            refresh({'parts': [part]}, path)
+            self.assertEqual(json.loads(path.read_text())['parts'][0]['offers'][0], offers[0])
+
     def test_refresh_keeps_only_unread_still_current_observations(self):
         now = datetime.now(timezone.utc)
         gtin = '4711387981016'
