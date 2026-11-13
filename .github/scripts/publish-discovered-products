@@ -8,7 +8,7 @@ for attempt in 1 2 3; do
   git_remote fetch --depth=1 origin master
   git_remote reset --hard FETCH_HEAD
   # A retry must discard images left by the preceding attempt.
-  git -C site clean -fd -- frontend/public/media/{monitors,laptops,earbuds,pc-parts} > /dev/null
+  git_remote clean -fd -- frontend/public/media/{monitors,laptops,earbuds,pc-parts} > /dev/null
   rm -rf "$out"
   mkdir -p "$out"
   export PYTHONPATH="$PWD"
