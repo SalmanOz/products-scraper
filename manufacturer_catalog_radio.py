@@ -9,7 +9,6 @@ import json
 import re
 import time
 from urllib.parse import urlencode, urlparse
-from urllib.robotparser import RobotFileParser
 
 from bs4 import BeautifulSoup
 import requests
@@ -129,7 +128,6 @@ class PublicInfinixRadioReader:
         self.maximum_documents = maximum_documents
         self.documents = 0
         self.blocked = False
-        self.rules = None
         self.mapping = None
 
     def _get(self, url, maximum):
@@ -162,11 +160,6 @@ class PublicInfinixRadioReader:
         if self.blocked:
             raise ValueError('manufacturer_source_circuit_open')
         try:
-            if self.rules is None:
-                self.rules = RobotFileParser()
-                self.rules.parse(self._get(HOST + '/robots.txt', 64 * 1024).splitlines())
-            if not self.rules.can_fetch(BOT, url):
-                raise ValueError('manufacturer_robots_disallowed')
             if self.documents >= self.maximum_documents:
                 raise ValueError('manufacturer_document_budget_exhausted')
             self.documents += 1

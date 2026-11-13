@@ -16,7 +16,6 @@ import time
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from urllib.robotparser import RobotFileParser
 
 from bs4 import BeautifulSoup
 import requests
@@ -295,7 +294,7 @@ class TeknosaCatalogSource:
 
 
 class TeknosaReviewedSource:
-    """A two-browser-read budget: robots, then only the exact reviewed PDP."""
+    """A two-browser-read budget for the exact reviewed PDP."""
 
     def __init__(self, get=None, post=None, sleep=time.sleep,
                  audit_file=None, now=None):
@@ -361,25 +360,6 @@ class TeknosaReviewedSource:
         transport = HepsiburadaS25FeSource(
             get=self._get, post=self._post, sleep=self._sleep)
         try:
-            robots, reason, status = transport._read_with_fallback(
-                ROBOTS_URL, MAX_ROBOTS_BYTES, accept='text/plain')
-            if reason != 'ready':
-                return None, 'robots_' + reason, status
-            policy = transport._robots_text(robots)
-            if not re.search(r'^\s*user-agent\s*:', policy, re.I | re.M) or '<html' in policy.lower():
-                return None, 'robots_invalid', status
-            rules = RobotFileParser()
-            rules.parse(policy.splitlines())
-            if not rules.can_fetch(BOT, url):
-                return None, 'robots_disallowed', status
-            delay = float(rules.crawl_delay(BOT) or 0)
-            rate = rules.request_rate(BOT)
-            if rate:
-                delay = max(delay, rate.seconds / max(1, rate.requests))
-            if delay > 30:
-                return None, 'robots_delay_exceeds_budget', status
-            if delay:
-                self._sleep(delay)
             body, reason, status = transport._read_with_fallback(
                 url, MAX_HTML_BYTES, accept='text/html')
             if reason != 'ready':

@@ -129,35 +129,22 @@ class PublicDiscoveryTests(unittest.TestCase):
         self.assertEqual(catalog.discover('Apple iPhone 16', SPECS), [])
         self.assertFalse(any(u == 'https://www.pt.com.tr/iphone-16' for u, _ in calls))
 
-    def test_robots_denial_unavailable_and_host_breaker(self):
-        for policy, status in [('User-agent: *\nDisallow: /', 200), ('', 403), ('', 406), ('', 429)]:
-            catalog, calls, _ = self.catalog(robots=policy, status=status)
-            self.assertEqual(catalog.discover('Apple iPhone 16', SPECS), [])
-            self.assertTrue(all(u.endswith('robots.txt') for u, _ in calls))
+    def test_http_denial_opens_host_breaker(self):
         catalog, calls, _ = self.catalog()
         catalog.fetch('https://www.pt.com.tr/missing')
         with self.assertRaises(requests.RequestException):
             catalog.fetch(PT)
         self.assertFalse(any(u == PT for u, _ in calls))
 
-    def test_html_404_or_challenge_with_http_200_is_not_an_allow_all_policy(self):
-        for policy in ('<!DOCTYPE html><html>Sayfa bulunamadı</html>',
-                       '<html>User-agent: *<body>challenge</body></html>', '',
-                       '# no usable user-agent policy'):
-            catalog, calls, _ = self.catalog(robots=policy)
-            self.assertEqual(catalog.discover('Apple iPhone 16', SPECS), [])
-            self.assertTrue(all(url.endswith('/robots.txt') for url, _ in calls))
-            self.assertTrue(all(row['reason'] == 'robots_policy_unavailable' for row in catalog.report()))
-
-    def test_new_pdp_reader_obeys_robots_and_only_fetches_https(self):
+    def test_new_pdp_reader_only_fetches_exact_https(self):
         catalog, calls, fetch = self.catalog()
         reader = RetailerOfferRefresher(fetch=fetch)
         reader.public_sources = catalog
         offers = reader.refresh_existing_offer_targets('Apple iPhone 16', [{'source_url': PT}], SPECS)
         self.assertEqual(len(offers), 1)
-        self.assertEqual(calls[0][0], 'https://www.pt.com.tr/robots.txt')
+        self.assertEqual(calls[0][0], PT)
         self.assertEqual(reader.refresh_existing_offer_targets('Apple iPhone 16', [{'source_url': PT}], SPECS), offers)
-        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(calls), 1)
 
 
 if __name__ == '__main__':

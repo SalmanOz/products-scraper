@@ -4,6 +4,9 @@
 //! `hasVariant` or recommendation branches whose price may belong to another
 //! phone (that invariant is load-bearing for correctness, not style).
 
+use std::sync::LazyLock;
+
+use regex::{Captures, Regex};
 use serde_json::Value;
 use scraper::{Html, Selector};
 
@@ -33,20 +36,30 @@ fn last_segment(text: &str) -> &str {
 
 /// `retailer_offer_refresh._schema_nodes`.
 ///
-/// The Python version repairs Vatan's raw-control-character review JSON-LD
-/// through `VatanSitemapSource._safe_product_url`. That repair only feeds the
-/// dedicated selected-SKU parser (not the generic reader), so phase 1 skips it
-/// and fails closed; it is ported together with the Vatan source reader.
 pub fn schema_nodes(doc: &Html) -> Vec<Value> {
+    schema_nodes_with_vatan_reviews(doc, false)
+}
+
+pub(crate) fn schema_nodes_with_vatan_reviews(doc: &Html, repair_reviews: bool) -> Vec<Value> {
     let mut nodes: Vec<Value> = Vec::new();
     let selector = match Selector::parse(r#"script[type="application/ld+json"]"#) {
         Ok(selector) => selector,
         Err(_) => return nodes,
     };
     for script in doc.select(&selector) {
+        if nodes.len() >= 2000 {
+            break;
+        }
         let text: String = script.text().collect::<Vec<_>>().join("");
         let parsed: Value = match serde_json::from_str(&text) {
             Ok(parsed) => parsed,
+            Err(_) if repair_reviews => {
+                if let Some(product) = repair_vatan_review_jsonld(&text) {
+                    // Only this selected product may use the repaired metadata.
+                    nodes.push(product);
+                }
+                continue;
+            }
             Err(_) => continue,
         };
         let mut pending = vec![parsed];
@@ -73,6 +86,33 @@ pub fn schema_nodes(doc: &Html) -> Vec<Value> {
         }
     }
     nodes
+}
+
+/// Escape control characters only in reviewBody strings. The Product,
+/// Offer, SKU and variant metadata must still pass selected-PDP checks.
+fn repair_vatan_review_jsonld(raw: &str) -> Option<Value> {
+    static REVIEW: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r#"("reviewBody"\s*:\s*")((?:\\.|[^"\\])*)(")"#).unwrap());
+    let repaired = REVIEW.replace_all(raw, |captures: &Captures<'_>| {
+        let mut text = captures[1].to_string();
+        for c in captures[2].chars() {
+            if c <= '\u{1f}' {
+                text.push_str(&format!("\\u{:04x}", c as u32));
+            } else {
+                text.push(c);
+            }
+        }
+        text.push_str(&captures[3]);
+        text
+    });
+    if repaired == raw {
+        return None;
+    }
+    let product: Value = serde_json::from_str(&repaired).ok()?;
+    let variants = product.get("hasVariant")?.as_array()?;
+    let offer = product.get("offers")?;
+    (type_is(&product, "Product") && !variants.is_empty() && type_is(offer, "Offer"))
+        .then_some(product)
 }
 
 /// Python truthiness of arbitrary JSON values (`product.get('hasVariant')`).

@@ -6,7 +6,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import gettempdir
 
-from mediamarkt_source import MediaMarktSource
 from retailer_offer_refresh import RetailerOfferRefresher
 from reviewed_offer_targets import MEDIAMARKT_BATCH_PATH
 
@@ -41,7 +40,7 @@ def summary(report):
     source = report['mediamarkt_source']
     lines = ['## MediaMarkt selected first-party PDP reader (read only)',
              f"Verified {report['verified_products']}/{report['total_products']} reviewed variants; "
-             f"robots {source['robots_status']}; browser GET {source['browser_html_responses']}/{source['browser_requests']}."]
+             f"browser GET {source['browser_html_responses']}/{source['browser_requests']}."]
     for row in report['products']:
         attempt = row['source_attempts'][0] if row['source_attempts'] else {}
         offer = row['observed_offer'] or {}

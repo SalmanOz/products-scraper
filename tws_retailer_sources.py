@@ -15,7 +15,6 @@ from retailer_barcode import retailer_gtin13
 from retailer_offer_refresh import _is_conditional_price, _schema_nodes, _type_is
 from teknosa_reviewed_source import _amount, _cash_price, parse_exact_first_party_offer
 from tr_price_scraper import TRPriceScraper
-from vatan_category_source import BOT, VatanCategorySource
 
 N11_CATEGORY_PATH = '/telefon-ve-aksesuarlari/cep-telefonu-aksesuarlari/bluetooth-kulaklik'
 VATAN_HOME = 'https://www.vatanbilgisayar.com'
@@ -383,15 +382,9 @@ def selected_vatan_store_tws(html, url, name, model_name, read_stock, expected_s
 
 
 def vatan_offers(source, models, model_name, failures):
-    source._load_robots()
-    if source._rules is None:
-        failures[f'vatan_{source._robots_status}'] += 1
-        return {}
     last = None
     def read(url, limit):
         nonlocal last
-        if not source._rules.can_fetch(BOT, url):
-            return None, 'robots_disallowed'
         if last is not None:
             source._sleep(max(0, max(0.5, source._delay) - (time.monotonic() - last)))
         last = time.monotonic()

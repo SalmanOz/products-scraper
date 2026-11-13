@@ -9,7 +9,6 @@ import time
 from threading import RLock
 from types import SimpleNamespace
 from urllib.parse import parse_qsl, unquote, urljoin, urlparse
-from urllib.robotparser import RobotFileParser
 
 from bs4 import BeautifulSoup
 import requests
@@ -69,13 +68,12 @@ def _category_page_number(url):
 
 
 class PazaramaCategorySource:
-    """One robots read and at most sixteen category reads, cached per run."""
+    """At most sixteen category reads, cached per run."""
 
     def __init__(self, fetch=None, sleep=time.sleep, clock=time.monotonic):
         self._fetch = fetch or requests.get
         self._sleep, self._clock = sleep, clock
         self._lock = RLock()
-        self._robots = None
         self._blocked = False
         self._loaded = False
         self._cards = []
@@ -91,23 +89,14 @@ class PazaramaCategorySource:
     def _request(self, url, limit):
         if self._blocked:
             raise requests.RequestException('Pazarama source circuit open')
-        if self._robots is not None:
-            if not self._robots.can_fetch(BOT, url):
-                raise requests.RequestException('Pazarama robots disallows URL')
-            interval = max(0.5, float(self._robots.crawl_delay(BOT) or 0))
-            rate = self._robots.request_rate(BOT)
-            if rate:
-                interval = max(interval, rate.seconds / max(1, rate.requests))
-            if interval > 30:
-                raise requests.RequestException('Pazarama crawl delay exceeds run budget')
-            if self._last_request is not None:
-                self._sleep(max(0, interval - (self._clock() - self._last_request)))
+        if self._last_request is not None:
+            self._sleep(max(0, 0.5 - (self._clock() - self._last_request)))
         self._last_request = self._clock()
         response = self._fetch(
             url, timeout=(5, 15), allow_redirects=False, stream=True,
             headers={
                 'User-Agent': BOT + '/1.0 (+https://teknoskor.com)',
-                'Accept': 'text/plain' if url == ROBOTS_URL else 'text/html',
+                'Accept': 'text/html',
                 'Accept-Language': 'tr-TR,tr;q=0.9',
             },
         )
@@ -132,30 +121,11 @@ class PazaramaCategorySource:
         finally:
             response.close()
 
-    def _ensure_robots(self):
-        if self._robots is not None:
-            return
-        self._failed_stage = 'robots'
-        response = self._request(ROBOTS_URL, MAX_ROBOTS_BYTES)
-        if (response.status_code != 200
-                or re.search(r'<(?:!doctype\s+html|html|head|body)\b', response.text, re.I)
-                or not re.search(r'^\s*user-agent\s*:', response.text, re.I | re.M)):
-            self._blocked = True
-            raise requests.RequestException('Pazarama robots policy unavailable')
-        rules = RobotFileParser()
-        rules.parse(response.text.splitlines())
-        if not rules.can_fetch(BOT, CATEGORY_URL):
-            self._blocked = True
-            raise requests.RequestException('Pazarama category disallowed')
-        self._robots = rules
-        self._failed_stage = None
-
     def fetch(self, url, **_kwargs):
-        """Robots-checked PDP read; no redirects, repeated reads or query URLs."""
+        """Bounded PDP read; no redirects, repeated reads or query URLs."""
         if not pazarama_product_url(url):
             raise requests.RequestException('Not a clean Pazarama product URL')
         with self._lock:
-            self._ensure_robots()
             if url not in self._pages:
                 if self._pdp_requests >= MAX_PDP_REQUESTS:
                     raise requests.RequestException('Pazarama PDP budget exhausted')
@@ -168,7 +138,6 @@ class PazaramaCategorySource:
             return
         self._loaded = True
         try:
-            self._ensure_robots()
             url = CATEGORY_URL
             for expected_page in range(1, MAX_CATEGORY_PAGES + 1):
                 if _category_page_number(url) != expected_page:
@@ -187,7 +156,7 @@ class PazaramaCategorySource:
                     if not anchor.select_one('.product-card__swiper'):
                         continue
                     product_url = urljoin(url, anchor['href'])
-                    if pazarama_product_url(product_url) and self._robots.can_fetch(BOT, product_url):
+                    if pazarama_product_url(product_url):
                         self._cards.append((product_url, anchor['title'].strip()))
                 next_page = next((urljoin(url, anchor['href']) for anchor in soup.select('a[href]')
                                   if anchor.get_text(' ', strip=True) == 'Daha Çok Ürün Göster'
@@ -225,6 +194,6 @@ class PazaramaCategorySource:
         with self._lock:
             return {'status': self._status, 'category_pages': self._category_requests,
                     'eligible_card_urls': len(self._cards), 'pdp_requests': self._pdp_requests,
-                    'robots_url': ROBOTS_URL, 'category_url': CATEGORY_URL,
+                    'category_url': CATEGORY_URL,
                     'failed_stage': self._failed_stage,
                     'http_status': self._http_status if self._failed_stage else None}

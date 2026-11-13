@@ -181,16 +181,13 @@ class A55ExactManualCoverageTests(unittest.TestCase):
         self.assertEqual(client.writes, [])
         self.assertEqual(set(verified_offers(report)), set(URLS))
 
-    def test_changed_legal_seller_or_robots_blocks_audit(self):
-        for drift in ('legal_name', 'tax', 'robots'):
+    def test_changed_legal_seller_blocks_audit(self):
+        for drift in ('legal_name', 'tax'):
             with self.subTest(drift=drift):
                 source = A55Source()
-                if drift == 'robots':
-                    source.status = 'blocked'
-                else:
-                    url = seller_urls()[0]
-                    source.seller_text[url] = source.seller_text[url].replace(
-                        SELLER_IDENTITIES['Güzel Teknoloji'][drift], 'changed')
+                url = seller_urls()[0]
+                source.seller_text[url] = source.seller_text[url].replace(
+                    SELLER_IDENTITIES['Güzel Teknoloji'][drift], 'changed')
                 report, client, _ = self.audited(source=source)
                 self.assertEqual(report['status'], 'failed')
                 self.assertEqual(client.writes, [])

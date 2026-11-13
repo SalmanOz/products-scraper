@@ -1512,7 +1512,7 @@ class N11PlatformCoverageTests(unittest.TestCase):
         bounded = PriorityRetailerTransport(get=get, sleep=lambda _: None, maximum_per_host=2)
         result = sweep(client=client, transport=bounded, discover_n11=True, coverage_first=True,
                        current_listing_inventory=self.inventory(catalog, covered))
-        self.assertEqual(len(requests), 3)  # Robots plus two actual search requests.
+        self.assertEqual(len(requests), 2)
         self.assertEqual(bounded.report()['n11']['document_requests'], 2)
         self.assertEqual(sum(d['reason'] == 'pdp_budget_exhausted' for d in result['discovery']), 24)
         self.assertEqual(result['catalog_count'], 26)

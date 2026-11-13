@@ -291,11 +291,7 @@ class CoverageTwoMarketplaceTests(unittest.TestCase):
         self.assertIn('duplicate rows', report['error'])
         self.assertEqual(client.writes, [])
 
-    def test_robots_and_changed_browser_url_never_verify_offer(self):
-        report, client, source = self.audited(source=Source('unavailable'))
-        self.assertEqual(report['status'], 'failed')
-        self.assertEqual(source.direct, [])
-        self.assertEqual(client.writes, [])
+    def test_changed_browser_url_never_verifies_offer(self):
         source = Source()
         source.direct_reason = 'http_403'
         source.changed_browser_url = True

@@ -1,7 +1,7 @@
 """Research-only GET audit. Unknown shops NEVER enter offer ingestion here.
 
 Runs the existing eight-model PDP audit, then probes curated candidate pages
-with robots delays and ordinary HTTPS. Candidate schema is diagnostic evidence,
+with fixed pacing and ordinary HTTPS. Candidate schema is diagnostic evidence,
 not approved price data. No DB/schema/IndexNow/browser or challenge work.
 """
 
@@ -13,7 +13,6 @@ from pathlib import Path
 import re
 import time
 from urllib.parse import urlparse
-from urllib.robotparser import RobotFileParser
 
 from bs4 import BeautifulSoup
 import requests
@@ -90,7 +89,7 @@ def document_evidence(html, url, profile):
 
 
 def probe_host(candidates, profiles, *, fetch=requests.get, sleep=time.sleep, clock=time.monotonic):
-    """At most three GETs/source, no redirects, no change of request identity."""
+    """At most two GETs/source, no redirects, no change of request identity."""
     if not candidates or len(candidates) > 2 or any(not safe_candidate(c['url']) for c in candidates):
         raise ValueError('Invalid candidate request scope')
     origin = 'https://' + urlparse(candidates[0]['url']).netloc
@@ -98,56 +97,38 @@ def probe_host(candidates, profiles, *, fetch=requests.get, sleep=time.sleep, cl
         raise ValueError('Candidate host changed')
     rows = [{**c, 'candidate_is_approved_for_ingestion': False} for c in candidates]
     last = None
-    def get(url, delay=0):
+    def get(url, delay=0.5):
         nonlocal last
         if last is not None:
             sleep(max(0, delay - (clock() - last)))
         last = clock()
         response = fetch(url, timeout=(5, 15), allow_redirects=False,
                          headers={'User-Agent': BOT + '/1.0 (+https://teknoskor.com)',
-                                  'Accept': 'text/plain' if url.endswith('/robots.txt') else 'text/html'})
+                                  'Accept': 'text/html'})
         if len(response.text.encode('utf-8')) > 5 * 1024 * 1024:
             raise requests.RequestException('Oversized candidate response')
         return response
-    try:
-        robots = get(origin + '/robots.txt')
-        valid = (robots.status_code == 200
-                 and not re.search(r'<(?:!doctype\s+html|html|head|body)\b', robots.text, re.I)
-                 and re.search(r'^\s*user-agent\s*:', robots.text, re.I | re.M))
-        if not valid:
-            return [{**r, 'reason': 'robots_policy_unavailable', 'robots_http_status': robots.status_code} for r in rows]
-        rules = RobotFileParser(); rules.parse(robots.text.splitlines())
-        delay = max(0.5, rules.crawl_delay(BOT) or 0)
-        rate = rules.request_rate(BOT)
-        if rate:
-            delay = max(delay, rate.seconds / max(1, rate.requests))
-        if delay > 60:
-            return [{**r, 'reason': 'robots_delay_exceeds_audit_budget'} for r in rows]
-        blocked = False
-        for row in rows:
-            url = row['url']
-            if blocked:
-                row['reason'] = 'host_circuit_open'; continue
-            if not rules.can_fetch(BOT, url):
-                row['reason'] = 'robots_disallowed'; continue
-            try:
-                response = get(url, delay)
-                row['http_status'] = response.status_code
-                row['observed_at'] = datetime.now(timezone.utc).isoformat()
-                if response.status_code in (403, 429, 500, 502, 503, 504):
-                    blocked = True
-                if response.status_code != 200:
-                    row['reason'] = 'http_error_or_redirect_not_followed'; continue
-                soup = BeautifulSoup(response.text, 'html.parser')
-                if re.search(r'captcha|just a moment|access denied|robot check',
-                             ' '.join(e.get_text(' ', strip=True) for e in soup.select('title,h1')), re.I):
-                    blocked = True; row['reason'] = 'challenge_page'; continue
-                row.update(document_evidence(response.text, url, profiles[row['slug']]))
-                row['reason'] = 'research_only_not_approved'
-            except requests.RequestException:
-                blocked = True; row['reason'] = 'transport_error'
-    except requests.RequestException:
-        return [{**r, 'reason': 'robots_transport_error'} for r in rows]
+    blocked = False
+    for row in rows:
+        url = row['url']
+        if blocked:
+            row['reason'] = 'host_circuit_open'; continue
+        try:
+            response = get(url)
+            row['http_status'] = response.status_code
+            row['observed_at'] = datetime.now(timezone.utc).isoformat()
+            if response.status_code in (403, 429, 500, 502, 503, 504):
+                blocked = True
+            if response.status_code != 200:
+                row['reason'] = 'http_error_or_redirect_not_followed'; continue
+            soup = BeautifulSoup(response.text, 'html.parser')
+            if re.search(r'captcha|just a moment|access denied|robot check',
+                         ' '.join(e.get_text(' ', strip=True) for e in soup.select('title,h1')), re.I):
+                blocked = True; row['reason'] = 'challenge_page'; continue
+            row.update(document_evidence(response.text, url, profiles[row['slug']]))
+            row['reason'] = 'research_only_not_approved'
+        except requests.RequestException:
+            blocked = True; row['reason'] = 'transport_error'
     return rows
 
 

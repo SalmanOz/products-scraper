@@ -89,19 +89,7 @@ class TeknosaReviewedSourceTests(unittest.TestCase):
         self.assertEqual(parse_exact_first_party_offer(page(), URL + '?shopId=teknosa')[1],
                          'wrong_or_oversized_pdp')
 
-    def test_robots_denial_blocks_pdp_request(self):
-        calls = []
-
-        def get(url, **kwargs):
-            calls.append(url)
-            return Response(url, 200, b'User-agent: *\nDisallow: /\n')
-
-        offer, reason, status = TeknosaReviewedSource(get=get).read_offer()
-        self.assertIsNone(offer)
-        self.assertEqual((reason, status), ('robots_disallowed', 200))
-        self.assertEqual(calls, [ROBOTS_URL])
-
-    def test_bounded_403_browser_fallback_reads_only_robots_and_reviewed_pdp(self):
+    def test_bounded_403_browser_fallback_reads_only_reviewed_pdp(self):
         requests = []
         def get(url, **kwargs):
             requests.append(('get', url))
@@ -120,8 +108,7 @@ class TeknosaReviewedSourceTests(unittest.TestCase):
         offer, reason, status = reader.read_offer()
         self.assertEqual((offer['price'], reason, status),
                          (68999.0, 'observed_exact_first_party_cash_offer', 200))
-        self.assertEqual(requests, [('get', ROBOTS_URL), ('browser', ROBOTS_URL),
-                                    ('get', URL), ('browser', URL)])
+        self.assertEqual(requests, [('get', URL), ('browser', URL)])
         self.assertEqual(reader.read_offer(URL + '?shopId=teknosa')[1], 'unreviewed_pdp')
 
     def test_reviewed_url_routes_through_strict_reader_and_rechecks_model(self):

@@ -24,7 +24,7 @@ jobs:
           cache: pip
       - name: Install dependencies
         run: pip install -r requirements.txt
-      - name: Test robots, sitemap XML and exact URL hint boundaries
+      - name: Test sitemap XML and exact URL hint boundaries
         run: python -m unittest -q test_teknosa_sitemap_audit
       - name: Start bounded read-only browser GET service
         run: |
@@ -35,7 +35,7 @@ jobs:
           done
           docker logs teknosa-sitemap-browser
           exit 1
-      - name: Read robots, index and one product shard without writes
+      - name: Read the index and one product shard without writes
         env:
           TEKNOSA_SITEMAP_AUDIT_OUTPUT_DIR: ${{ runner.temp }}
         run: python audit_teknosa_sitemap.py

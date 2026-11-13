@@ -1,6 +1,6 @@
 """MediaMarkt's public phone sitemap and selected first-party PDP offers.
 
-Sitemap entries are URL hints only. Each price requires a fresh, robots-allowed
+Sitemap entries are URL hints only. Each price requires a fresh, bounded
 product GET and matching selected Product/Offer, visible price and stock.
 """
 
@@ -14,7 +14,6 @@ from datetime import datetime, timezone
 from html import unescape
 from threading import RLock
 from urllib.parse import unquote, urljoin, urlparse
-from urllib.robotparser import RobotFileParser
 
 from bs4 import BeautifulSoup
 from curl_cffi.requests import RequestsError
@@ -206,11 +205,8 @@ class MediaMarktSource:
         self._get, self._post = get or requests.get, post or requests.post
         self._sleep, self._monotonic = sleep, monotonic
         self._lock = RLock()
-        self._rules = None
-        self._robots_loaded = False
         self._sitemaps_loaded = False
         self._urls = []
-        self._robots_status = 'not_loaded'
         self._sitemap_status = 'not_loaded'
         self._delay = 0.5
         self._last_request = None
@@ -281,42 +277,6 @@ class MediaMarktSource:
         finally:
             response.close()
 
-    def _load_robots(self):
-        if self._robots_loaded:
-            return
-        with self._lock:
-            if self._robots_loaded:
-                return
-            self._robots_loaded = True
-            try:
-                body, reason, _ = self._direct(ROBOTS_URL, MAX_ROBOTS_BYTES, 'text/plain')
-                if reason != 'ready':
-                    self._robots_status = reason
-                    return
-                policy = body.decode('utf-8-sig', errors='strict')
-                if (re.search(r'<(?:!doctype|html|head|body)\b', policy, re.I)
-                        or not re.search(r'^\s*user-agent\s*:', policy, re.I | re.M)):
-                    self._robots_status = 'invalid_policy'
-                    return
-                advertised = set(re.findall(r'^\s*Sitemap:\s*(\S+)\s*$', policy, re.I | re.M))
-                if not set(SITEMAP_URLS).issubset(advertised):
-                    self._robots_status = 'sitemaps_not_advertised'
-                    return
-                rules = RobotFileParser()
-                rules.parse(policy.splitlines())
-                delay = float(rules.crawl_delay(BOT) or 0)
-                rate = rules.request_rate(BOT)
-                if rate:
-                    delay = max(delay, rate.seconds / max(1, rate.requests))
-                if delay > 30:
-                    self._robots_status = 'crawl_delay_exceeds_budget'
-                    return
-                self._rules = rules
-                self._delay = max(0.5, delay)
-                self._robots_status = 'ready'
-            except (requests.RequestException, RequestsError, OSError, ValueError, UnicodeError):
-                self._robots_status = 'unavailable'
-
     def _load_sitemaps(self):
         if self._sitemaps_loaded:
             return
@@ -324,15 +284,9 @@ class MediaMarktSource:
             if self._sitemaps_loaded:
                 return
             self._sitemaps_loaded = True
-            self._load_robots()
-            if self._rules is None:
-                self._sitemap_status = 'robots_unavailable'
-                return
             urls = []
             try:
                 for url in SITEMAP_URLS:
-                    if not self._rules.can_fetch(BOT, url):
-                        raise ValueError('sitemap_disallowed')
                     body, reason, _ = self._direct(url, MAX_SITEMAP_BYTES,
                                                    'application/xml,text/xml')
                     if reason != 'ready':
@@ -345,7 +299,7 @@ class MediaMarktSource:
                     for item in root:
                         loc = item.find(_NS + 'loc')
                         candidate = loc.text.strip() if loc is not None and loc.text else ''
-                        if product_url(candidate) and self._rules.can_fetch(BOT, candidate):
+                        if product_url(candidate):
                             urls.append(candidate)
                 self._urls = list(dict.fromkeys(urls))
                 self._sitemap_status = 'ready'
@@ -385,7 +339,7 @@ class MediaMarktSource:
             if not isinstance(payload, dict) or payload.get('status') != 'ok' or not isinstance(solution, dict):
                 return None, None, 'solver_unavailable'
             final_url = solution.get('url')
-            if not product_url(final_url) or not self._rules.can_fetch(BOT, final_url):
+            if not product_url(final_url):
                 return None, None, 'unsafe_browser_redirect'
             if solution.get('status') != 200:
                 return None, None, f"site_http_{solution.get('status')}"
@@ -407,17 +361,14 @@ class MediaMarktSource:
             offer = load_verified_offer(self._preflight_file, source_url, self._now())
             return (offer, 'observed_exact_offer_from_preflight', 200) if offer else (
                 None, 'preflight_invalid_or_stale', None)
-        self._load_robots()
-        if self._rules is None:
-            return None, 'robots_unavailable', None
         current = source_url
         for redirects in range(3):
-            if not product_url(current) or not self._rules.can_fetch(BOT, current):
+            if not product_url(current):
                 return None, 'disallowed_or_changed_url', None
             try:
                 body, reason, status = self._direct(current, MAX_HTML_BYTES, 'text/html')
                 if reason == 'redirect':
-                    if redirects == 2 or not product_url(body) or not self._rules.can_fetch(BOT, body):
+                    if redirects == 2 or not product_url(body):
                         return None, 'unsafe_redirect', status
                     current = body
                     continue
@@ -463,7 +414,7 @@ class MediaMarktSource:
         return None, 'redirect_limit', None
 
     def report(self):
-        return {'robots_status': self._robots_status, 'sitemap_status': self._sitemap_status,
+        return {'sitemap_status': self._sitemap_status,
                 'eligible_urls': len(self._urls), 'direct_requests': self._direct_count,
                 'browser_requests': self._browser_count,
                 'direct_request_limit': self._direct_limit,

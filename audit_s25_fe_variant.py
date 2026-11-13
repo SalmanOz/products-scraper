@@ -45,7 +45,7 @@ def summary(report):
     source = report['mediamarkt_source']
     lines = ['## Samsung Galaxy S25 FE 8/256 first-party PDP pilot (read only)',
              f"Verified {report['verified_urls']}/{len(URLS)} exact colors; "
-             f"robots {source['robots_status']}; browser GET "
+             f"browser GET "
              f"{source['browser_html_responses']}/{source['browser_requests']}."]
     for row in report['products']:
         attempt = row['source_attempts'][0] if row['source_attempts'] else {}

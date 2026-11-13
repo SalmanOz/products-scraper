@@ -1,6 +1,6 @@
 """Two reviewed MediaMarkt marketplace buy boxes, with real seller identity.
 
-The transport shares MediaMarkt's robots policy and bounded direct/browser
+The transport shares MediaMarkt's bounded direct/browser
 budgets. A marketplace price never becomes a MediaMarkt first-party offer.
 """
 
@@ -11,7 +11,7 @@ import requests
 
 from mediamarkt_marketplace_audit import (catalog_variant_matches,
                                          selected_marketplace_offer)
-from mediamarkt_source import BOT, MAX_HTML_BYTES, MediaMarktSource, product_url
+from mediamarkt_source import MAX_HTML_BYTES, MediaMarktSource, product_url
 
 
 PROFILES = {
@@ -138,11 +138,6 @@ class MediaMarktMarketplaceSource:
         if not profile or not product_url(url):
             return None, 'unreviewed_marketplace_url', None
         transport = self.transport
-        transport._load_robots()
-        if transport._rules is None:
-            return None, 'robots_unavailable', None
-        if not transport._rules.can_fetch(BOT, url):
-            return None, 'robots_disallowed', None
         try:
             body, reason, status = transport._direct(url, MAX_HTML_BYTES, 'text/html')
             if reason == 'http_403':

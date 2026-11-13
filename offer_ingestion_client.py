@@ -725,7 +725,6 @@ class OfferIngestionClient:
         search_key = {'/arama': 'q', N11_PHONE_SEARCH_PATH: 'iw'}.get(parsed.path)
         if (parsed.scheme != 'https' or parsed.netloc != 'www.n11.com' or parsed.fragment
                 or not (n11_product_selectors(url) is not None
-                        or parsed.path == '/robots.txt' and not parsed.query
                         or search_key is not None and len(query) == 1 and query[0][0] == search_key
                         and 1 <= len(query[0][1]) <= 180 and not re.search(r'[\x00-\x1f\x7f]', query[0][1]))):
             raise requests.RequestException('Invalid public n11 collector destination')
@@ -735,7 +734,7 @@ class OfferIngestionClient:
                 headers={'Authorization': f'Bearer {self.secret}', 'Accept': 'application/json'},
                 json={'url': url})
             stamp = datetime.fromisoformat(body['observed_at'].replace('Z', '+00:00'))
-            maximum = 64 * 1024 if parsed.path == '/robots.txt' else 5 * 1024 * 1024
+            maximum = 5 * 1024 * 1024
             if (body.get('purpose') != 'public_n11_document' or body.get('writes') is not False
                     or body.get('url') != url or type(body.get('source_status')) is not int
                     or not 100 <= body['source_status'] <= 599
@@ -779,7 +778,7 @@ class OfferIngestionClient:
                 headers={'Authorization': f'Bearer {self.secret}', 'Accept': 'application/json'},
                 json={'url': url})
             stamp = datetime.fromisoformat(body['observed_at'].replace('Z', '+00:00'))
-            maximum = 64 * 1024 if route.path == '/robots.txt' else 5 * 1024 * 1024
+            maximum = 5 * 1024 * 1024
             if (body.get('purpose') != 'public_monitor_document' or body.get('writes') is not False
                     or body.get('url') != url or type(body.get('source_status')) is not int
                     or not 100 <= body['source_status'] <= 599 or not isinstance(body.get('document'), str)

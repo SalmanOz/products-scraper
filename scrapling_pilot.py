@@ -4,7 +4,7 @@ No credentials, ingestion client instance, database, price/score writes,
 adaptive matching, proxy, challenge solving, cart or login interaction.
 Only approved PDP targets are tested. Both lanes use the production parser,
 reviewed-SKU checks and outlier guard; extra = distinct (model, merchant),
-not extra URLs. Robots/access failures block both lanes, never trigger bypass.
+not extra URLs. Access failures stop further reads for the affected host.
 """
 
 from collections import Counter
@@ -21,7 +21,6 @@ import re
 import socket
 import time
 from urllib.parse import urlparse
-from urllib.robotparser import RobotFileParser
 
 import requests
 from bs4 import BeautifulSoup
@@ -87,7 +86,7 @@ def plain_get(url):
 class Policy:
     def __init__(self, get=plain_get, sleep=time.sleep, clock=time.monotonic):
         self.get, self.sleep, self.clock = get, sleep, clock
-        self.rules, self.denied, self.last, self.counts = {}, {}, {}, Counter()
+        self.denied, self.last, self.counts = {}, {}, Counter()
 
     def prepare(self, url):
         if not _safe_url(url):
@@ -95,30 +94,9 @@ class Policy:
         origin = 'https://' + urlparse(url).netloc
         if origin in self.denied:
             return self.denied[origin]
-        if origin not in self.rules:
-            try:
-                doc = self.get(origin + '/robots.txt')
-                if (doc.status != 200 or re.search(r'<(?:!doctype|html|body|head)\b', doc.text, re.I)
-                        or not re.search(r'^\s*user-agent\s*:', doc.text, re.I | re.M)):
-                    self.denied[origin] = f'robots_unavailable_http_{doc.status}'
-                    return self.denied[origin]
-                rules = RobotFileParser()
-                rules.parse(doc.text.splitlines())
-                self.rules[origin] = rules
-                self.last[origin] = self.clock()
-            except (requests.RequestException, ValueError, OSError):
-                self.denied[origin] = 'robots_transport_error'
-                return self.denied[origin]
-        rules = self.rules[origin]
-        if not rules.can_fetch(BOT, url):
-            return 'robots_disallowed'
-        rate = rules.request_rate(BOT)
-        delay = max(1.0, rules.crawl_delay(BOT) or 0, rate.seconds / max(1, rate.requests) if rate else 0)
-        if delay > 30:
-            return 'crawl_delay_exceeds_budget'
         if self.counts[origin] >= 24:
             return 'host_request_budget_reached'
-        self.sleep(max(0, delay - (self.clock() - self.last.get(origin, -1000))))
+        self.sleep(max(0, 1.0 - (self.clock() - self.last.get(origin, -1000))))
         self.last[origin] = self.clock()
         self.counts[origin] += 1
         return None
@@ -171,12 +149,11 @@ def browser_request_allowed(url, method, kind, target, rules, host_check=public_
                 or PROHIBITED.search(p.path + '?' + p.query)):
             return False
         if kind == 'document':
-            return url == target and rules.can_fetch(BOT, url)
+            return url == target
         if kind in ('script', 'stylesheet'):
             # Public static CDNs may load; no images, media, trackers or frames.
-            return p.netloc != base.netloc or rules.can_fetch(BOT, url)
-        return (kind in ('xhr', 'fetch') and p.netloc == base.netloc
-                and rules.can_fetch(BOT, url))
+            return True
+        return kind in ('xhr', 'fetch') and p.netloc == base.netloc
     except (ValueError, TypeError):
         return False
 
@@ -316,8 +293,7 @@ def run(profiles, policy, reader, catalog_get=plain_get):
                     elif lane == 'scrapling_http':
                         doc = reader.http(target)
                     else:
-                        origin = 'https://' + urlparse(target).netloc
-                        doc, events = reader.browser(target, policy.rules[origin])
+                        doc, events = reader.browser(target, None)
                     policy.observe(doc)
                     row[lane] = assess(profile, target, doc)
                     if lane == 'scrapling_browser':

@@ -857,7 +857,7 @@ class RetailerOfferRefresher:
                 host = parsed.hostname.removeprefix('www.')
                 blocked = (host in self._blocked_hosts
                            or self._transient_blocked_until.get(host, 0) > self._clock())
-            # Vatan catalog-matched PDPs use their own robots gate, bounded
+            # Vatan catalog-matched PDPs use their own request pacing, bounded
             # browser fallback and failure circuit after a denied direct GET.
             if blocked and not reviewed_vatan:
                 self._record_attempt(source_url, 'host_circuit_open')

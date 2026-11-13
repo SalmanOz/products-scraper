@@ -3,7 +3,6 @@
 import argparse
 from datetime import datetime, timezone
 import json
-from urllib.robotparser import RobotFileParser
 
 from daily_discovery import MAX_BODY, PublicReader, model_key, product_names
 from priority_retailer_transport import compatible_get
@@ -57,10 +56,6 @@ def prepare():
             or 'text/html' not in official.headers.get('Content-Type', '')
             or not any(model_key(name) == model_key(NAME) for name in product_names(official.text, MANUFACTURER))):
         raise ValueError('manufacturer_model_unverified')
-    robots = RobotFileParser()
-    robots.parse(reader.read(OZGUR_BASE + '/robots.txt').splitlines())
-    if any(not robots.can_fetch('TeknoskorPriceBot', url) for url in (OZGUR, OZGUR_TERMS)):
-        raise ValueError('ozgur_robots_disallowed')
     direct, _ = ozgur_offer(reader.read(OZGUR), reader.read(OZGUR_TERMS), url=OZGUR, name=NAME,
                                specs=SPECS, mpn='REDMI-NOTE-17-PRO-MAX-5G-SIYAH-256GB',
                                gtin=GTIN, brand='Xiaomi')

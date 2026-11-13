@@ -73,7 +73,7 @@ class TwsRefreshTest(TestCase):
         self.assertEqual(reader.call_args.args[0], 'www.pazarama.com')
         self.assertIs(reader.call_args.kwargs['document_reader'], gateway.return_value)
 
-    def test_teknosa_uses_the_existing_unavailable_robots_policy_for_exact_earbud_pages(self):
+    def test_teknosa_uses_direct_transport_for_exact_earbud_pages(self):
         host = 'www.teknosa.com'
         url = f'https://{host}/anker-aerofit-2-siyah-p-100000063496'
         with patch('tws_catalog_expansion.PriorityRetailerTransport') as factory:
@@ -81,7 +81,7 @@ class TwsRefreshTest(TestCase):
             transport.read_fresh_document.return_value = None, 'http_403', 403
             transport.resolved_url.return_value = url
             offers, reasons = reread(host, [('Anker Soundcore AeroFit 2', {'url': url})], discover=True)
-        self.assertEqual(factory.call_args.kwargs['unavailable_robots_hosts'], (host,))
+        self.assertFalse(factory.call_args.kwargs['browser_fallback'])
         self.assertFalse(factory.call_args.kwargs['browser_fallback'])
         self.assertFalse(offers)
         self.assertEqual(reasons, {'http_403': 1})

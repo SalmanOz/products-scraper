@@ -26,7 +26,7 @@ jobs:
           done
           docker logs apple-store-audit-browser
           exit 1
-      - name: Probe robots and selected Apple Store variant without writes
+      - name: Probe the selected Apple Store variant without writes
         env:
           APPLE_STORE_AUDIT_OUTPUT_DIR: ${{ runner.temp }}
         run: python audit_apple_store_access.py

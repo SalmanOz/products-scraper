@@ -24,7 +24,7 @@ jobs:
           cache: pip
       - name: Install dependencies
         run: pip install -r requirements.txt
-      - name: Test selected buy box and robots denial contracts
+      - name: Test selected buy box and request bounds
         run: python -m unittest -q test_s25_fe_hepsiburada_audit
       - name: Start bounded read-only browser GET service
         run: |

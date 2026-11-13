@@ -1,4 +1,4 @@
-"""Selected Türk Telekom eMağaza phone offers from public, robots-allowed pages.
+"""Selected Türk Telekom eMağaza phone offers from public, product pages.
 
 Stock-filtered category cards are URL hints. Only the selected ``?v=`` PDP,
 its enabled credit-card cash option, and its selected variant title establish
@@ -10,7 +10,6 @@ import re
 import time
 from threading import RLock
 from urllib.parse import parse_qsl, urljoin, urlparse
-from urllib.robotparser import RobotFileParser
 
 from bs4 import BeautifulSoup
 import requests
@@ -145,11 +144,9 @@ class TurkTelekomSource:
         self._get = get or requests.get
         self._sleep, self._monotonic = sleep, monotonic
         self._lock = RLock()
-        self._rules = None
         self._loaded = False
         self._cards = []
         self._status = 'not_loaded'
-        self._robots_status = 'not_loaded'
         self._last_request = None
         self._delay = 0.5
         self._pdp_requests = 0
@@ -158,14 +155,14 @@ class TurkTelekomSource:
         self._matcher = TRPriceScraper()
 
     def _request(self, url, limit):
-        if self._blocked or (self._rules and not self._rules.can_fetch(BOT, url)):
+        if self._blocked:
             raise ValueError('blocked_or_disallowed')
         if self._last_request is not None:
             self._sleep(max(0, self._delay - (self._monotonic() - self._last_request)))
         self._last_request = self._monotonic()
         response = self._get(url, timeout=(5, 15), allow_redirects=False, stream=True,
                              headers={'User-Agent': BOT + '/1.0 (+https://teknoskor.com)',
-                                      'Accept': 'text/plain' if url == ROBOTS_URL else 'text/html',
+                                      'Accept': 'text/html',
                                       'Accept-Language': 'tr-TR,tr;q=0.9'})
         try:
             if response.status_code in (403, 429):
@@ -184,40 +181,14 @@ class TurkTelekomSource:
         finally:
             response.close()
 
-    def _ensure_robots(self):
-        if self._rules is not None:
-            return
-        text, reason, _ = self._request(ROBOTS_URL, MAX_ROBOTS_BYTES)
-        if reason != 'ok' or not re.search(r'^\s*User-agent\s*:', text, re.I | re.M):
-            self._robots_status = reason if reason != 'ok' else 'invalid_robots'
-            raise ValueError('robots_unavailable')
-        rules = RobotFileParser()
-        rules.parse(text.splitlines())
-        if not rules.can_fetch(BOT, CATEGORY_URL):
-            self._robots_status = 'category_disallowed'
-            raise ValueError('category_disallowed')
-        delay = float(rules.crawl_delay(BOT) or 0)
-        rate = rules.request_rate(BOT)
-        if rate:
-            delay = max(delay, rate.seconds / max(1, rate.requests))
-        if delay > 30:
-            self._robots_status = 'crawl_delay_exceeds_budget'
-            raise ValueError('crawl_delay_exceeds_budget')
-        self._delay = max(0.5, delay)
-        self._rules = rules
-        self._robots_status = 'allowed'
-
     def _load(self):
         if self._loaded:
             return
         self._loaded = True
         try:
-            self._ensure_robots()
             seen = set()
             for page in range(MAX_CATEGORY_PAGES):
                 url = CATEGORY_URL + (f'&page={page}' if page else '')
-                if not self._rules.can_fetch(BOT, url):
-                    raise ValueError('category_disallowed')
                 body, reason, _ = self._request(url, MAX_HTML_BYTES)
                 self._category_requests += 1
                 if reason != 'ok':
@@ -232,7 +203,7 @@ class TurkTelekomSource:
                 for card in cards:
                     heading = card.select_one('h3.dls-device-card-heading-text')
                     target = urljoin(url, card.get('href', ''))
-                    if heading and product_url(target) and self._rules.can_fetch(BOT, target) and target not in seen:
+                    if heading and product_url(target) and target not in seen:
                         seen.add(target)
                         self._cards.append((target, heading.get_text(' ', strip=True)))
             self._status = 'ready'
@@ -266,9 +237,6 @@ class TurkTelekomSource:
             return None, 'invalid_turk_telekom_pdp_url', None
         with self._lock:
             try:
-                self._ensure_robots()
-                if not self._rules.can_fetch(BOT, url):
-                    return None, 'robots_disallowed', None
                 if self._pdp_requests >= MAX_PDP_REQUESTS:
                     return None, 'pdp_budget_exhausted', None
                 self._pdp_requests += 1
@@ -283,7 +251,7 @@ class TurkTelekomSource:
                 return None, type(error).__name__, None
 
     def report(self):
-        return {'status': self._status, 'robots_status': self._robots_status,
+        return {'status': self._status,
                 'category_requests': self._category_requests,
                 'stock_card_urls': len(self._cards), 'pdp_requests': self._pdp_requests,
                 'blocked': self._blocked}

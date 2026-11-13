@@ -63,7 +63,6 @@ def test_n11_collector_redirect_metadata_stays_bound_to_the_same_product_group()
                 'document': 'User-agent: *\nAllow: /\n' if url.endswith('robots.txt') else '<h1>Phone</h1>',
                 'content_type': 'text/html', **({'redirect_url': redirect} if redirect is not None else {})}
     session = FakeSession([
-        FakeResponse(200, body('https://www.n11.com/robots.txt')),
         FakeResponse(200, body(original, 301, canonical)),
         FakeResponse(200, body(canonical)),
     ])
@@ -71,8 +70,7 @@ def test_n11_collector_redirect_metadata_stays_bound_to_the_same_product_group()
     transport = PriorityRetailerTransport(n11_collector=client.n11_document_get, sleep=lambda _: None)
     assert transport.read_document(original)[1:] == ('document_read', 200)
     assert transport.resolved_url(original) == canonical
-    assert [call[2]['json']['url'] for call in session.calls] == [
-        'https://www.n11.com/robots.txt', original, canonical]
+    assert [call[2]['json']['url'] for call in session.calls] == [original, canonical]
     for destination, status in [(canonical.replace('12345678', '12345679'), 301),
         (canonical + '?magaza=other', 301), ('https://evil.example', 301), (canonical, 200),
         (canonical, 403), (123, 301)]:
@@ -94,7 +92,6 @@ def test_dedicated_n11_collector_keeps_authentication_on_our_host_and_binds_fres
                 'source_status': status, 'observed_at': datetime.now(timezone.utc).isoformat(),
                 'document': document, 'content_type': 'text/html'}
     session = FakeSession([
-        FakeResponse(200, body('https://www.n11.com/robots.txt', 'User-agent: *\nAllow: /\n')),
         FakeResponse(200, body(target, 'denied', 403)),
     ])
     client = OfferIngestionClient('https://teknoskor.com', TEST_SECRET, session=session)
@@ -104,7 +101,7 @@ def test_dedicated_n11_collector_keeps_authentication_on_our_host_and_binds_fres
                                          n11_collector=client.n11_document_get)
     assert transport.read_document(target)[1:] == ('http_403', 403)
     assert transport.read_document(target + '1')[1] == 'source_circuit_open'
-    assert len(session.calls) == 2
+    assert len(session.calls) == 1
     for method, url, options in session.calls:
         assert method == 'POST'
         assert url == 'https://teknoskor.com/api/ingestion/n11-document'
@@ -1104,8 +1101,7 @@ class N11CollectorBoundaryTests(TestCase):
                     'source_status': status, 'observed_at': datetime.now(timezone.utc).isoformat(),
                     'document': 'User-agent: *\nAllow: /\n' if url.endswith('robots.txt') else '',
                     'content_type': 'text/html', 'redirect_diagnostic': info}
-        session = FakeSession([FakeResponse(200, body('https://www.n11.com/robots.txt', 200)),
-                               FakeResponse(200, body(target))])
+        session = FakeSession([FakeResponse(200, body(target))])
         client = OfferIngestionClient('https://teknoskor.com', TEST_SECRET, session=session)
         source = PriorityRetailerTransport(n11_collector=client.n11_document_get, sleep=lambda _: None)
         row = inspect_target(source, target, {'slug': 'a57-test'})
@@ -1113,7 +1109,7 @@ class N11CollectorBoundaryTests(TestCase):
         self.assertEqual(row['redirect_diagnostic'], diagnostic)
         self.assertIsNone(row.get('prepared_offer'))
         self.assertEqual(source.resolved_url(target), target)
-        self.assertEqual([c[2]['json']['url'] for c in session.calls], ['https://www.n11.com/robots.txt', target])
+        self.assertEqual([c[2]['json']['url'] for c in session.calls], [target])
         self.assertEqual(source.report()['n11']['pdp_requests'], 1)
         for wrong in [None, {}, {**diagnostic, 'target': 'must-not-appear'},
                       {**diagnostic, 'reason': ['must-not-appear']},
@@ -1140,15 +1136,14 @@ class N11CollectorBoundaryTests(TestCase):
                     'source_status': status, 'observed_at': datetime.now(timezone.utc).isoformat(),
                     'document': 'User-agent: *\nAllow: /\n' if url.endswith('robots.txt') else '<h1>Phone</h1>',
                     'content_type': 'text/html', **({'unscoped_redirect_url': destination} if destination is not None else {})}
-        session = FakeSession([FakeResponse(200, body('https://www.n11.com/robots.txt')),
-                               FakeResponse(200, body(original, 301, target)),
+        session = FakeSession([FakeResponse(200, body(original, 301, target)),
                                FakeResponse(200, body(target))])
         client = OfferIngestionClient('https://teknoskor.com', TEST_SECRET, session=session)
         source = PriorityRetailerTransport(n11_collector=client.n11_document_get, sleep=lambda _: None)
         self.assertEqual(source.read_document(original)[1:], ('document_read', 200))
         self.assertEqual(source.resolved_url(original), target)
         self.assertEqual([call[2]['json']['url'] for call in session.calls],
-                         ['https://www.n11.com/robots.txt', original, target])
+                         [original, target])
         self.assertEqual(source.report()['n11']['unscoped_redirect_requests'], 1)
         for destination, status in [(target + '?magaza=other', 301),
                 (target.replace('12345678', '12345679'), 301), ('https://evil.example', 301),

@@ -195,7 +195,7 @@ class TrendyolDiscoveryTests(unittest.TestCase):
         transport = PriorityRetailerTransport(get=get, sleep=lambda _: None)
         with patch('sweep_priority_catalog.refresh_candidates') as writer:
             result = sweep(client=client, transport=transport, discover_trendyol=True, publish=True)
-        self.assertEqual(calls, ['https://www.trendyol.com/robots.txt', CATEGORY_URL, retired, brand, target])
+        self.assertEqual(calls, [CATEGORY_URL, retired, brand, target])
         discovery = result['trendyol_category_discovery']
         self.assertEqual(discovery['incomplete_pages'], [retired])
         self.assertFalse(discovery['pagination_complete'])
@@ -435,7 +435,7 @@ class TrendyolDiscoveryTests(unittest.TestCase):
             enumerate(['Xiaomi Redmi Note 14','Redmi Note 13'])]
         self.assertEqual(recovery_seed_targets(subbrands,{}),subbrands[:1])
 
-    def test_brand_and_root_pages_share_existing_category_budget_and_robots_with_pdp_quota_preserved(self):
+    def test_brand_and_root_pages_share_category_budget_with_pdp_quota_preserved(self):
         brand='https://www.trendyol.com/infinix-android-cep-telefonu-x-b158303-c164461'
         calls=[]
         def get(url,**_):
@@ -448,11 +448,7 @@ class TrendyolDiscoveryTests(unittest.TestCase):
         self.assertEqual(transport.read_trendyol_category(brand+'?pi=51')[1],'category_budget_exhausted')
         self.assertEqual(transport.read_document(URL)[1],'document_read')
         self.assertEqual((transport.report()['Trendyol']['category_requests'],transport.report()['Trendyol']['pdp_requests']),(100,1))
-        self.assertEqual(len(calls),102)
-        denied=PriorityRetailerTransport(get=lambda url,**_:Response(url,
-            'User-agent: *\nDisallow: /infinix-android-cep-telefonu-x-b158303-c164461\n'),sleep=lambda _:None)
-        self.assertEqual(denied.read_trendyol_category(brand)[1],'robots_disallowed')
-
+        self.assertEqual(len(calls),101)
     def test_sold_out_seed_breadcrumb_reaches_new_brand_listing_then_fresh_atomic_publication(self):
         from sweep_priority_catalog import sweep
         from test_priority_candidates import Client
@@ -576,9 +572,6 @@ class TrendyolDiscoveryTests(unittest.TestCase):
         self.assertEqual(transport.report()['Trendyol']['category_requests'], 2)
         self.assertEqual(transport.report()['Trendyol']['pdp_requests'], 1)
         self.assertEqual(transport.read_trendyol_category(CATEGORY_URL + '?pi=1000')[1], 'invalid_catalog_category')
-        denied = PriorityRetailerTransport(get=lambda url, **_: Response(url,
-            'User-agent: *\nDisallow: /cep-telefonu-x-c103498\n'), sleep=lambda _: None)
-        self.assertEqual(denied.read_trendyol_category(CATEGORY_URL)[1], 'robots_disallowed')
 
     def test_full_catalog_discovery_has_room_for_three_pdp_destinations_per_110_models(self):
         transport = PriorityRetailerTransport(get=lambda url, **_: Response(url,

@@ -7,8 +7,6 @@
 //! Deferred (fail-closed, phase 2/3):
 //! - dedicated catalog readers (hepsiburada/trendyol/n11/teknosa/mediamarkt/
 //!   apple/turktelekom/pasaj) answer `dedicated_reader_pending`;
-//! - the reviewed Vatan gate stays plain GET (`is_reviewed` → false), so no
-//!   browser fallback and no `reviewed_url_redirect` branch fire;
 //! - gate denials surface as `transport_error` in the engine diagnostics,
 //!   exactly like the Python `except requests.RequestException` handler; the
 //!   detailed gate reason stays in the gate's own report.
@@ -26,7 +24,8 @@ use psr_core::url::{
 use psr_parse::{is_challenge_page, product_offer_document, product_offer_permissive};
 
 use crate::circuit::{HostCircuits, TRANSIENT_CIRCUIT_COOLDOWN_SECONDS};
-use crate::robots::RobotsGate;
+use crate::retailer_gate::RetailerGate;
+use crate::vatan::VatanReviewedSource;
 
 /// `retailer_offer_refresh._MAX_BODY_BYTES`.
 pub const MAX_BODY_BYTES: usize = 5 * 1024 * 1024;
@@ -52,6 +51,7 @@ pub enum AttemptReason {
     NoExactProductOffer,
     ObservedExactOffer,
     DedicatedReaderPending,
+    ReviewedUrlRedirect,
 }
 
 impl AttemptReason {
@@ -72,6 +72,7 @@ impl AttemptReason {
             AttemptReason::NoExactProductOffer => "no_exact_product_offer",
             AttemptReason::ObservedExactOffer => "observed_exact_offer",
             AttemptReason::DedicatedReaderPending => "dedicated_reader_pending",
+            AttemptReason::ReviewedUrlRedirect => "reviewed_url_redirect",
         }
     }
 }
@@ -81,6 +82,8 @@ impl AttemptReason {
 pub struct AttemptRecord {
     pub reason: String,
     pub http_status: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transport: Option<String>,
 }
 
 #[derive(Debug)]
@@ -107,8 +110,9 @@ enum Hop {
 /// `RetailerOfferRefresher` instance.
 pub struct FetchEngine {
     http: reqwest::Client,
-    public_gate: RobotsGate,
-    pazarama_gate: RobotsGate,
+    public_gate: RetailerGate,
+    pazarama_gate: RetailerGate,
+    vatan: VatanReviewedSource,
     circuits: HostCircuits,
     cache: Mutex<HashMap<String, Option<OfferObservation>>>,
     diagnostics: Mutex<HashMap<String, AttemptRecord>>,
@@ -135,8 +139,9 @@ impl FetchEngine {
     fn build(http: reqwest::Client, permissive: bool) -> Self {
         Self {
             http: http.clone(),
-            public_gate: RobotsGate::public(http.clone()),
-            pazarama_gate: RobotsGate::pazarama(http),
+            public_gate: RetailerGate::public(http.clone()),
+            pazarama_gate: RetailerGate::pazarama(http),
+            vatan: VatanReviewedSource::new(),
             circuits: HostCircuits::new(),
             cache: Mutex::new(HashMap::new()),
             diagnostics: Mutex::new(HashMap::new()),
@@ -177,11 +182,16 @@ impl FetchEngine {
     }
 
     async fn record(&self, source_url: &str, reason: AttemptReason, status: Option<u16>) {
+        self.record_reason(source_url, reason.as_str(), status).await;
+    }
+
+    async fn record_reason(&self, source_url: &str, reason: &str, status: Option<u16>) {
         self.diagnostics.lock().await.insert(
             source_url.to_string(),
             AttemptRecord {
-                reason: reason.as_str().to_string(),
+                reason: reason.to_string(),
                 http_status: status,
+                transport: None,
             },
         );
     }
@@ -206,6 +216,7 @@ impl FetchEngine {
             .or_insert_with(|| AttemptRecord {
                 reason: "target_budget_skipped".to_string(),
                 http_status: None,
+                transport: None,
             });
     }
 
@@ -247,6 +258,7 @@ impl FetchEngine {
             variant_query(parsed).unwrap_or_default();
         let mut current = source_url.to_string();
         let mut candidate: Option<OfferObservation> = None;
+        let mut browser_response = false;
 
         self.record(source_url, AttemptReason::NoExactProductOffer, None)
             .await;
@@ -255,9 +267,13 @@ impl FetchEngine {
             let Some(parsed) = self.check_url(&current) else {
                 break;
             };
-            // Reviewed Vatan gate is deferred: plain GET, no browser
-            // fallback, no `prepare()` restriction.
-            let reviewed_vatan = false;
+            let reviewed_vatan = !self.permissive && VatanReviewedSource::is_reviewed(&current);
+            if reviewed_vatan {
+                if let Err(reason) = self.vatan.prepare(&current).await {
+                    self.record_reason(source_url, reason, None).await;
+                    break;
+                }
+            }
             let host = host_key(&parsed);
             if !reviewed_vatan && self.circuits.is_blocked(&host).await {
                 self.record(source_url, AttemptReason::HostCircuitOpen, None)
@@ -274,7 +290,25 @@ impl FetchEngine {
                         .await;
                     break;
                 }
-                Hop::Page(page) => {
+                Hop::Page(mut page) => {
+                    if page.status == 403 && reviewed_vatan {
+                        match self.vatan.browser_get(&current).await {
+                            Ok(html) => {
+                                browser_response = true;
+                                page = FetchedPage {
+                                    status: 200,
+                                    body: html,
+                                    location: None,
+                                    final_url: current.clone(),
+                                };
+                            }
+                            Err(reason) => {
+                                self.record_reason(source_url, &reason, Some(403)).await;
+                                self.circuits.block_host(&host).await;
+                                break;
+                            }
+                        }
+                    }
                     let status = page.status;
                     if status == 403 || status == 429 {
                         self.record(
@@ -299,8 +333,11 @@ impl FetchEngine {
                         break;
                     }
                     if REDIRECT_STATUSES.contains(&status) {
-                        // The `reviewed_url_redirect` branch requires the
-                        // deferred reviewed-Vatan gate.
+                        if reviewed_vatan {
+                            self.record(source_url, AttemptReason::ReviewedUrlRedirect, Some(status))
+                                .await;
+                            break;
+                        }
                         if redirects == 3 || page.location.as_deref().unwrap_or("").is_empty() {
                             self.record(
                                 source_url,
@@ -396,6 +433,11 @@ impl FetchEngine {
             }
         }
 
+        if browser_response {
+            if let Some(attempt) = self.diagnostics.lock().await.get_mut(source_url) {
+                attempt.transport = Some("vatan_browser".to_string());
+            }
+        }
         self.cache
             .lock()
             .await
@@ -446,7 +488,7 @@ impl FetchEngine {
         }
     }
 
-    async fn gate_hop(&self, gate: &RobotsGate, url: &str) -> Hop {
+    async fn gate_hop(&self, gate: &RetailerGate, url: &str) -> Hop {
         match gate.fetch(url).await {
             Ok(page) => Hop::Page(FetchedPage {
                 status: page.status,

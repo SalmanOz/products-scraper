@@ -170,7 +170,7 @@ class PasajCandidateTests(unittest.TestCase):
         self.assertEqual(len(report['ambiguous_urls']), 1)
         self.assertEqual(source.urls, [])
 
-    def test_unreviewed_transport_obeys_robots_redirect_and_six_pdp_cap(self):
+    def test_unreviewed_transport_obeys_redirect_and_six_pdp_cap(self):
         calls = []
 
         def get(url, **kwargs):
@@ -184,9 +184,9 @@ class PasajCandidateTests(unittest.TestCase):
         body, reason, status = source.read_document(URL)
         self.assertEqual((reason, status), ('document_read', 200))
         self.assertIn(TITLE, body)
-        self.assertEqual([url for url, _ in calls], [ROBOTS_URL, URL])
+        self.assertEqual([url for url, _ in calls], [URL])
         self.assertEqual(source.read_document(QUERY)[1], 'not_unreviewed_clean_pdp')
-        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(calls), 1)
         for _ in range(5):
             self.assertEqual(source.read_document(URL)[1], 'document_read')
         self.assertEqual(source.read_document(URL)[1], 'pdp_budget_exhausted')
@@ -194,12 +194,6 @@ class PasajCandidateTests(unittest.TestCase):
         self.assertTrue(all(not kwargs['allow_redirects'] and kwargs['stream']
                             for _, kwargs in calls))
 
-        blocked = PasajCandidateSource(
-            get=lambda url, **_kw: Response(
-                url, 'User-agent: *\nDisallow: /pasaj\n',
-                content_type='text/plain'), sleep=lambda _delay: None)
-        self.assertEqual(blocked.read_document(URL)[1], 'robots_disallowed')
-        self.assertEqual(blocked.report()['pdp_requests'], 0)
 
         def redirected(url, **_kwargs):
             if url == ROBOTS_URL:

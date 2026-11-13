@@ -101,7 +101,7 @@ class AppleStoreSourceTests(unittest.TestCase):
                         'https://www.apple.com/tr/shop/buy-iphone/iphone-17'):
             self.assertIsNone(reviewed_slug(changed))
 
-    def test_robots_and_browser_selected_offer_only(self):
+    def test_browser_selected_offer_only(self):
         url = PDP_URLS['apple-iphone-17']
         calls = []
 
@@ -119,18 +119,8 @@ class AppleStoreSourceTests(unittest.TestCase):
         offer, reason, status = source.read_offer(url)
         self.assertEqual((offer['price'], reason, status),
                          (99999, 'observed_exact_offer', 200))
-        self.assertEqual(calls, [ROBOTS_URL, url])
+        self.assertEqual(calls, [url])
         self.assertEqual(source.report()['browser_requests'], 1)
-
-    def test_robots_disallow_never_calls_browser(self):
-        def get(url, **_kwargs):
-            return Response(url, b'User-agent: *\nDisallow: /tr/shop/buy-iphone/\n')
-
-        def post(*_args, **_kwargs):
-            raise AssertionError('Browser must not run when robots disallows')
-
-        source = AppleStoreSource(get=get, post=post)
-        self.assertIsNone(source.read_offer(PDP_URLS['apple-iphone-17'])[0])
 
     def test_unreviewed_apple_page_never_uses_generic_reader(self):
         def unexpected_fetch(*_args, **_kwargs):

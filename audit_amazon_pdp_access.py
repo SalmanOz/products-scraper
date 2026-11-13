@@ -10,7 +10,6 @@ import time
 from pathlib import Path
 from tempfile import gettempdir
 from urllib.parse import urljoin, urlparse
-from urllib.robotparser import RobotFileParser
 
 import requests
 from bs4 import BeautifulSoup
@@ -84,38 +83,11 @@ def selected_facts(body):
 
 def run():
     report = {'purpose': 'read_only_amazon_exact_pdp_runner_access',
-              'robots_status': 'unavailable', 'normal': None, 'browser': None,
+              'normal': None, 'browser': None,
               'normal_selected_facts': None, 'browser_selected_facts': None}
     headers = {'User-Agent': BOT + '/1.0 (+https://teknoskor.com)',
                'Accept-Language': 'tr-TR,tr;q=0.9'}
     try:
-        response = requests.get(ROBOTS_URL, timeout=(5, 20), allow_redirects=False,
-                                stream=True, headers={**headers, 'Accept': 'text/plain'})
-        status = response.status_code
-        raw = bounded_response(response, MAX_ROBOTS)
-        if status != 200 or raw is None:
-            report['robots_status'] = f'http_{status}_or_oversized'
-            return report
-        policy = raw.decode('utf-8-sig')
-        if (re.search(r'<(?:!doctype|html|head|body)\b', policy, re.I)
-                or not re.search(r'^\s*user-agent\s*:', policy, re.I | re.M)):
-            report['robots_status'] = 'invalid_policy'
-            return report
-        rules = RobotFileParser()
-        rules.parse(policy.splitlines())
-        if not rules.can_fetch(BOT, PDP_URL):
-            report['robots_status'] = 'pdp_disallowed'
-            return report
-        delay = float(rules.crawl_delay(BOT) or 0)
-        rate = rules.request_rate(BOT)
-        if rate:
-            delay = max(delay, rate.seconds / max(1, rate.requests))
-        if delay > 30:
-            report['robots_status'] = 'delay_exceeds_budget'
-            return report
-        report['robots_status'] = 'ready'
-        if delay:
-            time.sleep(delay)
         response = requests.get(PDP_URL, timeout=(5, 25), allow_redirects=False,
                                 stream=True, headers={**headers, 'Accept': 'text/html'})
         normal = {'status': response.status_code, 'final_url': response.url,
@@ -125,11 +97,10 @@ def run():
         report['normal'] = normal
         if normal['status'] in (301, 302, 303, 307, 308):
             final = normal['location']
-            if not exact_pdp_url(final) or not rules.can_fetch(BOT, final):
-                normal['reason'] = 'unsafe_or_disallowed_redirect'
+            if not exact_pdp_url(final):
+                normal['reason'] = 'unsafe_redirect'
                 return report
-            if delay:
-                time.sleep(delay)
+            time.sleep(0.5)
             response = requests.get(final, timeout=(5, 25), allow_redirects=False,
                                     stream=True, headers={**headers, 'Accept': 'text/html'})
             normal['redirect_status'] = response.status_code
@@ -144,6 +115,7 @@ def run():
                 return report
         if final_status not in (200, 403):
             return report
+        time.sleep(0.5)
         response = requests.post(SOLVER_URL, json={
             'cmd': 'request.get', 'url': PDP_URL, 'maxTimeout': 45000,
         }, timeout=60, stream=True)
@@ -157,8 +129,7 @@ def run():
             return report
         final = solution.get('url')
         report['browser'].update(site_http=solution.get('status'), final_url=final)
-        if (solution.get('status') != 200 or not exact_pdp_url(final)
-                or not rules.can_fetch(BOT, final)):
+        if (solution.get('status') != 200 or not exact_pdp_url(final)):
             return report
         html = solution.get('response')
         if isinstance(html, str) and len(html.encode('utf-8')) <= MAX_HTML:

@@ -10,13 +10,12 @@ from retailer_offer_refresh import RetailerOfferRefresher
 from reviewed_offer_targets import daily_offer_targets, with_reviewed_radio
 from test_retailer_offer_refresh import VATAN_URL, vatan_variant_page, vatan_variant_schema
 from vatan_reviewed_source import (
-    MAX_BROWSER_REQUESTS, ROBOTS_URL, SOLVER_URL, VatanReviewedSource,
+    MAX_BROWSER_REQUESTS, SOLVER_URL, VatanReviewedSource,
     reviewed_profiles, S25_FE_256_VATAN_URL,
 )
 
 
 SPECS = {'ram_gb': 8, 'storage_gb': 256, 'network_generation': '5g'}
-ROBOTS = 'User-agent: *\nAllow: /\nDisallow: /arama/\n'
 
 
 def response(url, body, status=200):
@@ -43,7 +42,7 @@ class VatanReviewedSourceTests(unittest.TestCase):
         def post(url, **_kwargs):
             calls.append(url)
             return solver_result(status=403)
-        source = VatanReviewedSource(get=lambda url, **_: response(url, ROBOTS),
+        source = VatanReviewedSource(
                                      post=post, sleep=lambda _: None)
         source.configure_catalog_budget(110)
         self.assertEqual(source.browser_get(VATAN_URL), (None, 'site_http_403'))
@@ -56,8 +55,7 @@ class VatanReviewedSourceTests(unittest.TestCase):
         self.assertNotEqual(url, VATAN_URL)
         calls = []
         def get(target, **_):
-            return response(target, ROBOTS if target == ROBOTS_URL else 'denied',
-                            200 if target == ROBOTS_URL else 403)
+            return response(target, 'denied', 403)
         body = vatan_variant_page(vatan_variant_schema()).replace(VATAN_URL, url)
         def post(_url, **kwargs):
             calls.append(kwargs['json']['url'])
@@ -104,8 +102,7 @@ class VatanReviewedSourceTests(unittest.TestCase):
 
         def get(url, **_):
             get_calls.append(url)
-            return response(url, ROBOTS if url == ROBOTS_URL else 'denied',
-                            200 if url == ROBOTS_URL else 403)
+            return response(url, 'denied', 403)
 
         def post(url, **kwargs):
             post_calls.append((url, kwargs['json']))
@@ -118,15 +115,14 @@ class VatanReviewedSourceTests(unittest.TestCase):
         self.assertEqual(len(offers), 1)
         self.assertEqual(offers[0]['price'], 89999)
         self.assertEqual(offers[0]['availability'], 'in_stock')
-        self.assertEqual(get_calls, [ROBOTS_URL, VATAN_URL])
+        self.assertEqual(get_calls, [VATAN_URL])
         self.assertEqual(post_calls, [(SOLVER_URL, {
             'cmd': 'request.get', 'url': VATAN_URL, 'maxTimeout': 45000})])
         self.assertEqual(source.report()['browser_requests'], 1)
 
     def test_browser_cannot_turn_wrong_variant_into_offer(self):
         def get(url, **_):
-            return response(url, ROBOTS if url == ROBOTS_URL else 'denied',
-                            200 if url == ROBOTS_URL else 403)
+            return response(url, 'denied', 403)
         html = vatan_variant_page(vatan_variant_schema(price='89999'), visible_price='79.999 TL')
         source = VatanReviewedSource(get=get, post=lambda *_args, **_kwargs: solver_result(html=html),
                                      sleep=lambda _: None)
@@ -136,22 +132,10 @@ class VatanReviewedSourceTests(unittest.TestCase):
         self.assertEqual(reader.target_report('Apple iPhone 17', [{'source_url': VATAN_URL}], SPECS)[0]['reason'],
                          'no_exact_product_offer')
 
-    def test_disallowed_or_unavailable_robots_never_reaches_pdp_or_solver(self):
-        for policy in ['User-agent: *\nDisallow: /\n', '<html>challenge</html>']:
-            calls = []
-            def get(url, **_):
-                calls.append(url)
-                return response(url, policy)
-            source = VatanReviewedSource(get=get, post=lambda *_a, **_k: self.fail('solver called'))
-            reader = RetailerOfferRefresher(fetch=get, vatan_source=source)
-            self.assertEqual(reader.refresh_existing_offer_targets(
-                'Apple iPhone 17', [{'source_url': VATAN_URL}], SPECS), [])
-            self.assertEqual(calls, [ROBOTS_URL])
-
     def test_exact_url_and_global_browser_budget_fail_closed(self):
         calls = []
         source = VatanReviewedSource(
-            get=lambda url, **_: response(url, ROBOTS),
+
             post=lambda url, **kwargs: (calls.append(url), solver_result(url=VATAN_URL + '?x=1'))[1],
             sleep=lambda _: None)
         self.assertEqual(source.browser_get('https://www.vatanbilgisayar.com/other.html'),
@@ -160,19 +144,6 @@ class VatanReviewedSourceTests(unittest.TestCase):
             self.assertEqual(source.browser_get(VATAN_URL), (None, 'unexpected_final_url'))
         self.assertEqual(source.browser_get(VATAN_URL), (None, 'browser_budget_exhausted'))
         self.assertEqual(len(calls), MAX_BROWSER_REQUESTS)
-
-    def test_catalog_candidate_with_unavailable_robots_does_not_reach_pdp_or_browser(self):
-        calls = []
-        def get(url, **_):
-            calls.append(url)
-            return response(url, 'denied', 403)
-        source = VatanReviewedSource(get=get, post=lambda *_a, **_k: self.fail('solver called'))
-        reader = RetailerOfferRefresher(fetch=get, vatan_source=source)
-        url = 'https://www.vatanbilgisayar.com/iphone-17-256-gb-akilli-telefon-siyah.html'
-        self.assertEqual(reader.refresh_existing_offer_targets(
-            'Apple iPhone 17', [{'source_url': url}], SPECS), [])
-        self.assertEqual(calls, [ROBOTS_URL])
-
 
 if __name__ == '__main__':
     unittest.main()

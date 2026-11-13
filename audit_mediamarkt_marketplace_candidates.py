@@ -1,7 +1,7 @@
 """Bounded, read-only candidate queue for unpriced MediaMarkt marketplace phones.
 
 Sitemap URLs are hints. A candidate is source verified only after a fresh,
-robots-allowed selected PDP read proves SKU, GTIN, seller, cash price, stock,
+selected PDP read proves SKU, GTIN, seller, cash price, stock,
 and the catalog's RAM/storage/radio. Private offer-target checks are separate:
 this report never declares a row ready for publication or writes an offer.
 """
@@ -22,7 +22,7 @@ from audit_mediamarkt_unpriced_coverage import (
     _catalog, _has_current_price, _specs, selected_rejection_evidence,
 )
 from mediamarkt_marketplace_audit import catalog_variant_matches, selected_marketplace_offer
-from mediamarkt_source import (BOT, MAX_HTML_BYTES, MAX_SOLVER_BYTES, SOLVER_URL,
+from mediamarkt_source import (MAX_HTML_BYTES, MAX_SOLVER_BYTES, SOLVER_URL,
                                MediaMarktSource, product_url)
 from tr_price_scraper import TRPriceScraper
 
@@ -33,7 +33,7 @@ MAX_MODEL_FACETS = 5
 MAX_MODEL_FACET_OFFSET = 1000
 BASE_CATEGORY_URL = 'https://www.mediamarkt.com.tr/tr/category/android-telefonlar-675172.html'
 # Both URLs are visible filters on the public Android phone category. MediaMarkt
-# excludes search URLs in robots.txt, so category pages supply bounded hints.
+# category pages supply bounded hints.
 CATEGORY_HINT_URLS = (
     'https://www.mediamarkt.com.tr/tr/category/android-telefonlar-675172.html?brand=POCO',
     'https://www.mediamarkt.com.tr/tr/category/android-telefonlar-675172.html?model=XIAOMI%20Redmi%20Note%2015',
@@ -94,8 +94,6 @@ def _catalog_model_facets(body, unpriced_rows):
 def _read_category(source, category_url, allowed):
     if category_url not in allowed:
         return None, 'invalid_category'
-    if source._rules is None or not source._rules.can_fetch(BOT, category_url):
-        return None, 'robots_disallowed'
     try:
         body, reason, _ = source._direct(category_url, MAX_HTML_BYTES, 'text/html')
         if reason == 'http_403':
@@ -115,7 +113,7 @@ def _category_hints(source, unpriced_rows, model_offset):
         if status[category_url] in {'ready', 'browser_ready'}:
             for anchor in BeautifulSoup(body, 'html.parser', from_encoding='utf-8').select('a[href]'):
                 url = urljoin(category_url, anchor['href'])
-                if product_url(url) and source._rules.can_fetch(BOT, url):
+                if product_url(url):
                     hints.add(url)
     body, status[BASE_CATEGORY_URL] = _read_category(source, BASE_CATEGORY_URL,
                                                     {BASE_CATEGORY_URL})
@@ -130,16 +128,15 @@ def _category_hints(source, unpriced_rows, model_offset):
             continue
         for anchor in BeautifulSoup(body, 'html.parser', from_encoding='utf-8').select('a[href]'):
             url = urljoin(category_url, anchor['href'])
-            if product_url(url) and source._rules.can_fetch(BOT, url):
+            if product_url(url):
                 hints.add(url)
     return hints, status, len(facets), chosen
 
 
 def _browser_category(source, category_url, allowed=CATEGORY_HINT_URLS):
     """One browser GET after a 403; accept only this reviewed category URL."""
-    if (category_url not in allowed or source._rules is None or
-            not source._rules.can_fetch(BOT, category_url)):
-        return None, 'robots_disallowed_or_invalid_category'
+    if category_url not in allowed:
+        return None, 'invalid_category'
     source._pace(browser=True)
     response = source._post(SOLVER_URL, json={
         'cmd': 'request.get', 'url': category_url, 'maxTimeout': 45000,
@@ -185,9 +182,8 @@ def _candidate_queue(rows, source, model_offset=0):
             url = target.get('source_url') if isinstance(target, dict) else None
             if product_url(url):
                 by_url.setdefault(url, {})[row['id']] = (row, specs)
-    category_urls, category_status, facet_count, chosen_facets = (
-        _category_hints(source, unpriced_rows, model_offset)
-        if source._rules is not None else (set(), {}, 0, []))
+    category_urls, category_status, facet_count, chosen_facets = _category_hints(
+        source, unpriced_rows, model_offset)
     for url in category_urls:
         for row, specs in unpriced_rows:
             if _audit_variant_hint(url, row, specs):
@@ -208,9 +204,8 @@ def _candidate_queue(rows, source, model_offset=0):
 
 def _read_selected(source, url):
     """One direct read, with one exact URL browser retry for a 403 only."""
-    if (not product_url(url) or source._rules is None or
-            not source._rules.can_fetch(BOT, url)):
-        return None, {'reason': 'robots_disallowed_or_invalid_url', 'http_status': None}
+    if not product_url(url):
+        return None, {'reason': 'invalid_url', 'http_status': None}
     try:
         body, reason, status = source._direct(url, MAX_HTML_BYTES, 'text/html')
         if reason == 'http_403':
@@ -326,7 +321,7 @@ def summary(report):
         f"from offset {report['model_offset']}; "
         f"probed {report['probed']}/{report['probe_budget']} from offset "
         f"{report['offset']}; source verified {report['source_verified']}.",
-        f"Source: robots {report['source'].get('robots_status', '?')}; "
+        f"Source: "
         f"sitemap {report['source'].get('sitemap_status', '?')}; "
         f"direct {report['source'].get('direct_requests', '?')}; "
         f"browser {report['source'].get('browser_requests', '?')}.",

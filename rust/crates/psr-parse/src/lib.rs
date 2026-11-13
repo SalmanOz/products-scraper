@@ -2,6 +2,7 @@
 
 pub mod jsonld;
 pub mod product_offer;
+mod vatan;
 
 pub use jsonld::{is_truthy, py_number_string, schema_nodes, type_is};
 pub use product_offer::{

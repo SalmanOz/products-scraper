@@ -140,7 +140,7 @@ def response_fields(observation, main, title, cart):
 
 
 def read_observation(transport, html, document_url, *, fresh=False):
-    """Read once through the caller's existing robots/circuit/request budget."""
+    """Read once through the caller's existing circuit and request budget."""
     target = classification_url(document_url, html)
     read = getattr(type(transport), 'read_teknosa_classification', None)
     if target is None or not callable(read):

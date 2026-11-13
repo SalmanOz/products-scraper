@@ -34,7 +34,7 @@ from pttavm_offer_source import HOST as PTTAVM, ptt_product_url, ptt_seller_iden
 from priority_retailer_transport import PriorityRetailerTransport, compatible_get, product_host
 from retailer_barcode import retailer_gtin13
 from tws_offer_pilot import NEW_MODEL_NAMES, _mediamarkt_tws_url, independent_sellers, model_name, selected_tws_offer
-from tws_retailer_sources import (BOT, STOP_REASONS, _vatan_url, selected_hepsiburada_tws,
+from tws_retailer_sources import (STOP_REASONS, _vatan_url, selected_hepsiburada_tws,
                                   selected_n11_tws, selected_pazarama_tws, selected_photo, selected_teknosa_tws,
                                   selected_vatan_store_tws, selected_vatan_tws)
 from tr_price_scraper import TRPriceScraper
@@ -137,10 +137,8 @@ def reread(host, rows, statuses=None, document_reader=None, *, discover=False):
             options.update(get=compatible_get, browser_fallback=False)
         elif discover or host in (NETHOUSE, IDEFIX, OZGUR_HOST, EVOFONE):
             options['browser_fallback'] = False
-        if host == IDEFIX:
-            options['missing_robots_hosts'] = (IDEFIX_API,)
         if host in ('www.teknosa.com', PAZARAMA):
-            options.update(browser_fallback=False, unavailable_robots_hosts=(host,))
+            options.update(browser_fallback=False)
         document_budget = len(rows) * (2 if host == IDEFIX and discover else 1) + seller_budget
         transport = PriorityRetailerTransport(maximum_per_host=min(260, document_budget), **options)
     source = None
@@ -149,11 +147,8 @@ def reread(host, rows, statuses=None, document_reader=None, *, discover=False):
                   else MediaMarktSource(get=document_reader or compatible_get))
         if isinstance(source, MediaMarktSource):
             source.configure_catalog_budget(len(rows))
-        source._load_robots()
 
     def vatan_inventory(url):
-        if not source._rules.can_fetch(BOT, url):
-            return None, 'robots_disallowed', None
         source._sleep(max(.5, source._delay))
         return source._read(url, 64 * 1024, 'application/json')
 
@@ -189,7 +184,7 @@ def reread(host, rows, statuses=None, document_reader=None, *, discover=False):
                 if reason == 'source_cooldown' and transport.wait_for_cooldown(url):
                     html, reason, _ = transport.read_fresh_document(url)
                 final = transport.resolved_url(url)
-            elif source._rules and source._rules.can_fetch(BOT, url):
+            elif source is not None:
                 if isinstance(source, VatanCategorySource):
                     source._sleep(max(.5, source._delay))
                     html, reason, _ = source._read(url, 5 * 1024 * 1024, 'text/html')

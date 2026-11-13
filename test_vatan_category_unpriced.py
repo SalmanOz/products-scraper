@@ -2,7 +2,6 @@
 
 from io import BytesIO
 import unittest
-from urllib.robotparser import RobotFileParser
 
 import requests
 from bs4 import BeautifulSoup
@@ -172,19 +171,17 @@ class VatanCategoryTests(unittest.TestCase):
             specs))
 
     def test_category_cards_are_exact_urls_only_and_never_return_price(self):
-        rules = RobotFileParser()
-        rules.parse(ROBOTS.splitlines())
         url = PROFILES[0]['url']
         extra = (f'<a class="product-list-link" href="{url}?page=2"><h3>other</h3></a>'
                  '<a class="product-list-link" href="https://other.example/phone.html">'
                  '<h3>other</h3></a>')
-        self.assertEqual(parse_category_cards(category_html(url, TITLES[0], extra), rules,
+        self.assertEqual(parse_category_cards(category_html(url, TITLES[0], extra),
                                               OPPO_CATEGORY),
                          [{'title': TITLES[0], 'source_url': url}])
-        self.assertEqual(parse_category_cards(category_html(url, TITLES[0]), rules,
+        self.assertEqual(parse_category_cards(category_html(url, TITLES[0]),
                                               OPPO_CATEGORY + '?page=2'), [])
 
-    def test_direct_category_get_is_robots_bounded_and_403_stops(self):
+    def test_direct_category_get_is_bounded_and_403_stops(self):
         calls = []
         def fetch(url, **_kwargs):
             calls.append(url)
@@ -194,14 +191,8 @@ class VatanCategoryTests(unittest.TestCase):
         self.assertEqual(source.read_category(OPPO_CATEGORY), [])
         self.assertEqual(source.read_category(OPPO_CATEGORY), [])
         self.assertEqual(source.read_category(OPPO_CATEGORY + '?page=2'), [])
-        self.assertEqual(calls, [ROBOTS_URL, OPPO_CATEGORY])
+        self.assertEqual(calls, [OPPO_CATEGORY])
         self.assertEqual(source.report()['categories'][OPPO_CATEGORY]['status'], 'http_403')
-        disallowed = VatanCategorySource(fetch=lambda url, **_k: response(
-            url, 'User-agent: *\nDisallow: /oppo/\n'), sleep=lambda _: None)
-        self.assertEqual(disallowed.read_category(OPPO_CATEGORY), [])
-        self.assertEqual(disallowed.report()['categories'][OPPO_CATEGORY]['status'],
-                         'robots_disallowed')
-
     def test_selected_pdp_parser_keeps_exact_real_h1_and_visible_cash(self):
         for profile, title, sku, price, visible in zip(
                 PROFILES, TITLES, ('155165', '154791'), ('104999', '75999'),

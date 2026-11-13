@@ -19,7 +19,7 @@ jobs:
           cache: pip
       - name: Install dependencies
         run: pip install -r requirements.txt
-      - name: Test Pazarama robots, exact variants and price separation
+      - name: Test Pazarama exact variants and price separation
         run: python -m unittest -q test_pazarama_category_source test_pazarama_offer_reader test_pazarama_source_audit
       - name: Start read-only browser GET service
         run: |

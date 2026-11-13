@@ -104,7 +104,7 @@ def run_audit(categories=None, reader=None, catalog_client=None):
 def summary(report):
     lines = ['## Vatan unpriced phone category + PDP audit (read only)',
              f"Status: {report['status']}; catalog {report['catalog_status']}; "
-             f"robots {report['categories']['robots_status']}."]
+             "."]
     for row in report['products']:
         attempt = row['source_attempts'][0] if row['source_attempts'] else {}
         offer = row['offer'] or {}

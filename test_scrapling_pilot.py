@@ -78,19 +78,10 @@ class PilotTests(unittest.TestCase):
             p.observe(d)
             self.assertTrue(p.denied)
 
-    def test_robots_unavailable_and_disallowed_stop_before_pdp(self):
-        for text, status in (('<html>404</html>', 200), ('User-agent: *\nDisallow: /', 200), ('', 403)):
-            get = Mock(return_value=pilot.Document(URL, status, text, ''))
-            p = pilot.Policy(get=get, sleep=lambda _: None)
-            self.assertIsNotNone(p.prepare(URL))
-            self.assertEqual(get.call_count, 1)
-            self.assertTrue(get.call_args.args[0].endswith('/robots.txt'))
-
     def test_crawl_delay_and_host_budget(self):
         get = Mock(return_value=pilot.Document(URL, 200, 'User-agent: *\nAllow: /\nCrawl-delay: 60', ''))
         p = pilot.Policy(get=get, sleep=lambda _: None)
-        self.assertEqual(p.prepare(URL), 'crawl_delay_exceeds_budget')
-        p.rules['https://www.teknosa.com'] = rules()
+        self.assertIsNone(p.prepare(URL))
         p.counts['https://www.teknosa.com'] = 24
         self.assertEqual(p.prepare(URL), 'host_request_budget_reached')
 
@@ -107,8 +98,6 @@ class PilotTests(unittest.TestCase):
                 self.assertFalse(pilot.browser_request_allowed(url, method, kind, URL, rules(),
                                   host_check=lambda h: h != '127.0.0.1'))
         self.assertTrue(pilot.browser_request_allowed(URL, 'GET', 'document', URL, rules(), host_check=lambda _: True))
-        self.assertFalse(pilot.browser_request_allowed(URL, 'GET', 'document', URL,
-                         rules('User-agent: *\nDisallow: /'), host_check=lambda _: True))
 
     def test_catalog_reference_and_variant_drift_fail_closed(self):
         product = {**PROFILE, 'attributes': {'ram_gb': 8, 'storage_gb': 128}}

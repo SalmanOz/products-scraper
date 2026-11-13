@@ -75,7 +75,7 @@ class PazaramaSourceAuditTests(unittest.TestCase):
                        'url': kwargs['json']['url'], 'response': 'User-agent: *\nAllow: /\n'}}
             return Response(SOLVER_URL, json.dumps(payload).encode())
         browser = BrowserGetTransport(post=post)
-        response = browser(ROBOTS_URL)
+        response = browser(CATEGORY_URL)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(b''.join(response.iter_content(10)), b'User-agent: *\nAllow: /\n')
         self.assertEqual(calls[0][1]['json']['cmd'], 'request.get')
@@ -90,7 +90,7 @@ class PazaramaSourceAuditTests(unittest.TestCase):
             return Response(SOLVER_URL, b'{"status":"error","message":"private challenge text"}')
         browser = BrowserGetTransport(post=post)
         with self.assertRaisesRegex(Exception, 'Invalid browser GET result'):
-            browser(ROBOTS_URL)
+            browser(CATEGORY_URL)
         self.assertEqual(browser.diagnostics[0]['reason'], 'solver_reported_failure')
         self.assertNotIn('message', browser.diagnostics[0])
 
@@ -100,7 +100,7 @@ class PazaramaSourceAuditTests(unittest.TestCase):
             return Response(SOLVER_URL, data, status=500)
         browser = BrowserGetTransport(post=post)
         with self.assertRaisesRegex(Exception, 'unavailable'):
-            browser(ROBOTS_URL)
+            browser(CATEGORY_URL)
         diagnostic = browser.diagnostics[0]
         self.assertEqual(diagnostic['solver_http_status'], 500)
         self.assertIn('TimeoutException', diagnostic['solver_error_excerpt'])
@@ -112,12 +112,12 @@ class PazaramaSourceAuditTests(unittest.TestCase):
         self.assertEqual(report['status'], 'passed')
         self.assertEqual(report['verified_products'], 3)
         self.assertEqual(report['category']['category_pages'], 1)
-        self.assertEqual([event['http_status'] for event in report['http_events']], [200] * 5)
+        self.assertEqual([event['http_status'] for event in report['http_events']], [200] * 4)
         self.assertEqual([row['verified_offers'][0]['price'] for row in report['products']],
                          [20000, 22500, 38999])
         self.assertEqual([row['price_evidence']['schema_offer_price'] for row in report['products']],
                          [19000, 21150, 38999])
-        self.assertIn('Robots HTTP 200', format_summary(report))
+        self.assertIn('Category pages 1 (statuses: 200)', format_summary(report))
         self.assertTrue(all(kwargs['allow_redirects'] is False for _, kwargs in fetch.calls))
 
     def test_discovery_gap_does_not_pass_on_reviewed_pdp_alone(self):

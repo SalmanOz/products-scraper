@@ -60,7 +60,7 @@ class N11CatalogTests(unittest.TestCase):
             transport = PriorityRetailerTransport(get=get, sleep=lambda _: None, maximum_per_host=2)
             product = {'id': 1, 'slug': 'samsung-galaxy-a57', 'name': NAME, 'attributes': {**SPECS, **changes}}
             row = inspect_target(transport, old, product)
-            self.assertEqual(calls, ['https://www.n11.com/robots.txt', old, URL])
+            self.assertEqual(calls, [old, URL])
             self.assertEqual(row['source_selector_reset'], {'scope': 'fresh_default_pdp', 'historical_selectors_reused': False})
             self.assertEqual(row['resolved_url'], URL)
             if changes:

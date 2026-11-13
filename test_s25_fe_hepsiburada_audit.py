@@ -87,7 +87,7 @@ class HepsiburadaS25FeAuditTests(unittest.TestCase):
             with self.subTest(changed=changed):
                 self.assertEqual(parse_exact_buy_box(fixture(**changed)), (None, expected))
 
-    def test_only_robots_allowed_exact_pdp_is_requested(self):
+    def test_only_exact_pdp_is_requested(self):
         calls = []
         def get(url, **_):
             calls.append(url)
@@ -96,16 +96,8 @@ class HepsiburadaS25FeAuditTests(unittest.TestCase):
         offer, reason, status = HepsiburadaS25FeSource(get=get).read_offer()
         self.assertEqual((reason, status, offer['price']),
                          ('observed_exact_first_party_cash_offer', 200, 36999))
-        self.assertEqual(calls, [ROBOTS_URL, URL])
-        blocked = []
-        def deny(url, **_):
-            blocked.append(url)
-            return response(url, 'User-agent: *\nDisallow: /\n')
-        self.assertEqual(HepsiburadaS25FeSource(get=deny).read_offer(),
-                         (None, 'robots_disallowed', None))
-        self.assertEqual(blocked, [ROBOTS_URL])
-
-    def test_bounded_browser_reads_robots_before_product_after_direct_403(self):
+        self.assertEqual(calls, [URL])
+    def test_bounded_browser_reads_product_after_direct_403(self):
         calls = []
         def get(url, **_):
             calls.append(('direct', url))
@@ -118,12 +110,9 @@ class HepsiburadaS25FeAuditTests(unittest.TestCase):
         offer, reason, status = HepsiburadaS25FeSource(get=get, post=post).read_offer()
         self.assertEqual((reason, status, offer['price']),
                          ('observed_exact_first_party_cash_offer', 200, 36999))
-        self.assertEqual(calls, [
-            ('direct', ROBOTS_URL), ('browser', ROBOTS_URL),
-            ('direct', URL), ('browser', URL),
-        ])
+        self.assertEqual(calls, [('direct', URL), ('browser', URL)])
 
-    def test_browser_robots_challenge_never_requests_product(self):
+    def test_browser_html_without_selected_offer_is_rejected(self):
         calls = []
         def get(url, **_):
             calls.append(('direct', url))
@@ -133,20 +122,20 @@ class HepsiburadaS25FeAuditTests(unittest.TestCase):
             calls.append(('browser', url))
             return solver_result(url, '<html><body>Access denied</body></html>')
         self.assertEqual(HepsiburadaS25FeSource(get=get, post=post).read_offer(),
-                         (None, 'robots_invalid', 200))
-        self.assertEqual(calls, [('direct', ROBOTS_URL), ('browser', ROBOTS_URL)])
+                         (None, 'selected_title_missing', 200))
+        self.assertEqual(calls, [('direct', URL), ('browser', URL)])
 
-    def test_browser_redirect_or_disallowed_robots_fail_closed(self):
+    def test_browser_redirect_or_missing_selected_html_fails_closed(self):
         def get(_url, **_):
-            return response(ROBOTS_URL, 'denied', 403)
+            return response(URL, 'denied', 403)
         changed = HepsiburadaS25FeSource(
-            get=get, post=lambda *_a, **_k: solver_result(ROBOTS_URL + '?x=1',
+            get=get, post=lambda *_a, **_k: solver_result(URL + '?x=1',
                                                             'User-agent: *\nAllow: /'))
-        self.assertEqual(changed.read_offer(), (None, 'robots_browser_changed_url', 200))
+        self.assertEqual(changed.read_offer(), (None, 'browser_changed_url', 200))
         denied = HepsiburadaS25FeSource(
-            get=get, post=lambda *_a, **_k: solver_result(ROBOTS_URL,
+            get=get, post=lambda *_a, **_k: solver_result(URL,
                                                             'User-agent: *\nDisallow: /'))
-        self.assertEqual(denied.read_offer(), (None, 'robots_disallowed', None))
+        self.assertEqual(denied.read_offer(), (None, 'selected_title_missing', 200))
 
     def test_only_exact_reviewed_url_uses_dedicated_reader_and_8_256_catalog(self):
         class ExactSource:

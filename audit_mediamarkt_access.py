@@ -12,7 +12,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import gettempdir
 from urllib.parse import urljoin, urlparse
-from urllib.robotparser import RobotFileParser
 
 from bs4 import BeautifulSoup
 import requests
@@ -80,12 +79,12 @@ def read(url, limit, accept):
         response.close()
 
 
-def browser_read(url, rules):
-    """One local browser GET for a robots-allowed PDP after ordinary GET 403."""
+def browser_read(url):
+    """One local browser GET for a reviewed PDP after ordinary GET 403."""
     row = {'transport': 'browser_get', 'url': url, 'service_http': None,
            'site_http': None, 'final_url': None, 'bytes': 0}
-    if not safe_url(url) or not rules.can_fetch(BOT, url):
-        row['reason'] = 'invalid_or_disallowed'
+    if not safe_url(url):
+        row['reason'] = 'invalid_url'
         return row, b''
     response = requests.post(SOLVER_URL, json={
         'cmd': 'request.get', 'url': url, 'maxTimeout': 45000,
@@ -109,7 +108,7 @@ def browser_read(url, rules):
         row['site_http'] = solution.get('status')
         row['final_url'] = solution.get('url')
         final = row['final_url']
-        if not safe_url(final) or not rules.can_fetch(BOT, final):
+        if not safe_url(final):
             row['reason'] = 'unsafe_or_disallowed_redirect'
             return row, b''
         if row['site_http'] != 200:
@@ -168,24 +167,9 @@ def selected_offer(body, final_url):
 def run():
     report = {'purpose': 'read_only_mediamarkt_runner_access',
               'checked_at': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
-              'robots': {}, 'sitemaps': [], 'products': {}}
+              'sitemaps': [], 'products': {}}
     try:
-        robots_row, body = read(ROBOTS, MAX_ROBOTS, 'text/plain')
-        report['robots'] = robots_row
-        policy = body.decode('utf-8-sig', errors='strict')
-        if (robots_row['http_status'] != 200
-                or re.search(r'<(?:!doctype|html|head|body)\b', policy, re.I)
-                or not re.search(r'^\s*user-agent\s*:', policy, re.I | re.M)):
-            report['reason'] = 'robots_policy_unavailable'
-            return report
-        rules = RobotFileParser()
-        rules.parse(policy.splitlines())
-        report['robots']['valid_policy'] = True
-        advertised = set(re.findall(r'^\s*Sitemap:\s*(\S+)\s*$', policy, re.I | re.M))
         for url in SITEMAPS:
-            if url not in advertised or not rules.can_fetch(BOT, url):
-                report['sitemaps'].append({'url': url, 'reason': 'not_advertised_or_disallowed'})
-                continue
             row, content = read(url, MAX_SITEMAP, 'application/xml,text/xml')
             if content:
                 try:
@@ -197,13 +181,13 @@ def run():
                     row['reason'] = 'invalid_xml'
             report['sitemaps'].append(row)
         for name, url in PRODUCTS.items():
-            if not safe_url(url) or not rules.can_fetch(BOT, url):
-                report['products'][name] = {'reason': 'invalid_or_disallowed'}
+            if not safe_url(url):
+                report['products'][name] = {'reason': 'invalid_url'}
                 continue
             row, content = read(url, MAX_HTML, 'text/html')
             if row['http_status'] == 403 and os.environ.get('MEDIAMARKT_AUDIT_BROWSER_GET') == '1':
                 try:
-                    browser_row, content = browser_read(url, rules)
+                    browser_row, content = browser_read(url)
                 except (requests.RequestException, ValueError, TypeError):
                     browser_row, content = {'transport': 'browser_get', 'reason': 'transport_error'}, b''
                 row['browser_response'] = browser_row
@@ -211,7 +195,7 @@ def run():
                     row['selected'] = selected_offer(content, browser_row['final_url'])
             if row.get('redirect'):
                 destination = row['redirect']
-                row['redirect_allowed'] = safe_url(destination) and rules.can_fetch(BOT, destination)
+                row['redirect_allowed'] = safe_url(destination)
                 if row['redirect_allowed']:
                     final, content = read(destination, MAX_HTML, 'text/html')
                     row['redirect_response'] = final
@@ -231,8 +215,7 @@ def main():
     (OUT / 'mediamarkt-access.json').write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n')
     selected = report['products'].get('iphone17_first_party', {}).get('selected', {})
     offer = selected.get('selected_offer') or {}
-    ready = (report['robots'].get('valid_policy')
-             and len(report['sitemaps']) == 2
+    ready = (len(report['sitemaps']) == 2
              and all(0 < row.get('url_count', 0) <= 20_000 for row in report['sitemaps'])
              and offer.get('seller') is None
              and offer.get('product_url_match') and offer.get('offer_url_match')
@@ -240,7 +223,6 @@ def main():
              and offer.get('availability', '').endswith('/InStock')
              and selected.get('active_basket_buttons', 0) > 0)
     summary = ('MediaMarkt runner access: ' + ('READY' if ready else 'NOT READY')
-               + f"; robots={report['robots'].get('http_status')}"
                + f"; sitemap URLs={[x.get('url_count') for x in report['sitemaps']]}"
                + f"; first-party iPhone17 price={offer.get('price')}.\n")
     detail_lines = []

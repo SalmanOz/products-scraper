@@ -12,7 +12,7 @@ from bs4 import BeautifulSoup
 
 from audit_vatan_source import PROFILES
 from vatan_sitemap_source import (
-    BOT, MAX_SITEMAP_BYTES, MAX_SITEMAP_URLS, SITEMAP_URL, SOLVER_URL,
+    MAX_SITEMAP_BYTES, MAX_SITEMAP_URLS, SITEMAP_URL, SOLVER_URL,
     VatanSitemapSource,
 )
 
@@ -120,11 +120,8 @@ def summary(report):
 def main():
     source = VatanSitemapSource()
     report = run_audit(source)
-    # A second GET exists only in this read-only pilot, after the production
-    # source has proved that robots allows the exact sitemap URL. Diagnostics
-    # never change the production reader's byte bounds.
-    if (report['sitemap']['status'] in {'sitemap_solver_oversized', 'ParseError'}
-            and source._rules is not None and source._rules.can_fetch(BOT, SITEMAP_URL)):
+    # The read-only diagnostic keeps the exact sitemap URL and its own byte cap.
+    if report['sitemap']['status'] in {'sitemap_solver_oversized', 'ParseError'}:
         report['solver_diagnostic'] = diagnose_solver_response()
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / 'vatan-sitemap-browser.json').write_text(

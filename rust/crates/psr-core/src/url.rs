@@ -122,6 +122,27 @@ pub fn pazarama_product_url(url: &str) -> bool {
     check().unwrap_or(false)
 }
 
+/// Exact Vatan phone PDP shape from `VatanSitemapSource._safe_product_url`.
+pub fn vatan_product_url(url: &str) -> bool {
+    if url.chars().count() > 500 {
+        return false;
+    }
+    let Some(parsed) = safe_url(url) else {
+        return false;
+    };
+    let path = unquote(&parsed.path);
+    let lower = path.to_lowercase();
+    parsed.hostname.as_deref() == Some("www.vatanbilgisayar.com")
+        && parsed.query_string().is_empty()
+        && parsed.fragment_string().is_empty()
+        && path.ends_with(".html")
+        && lower.contains("akilli-telefon")
+        && !path.chars().any(|c| c <= ' ' || c == '\\')
+        && !["/arama/", "kilif", "ekran-koruyucu", "yenilenmis", "outlet"]
+            .iter()
+            .any(|entry| lower.contains(entry))
+}
+
 /// `turk_telekom_source.HOST` + `product_url`.
 pub const TURK_TELEKOM_PDP_HOST: &str = "emagaza.turktelekom.com.tr";
 

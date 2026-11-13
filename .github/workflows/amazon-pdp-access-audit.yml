@@ -25,7 +25,7 @@ jobs:
           done
           docker logs amazon-pdp-audit-browser
           exit 1
-      - name: Probe robots and one exact Amazon PDP without writes
+      - name: Probe one exact Amazon PDP without writes
         env:
           AMAZON_AUDIT_OUTPUT_DIR: ${{ runner.temp }}
         run: python audit_amazon_pdp_access.py

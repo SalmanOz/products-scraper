@@ -1,6 +1,6 @@
 """Read-only proof for two exact, currently unpriced MediaMarkt phone PDPs.
 
-The fixed URLs are hints, not offers. Each run rereads robots and the selected
+The fixed URLs are hints, not offers. Each run rereads the selected
 PDP. Price, seller, stock, GTIN and variant must agree in the selected page.
 No ingestion client write method is called by this module.
 """
@@ -17,7 +17,7 @@ import requests
 
 from mediamarkt_marketplace_audit import catalog_variant_matches, selected_marketplace_offer
 from mediamarkt_marketplace_preflight import no_merchant_collision
-from mediamarkt_source import BOT, MAX_HTML_BYTES, MediaMarktSource, product_url
+from mediamarkt_source import MAX_HTML_BYTES, MediaMarktSource, product_url
 from offer_ingestion_client import IngestionClientError, OfferIngestionClient
 from update_prices import PriceUpdater
 
@@ -218,11 +218,6 @@ def _offer_matches(offer, url, profile):
 def _read_selected(source, url):
     """One direct GET per PDP and one exact-URL retry only if direct GET is 403."""
     try:
-        source._load_robots()
-        if (source.report().get('robots_status') != 'ready' or source._rules is None
-                or not source._rules.can_fetch(BOT, url)):
-            return None, {'source_url': url, 'reason': 'robots_unavailable_or_disallowed',
-                          'http_status': None}
         body, reason, status = source._direct(url, MAX_HTML_BYTES, 'text/html')
         if reason == 'http_403':
             body, final_url, reason = source._browser_get(url)
@@ -251,7 +246,7 @@ def audit(*, client=None, source=None):
     client = client or OfferIngestionClient.from_env()
     source = source or MediaMarktSource()
     report = {'purpose': PURPOSE, 'writes': False, 'status': 'failed',
-              'checked_at': None, 'robots_status': None, 'source': None,
+              'checked_at': None, 'source': None,
               'rows': [], 'catalog_collisions': {},
               'raw_seller_collisions': {}, 'catalog_errors': []}
     try:
@@ -281,13 +276,10 @@ def audit(*, client=None, source=None):
                 'status': 'failed' if row_errors else 'passed',
                 'errors': row_errors,
             })
-        report['robots_status'] = source.report().get('robots_status')
         if len(report['rows']) != 2:
-            raise ValueError('robots_or_scope_changed')
+            raise ValueError('scope_changed')
         errors = []
         errors.extend(report['catalog_errors'])
-        if report['robots_status'] != 'ready':
-            errors.append('robots_unavailable')
         if any(not row['catalog_evidence']['exact'] for row in report['rows']):
             errors.append('catalog_identity_variant_or_unpriced_status_changed')
         if any(row['merchant_collision'] for row in report['rows']):
@@ -306,7 +298,7 @@ def audit(*, client=None, source=None):
 
 def summary(report):
     lines = [f"İki fiyatsız telefon MediaMarkt salt okuma denetimi: {report['status']}; "
-             f"robots {report['robots_status']}; doğrulanan "
+             f"doğrulanan "
              f"{sum(bool(row.get('verified_offer')) for row in report['rows'])}/2."]
     for row in report['rows']:
         offer = row.get('verified_offer') or {}

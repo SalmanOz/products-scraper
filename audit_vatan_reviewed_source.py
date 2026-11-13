@@ -49,7 +49,7 @@ def format_summary(report):
     total = report['total_products']
     source = report['vatan_reviewed_pdp']
     lines = ['## Vatan reviewed exact-SKU PDP audit (read only)',
-             f"Verified {count}/{total}; robots {source['robots_status']}; "
+             f"Verified {count}/{total}; "
              f"browser GET {source['browser_requests']}/{source['reviewed_urls']} reviewed URLs."]
     for row in report['products']:
         attempt = row['source_attempts'][0] if row['source_attempts'] else {}

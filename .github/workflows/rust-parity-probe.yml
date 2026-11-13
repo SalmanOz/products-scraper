@@ -31,6 +31,18 @@ jobs:
       - name: Build release binary
         working-directory: rust
         run: cargo build --release --locked -p psr-cli
+      - name: Start Vatan read-only browser GET service
+        if: ${{ !inputs.permissive && startsWith(inputs.url, 'https://www.vatanbilgisayar.com/') }}
+        run: |
+          docker run -d --name=rust-vatan-probe-browser -p 127.0.0.1:8191:8191 ghcr.io/flaresolverr/flaresolverr:latest
+          for attempt in {1..30}; do
+            if curl --fail --silent http://localhost:8191/ > /dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs rust-vatan-probe-browser
+          exit 1
       - name: Probe one URL (read-only, JSON result)
         working-directory: rust
         env:

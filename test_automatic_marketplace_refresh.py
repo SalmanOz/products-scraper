@@ -193,7 +193,7 @@ class AutomaticMarketplaceTests(unittest.TestCase):
         for change in ({'merchant': 'MediaMarkt'}, {'condition': 'refurbished'},
                        {'gtin13': '0000000000001'}, {'seller_id': ''}):
             self.assertFalse(generic_marketplace_offer({**offer, **change}, product['name'], specs))
-        self.assertEqual(fetch.calls, [ROBOTS_URL, url])
+        self.assertEqual(fetch.calls, [url])
 
     def test_distinct_seller_is_not_crowded_out_by_twelve_old_colors(self):
         prefix = 'https://www.mediamarkt.com.tr/tr/product/_phone-akilli-telefon-'

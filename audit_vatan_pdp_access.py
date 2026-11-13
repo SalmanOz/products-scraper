@@ -6,12 +6,10 @@ submits offers to ingestion or makes these URLs production discovery seeds.
 
 import json
 import os
-import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import gettempdir
-from urllib.robotparser import RobotFileParser
 
 import requests
 from bs4 import BeautifulSoup
@@ -20,7 +18,7 @@ from retailer_offer_refresh import (
     RetailerOfferRefresher, _MAX_BODY_BYTES, _challenge_page, _product_offer,
 )
 from tr_price_scraper import TRPriceScraper
-from vatan_sitemap_source import BOT, MAX_ROBOTS_BYTES, ROBOTS_URL, VatanSitemapSource
+from vatan_reviewed_source import VatanReviewedSource
 
 
 PROFILES = (
@@ -37,24 +35,6 @@ PURCHASABLE = {'in_stock', 'limited'}
 OUTPUT_DIR = Path(os.environ.get('VATAN_AUDIT_OUTPUT_DIR', gettempdir()))
 REPORT_PATH = OUTPUT_DIR / 'vatan-pdp-access.json'
 SUMMARY_PATH = OUTPUT_DIR / 'vatan-pdp-access.md'
-
-
-def _robots_rules(fetch):
-    source = VatanSitemapSource(fetch=fetch, sleep=lambda _: None)
-    raw = source._read(ROBOTS_URL, MAX_ROBOTS_BYTES)
-    text = raw.decode('utf-8-sig', errors='strict')
-    if (re.search(r'<(?:!doctype|html|head|body)\b', text, re.I)
-            or not re.search(r'^\s*user-agent\s*:', text, re.I | re.M)):
-        raise ValueError('robots_policy_unavailable')
-    rules = RobotFileParser()
-    rules.parse(text.splitlines())
-    delay = float(rules.crawl_delay(BOT) or 0)
-    rate = rules.request_rate(BOT)
-    if rate:
-        delay = max(delay, rate.seconds / max(1, rate.requests))
-    if delay > 30:
-        raise ValueError('crawl_delay_exceeds_budget')
-    return rules, delay
 
 
 def _offer_fields(offer):
@@ -108,30 +88,25 @@ def _browser_get_offer(name, url, specs, post):
         return {**result, 'status': 'probe_error'}
 
 
-def run_audit(robots_fetch=None, reader_factory=None, post=None, sleep=time.sleep):
-    robots_fetch = robots_fetch or requests.get
-    reader_factory = reader_factory or RetailerOfferRefresher
+def run_audit(reader_factory=None, post=None, sleep=time.sleep):
+    if reader_factory is None:
+        # Take a direct-only baseline before probing the browser independently.
+        def reader_factory():
+            source = VatanReviewedSource(sleep=sleep)
+            source.browser_get = lambda _url: (None, 'access_denied')
+            return RetailerOfferRefresher(vatan_source=source)
     post = post or requests.post
     rows = []
     report = {'purpose': 'read_only_exact_pdp_runner_probe',
               'checked_at': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
-              'robots_status': 'unavailable', 'products': rows}
-    try:
-        rules, delay = _robots_rules(robots_fetch)
-        report['robots_status'] = 'ready'
-    except (requests.RequestException, ValueError, UnicodeError) as error:
-        report['robots_status'] = str(error) if isinstance(error, ValueError) else type(error).__name__
-        rules, delay = None, 0
+              'products': rows}
     for index, (name, slug, ram, storage, url) in enumerate(PROFILES):
         row = {'slug': slug, 'name': name, 'url': url,
                'normal_get': {'status': 'not_attempted', 'http_status': None, 'offer': None},
                'browser_get': {'status': 'not_attempted', 'http_status': None, 'offer': None}}
         rows.append(row)
-        if rules is None or not rules.can_fetch(BOT, url):
-            row['normal_get']['status'] = 'robots_unavailable_or_disallowed'
-            continue
-        if index and delay:
-            sleep(delay)
+        if index:
+            sleep(0.5)
         specs = {'ram_gb': ram, 'storage_gb': storage, 'network_generation': '5g'}
         try:
             reader = reader_factory()
@@ -150,8 +125,7 @@ def run_audit(robots_fetch=None, reader_factory=None, post=None, sleep=time.slee
             row['normal_get']['status'] = type(error).__name__
             offers = []
         if not offers:
-            if delay:
-                sleep(delay)
+            sleep(0.5)
             row['browser_get'] = _browser_get_offer(name, url, specs, post)
     report['verified_normal'] = sum(bool(r['normal_get']['offer']) for r in rows)
     report['verified_browser'] = sum(bool(r['browser_get']['offer']) for r in rows)
@@ -160,7 +134,7 @@ def run_audit(robots_fetch=None, reader_factory=None, post=None, sleep=time.slee
 
 def format_summary(report):
     lines = ['## Vatan exact PDP runner access (read only)',
-             f"Robots: {report['robots_status']}; normal GET {report['verified_normal']}/3; browser GET {report['verified_browser']}/3."]
+             f"Normal GET {report['verified_normal']}/3; browser GET {report['verified_browser']}/3."]
     for row in report['products']:
         direct = row['normal_get']
         browser = row['browser_get']

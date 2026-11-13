@@ -9,10 +9,8 @@ import re
 import time
 import xml.etree.ElementTree as ET
 from urllib.parse import urlparse
-from urllib.robotparser import RobotFileParser
 
 import requests
-from bs4 import BeautifulSoup
 
 
 BOT = 'TeknoskorPriceBot'
@@ -81,20 +79,6 @@ def _xml_root(raw, expected_tag, maximum, metrics=None):
     return root
 
 
-def _robots_text(raw):
-    text = raw.decode('utf-8-sig', errors='strict')
-    if re.search(r'<\s*(?:html|body|pre)\b', text, re.I):
-        # Chromium may present text/plain robots.txt inside a single PRE.
-        soup = BeautifulSoup(text, 'html.parser')
-        blocks = soup.find_all('pre')
-        if (len(blocks) != 1 or soup.find(['script', 'form', 'iframe'])
-                or ' '.join(soup.get_text(' ', strip=True).split()) !=
-                   ' '.join(blocks[0].get_text(' ', strip=True).split())):
-            return ''
-        text = blocks[0].get_text()
-    return text
-
-
 def _product_sitemap(index):
     candidates = []
     for row in index:
@@ -111,7 +95,7 @@ def _product_sitemap(index):
     return candidates[0]
 
 
-def _product_candidates(root, rules):
+def _product_candidates(root):
     if len(root) > MAX_URLS:
         raise ValueError('too_many_product_urls')
     seen = set()
@@ -121,7 +105,7 @@ def _product_candidates(root, rules):
             continue
         loc = row.find(NS + 'loc')
         url = loc.text.strip() if loc is not None and isinstance(loc.text, str) else ''
-        if not _safe_exact_url(url) or not rules.can_fetch(BOT, url) or url in seen:
+        if not _safe_exact_url(url) or url in seen:
             continue
         seen.add(url)
         path = urlparse(url).path.lstrip('/').casefold()
@@ -143,9 +127,9 @@ class TeknosaSitemapAudit:
         self._direct_statuses = {}
         self._solver_diagnostics = {}
 
-    def _read(self, url, maximum, accept, *, rules=None):
-        if not _safe_exact_url(url) or (rules is not None and not rules.can_fetch(BOT, url)):
-            raise ValueError('url_not_robots_allowed')
+    def _read(self, url, maximum, accept):
+        if not _safe_exact_url(url):
+            raise ValueError('invalid_sitemap_url')
         response = self._get(
             url, timeout=(5, 20), allow_redirects=False, stream=True,
             headers={'User-Agent': BOT + '/1.0 (+https://teknoskor.com)',
@@ -225,7 +209,7 @@ class TeknosaSitemapAudit:
 
     def run(self):
         report = {'purpose': 'read_only_teknosa_sitemap_access_and_exact_url_hints',
-                  'writes': False, 'status': 'failed', 'stage': 'robots',
+                  'writes': False, 'status': 'failed', 'stage': 'index',
                   'index_url': INDEX_URL, 'product_sitemap_url': None,
                   'product_url_count': 0, 'candidate_urls': {},
                   'direct_http_statuses': self._direct_statuses,
@@ -233,44 +217,22 @@ class TeknosaSitemapAudit:
                   'solver_diagnostics': self._solver_diagnostics,
                   'xml_diagnostics': {}, 'browser_requests': 0}
         try:
-            raw_robots = self._read(ROBOTS_URL, MAX_ROBOTS_BYTES, 'text/plain')
-            robots = _robots_text(raw_robots)
-            if (re.search(r'<(?:!doctype|html|head|body)\b', robots, re.I)
-                    or not re.search(r'^\s*user-agent\s*:', robots, re.I | re.M)
-                    or not re.search(r'^\s*sitemap\s*:\s*' + re.escape(INDEX_URL) +
-                                     r'\s*$', robots, re.I | re.M)):
-                raise ValueError('invalid_robots_policy')
-            rules = RobotFileParser()
-            rules.parse(robots.splitlines())
-            if not rules.can_fetch(BOT, INDEX_URL):
-                raise ValueError('index_disallowed')
-            delay = float(rules.crawl_delay(BOT) or 0)
-            rate = rules.request_rate(BOT)
-            if rate:
-                delay = max(delay, rate.seconds / max(1, rate.requests))
-            if delay > 30:
-                raise ValueError('crawl_delay_exceeds_budget')
-            if delay:
-                self._sleep(delay)
             report['stage'] = 'index'
             raw_index = self._read(INDEX_URL, MAX_INDEX_BYTES,
-                                   'application/xml,text/xml', rules=rules)
+                                   'application/xml,text/xml')
             index = _xml_root(raw_index, 'sitemapindex', MAX_INDEX_BYTES,
                               report['xml_diagnostics'].setdefault(INDEX_URL, {}))
             if len(index) > 100:
                 raise ValueError('too_many_sitemaps')
             child_url = _product_sitemap(index)
-            if not rules.can_fetch(BOT, child_url):
-                raise ValueError('product_sitemap_disallowed')
             report['product_sitemap_url'] = child_url
-            if delay:
-                self._sleep(delay)
+            self._sleep(0.5)
             report['stage'] = 'product_sitemap'
             raw_product = self._read(child_url, MAX_PRODUCT_BYTES,
-                                     'application/xml,text/xml', rules=rules)
+                                     'application/xml,text/xml')
             root = _xml_root(raw_product, 'urlset', MAX_PRODUCT_BYTES,
                              report['xml_diagnostics'].setdefault(child_url, {}))
-            count, candidates = _product_candidates(root, rules)
+            count, candidates = _product_candidates(root)
             report['product_url_count'] = count
             report['candidate_urls'] = candidates
             report['status'] = 'completed'

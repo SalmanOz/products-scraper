@@ -34,7 +34,7 @@ from mediamarkt_source import MediaMarktSource, SourceBudgetExhausted, SourceCir
 from priority_retailer_transport import PriorityRetailerTransport, compatible_get
 from retailer_barcode import retailer_gtin13
 from tws_offer_pilot import independent_sellers
-from tws_retailer_sources import BOT, STOP_REASONS, _vatan_url
+from tws_retailer_sources import STOP_REASONS, _vatan_url
 from vatan_category_source import VatanCategorySource
 
 MINIMUM = 25
@@ -190,7 +190,7 @@ def _target(url):
 
 def _hepsiburada_public_get(url, **kwargs):
     # The public storefront responds normally to the browser client's standard
-    # headers. Reuse the same robots checks, host quota and denial circuit.
+    # headers. Reuse the same host quota and denial circuit.
     if urlparse(url).netloc == 'www.hepsiburada.com':
         kwargs['headers'] = {'Accept': kwargs['headers']['Accept']}
     return compatible_get(url, **kwargs)
@@ -204,10 +204,9 @@ def verify_seller(offer, source, transport, identities):
     if key not in identities:
         raw = None
         if offer['platform'] == 'MediaMarkt':
-            if source._rules.can_fetch(BOT, url):
-                body, reason, _ = source._direct(url, 5 * 1024 * 1024, 'text/html')
-                if reason == 'ready':
-                    raw = body
+            body, reason, _ = source._direct(url, 5 * 1024 * 1024, 'text/html')
+            if reason == 'ready':
+                raw = body
         elif offer['platform'] == 'Teknosa':
             raw, _, _ = transport.read_teknosa_seller(url)
         elif offer['platform'] == 'Hepsiburada':
@@ -264,14 +263,12 @@ def read_retailer(host, rows, *, document_reader=None):
                   MediaMarktSource(get=compatible_get))
         if host.startswith('www.mediamarkt'):
             source.configure_catalog_budget(len(rows) * 2)
-        source._load_robots()
 
     for row in rows:
         url = row['url']
         try:
             if host in FIRST_PARTY:
-                if (source._rules is None or not source._rules.can_fetch(BOT, url)
-                        or host.startswith('www.vatan') and not _vatan_url(url)
+                if (host.startswith('www.vatan') and not _vatan_url(url)
                         or host.startswith('www.mediamarkt') and not re.fullmatch(
                             r'/tr/product/_[a-z0-9-]+-\d{6,12}\.html', urlparse(url).path)):
                     failures['source_policy'] += 1

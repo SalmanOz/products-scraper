@@ -49,9 +49,7 @@ def validated_offers(report, now=None):
             return None
         sources = report.get('sources')
         if (not isinstance(sources, dict)
-                or sources.get('turk_telekom', {}).get('status') != 'ready'
-                or sources.get('turk_telekom', {}).get('robots_status') != 'allowed'
-                or sources.get('pasaj', {}).get('robots_status') != 'allowed'):
+                or sources.get('turk_telekom', {}).get('status') != 'ready'):
             return None
         attempts = report.get('source_attempts')
         if not isinstance(attempts, list) or len(attempts) != 2:

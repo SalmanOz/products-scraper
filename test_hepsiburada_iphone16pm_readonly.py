@@ -198,7 +198,7 @@ class HepsiburadaIphone16PmAuditTests(unittest.TestCase):
             '<html><title>Access denied</title><body>Captcha</body></html>'),
             (None, 'challenge_page'))
 
-    def test_robots_preflight_and_exact_request_budget(self):
+    def test_exact_request_budget(self):
         calls = []
 
         def get(url, **_):
@@ -209,18 +209,8 @@ class HepsiburadaIphone16PmAuditTests(unittest.TestCase):
         report = run_audit(HepsiburadaIphone16PmAuditSource(get=get))
         self.assertTrue(report['verified'])
         self.assertFalse(report['writes'])
-        self.assertEqual(calls, [ROBOTS_URL, URL])
+        self.assertEqual(calls, [URL])
         self.assertEqual(report['offer']['merchant'], SELLER)
-
-        calls.clear()
-
-        def deny(url, **_):
-            calls.append(url)
-            return response(url, 'User-agent: *\nDisallow: /\n')
-
-        self.assertEqual(HepsiburadaIphone16PmAuditSource(get=deny).read_offer(),
-                         (None, 'robots_disallowed', None))
-        self.assertEqual(calls, [ROBOTS_URL])
 
     def test_403_429_and_redirect_stop_without_browser_or_post(self):
         calls = []
@@ -234,7 +224,7 @@ class HepsiburadaIphone16PmAuditTests(unittest.TestCase):
             self.assertEqual(HepsiburadaIphone16PmAuditSource(get=get).read_offer(),
                              (None, 'http_403', 403))
             post.assert_not_called()
-        self.assertEqual(calls, [ROBOTS_URL, URL])
+        self.assertEqual(calls, [URL])
         calls.clear()
 
         def get_429(url, **_):
@@ -244,7 +234,7 @@ class HepsiburadaIphone16PmAuditTests(unittest.TestCase):
 
         self.assertEqual(HepsiburadaIphone16PmAuditSource(
             get=get_429).read_offer(), (None, 'http_429', 429))
-        self.assertEqual(calls, [ROBOTS_URL, URL])
+        self.assertEqual(calls, [URL])
 
         calls.clear()
 
@@ -256,7 +246,7 @@ class HepsiburadaIphone16PmAuditTests(unittest.TestCase):
         self.assertEqual(HepsiburadaIphone16PmAuditSource(
             get=redirected).read_offer(),
             (None, 'unexpected_final_url', 200))
-        self.assertEqual(calls, [ROBOTS_URL, URL])
+        self.assertEqual(calls, [URL])
 
 
 if __name__ == '__main__':

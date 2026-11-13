@@ -22,8 +22,7 @@ def validated_offers(report, now=None):
         now = now or datetime.now(timezone.utc)
         if (not isinstance(report, dict)
                 or report.get('purpose') != 'read_only_mediamarkt_a37_two_selected_offers'
-                or report.get('status') != 'passed' or report.get('writes') is not False
-                or report.get('robots_status') != 'ready'):
+                or report.get('status') != 'passed' or report.get('writes') is not False):
             return None
         checked = _time(report['checked_at'])
         if now.tzinfo is None or not -60 <= (now - checked).total_seconds() <= MAX_AGE_SECONDS:

@@ -58,7 +58,7 @@ def run_audit(source=None):
 def format_summary(report):
     lines = ['## Türk Telekom public PDP access audit',
              f"Status: {report['status']} — {report['verified_products']}/{report['required_products']} exact profiles.",
-             f"Source: {report['source']['status']}; robots {report['source']['robots_status']}; "
+             f"Source: {report['source']['status']}; "
              f"stock cards {report['source']['stock_card_urls']}."]
     for row in report['products']:
         offers = ', '.join(f"{offer['price']:,.2f} TRY ({offer['availability']})"

@@ -118,7 +118,7 @@ class PasajSourceTest(unittest.TestCase):
         self.assertTrue(updater.live_offer_is_valid(product, observed[0], specs))
         self.assertEqual(len(updater.prepare_product_offers(product, observed,
                              updater.utc_timestamp(), updater.utc_timestamp())), 1)
-        self.assertEqual(calls, [ROBOTS_URL, URL])
+        self.assertEqual(calls, [URL])
         self.assertEqual(source.report()['pdp_request_limit'], 60)
         self.assertEqual(reader.refresh_existing_offer_targets('Samsung Galaxy A54 5G',
                          [{'source_url': URL}], {**specs, 'storage_gb': 256}), [])
@@ -241,7 +241,7 @@ class PasajSourceTest(unittest.TestCase):
         self.assertIsNone(_selected_offer(page().replace('"price": 86999', '"price": 67999', 1),
                                            IPHONE17_256_URL))
 
-    def test_robots_and_exact_pdp_transport(self):
+    def test_exact_pdp_transport(self):
         calls = []
         def get(url, **kwargs):
             calls.append((url, kwargs))
@@ -252,35 +252,16 @@ class PasajSourceTest(unittest.TestCase):
         source = PasajSource(get=get, sleep=lambda _: None)
         offer, reason, status = source.read_offer(IPHONE17_256_URL)
         self.assertEqual((reason, status, offer['price']), ('observed_exact_cash_offer', 200, 86999))
-        self.assertEqual([url for url, _ in calls], [ROBOTS_URL, IPHONE17_256_URL])
+        self.assertEqual([url for url, _ in calls], [IPHONE17_256_URL])
         self.assertTrue(all(not kw['allow_redirects'] and kw['stream'] for _, kw in calls))
 
-    def test_robots_disallow_and_redirect_fail_closed(self):
-        def disallowed(url, **kwargs):
-            return Response(url, 'User-agent: *\nDisallow: /pasaj\n', content_type='text/plain')
-        source = PasajSource(get=disallowed, sleep=lambda _: None)
-        self.assertEqual(source.read_offer(IPHONE17_256_URL)[1], 'robots_disallowed')
-        self.assertEqual(source.report()['pdp_requests'], 0)
+    def test_redirect_fails_closed(self):
         def redirected(url, **kwargs):
             if url == ROBOTS_URL:
                 return Response(url, 'User-agent: *\nAllow: /\n', content_type='text/plain')
             return Response('https://www.turkcell.com.tr/pasaj/c/ios-telefonlar', page(), 302)
         source = PasajSource(get=redirected, sleep=lambda _: None)
         self.assertEqual(source.read_offer(IPHONE17_256_URL)[1], 'unexpected_final_url')
-
-    def test_robots_permissions_are_checked_for_each_reviewed_url(self):
-        calls = []
-        def get(url, **kwargs):
-            calls.append(url)
-            if url == ROBOTS_URL:
-                return Response(url, 'User-agent: *\nDisallow: /pasaj/cep-telefonu/android-telefonlar\n',
-                                content_type='text/plain')
-            return Response(url, page())
-        source = PasajSource(get=get, sleep=lambda _: None)
-        self.assertEqual(source.read_offer(IPHONE17_256_URL)[1], 'observed_exact_cash_offer')
-        self.assertEqual(source.read_offer(A26_6_128_URL)[1], 'robots_disallowed')
-        self.assertEqual(calls, [ROBOTS_URL, IPHONE17_256_URL])
-        self.assertEqual(source.report()['pdp_requests'], 1)
 
     def test_read_only_audit_covers_all_three_exact_variants(self):
         pages = {IPHONE17_256_URL: page(), IPHONE16_128_URL: iphone16_page(),

@@ -3,7 +3,6 @@
 import argparse
 from datetime import datetime, timezone
 import json
-from urllib.robotparser import RobotFileParser
 
 from bs4 import BeautifulSoup
 
@@ -62,10 +61,6 @@ def prepare():
             or options != {'Renk': 'Açık Mor', 'Depolama': '128 GB', 'Hafıza': '4 GB'}
             or '2G GSM, 3G WCDMA, 4G LTE FDD, 4G LTE TDD' not in official.get_text(' ', strip=True)):
         raise ValueError('manufacturer_4g_variant_unverified')
-    robots = RobotFileParser()
-    robots.parse(reader.read(OZGUR_BASE + '/robots.txt').splitlines())
-    if any(not robots.can_fetch('TeknoskorPriceBot', url) for url in (OZGUR, OZGUR_TERMS)):
-        raise ValueError('ozgur_robots_disallowed')
     direct, photo = ozgur_offer(reader.read(OZGUR), reader.read(OZGUR_TERMS), url=OZGUR, name=NAME,
                                specs=SPECS, mpn=MPN, gtin=GTIN, brand='Samsung')
 

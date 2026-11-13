@@ -12,7 +12,6 @@ import re
 import time
 from urllib.parse import urlparse
 from threading import RLock
-from urllib.robotparser import RobotFileParser
 
 from bs4 import BeautifulSoup
 import requests
@@ -269,25 +268,23 @@ def _selected_offer(html, url, catalog_profile=None):
 
 
 class PasajSource:
-    """Bounded read-only requests with fail-closed robots and redirect handling."""
+    """Bounded read-only requests with strict redirect handling."""
 
     def __init__(self, get=None, sleep=time.sleep, monotonic=time.monotonic):
         self._get = get or requests.get
         self._sleep, self._monotonic = sleep, monotonic
         self._lock = RLock()
-        self._rules = None
         self._last_request = None
         self._delay = 0.5
         self._pdp_requests = 0
         self._blocked = False
-        self._robots_status = 'not_loaded'
         self._catalog_profiles = {}
         self._pdp_limit = MAX_PDP_REQUESTS
 
     def configure_catalog_budget(self, product_count):
         if type(product_count) is not int or product_count < 1:
             raise ValueError('Catalog product count must be a positive integer')
-        if self._pdp_requests or self._rules is not None:
+        if self._pdp_requests:
             raise RuntimeError('Configure the catalog budget before source requests')
         self._pdp_limit = max(MAX_PDP_REQUESTS, min(60, product_count))
 
@@ -320,14 +317,14 @@ class PasajSource:
         return _selected_offer(html, url, self._catalog_profiles.get(url))
 
     def _request(self, url, limit):
-        if self._blocked or (self._rules and not self._rules.can_fetch(BOT, url)):
+        if self._blocked:
             raise ValueError('blocked_or_disallowed')
         if self._last_request is not None:
             self._sleep(max(0, self._delay - (self._monotonic() - self._last_request)))
         self._last_request = self._monotonic()
         response = self._get(url, timeout=(5, 15), allow_redirects=False, stream=True,
                              headers={'User-Agent': BOT + '/1.0 (+https://teknoskor.com)',
-                                      'Accept': 'text/plain' if url == ROBOTS_URL else 'text/html',
+                                      'Accept': 'text/html',
                                       'Accept-Language': 'tr-TR,tr;q=0.9'})
         try:
             if response.status_code in (403, 429):
@@ -337,8 +334,7 @@ class PasajSource:
             if response.status_code != 200:
                 return None, 'http_' + str(response.status_code), response.status_code
             mime = response.headers.get('Content-Type', '').lower()
-            if (url == ROBOTS_URL and not ('text/plain' in mime or 'text/html' in mime) or
-                    url != ROBOTS_URL and 'text/html' not in mime):
+            if 'text/html' not in mime:
                 return None, 'unexpected_content_type', 200
             size = str(response.headers.get('Content-Length') or '')
             if size.isdigit() and int(size) > limit:
@@ -352,34 +348,11 @@ class PasajSource:
         finally:
             response.close()
 
-    def _ensure_robots(self, url):
-        if self._rules is None:
-            body, reason, _ = self._request(ROBOTS_URL, MAX_ROBOTS_BYTES)
-            if reason != 'ok' or not re.search(r'^\s*User-agent\s*:', body, re.I | re.M):
-                self._robots_status = reason if reason != 'ok' else 'invalid_robots'
-                raise ValueError('robots_unavailable')
-            rules = RobotFileParser()
-            rules.parse(body.splitlines())
-            delay = float(rules.crawl_delay(BOT) or 0)
-            rate = rules.request_rate(BOT)
-            if rate:
-                delay = max(delay, rate.seconds / max(1, rate.requests))
-            if delay > 30:
-                self._robots_status = 'crawl_delay_exceeds_budget'
-                raise ValueError('crawl_delay_exceeds_budget')
-            self._delay = max(0.5, delay)
-            self._rules = rules
-        if not self._rules.can_fetch(BOT, url):
-            self._robots_status = 'pdp_disallowed'
-            raise ValueError('robots_disallowed')
-        self._robots_status = 'allowed'
-
     def read_offer(self, url):
         if not product_url(url) and not self.is_catalog_target(url):
             return None, 'unreviewed_pasaj_pdp', None
         with self._lock:
             try:
-                self._ensure_robots(url)
                 if self._pdp_requests >= self._pdp_limit:
                     return None, 'pdp_budget_exhausted', None
                 self._pdp_requests += 1
@@ -394,6 +367,6 @@ class PasajSource:
                 return None, type(error).__name__, None
 
     def report(self):
-        return {'robots_status': self._robots_status, 'pdp_requests': self._pdp_requests,
+        return {'pdp_requests': self._pdp_requests,
                 'blocked': self._blocked, 'reviewed_pdp_count': len(REVIEWED),
                 'catalog_discovered_urls': len(self._catalog_profiles), 'pdp_request_limit': self._pdp_limit}

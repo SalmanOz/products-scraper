@@ -169,7 +169,7 @@ def audit(*, client=None, source=None):
               'github_run_id': os.environ.get('GITHUB_RUN_ID'),
               'github_run_attempt': os.environ.get('GITHUB_RUN_ATTEMPT'),
               'checked_at': None, 'catalog_status': 'failed',
-              'catalog_error': None, 'robots_status': None,
+              'catalog_error': None,
               'rows': [], 'source': None}
     try:
         catalog = _catalog(client)
@@ -192,9 +192,7 @@ def audit(*, client=None, source=None):
             'source_attempt': attempt, 'verified_offer': verified,
             'status': 'passed' if product and verified else 'failed',
         })
-    report['robots_status'] = source.report().get('robots_status')
     if (report['catalog_status'] == 'passed'
-            and report['robots_status'] == 'ready'
             and len(report['rows']) == len(PROFILES)
             and all(row['status'] == 'passed' for row in report['rows'])):
         report['status'] = 'passed'
@@ -211,7 +209,6 @@ def verified_offers(report, now=None):
                 or report.get('status') != 'passed'
                 or report.get('catalog_status') != 'passed'
                 or report.get('catalog_error') is not None
-                or report.get('robots_status') != 'ready'
                 or report.get('github_run_id') != os.environ.get('GITHUB_RUN_ID')
                 or report.get('github_run_attempt') !=
                     os.environ.get('GITHUB_RUN_ATTEMPT')
@@ -314,7 +311,6 @@ def publish(report, *, client=None, source=None, now=None):
         offer, attempt = _read_selected(source, url)
         if (attempt.get('reason') != 'observed_exact_new_marketplace_offer'
                 or attempt.get('http_status') != 200
-                or source.report().get('robots_status') != 'ready'
                 or not _exact_offer(offer, url, profile)
                 or any(offer.get(key) != audited[url].get(key)
                        for key in OFFER_IDENTITY_FIELDS)):
@@ -409,8 +405,7 @@ def summary(report, *, publication=None, publish_requested=None):
         publication_state = ('Yayın sonucu doğrulanamadı; yazım gerçekleşmiş olabilir. '
                              'Ingestion sonucunu kontrol edin.')
     lines = [f"POCO X8 Pro + Galaxy A27 5G MediaMarkt iki SKU: {report['status']}; "
-             f"yetkili katalog {report['catalog_status']}; robots "
-             f"{report.get('robots_status')}. {publication_state}"]
+             f"yetkili katalog {report['catalog_status']}. {publication_state}"]
     for row in report['rows']:
         offer = row.get('verified_offer') or {}
         evidence = row.get('catalog_evidence') or {}
