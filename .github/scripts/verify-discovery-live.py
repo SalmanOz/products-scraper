@@ -33,7 +33,8 @@ def check(product):
         raise ValueError('A new product image is unavailable')
     doc = BeautifulSoup(page.content, 'html.parser')
     links = {a['href'] for a in doc.select('main a[href]')}
-    if len(links.intersection(o['url'] for o in product['offers'])) < 2 or not doc.select_one('main h1'):
+    expected = {offer['url'] for offer in product['offers']}
+    if not expected or not expected <= links or not doc.select_one('main h1'):
         raise ValueError('A new product is missing its detail or offers')
 
 

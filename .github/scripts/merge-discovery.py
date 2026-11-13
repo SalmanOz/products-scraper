@@ -14,7 +14,8 @@ from laptop_price_stage import targets_for_catalog as laptop_targets
 from monitor_refresh import targets_for_catalog as monitor_targets
 from monitor_pilot import MANUFACTURER_SPECS, group_targets
 from monitor_sources import code_key
-from monitor_scale import MAX_RESCAN_TARGETS
+from pc_parts_multistore import GAMING, offer_host
+from retailer_catalog_feeds import FEEDS
 from retailer_barcode import retailer_gtin13
 
 
@@ -38,8 +39,8 @@ def identities(model):
     return result
 
 
-def fresh_pair(offers, timestamp, now, merchant='merchant'):
-    if len(offers) < 2 or len({o['platform'] for o in offers}) < 2:
+def fresh_offers(offers, timestamp, now, merchant='merchant', minimum=2):
+    if len(offers) < minimum or len({o['platform'] for o in offers}) < minimum:
         return False
     if len({key(o[merchant]) for o in offers}) != len(offers) or len({o['url'] for o in offers}) != len(offers):
         return False
@@ -112,8 +113,10 @@ class Expansion:
             for bundle in report['categories'][kind]['staged']:
                 model = bundle['model']
                 offers = model['offers']
-                fresh = fresh_pair(offers, 'observed_at', self.now)
-                if not fresh or retailer_gtin13(model['gtin']) != model['gtin']:
+                feed_verified = (len(offers) == 1 and bundle.get('feedGtin') == model['gtin']
+                                 and offer_host(offers[0]['url']) in FEEDS)
+                if (not fresh_offers(offers, 'observed_at', self.now, minimum=1 if feed_verified else 2)
+                        or retailer_gtin13(model['gtin']) != model['gtin']):
                     continue
                 rows = bundle['targets']
                 if kind == 'monitor' and any(r['code'] != code_key(model['mpn']) for r in rows):
@@ -138,7 +141,8 @@ class Expansion:
             expanded = {**catalog, 'checkedAt': self.stamp, 'models': [*catalog['models'], *added],
                         'discoveryTargets': list(targets.values())}
             if kind == 'monitor':
-                group_targets(monitor_targets(expanded, read(Path('monitor_pilot_targets.json'))), MAX_RESCAN_TARGETS)
+                routes = monitor_targets(expanded, read(Path('monitor_pilot_targets.json')))
+                group_targets(routes, len(routes))
             else:
                 laptop_targets(expanded)
             self.snapshot(name, expanded)
@@ -149,8 +153,9 @@ class Expansion:
         catalog = self.catalog(name)
         added = []
         for model in read(root / 'report.json')['staged']:
+            feed_verified = model.pop('feedGtin', None) == model['gtin'] and offer_host(model['sourceUrl']) == GAMING
             offers = model['offers']
-            if (retailer_gtin13(model['gtin']) == model['gtin'] and fresh_pair(offers, 'checkedAt', self.now, 'seller')
+            if (retailer_gtin13(model['gtin']) == model['gtin'] and fresh_offers(offers, 'checkedAt', self.now, 'seller', minimum=1 if feed_verified else 2)
                     and self.accept(model, 'pc-parts', root / 'photos' / (model['gtin'] + '.webp'),
                                     offers, set(model['offerTargets']))):
                 added.append(model)
@@ -184,7 +189,7 @@ class Expansion:
                         or urls.intersection(route_urls) or catalog_key in targets):
                     self.duplicates += 1
                     continue
-                if (not gtin or retailer_gtin13(gtin) != gtin or not fresh_pair(offers, 'observed_at', self.now)
+                if (not gtin or retailer_gtin13(gtin) != gtin or not fresh_offers(offers, 'observed_at', self.now)
                         or not {o['url'] for o in offers} <= route_urls):
                     continue
                 selected.append(row)

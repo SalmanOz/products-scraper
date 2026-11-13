@@ -5,7 +5,7 @@ from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
-from itertools import combinations
+from itertools import islice
 import json
 import math
 from pathlib import Path
@@ -22,12 +22,13 @@ from laptop_discovery import Reader, _pdp
 from laptop_pilot import (PARSERS as LAPTOP_PARSERS, _hepsiburada_public_get, _image,
                           build_model, compatible as laptop_compatible, select_offers, verify_seller)
 from laptop_retailer_sources import model_codes
-from monitor_pilot import PHOTO_HOSTS, compatible as monitor_compatible, independent_pair, materialize
+from monitor_pilot import PHOTO_HOSTS, candidates as monitor_candidates, compatible as monitor_compatible, materialize
 from monitor_sources import PARSERS as MONITOR_PARSERS, code_key, mentions
 from n11_catalog_source import public_search_cards
 from pc_parts_multistore import DIRECT_PATHS, offer_host
 from priority_retailer_transport import PriorityRetailerTransport
 from retailer_barcode import retailer_gtin13
+from retailer_catalog_feeds import FEEDS
 
 
 CATALOG_FILES = {'laptop': 'laptopPilot.json', 'monitor': 'monitorPilot.json'}
@@ -122,10 +123,12 @@ def discover_accessory_leads(state, model_links, comparison_sources, maximum):
 
 
 def candidate_targets(state, categories, maximum, diagnostics=None, *, existing_codes=None, native_search=0,
-                      native_reports=None):
+                      native_reports=None, existing_barcodes=None, allow_single=False):
     prior = state.get('accessoryLeadAudits', {})
     existing_codes = existing_codes or {}
+    existing_barcodes = existing_barcodes or {}
     targets = defaultdict(dict)
+    feeds = defaultdict(dict)
     model_links = defaultdict(set)
     comparison_sources = defaultdict(set)
     for key, row in state['products'].items():
@@ -137,7 +140,16 @@ def candidate_targets(state, categories, maximum, diagnostics=None, *, existing_
             continue
         codes = (monitor_codes(row['title']) if kind == 'monitor'
                  else {code_key(code) for code in model_codes(row['title'])})
-        unknown_codes = codes - existing_codes.get(kind, set())
+        known = existing_codes.get(kind, set())
+        gtin = row.get('feedGtin')
+        feed_url = row.get('url')
+        if (gtin and retailer_gtin13(gtin) == gtin and feed_url in urls
+                and row.get('source') in FEEDS and urlsplit(feed_url).netloc == row['source']):
+            if gtin in existing_barcodes.get(kind, set()):
+                continue
+            if not codes.intersection(known):
+                feeds[kind, gtin][feed_url] = {code for code in codes if mentions(urlsplit(feed_url).path, code)}
+        unknown_codes = codes - known
         for code in unknown_codes:
             model_links[kind, code, True].update(url for url in urls if mentions(urlsplit(url).path, code))
             if native_search and SEARCH_CODE.fullmatch(code) and row.get('source'):
@@ -146,6 +158,20 @@ def candidate_targets(state, categories, maximum, diagnostics=None, *, existing_
             # Some retailer URLs omit the MPN. A single comparison page can
             # still supply leads, and the selected PDP has to prove the MPN.
             model_links[kind, key, False].update(urls)
+    # A feed GTIN groups retailers even when their URL slugs differ. Product
+    # documents still have to prove the selected variant and live offer.
+    feed_routes = {}
+    for (kind, gtin), routes in feeds.items():
+        code_sets = [codes for codes in routes.values() if codes]
+        if kind == 'monitor' and not code_sets:
+            continue
+        shared = set.intersection(*code_sets) if code_sets else set()
+        if kind == 'monitor' and not shared:
+            continue
+        code = max(shared, key=lambda value: (len(value), value)) if shared else gtin
+        model_links[kind, code, kind == 'monitor' or bool(shared)].update(routes)
+        for url in routes:
+            feed_routes[kind, url] = gtin
     new_urls = set()
     if native_search:
         reports, new_urls = discover_accessory_leads(state, model_links, comparison_sources, native_search)
@@ -153,9 +179,9 @@ def candidate_targets(state, categories, maximum, diagnostics=None, *, existing_
             native_reports.update(reports)
     for (kind, model, exact_code), urls in model_links.items():
         sources = len({urlsplit(url).netloc for url in urls})
-        if sources < 2:
-            continue
         for url in urls:
+            if sources < 2 and not (allow_single and (kind, url) in feed_routes):
+                continue
             candidates = targets[kind, urlsplit(url).netloc]
             identity = (len(model) if kind == 'monitor' else 0, sources, exact_code, model)
             if identity > candidates.get(url, (0, 0, False, '')):
@@ -188,6 +214,7 @@ def candidate_targets(state, categories, maximum, diagnostics=None, *, existing_
         paired = selected[kind, host]
         chosen = {url for url, _ in paired}
         ordered = sorted(targets_by_url.items(), key=lambda row: (prior.get(f'{kind}/{row[0]}', ''),
+                                                                  (kind, row[0]) not in feed_routes,
                                                                   -row[1][1], row[1][3], row[0]))
         counts = Counter(model for _, model in paired)
         ranked = []
@@ -198,7 +225,9 @@ def candidate_targets(state, categories, maximum, diagnostics=None, *, existing_
             counts[model] += 1
         ranked.sort(key=lambda row: row[0])
         routes = paired + [(url, model) for _, url, model in ranked[:maximum - len(paired)]]
-        result[host].extend((kind, url, model if kind == 'monitor' else '') for url, model in routes)
+        result[host].extend((kind, url, model if kind == 'monitor' else '', feed_routes.get((kind, url)))
+                            if allow_single else (kind, url, model if kind == 'monitor' else '')
+                            for url, model in routes)
         for _, model in routes:
             planned[kind, model].add(host)
     if diagnostics is not None:
@@ -218,7 +247,7 @@ def read_host(host, targets):
         reader.transport = PriorityRetailerTransport(maximum_per_host=len(targets), browser_fallback=False,
             get=catalog_document_reader('accessory-discovery') if host == 'www.n11.com' else None)
     offers, rejections, attempted = [], Counter(), set()
-    for kind, url, code in targets:
+    for kind, url, code, feed_gtin in targets:
         if reader.stop:
             break
         attempted.add(f'{kind}/{url}')
@@ -244,28 +273,36 @@ def read_host(host, targets):
                     not (3000 if kind == 'laptop' else 1) <= price <= 1_000_000):
                 rejections['barcode_stock_or_condition_unverified'] += 1
                 continue
+            if feed_gtin and gtin != feed_gtin:
+                rejections['feed_barcode_does_not_match_product_page'] += 1
+                continue
             if not verify_seller(offer, reader.source, reader.transport, reader.sellers):
                 rejections['seller_identity_unverified'] += 1
                 continue
-            offers.append((kind, {**offer, **({'code': code} if code else {})}))
+            offers.append((kind, {**offer, **({'code': code} if code else {}),
+                                  **({'_feed_gtin': feed_gtin} if feed_gtin else {})}))
         except (RequestsError, RequestException, OSError, ValueError, TypeError, KeyError, AttributeError):
             rejections['read_or_parse_error'] += 1
     return offers, dict(rejections), attempted
 
 
 def materialize_candidate(kind, offers):
+    # Only a matching first-party feed and live seller document can
+    # establish a new model with a single offer.
+    single = [offer for offer in offers if offer.get('_feed_gtin') == offer['gtin13']]
     if kind == 'laptop':
         selected = select_offers(offers)
-        if len({offer['platform'] for offer in selected}) < 2:
-            return None
-        for offer in selected:
-            if offer.get('_image') and (photo := _image(offer['_image'], allowed_hosts=PHOTO_HOSTS)):
-                return build_model(selected, offer), photo
+        choices = [selected] if len({offer['platform'] for offer in selected}) >= 2 else []
+        choices.extend([offer] for offer in single)
+        for cohort in choices:
+            for offer in cohort:
+                if offer.get('_image') and (photo := _image(offer['_image'], allowed_hosts=PHOTO_HOSTS)):
+                    return build_model(cohort, offer), photo
         return None
-    pairs = sorted((pair for pair in combinations(offers, 2) if independent_pair(*pair)),
-                   key=lambda pair: sum(offer['price'] for offer in pair))
-    for pair in pairs:
-        if result := materialize(pair, offers):
+    for cohort in monitor_candidates(offers):
+        if len(cohort) == 1 and cohort[0] not in single:
+            continue
+        if result := materialize(cohort, offers if len(cohort) > 1 else cohort):
             return result
     return None
 
@@ -275,34 +312,42 @@ def stage_category(kind, catalog, grouped, output, maximum_models):
     known_codes = {code_key(row['mpn']) for row in catalog['models']}
     known_slugs = {row['slug'] for row in catalog['models']}
     rows, rejected = [], Counter()
+    candidates = []
     for (code, gtin), offers in sorted(grouped.items(), key=lambda row: (-len(row[1]), row[0])):
         if gtin in known_barcodes or code_key(code) in known_codes:
             rejected['already_in_catalog'] += 1
             continue
-        if len({offer['platform'] for offer in offers}) < 2:
+        if len({offer['platform'] for offer in offers}) < 2 and not any(o.get('_feed_gtin') for o in offers):
             rejected['same_barcode_second_platform_missing'] += 1
             continue
-        result = materialize_candidate(kind, offers)
-        if not result:
-            rejected['independent_pair_specs_or_photo_missing'] += 1
-            continue
-        model, image = result
-        if model['slug'] in known_slugs:
-            rejected['catalog_slug_collision'] += 1
-            continue
-        known_barcodes.add(gtin)
-        known_codes.add(code_key(code))
-        known_slugs.add(model['slug'])
-        (output / f"{model['slug']}.webp").write_bytes(image)
-        selected_urls = {offer['url'] for offer in model['offers']}
-        selected = [offer for offer in offers if offer['url'] in selected_urls]
-        compatible = monitor_compatible if kind == 'monitor' else laptop_compatible
-        targets = {offer['url']: {'url': offer['url'], 'gtin': gtin,
-                                 'code' if kind == 'monitor' else 'mpn': code}
-                   for offer in offers if all(compatible(offer, chosen) for chosen in selected)}
-        rows.append({'model': model, 'targets': list(targets.values())})
-        if len(rows) == maximum_models:
-            break
+        candidates.append((code, gtin, offers))
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        pending = iter(candidates)
+        while len(rows) < maximum_models and (batch := list(islice(pending, min(12, maximum_models - len(rows))))):
+            materials = pool.map(lambda row: materialize_candidate(kind, row[2]), batch)
+            for (code, gtin, offers), result in zip(batch, materials):
+                if not result:
+                    rejected['verified_offers_specs_or_photo_missing'] += 1
+                    continue
+                model, image = result
+                model_code = code_key(model['mpn'])
+                if gtin in known_barcodes or {code_key(code), model_code} & known_codes or model['slug'] in known_slugs:
+                    rejected['already_in_catalog'] += 1
+                    continue
+                known_barcodes.add(gtin)
+                known_codes.update((code_key(code), model_code))
+                known_slugs.add(model['slug'])
+                (output / f"{model['slug']}.webp").write_bytes(image)
+                selected_urls = {offer['url'] for offer in model['offers']}
+                selected = [offer for offer in offers if offer['url'] in selected_urls]
+                compatible = monitor_compatible if kind == 'monitor' else laptop_compatible
+                targets = {offer['url']: {'url': offer['url'], 'gtin': gtin,
+                                         'code' if kind == 'monitor' else 'mpn': code}
+                           for offer in offers if all(compatible(offer, chosen) for chosen in selected)}
+                row = {'model': model, 'targets': list(targets.values())}
+                if len(selected_urls) == 1:
+                    row['feedGtin'] = gtin
+                rows.append(row)
     return rows, dict(rejected)
 
 
@@ -312,7 +357,9 @@ def run(state, catalogs, output, maximum_requests, maximum_models, *, native_sea
     existing_codes = {kind: {code_key(row['mpn']) for row in catalog['models']}
                       for kind, catalog in inventory.items()}
     groups = candidate_targets(state, catalogs, maximum_requests, diagnostics, existing_codes=existing_codes,
-                               native_search=native_search, native_reports=native_reports)
+                               native_search=native_search, native_reports=native_reports, allow_single=True,
+                               existing_barcodes={kind: {row['gtin'] for row in cat['models']}
+                                                  for kind, cat in inventory.items()})
     observed, sources = defaultdict(lambda: defaultdict(list)), {}
     with ThreadPoolExecutor(max_workers=6) as pool:
         jobs = {host: pool.submit(read_host, host, rows) for host, rows in groups.items()}
@@ -340,9 +387,9 @@ def main():
     for option in ('state', 'site-data', 'output'):
         parser.add_argument(f'--{option}', type=Path, required=True)
     parser.add_argument('--category', choices=CATALOG_FILES, action='append')
-    parser.add_argument('--requests-per-host', type=int, default=12, choices=range(1, 41))
-    parser.add_argument('--maximum-models', type=int, default=6, choices=range(1, 16))
-    parser.add_argument('--native-search', type=int, default=0, choices=range(0, 9),
+    parser.add_argument('--requests-per-host', type=int, default=60, choices=range(1, 101))
+    parser.add_argument('--maximum-models', type=int, default=100, choices=range(1, 201))
+    parser.add_argument('--native-search', type=int, default=0, choices=range(0, 21),
                         help='Maximum exact model searches per category and retailer')
     args = parser.parse_args()
     if not args.state.is_file():

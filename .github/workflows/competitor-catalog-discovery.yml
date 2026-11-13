@@ -23,7 +23,7 @@ jobs:
     if: github.repository == 'SalmanOz/products-scraper' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: site-catalog
-    timeout-minutes: 50
+    timeout-minutes: 60
     permissions:
       contents: read
       id-token: write
@@ -114,13 +114,6 @@ jobs:
             site/frontend/src/data/twsOfferSnapshot.json tws_expansion_specs.json \
             .competitor-discovery/earbud-offers.json .competitor-discovery/earbud-expansion --from-audit \
             | tee .competitor-discovery/earbud-expansion-report.json
-          python comparison_accessory_candidates.py --native-search 4 --state .competitor-discovery/state.json \
-            --site-data site/frontend/src/data --output .competitor-discovery/accessories
-          python laptop_price_stage.py site/frontend/src/data/laptopPilot.json \
-            .competitor-discovery/accessories
-          python comparison_component_candidates.py --state .competitor-discovery/state.json \
-            --catalog site/frontend/src/data/pcParts.json --specs pc_component_specs.json \
-            --output .competitor-discovery/components
       - name: Check new phones against the site publication gate
         env:
           DRY_RUN: ${{ inputs.dry_run == true }}
@@ -140,6 +133,15 @@ jobs:
             --state .competitor-discovery/state.json --output .competitor-discovery/unlisted-phone-offers.json; then
             echo '::warning::The unlisted phone audit did not finish this run.' >&3
           fi
+      - name: Verify new monitors, laptops and PC components
+        run: |
+          set -euo pipefail
+          exec > "$RUNNER_TEMP/discovery-expansion.log" 2>&1
+          python comparison_component_candidates.py --state .competitor-discovery/state.json \
+            --catalog site/frontend/src/data/pcParts.json --specs pc_component_specs.json \
+            --maximum-per-kind 5 --feed-budget 100 --output .competitor-discovery/components
+          python comparison_accessory_candidates.py --native-search 8 --state .competitor-discovery/state.json \
+            --site-data site/frontend/src/data --output .competitor-discovery/accessories
       - name: Set up Node.js for the site validators
         if: inputs.dry_run != true
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -147,7 +149,7 @@ jobs:
           node-version: '22'
       - name: Install the site catalog validator dependencies
         if: inputs.dry_run != true &&
-          (hashFiles('.competitor-discovery/accessories/*/*.webp', '.competitor-discovery/earbud-expansion/earbuds/*.webp') != '')
+          (hashFiles('.competitor-discovery/accessories/*/*.webp', '.competitor-discovery/earbud-expansion/earbuds/*.webp', '.competitor-discovery/components/photos/*.webp') != '')
         working-directory: site/frontend
         run: npm ci --ignore-scripts --no-audit --no-fund > "$RUNNER_TEMP/catalog-validator-install.log" 2>&1
       - name: Publish new verified products

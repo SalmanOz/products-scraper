@@ -9,7 +9,7 @@ from threading import Lock, local
 
 from actions_collector_oidc import actions_collector_token
 from laptop_pilot import _public_offers
-from monitor_pilot import CORE, CROSS_PLATFORM_MINIMUM, MANUFACTURER_SPECS, PILOT_SIZE, candidates, collect_observations
+from monitor_pilot import CORE, CROSS_PLATFORM_MINIMUM, MANUFACTURER_SPECS, PILOT_SIZE, candidates, collect_observations, group_targets
 from monitor_scale import MAX_RESCAN_TARGETS
 from monitor_sources import code_key
 from offer_ingestion_client import OfferIngestionClient
@@ -76,6 +76,27 @@ def targets_for_catalog(catalog, legacy):
     return list(targets.values())
 
 
+def refresh_batch(catalog, targets, legacy):
+    # Keep the original comparison coverage in each refresh. Rotate the
+    # remaining bandwidth across the least recently observed models.
+    group_targets(targets, len(targets))
+    if len(targets) <= MAX_RESCAN_TARGETS:
+        return targets
+    fixed = {row['url'] for row in legacy}
+    selected = [row for row in targets if row['url'] in fixed]
+    candidates_by_gtin = defaultdict(list)
+    for row in targets:
+        if row['url'] not in fixed:
+            candidates_by_gtin[row['gtin']].append(row)
+    last_check = {row['gtin']: max((offer['observed_at'] for offer in row['offers']), default='')
+                  for row in catalog['models']}
+    for gtin in sorted(candidates_by_gtin, key=lambda code: (last_check[code], code)):
+        batch = candidates_by_gtin[gtin]
+        if len(selected) + len(batch) <= MAX_RESCAN_TARGETS:
+            selected.extend(batch)
+    return selected
+
+
 def main():
     cli = argparse.ArgumentParser(description=__doc__)
     cli.add_argument('targets', type=Path)
@@ -89,7 +110,8 @@ def main():
     if (len(gtins) < PILOT_SIZE or len(gtins) != len(catalog['models'])
             or any(retailer_gtin13(gtin) != gtin for gtin in gtins)):
         raise ValueError('Expected unique, valid GTINs for the published monitor catalog')
-    targets = targets_for_catalog(catalog, json.loads(args.targets.read_text()))
+    legacy = json.loads(args.targets.read_text())
+    targets = refresh_batch(catalog, targets_for_catalog(catalog, legacy), legacy)
     token = os.getenv('MONITOR_READER_OIDC')
     get_token = (actions_collector_token('https://teknoskor.com/api/ingestion/monitor-document')
                  if os.getenv('MONITOR_READER_ACTIONS_OIDC') == 'true' else None)

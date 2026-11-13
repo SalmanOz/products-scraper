@@ -2,6 +2,7 @@
 
 import argparse
 from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from hashlib import sha256
 import json
@@ -13,9 +14,12 @@ from bs4 import BeautifulSoup
 
 from catalog_source_collector import catalog_document_reader
 from competitor_catalog_gaps import read_state, retailer_destination, write_json
+from laptop_direct_source import DIRECT_STORES
 from laptop_pilot import _image
-from pc_parts import CATEGORIES
-from pc_parts_multistore import INCEHESAP, PcRetailer, collect_targets, independent_offers, offer_host
+from pc_parts import CATEGORIES, parse_part
+from pc_parts_multistore import (
+    GAMING, INCEHESAP, PcRetailer, collect_targets, company_key, independent_offers, offer_host,
+)
 from retailer_barcode import retailer_gtin13
 from retailer_catalog_feeds import FEEDS
 
@@ -80,7 +84,76 @@ def selected_images(html, title):
     return urls[:3]
 
 
-def stage(state, catalog, profiles, output, maximum):
+def stage_gaming_feed(state, catalog, photos, maximum, excluded, rejects):
+    known = {part['gtin'] for part in catalog['parts']} | excluded
+    attempts = state.setdefault('componentLeadAudits', {})
+    feed_rows = defaultdict(set)
+    routes = {}
+    for row in state['products'].values():
+        gtin, url = row.get('feedGtin'), row.get('url')
+        if row['category'] not in CATEGORIES or not gtin or retailer_gtin13(gtin) != gtin:
+            continue
+        host = offer_host(url)
+        if gtin in known or host not in FEEDS or host != row.get('source') or url not in row.get('retailerLeads', []):
+            continue
+        feed_rows[row['category'], gtin].add(url)
+        if host == GAMING:
+            routes[row['category'], gtin] = url
+    ordered = sorted(routes, key=lambda key: (attempts.get(routes[key], ''), -len(feed_rows[key]), key))[:maximum]
+    candidates, alternate = {}, []
+    reader = PcRetailer(GAMING, budget=maximum)
+    legal_path = DIRECT_STORES[GAMING][3]
+    for kind, gtin in ordered:
+        url = routes[kind, gtin]
+        html, reason, _ = reader.transport._read_document(url, GAMING)
+        attempts[url] = datetime.now(timezone.utc).isoformat()
+        if not html:
+            rejects[reason] += 1
+            if reason in {'http_403', 'http_429', 'source_circuit_open', 'challenge_page'}:
+                break
+            continue
+        try:
+            model = parse_part(html, url, kind)
+        except (ValueError, AttributeError, KeyError, TypeError):
+            rejects['gaming_selected_component_unverified'] += 1
+            continue
+        price = model['offer']['price']
+        if model['gtin'] != gtin or not 0 < price <= 1_000_000:
+            rejects['gaming_feed_barcode_or_price_mismatch'] += 1
+            continue
+        seller = {'platform': 'Gaming.Gen.TR', 'merchant': 'Gaming.Gen.TR', 'merchant_id': GAMING,
+                  'seller_url': 'https://' + GAMING + legal_path}
+        if not reader.verify_seller(seller):
+            rejects['gaming_seller_unverified'] += 1
+            continue
+        primary = {**model['offer'], 'gtin': gtin, 'sellerKey': company_key(seller['_legal_name'])}
+        candidates[gtin] = (model, primary)
+        alternate.extend((link, model) for link in sorted(feed_rows[kind, gtin] - {url}))
+    other_offers = defaultdict(list)
+    for offer in collect_targets(alternate):
+        other_offers[offer['gtin']].append(offer)
+
+    def read_image(candidate):
+        return _image(candidate[0]['_photo'], allowed_hosts={GAMING})
+
+    staged = []
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        for (model, primary), image in zip(candidates.values(), pool.map(read_image, candidates.values())):
+            if not image:
+                rejects['gaming_selected_image_unavailable'] += 1
+                continue
+            gtin = model['gtin']
+            offers = independent_offers([primary, *other_offers[gtin]])
+            if not any(o['url'] == primary['url'] for o in offers):
+                offers = [primary]
+            (photos / f'{gtin}.webp').write_bytes(image)
+            del model['_photo']
+            staged.append({**model, 'offer': offers[0], 'offers': offers, 'feedGtin': gtin,
+                           'offerTargets': list(dict.fromkeys([primary['url'], *(o['url'] for o in offers)]))})
+    return len(ordered), staged
+
+
+def stage(state, catalog, profiles, output, maximum, feed_budget=0):
     budget = min(50, len(CATEGORIES) * maximum + 2)
     site_reader = catalog_document_reader('component-discovery')
     site_readers = dict.fromkeys(PRIMARY_HOSTS, site_reader) if site_reader else {}
@@ -162,9 +235,14 @@ def stage(state, catalog, profiles, output, maximum):
                        'sourceUrl': url, 'specSourceUrl': profile['specSourceUrl'],
                        'offer': offers[0], 'offers': offers,
                        'offerTargets': list(dict.fromkeys([url, *(o['url'] for o in offers)]))})
+    feed_queued = 0
+    if feed_budget:
+        feed_queued, feed_staged = stage_gaming_feed(state, catalog, photos, feed_budget,
+                                                    {row['gtin'] for row in staged}, rejects)
+        staged.extend(feed_staged)
     primary_readers = {host: 'site' if host in site_readers else 'runner' for host in sorted(PRIMARY_HOSTS)}
     return {'checkedAt': checked_at, 'primaryReader': primary_readers[INCEHESAP], 'primaryReaders': primary_readers,
-            'queued': len(leads), 'selected': len(candidates),
+            'queued': len(leads), 'feedQueued': feed_queued, 'selected': len(candidates),
             'paired': paired, 'staged': staged, 'rejections': dict(rejects)}
 
 
@@ -175,12 +253,15 @@ def main():
     parser.add_argument('--specs', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--maximum-per-kind', type=int, default=2)
+    parser.add_argument('--feed-budget', type=int, default=0, metavar='PRODUCTS')
     args = parser.parse_args()
+    if not 0 <= args.feed_budget <= 200:
+        parser.error('Feed verification budget must be between 0 and 200')
     if not 1 <= args.maximum_per_kind <= 5:
         parser.error('--maximum-per-kind must be between 1 and 5')
     payload = args.catalog.read_bytes()
     state = read_state(args.state)
-    report = stage(state, json.loads(payload), json.loads(args.specs.read_bytes()), args.output, args.maximum_per_kind)
+    report = stage(state, json.loads(payload), json.loads(args.specs.read_bytes()), args.output, args.maximum_per_kind, args.feed_budget)
     report['baseSha256'] = sha256(payload).hexdigest()
     write_json(args.output / 'report.json', report)
     write_json(args.state, state)
