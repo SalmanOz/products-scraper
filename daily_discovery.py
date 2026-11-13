@@ -299,7 +299,7 @@ def submit(client, payload):
 
 
 def run_discovery(*, client, reader, specs, price_scraper, refresher, publish=False,
-                  previous=None, report=None, checkpoint=None, reviewed=()):
+                  previous=None, report=None, checkpoint=None, reviewed=(), competitor_candidates=None):
     report = report if report is not None else {}
     report.update({'contract': CONTRACT, 'started_at': utc_now(), 'publish_enabled': publish,
                    'sources': [], 'candidates': [], 'created': 0})
@@ -347,7 +347,7 @@ def run_discovery(*, client, reader, specs, price_scraper, refresher, publish=Fa
     reviewed_names = [candidate['name'] for candidate, *_ in reviewed]
     reviewed_slugs = {candidate['slug'] for candidate, *_ in reviewed}
     candidates = {}
-    for brand, url in LISTINGS.items():
+    for brand, url in (LISTINGS.items() if competitor_candidates is None else ()):
         try:
             found = discover_candidates(brand, reader.read(url), url)
             report['sources'].append({'brand': brand, 'status': 'ok' if found else 'no_phone_links', 'discovered': len(found)})
@@ -359,6 +359,11 @@ def run_discovery(*, client, reader, specs, price_scraper, refresher, publish=Fa
         except Exception as error:
             # Exception messages may contain request diagnostics; reports keep only type/reason.
             report['sources'].append({'brand': brand, 'status': 'unavailable', 'reason': type(error).__name__})
+    if competitor_candidates is not None:
+        for candidate, _ in competitor_candidates.values():
+            if (candidate['slug'] not in slugs and
+                    not any(may_duplicate(candidate['name'], name) for name in existing_names)):
+                candidates[candidate['slug']] = candidate
     previous = previous or {}
     attempted = dict(previous.get('attempted', {}))
     ordered = sorted(candidates.values(), key=lambda item: (attempted.get(item['slug'], ''), item['slug']))
@@ -370,6 +375,8 @@ def run_discovery(*, client, reader, specs, price_scraper, refresher, publish=Fa
         if report['created'] >= MAX_PUBLICATIONS:
             break
         slug = candidate['slug']
+        if competitor_candidates is not None and any(may_duplicate(candidate['name'], name) for name in existing_names):
+            continue
         attempted[slug] = utc_now()
         report['attempted'][slug] = attempted[slug]
         result = {'slug': slug, 'name': candidate['name'], 'evidence_url': candidate['evidenceUrl']}
@@ -418,7 +425,11 @@ def run_discovery(*, client, reader, specs, price_scraper, refresher, publish=Fa
             if not images:
                 result.update(status='held', reasons=['first_party_product_image_unavailable']); continue
             attributes = staged_attributes(records)
-            offers = direct_offers(candidate, attributes, price_scraper, refresher)
+            if competitor_candidates is None:
+                offers = direct_offers(candidate, attributes, price_scraper, refresher)
+            else:
+                from unlisted_phone_audit import discovery_offers
+                offers = discovery_offers(competitor_candidates[slug][1], candidate['name'], attributes)
             if not offers:
                 result.update(status='held', reasons=['no_current_in_stock_exact_sku_pdp_offer']); continue
             payload = {'mode': 'validate', 'candidate': candidate, 'sources': records,
@@ -435,6 +446,7 @@ def run_discovery(*, client, reader, specs, price_scraper, refresher, publish=Fa
             result.update(status=response.get('outcome'), merchants=len(offers))
             if response.get('outcome') == 'created':
                 report['created'] += 1
+                existing_names.append(candidate['name'])
         except SourceIngestionError as error:
             body = error.response_body
             if body.get('committed') is True:

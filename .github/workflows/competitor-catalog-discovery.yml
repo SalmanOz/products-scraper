@@ -4,12 +4,18 @@ on:
   schedule:
     - cron: '23 1 * * *'
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Save the private discovery report without publishing
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: competitor-catalog-discovery
+  group: site-catalog-price-refresh
+  queue: max
   cancel-in-progress: false
 
 jobs:
@@ -17,7 +23,7 @@ jobs:
     if: github.repository == 'SalmanOz/products-scraper' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: site-catalog
-    timeout-minutes: 30
+    timeout-minutes: 50
     permissions:
       contents: read
       id-token: write
@@ -31,6 +37,14 @@ jobs:
       - uses: ./.github/actions/site-catalog
         with:
           key: ${{ secrets.SITE_CATALOG_READ_KEY }}
+          expansion: |
+            /frontend/package.json
+            /frontend/package-lock.json
+            /frontend/scripts/verify-laptop-pilot.mjs
+            /frontend/scripts/verify-accessory-details.mjs
+            /frontend/public/media/monitors/
+            /frontend/public/media/laptops/
+            /frontend/public/media/earbuds/
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         continue-on-error: true
         with:
@@ -107,10 +121,41 @@ jobs:
           python comparison_component_candidates.py --state .competitor-discovery/state.json \
             --catalog site/frontend/src/data/pcParts.json --specs pc_component_specs.json \
             --output .competitor-discovery/components
-          if ! timeout 120s python unlisted_phone_audit.py \
+      - name: Check new phones against the site publication gate
+        env:
+          DRY_RUN: ${{ inputs.dry_run == true }}
+          TEKNOSKOR_INGESTION_URL: https://teknoskor.com
+          SCRAPER_INGESTION_SECRET: ${{ inputs.dry_run != true && secrets.SCRAPER_INGESTION_SECRET || '' }}
+          R2_ACCESS_KEY_ID: ${{ inputs.dry_run != true && secrets.R2_ACCESS_KEY_ID || '' }}
+          R2_SECRET_ACCESS_KEY: ${{ inputs.dry_run != true && secrets.R2_SECRET_ACCESS_KEY || '' }}
+          R2_ACCOUNT_ID: ${{ inputs.dry_run != true && secrets.R2_ACCOUNT_ID || '' }}
+          R2_BUCKET_NAME: ${{ inputs.dry_run != true && secrets.R2_BUCKET_NAME || '' }}
+          R2_PUBLIC_DOMAIN: ${{ inputs.dry_run != true && secrets.R2_PUBLIC_DOMAIN || '' }}
+        run: |
+          set -euo pipefail
+          exec 3>&1 > "$RUNNER_TEMP/discovery-phones.log" 2>&1
+          args=()
+          if [[ "$DRY_RUN" != true ]]; then args+=(--publish); fi
+          if ! timeout 300s python unlisted_phone_audit.py "${args[@]}" \
             --state .competitor-discovery/state.json --output .competitor-discovery/unlisted-phone-offers.json; then
             echo '::warning::The unlisted phone audit did not finish this run.' >&3
           fi
+      - name: Set up Node.js for the site validators
+        if: inputs.dry_run != true
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - name: Install the site catalog validator dependencies
+        if: inputs.dry_run != true &&
+          (hashFiles('.competitor-discovery/accessories/*/*.webp', '.competitor-discovery/earbud-expansion/earbuds/*.webp') != '')
+        working-directory: site/frontend
+        run: npm ci --ignore-scripts --no-audit --no-fund > "$RUNNER_TEMP/catalog-validator-install.log" 2>&1
+      - name: Publish new verified products
+        id: publish
+        if: inputs.dry_run != true
+        env:
+          SITE_CATALOG_DEPLOY_KEY: ${{ secrets.SITE_CATALOG_WRITE_KEY }}
+        run: bash .github/scripts/publish-discovered-products
       - name: Save the latest reports to a private branch
         if: always() && !cancelled() && hashFiles('.competitor-discovery/report.json') != ''
         env:
@@ -123,3 +168,10 @@ jobs:
             jq '{candidateRows: (.candidates | length), existingRowsWithRetailerLinks: (.existingWithRetailerLeads | length)}' \
               .competitor-discovery/report.json | tee -a "$GITHUB_STEP_SUMMARY"
           fi
+      - name: Verify the published catalog on production
+        if: steps.publish.outputs.sha != ''
+        env:
+          EXPECTED_SHA: ${{ steps.publish.outputs.sha }}
+        run: |
+          bash .github/scripts/wait-for-site "$EXPECTED_SHA" discovery
+          python .github/scripts/verify-discovery-live.py .competitor-discovery/publication.json

@@ -2,12 +2,14 @@
 
 import argparse
 from collections import Counter
+from datetime import datetime, timedelta, timezone
+import json
 from pathlib import Path
 from urllib.parse import urlsplit
 
 import requests
 
-from comparison_phone_offers import indexed_phone_leads, phone_lead_index, run
+from comparison_phone_offers import indexed_phone_leads, phone_lead_index, ranked_pairs, run
 from competitor_catalog_gaps import phone_catalog_family, phone_family, public_phone_catalog, read_state, write_json
 from daily_discovery import LISTINGS, PublicReader, discover_candidates, may_duplicate, staged_attributes, utc_now
 from manufacturer_specs import manufacturer_spec_links, missing_critical_facts, parse_manufacturer_specifications
@@ -41,7 +43,7 @@ def candidate_queue(state, catalog, candidates, limit):
     return len(queue), queue[:limit]
 
 
-def audit(state, catalog, reader, limit):
+def audit(state, catalog, reader, limit, *, verified_candidates=None):
     if not catalog:
         raise ValueError('public_phone_catalog_unavailable')
     candidates, sources = [], {}
@@ -82,16 +84,52 @@ def audit(state, catalog, reader, limit):
         state.setdefault('unlistedPhoneAudits', {})[slug] = utc_now()
 
     if ready:
+        observations = {} if verified_candidates is not None else None
         offers = run(state, [row['slug'] for row in ready], products=ready, maximum=12,
-                     public_audit=True, unlisted_audit=True)
+                     public_audit=True, unlisted_audit=True, verified_observations=observations)
         for offer in offers:
             row, option = variants[offer['slug']]
             row.setdefault('variants', []).append({**option, **{key: value for key, value in offer.items() if key != 'slug'}})
         for row in rows.values():
             if row.get('variants'):
                 row['status'] = 'verified_offer_pair' if any(result['sameGtin'] for result in row['variants']) else 'no_verified_offer_pair'
+        if verified_candidates is not None:
+            for candidate in queue:
+                family = candidate['leadFamily']
+                if rows[family]['status'] == 'verified_offer_pair':
+                    verified_candidates[candidate['slug']] = (
+                        {k: candidate[k] for k in ('slug', 'name', 'brandSlug', 'evidenceUrl', 'segment')},
+                        [row for slug, (info, _) in variants.items() if info is rows[family]
+                         for row in observations.get(slug, ())],
+                    )
     return {'checkedAt': utc_now(), 'manufacturerSources': sources, 'queued': queued,
             'statuses': dict(Counter(row['status'] for row in rows.values())), 'rows': list(rows.values())}
+
+
+def discovery_offers(observations, name, attributes):
+    from automatic_memory_variants import variant_selected_evidence
+    from selected_sku_evidence import selected_sku_evidence
+    from update_prices import PriceUpdater
+
+    specs = PriceUpdater.get_expected_specs(attributes)
+    keys = ('ram_gb', 'storage_gb', 'network_generation')
+    if any(not specs.get(key) for key in keys):
+        return []
+    now = datetime.now(timezone.utc)
+    for pair in ranked_pairs(observations):
+        offers = []
+        for offer in pair:
+            proof = selected_sku_evidence(offer) or variant_selected_evidence(offer, name, specs)
+            observed = offer['observed_at']
+            if (not proof or any(proof.get(key) != specs[key] for key in keys) or
+                    not timedelta(0) <= now - datetime.fromisoformat(observed) < timedelta(hours=1)):
+                break
+            offers.append({'merchant_name': offer['merchant'], 'price': offer['price'], 'currency': 'TRY',
+                           'availability': 'in_stock', 'source_url': offer['url'], 'source_title': offer['source_title'],
+                           'observed_at': observed, 'checked_at': observed, 'source_variant_evidence': proof})
+        if len(offers) == 2:
+            return offers
+    return []
 
 
 def main():
@@ -99,13 +137,35 @@ def main():
     parser.add_argument('--state', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--limit', type=int, choices=range(1, 9), default=4)
+    parser.add_argument('--publish', action='store_true')
     args = parser.parse_args()
     if not args.state.is_file():
         parser.error('Provide an existing competitor discovery state')
     state = read_state(args.state)
-    report = audit(state, public_phone_catalog(), PublicReader(), args.limit)
+    reader = PublicReader()
+    candidates = {} if args.publish else None
+    report = audit(state, public_phone_catalog(), reader, args.limit, verified_candidates=candidates)
     write_json(args.output, report)
     write_json(args.state, state)
+    if candidates:
+        from daily_discovery import DiscoveryImageStore, PublicSpecificationScraper, run_discovery
+        from source_ingestion import SourceIngestionClient
+
+        client = SourceIngestionClient.from_env()
+        specs = PublicSpecificationScraper(reader, ingestion_client=client, require_images=False,
+                                           image_store=DiscoveryImageStore(required=True))
+        publication = args.output.with_name('phone-publication.json')
+        run_discovery(client=client, reader=reader, specs=specs, price_scraper=None, refresher=None, publish=True,
+                      competitor_candidates=candidates, checkpoint=lambda report: write_json(publication, report))
+        result = json.loads(publication.read_bytes())
+        for row in result['candidates']:
+            if row['status'] not in ('created', 'committed_needs_attention'):
+                continue
+            response = requests.get('https://teknoskor.com/product/' + row['slug'],
+                                    headers={'User-Agent': 'Mozilla/5.0', 'Cache-Control': 'no-cache'},
+                                    timeout=20, allow_redirects=False)
+            if response.status_code != 200:
+                raise RuntimeError('A published phone did not appear on production')
     print(f"Unlisted phones: {report['queued']} queued, {report['statuses']}")
 
 

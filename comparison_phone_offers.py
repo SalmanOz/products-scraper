@@ -653,9 +653,11 @@ def load_iphone_16_plus_profiles(path=IPHONE_16_PLUS_PROFILES):
 
 
 def run(state, slugs, client=None, *, publish=False, maximum=24, products=None, public_audit=False, profiles=None,
-        unlisted_audit=False):
+        unlisted_audit=False, verified_observations=None):
     if unlisted_audit and (not public_audit or profiles or products is None):
         raise ValueError('Unlisted phones require an explicit read-only candidate list')
+    if verified_observations is not None and not unlisted_audit:
+        raise ValueError('Discovery observations require the unlisted phone audit')
     if publish and public_audit:
         raise ValueError('Public queue verification is read-only')
     if publish and client is None:
@@ -760,6 +762,8 @@ def run(state, slugs, client=None, *, publish=False, maximum=24, products=None, 
                            for row in observations if row['gtin13'] != profile['gtin'])
             observations = [row for row in observations if row['gtin13'] == profile['gtin']]
             pair = next(iter(ranked_pairs(observations)), [])
+        if verified_observations is not None:
+            verified_observations[slug] = observations
         result = {'slug': slug, 'sameGtin': pair[0]['gtin13'] if pair else None,
                   'selectedPair': [report_offer(row) for row in pair],
                   'offers': [report_offer(row) for row in observations], 'rejections': rejects, **searches}

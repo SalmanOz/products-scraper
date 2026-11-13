@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+reports=.competitor-discovery
+out="$RUNNER_TEMP/catalog-expansion"
+git_remote() { bash .github/scripts/site-git "$@"; }
+for attempt in 1 2 3; do
+  git_remote fetch --depth=1 origin master
+  git_remote reset --hard FETCH_HEAD
+  # A retry must discard images left by the preceding attempt.
+  git -C site clean -fd -- frontend/public/media/{monitors,laptops,earbuds,pc-parts} > /dev/null
+  rm -rf "$out"
+  mkdir -p "$out"
+  export PYTHONPATH="$PWD"
+  if ! python .github/scripts/merge-discovery.py site/frontend "$reports" "$out" > "$out/merge.log" 2>&1; then
+    echo 'Catalog expansion could not be prepared.' >&2
+    exit 1
+  fi
+  mkdir -p "$reports"
+  cp "$out/manifest.json" "$reports/publication.json"
+  count=$(jq '.products | length' "$out/manifest.json")
+  duplicates=$(jq .duplicates "$out/manifest.json")
+  if [[ "$count" == 0 ]]; then
+    echo "No new products passed publication checks ($duplicates duplicate candidates skipped)."
+    exit 0
+  fi
+
+  # Use the validators from the private repo. Capture errors locally because
+  # assertions can include unpublished catalog records.
+  if ! bash -e -c '
+    out=$1
+    if [[ -f "$out/monitorPilot.json" ]]; then
+      node site/frontend/scripts/verify-monitor-pilot.mjs --expand "$out/monitorPilot.json"
+    fi
+    if [[ -f "$out/pcParts.json" ]]; then
+      node site/frontend/scripts/verify-pc-parts.mjs "$out/pcParts.json" --expand
+    fi
+    for path in "$out/"*.json; do
+      if [[ "$path" != "$out/manifest.json" ]]; then cp "$path" site/frontend/src/data/; fi
+    done
+    if [[ -f "$out/laptopPilot.json" ]]; then node site/frontend/scripts/verify-laptop-pilot.mjs; fi
+    if [[ -f "$out/twsProductCatalog.json" ]]; then node site/frontend/scripts/verify-accessory-details.mjs; fi
+    node site/frontend/scripts/update-accessory-price-history.mjs
+  ' _ "$out" > "$out/validation.log" 2>&1; then
+    echo 'New catalog products did not pass site validation.' >&2
+    exit 1
+  fi
+  while IFS= read -r path; do
+    git_remote add -- "frontend/$path"
+  done < <(jq -r '.files[]' "$out/manifest.json")
+  git_remote add -- frontend/src/data/accessoryPriceHistory.json
+  git_remote -c user.name='github-actions[bot]' \
+    -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+    commit --quiet -m 'Publish verified products from competitor discovery'
+
+  if git_remote push origin HEAD:refs/heads/master; then
+    sha=$(git -C site rev-parse HEAD)
+    jq --arg sha "$sha" '.commit = $sha' "$out/manifest.json" > "$reports/publication.json"
+    echo "Published $count new products ($duplicates duplicate candidates skipped)."
+    echo "sha=$sha" >> "$GITHUB_OUTPUT"
+    exit 0
+  fi
+  sleep "$attempt"
+done
+echo 'Could not publish verified products to the private site repository.' >&2
+exit 1

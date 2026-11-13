@@ -4,6 +4,9 @@ inputs:
   key:
     description: SSH deploy key for the site repository
     required: true
+  expansion:
+    description: Include catalog expansion validators and existing product photos
+    default: ''
 runs:
   using: composite
   steps:
@@ -21,3 +24,4 @@ runs:
           /frontend/scripts/verify-pc-parts.mjs
           /frontend/scripts/update-accessory-price-history.mjs
           /frontend/public/media/pc-parts/
+          ${{ inputs.expansion }}
