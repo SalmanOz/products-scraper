@@ -6,6 +6,7 @@ from urllib.parse import urlsplit
 
 import requests
 
+from actions_collector_oidc import actions_collector_token
 from offer_ingestion_client import IngestionClientError, OfferIngestionClient, PublicDocumentResponse
 from priority_retailer_transport import (
     MAX_HTML_BYTES, n11_canonical_redirect, n11_unscoped_redirect, validated_n11_redirect_diagnostic,
@@ -14,15 +15,19 @@ from priority_retailer_transport import (
 
 def catalog_document_reader(scope):
     token = os.getenv('CATALOG_SOURCE_OIDC')
-    if not token:
+    get_token = (actions_collector_token('https://teknoskor.com/api/ingestion/catalog-source-document')
+                 if os.getenv('CATALOG_SOURCE_ACTIONS_OIDC') == 'true' else None)
+    if not token and not get_token:
         return None
-    client = OfferIngestionClient('https://teknoskor.com', token, timeout=(5, 30), max_attempts=1)
+    client = OfferIngestionClient('https://teknoskor.com', get_token() if get_token else token,
+                                  timeout=(5, 30), max_attempts=1)
 
     def read(url, **_options):
         try:
             body = client._request_json(
                 'POST', f'/api/ingestion/catalog-source-document?scope={scope}',
-                headers={'Authorization': 'Bearer ' + client.secret, 'Accept': 'application/json'},
+                headers={'Authorization': 'Bearer ' + (get_token() if get_token else client.secret),
+                         'Accept': 'application/json'},
                 json={'url': url}, allow_redirects=False,
             )
             route = urlsplit(url)

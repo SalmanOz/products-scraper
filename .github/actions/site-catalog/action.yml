@@ -1,0 +1,23 @@
+name: Check out the private site catalog
+description: Read the published catalog and its validators from the private site repository
+inputs:
+  key:
+    description: SSH deploy key for the site repository
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      with:
+        repository: SalmanOz/products
+        ref: master
+        path: site
+        ssh-key: ${{ inputs.key }}
+        persist-credentials: false
+        sparse-checkout-cone-mode: false
+        sparse-checkout: |
+          /frontend/src/data/
+          /frontend/scripts/verify-monitor-pilot.mjs
+          /frontend/scripts/verify-pc-parts.mjs
+          /frontend/scripts/update-accessory-price-history.mjs
+          /frontend/public/media/pc-parts/

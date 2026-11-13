@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "$1" in
+  monitor) file=monitorPilot.json; message='Refresh verified monitor offers' ;;
+  earbuds) file=twsOfferSnapshot.json; message='Refresh verified earbud offers' ;;
+  pc-parts) file=pcParts.json; message='Refresh verified PC component offers' ;;
+  *) exit 2 ;;
+esac
+snapshot=$2
+file="frontend/src/data/$file"
+history=frontend/src/data/accessoryPriceHistory.json
+git_remote() { bash .github/scripts/site-git "$@"; }
+
+for attempt in 1 2 3; do
+  # Rebase onto the current private branch by rebuilding the data-only commit.
+  # If this particular catalog changed, a fresh scrape must use its new inputs.
+  git_remote fetch --depth=1 origin master
+  git -C site reset --hard FETCH_HEAD
+  if [[ $(sha256sum "site/$file" | cut -d ' ' -f 1) != "$3" ]]; then
+    echo "::notice::The source snapshot changed during collection. The next run will refresh the current catalog."
+    exit 0
+  fi
+  if [[ "$1" == earbuds && $(sha256sum site/frontend/src/data/twsProductCatalog.json | cut -d ' ' -f 1) != "$4" ]]; then
+    echo "::notice::The earbud catalog changed during collection. The next run will refresh the current catalog."
+    exit 0
+  fi
+
+  case "$1" in
+    monitor)
+      node site/frontend/scripts/verify-monitor-pilot.mjs --offers-only "$snapshot" > "$RUNNER_TEMP/site-validation.log" 2>&1 \
+        || { echo 'Monitor snapshot did not pass publication validation.' >&2; exit 1; }
+      ;;
+    earbuds)
+      python .github/scripts/verify-earbud-snapshot.py "site/$file" "$snapshot" "$(dirname "$snapshot")/report.json" \
+        > "$RUNNER_TEMP/site-validation.log" 2>&1 || { echo 'Earbud snapshot did not pass publication validation.' >&2; exit 1; }
+      ;;
+    pc-parts)
+      node site/frontend/scripts/verify-pc-parts.mjs "$snapshot" --refresh > "$RUNNER_TEMP/site-validation.log" 2>&1 \
+        || { echo 'PC component snapshot did not pass publication validation.' >&2; exit 1; }
+      if node -e 'const fs = require("node:fs"); const load = p => JSON.parse(fs.readFileSync(p)).parts; process.exit(JSON.stringify(load(process.argv[1])) === JSON.stringify(load(process.argv[2])) ? 0 : 1)' "site/$file" "$snapshot"; then
+        echo 'No newly verified PC component observations.'
+        exit 0
+      fi
+      ;;
+  esac
+  if cmp -s "site/$file" "$snapshot"; then exit 0; fi
+  cp "$snapshot" "site/$file"
+  git -C site add -- "$file"
+  if [[ "$1" != pc-parts ]]; then
+    node site/frontend/scripts/update-accessory-price-history.mjs
+    git -C site add -- "$history"
+  fi
+  git -C site -c user.name='github-actions[bot]' \
+    -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit --quiet -m "$message"
+
+  if git_remote push origin HEAD:refs/heads/master; then
+    echo "sha=$(git -C site rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+    exit 0
+  fi
+  sleep "$attempt"
+done
+echo 'Could not publish the verified snapshot to the private site repository.' >&2
+exit 1

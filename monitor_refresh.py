@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 from threading import Lock, local
 
+from actions_collector_oidc import actions_collector_token
 from laptop_pilot import _public_offers
 from monitor_pilot import CORE, CROSS_PLATFORM_MINIMUM, MANUFACTURER_SPECS, PILOT_SIZE, candidates, collect_observations
 from monitor_sources import code_key
@@ -89,20 +90,25 @@ def main():
         raise ValueError('Expected unique, valid GTINs for the published monitor catalog')
     targets = targets_for_catalog(catalog, json.loads(args.targets.read_text()))
     token = os.getenv('MONITOR_READER_OIDC')
+    get_token = (actions_collector_token('https://teknoskor.com/api/ingestion/monitor-document')
+                 if os.getenv('MONITOR_READER_ACTIONS_OIDC') == 'true' else None)
     sessions = local()
     collector_slot = Lock()
 
     def read_document(url, **options):
-        if not hasattr(sessions, 'client'):
-            sessions.client = OfferIngestionClient('https://teknoskor.com', token, timeout=(5, 25), max_attempts=2)
         # Keep the production gateway to one large upstream document at a
         # time. Direct retailer readers still run independently.
         with collector_slot:
+            current_token = get_token() if get_token else token
+            if not hasattr(sessions, 'client') or sessions.client.secret != current_token:
+                sessions.client = OfferIngestionClient('https://teknoskor.com', current_token,
+                                                       timeout=(5, 25), max_attempts=2)
             return sessions.client.monitor_document_get(url, **options)
 
     started = datetime.now(timezone.utc)
     direct_hosts = {'www.mediamarkt.com.tr'} if args.collection == 'mixed' else ()
-    groups, rejected = collect_observations(targets, read_document if token else None, direct_hosts=direct_hosts)
+    groups, rejected = collect_observations(targets, read_document if token or get_token else None,
+                                            direct_hosts=direct_hosts)
     snapshot, fresh, paired = refresh(catalog, groups, datetime.now(timezone.utc))
     discovery_gtins = {row['gtin'] for row in catalog.get('discoveryTargets', [])}
     report = {'fresh_models': fresh, 'fresh_pairs': paired, 'rejected': rejected,

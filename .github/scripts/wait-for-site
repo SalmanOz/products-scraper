@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+expected_sha=$1
+kind=$2
+for attempt in $(seq 1 30); do
+  sha=$(curl -fsS --max-time 10 -A 'Mozilla/5.0' -H 'Cache-Control: no-cache' \
+    https://teknoskor.com/deployment.json \
+    | node -e 'const fs = require("node:fs"); process.stdout.write(JSON.parse(fs.readFileSync(0)).commit || "")' || true)
+  if [[ "$sha" == "$expected_sha" ]]; then
+    if [[ "$kind" == monitor ]]; then
+      curl -fsS --max-time 20 -A 'Mozilla/5.0' -H 'Cache-Control: no-cache' \
+        https://teknoskor.com/monitorler -o "$RUNNER_TEMP/monitor-catalog.html"
+      expected_count=$(node -p "require('./site/frontend/src/data/monitorPilot.json').models.length")
+      test "$(grep -o 'data-monitor-model=' "$RUNNER_TEMP/monitor-catalog.html" | wc -l)" -eq "$expected_count"
+    fi
+    echo "Production is serving $expected_sha."
+    exit 0
+  fi
+  sleep 20
+done
+echo 'Production did not serve the published commit in time.' >&2
+exit 1

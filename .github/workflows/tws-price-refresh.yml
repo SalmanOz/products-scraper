@@ -1,0 +1,107 @@
+name: Earbud price refresh
+
+on:
+  schedule:
+    - cron: '41 4 * * *'
+  workflow_dispatch:
+    inputs:
+      collection:
+        description: Choose site collection or compare with a read-only runner or mixed collection
+        type: choice
+        options: [site, runner, mixed, macos]
+        default: site
+      publish:
+        description: Publish refreshed prices for the existing earbud catalog
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: site-catalog-price-refresh
+  queue: max
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    if: github.repository == 'SalmanOz/products-scraper' && github.ref == 'refs/heads/main'
+    runs-on: ${{ inputs.collection == 'macos' && 'macos-latest' || 'ubuntu-latest' }}
+    environment: site-catalog
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      COLLECTOR_AUDIENCE: https://teknoskor.com/api/ingestion/catalog-source-document
+      COLLECTOR_PROBE_URL: https://teknoskor.com/api/ingestion/catalog-source-document?scope=earbud
+      COLLECTION: ${{ github.event_name == 'schedule' && 'mixed' || inputs.collection == 'macos' && 'runner' || inputs.collection || 'site' }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/site-catalog
+        with:
+          key: ${{ secrets.SITE_CATALOG_READ_KEY }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Verify the production collector accepts this workflow
+        if: env.COLLECTION != 'runner'
+        run: |
+          set -euo pipefail
+          token=$(bash .github/scripts/collector-token "$COLLECTOR_AUDIENCE")
+          code=$(curl -sS --max-time 20 -o /dev/null -w '%{http_code}' -X POST \
+            -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
+            --data '{}' "$COLLECTOR_PROBE_URL")
+          test "$code" = 403
+      - name: Install scraper dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Test earbud readers and refresh validation
+        run: python -m unittest -q test_tws_refresh test_tws_offer_pilot test_pttavm_offer_source test_nethouse_offer_source test_idefix_tws_source
+      - name: Verify live price and stock for existing GTINs
+        id: collect
+        run: |
+          set -euo pipefail
+          if [[ "$COLLECTION" != runner ]]; then
+            export CATALOG_SOURCE_ACTIONS_OIDC=true
+          fi
+          out="$RUNNER_TEMP/site-price-refresh"
+          mkdir -p "$out"
+          source=site/frontend/src/data/twsOfferSnapshot.json
+          catalog=site/frontend/src/data/twsProductCatalog.json
+          sha256sum "$source" | cut -d ' ' -f 1 > "$out/source.sha256"
+          sha256sum "$catalog" | cut -d ' ' -f 1 > "$out/catalog.sha256"
+          python tws_refresh.py "$catalog" "$source" "$out/snapshot.json" \
+            --collection "$COLLECTION" --allow-partial > "$out/report.json" 2> "$out/collector.log"
+          jq -e '
+            (.configuredTargets > 0 and .completedTargetReads * 5 >= .configuredTargets * 4) as $sufficient
+            | (.publicationMode == "full" and $sufficient)
+              or (.publicationMode == "verified_variants_only" and ($sufficient | not) and .refreshed > 0)
+              or (.publicationMode == "held" and ($sufficient | not))
+          ' "$out/report.json" > /dev/null
+          jq '{configuredTargets, completedTargetReads, verifiedOffers, refreshed, publicationMode}' "$out/report.json"
+          mode=$(jq -r .publicationMode "$out/report.json")
+          if [[ "$mode" != held ]]; then
+            python .github/scripts/verify-earbud-snapshot.py "$source" "$out/snapshot.json" "$out/report.json" \
+              > "$out/validation.log" 2>&1 || { echo 'Earbud snapshot did not pass validation.' >&2; exit 1; }
+          fi
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+      - name: Publish the verified price snapshot
+        id: publish
+        if: >-
+          steps.collect.outputs.mode != 'held' &&
+          (github.event_name == 'schedule' || inputs.publish == true && inputs.collection == 'site')
+        env:
+          SITE_CATALOG_DEPLOY_KEY: ${{ secrets.SITE_CATALOG_WRITE_KEY }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/site-price-refresh"
+          bash .github/scripts/publish-site-prices earbuds "$out/snapshot.json" \
+            "$(cat "$out/source.sha256")" "$(cat "$out/catalog.sha256")"
+      - name: Verify the website is serving the published commit
+        if: steps.publish.outputs.sha != ''
+        env:
+          EXPECTED_SHA: ${{ steps.publish.outputs.sha }}
+        run: bash .github/scripts/wait-for-site "$EXPECTED_SHA" earbuds

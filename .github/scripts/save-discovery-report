@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+branch=refs/heads/scraper-discovery
+directory=$(mktemp -d "$RUNNER_TEMP/site-discovery.XXXXXX")
+trap 'rm -rf "$directory"' EXIT
+
+# Store the current reports and crawler state without any private site checkout files.
+test -s .competitor-discovery/state.json
+gzip -n -c .competitor-discovery/state.json > "$directory/state.json.gz"
+tar --exclude='./state.json' -czf "$directory/reports.tar.gz" -C .competitor-discovery .
+max_file_bytes=$((95 * 1024 * 1024))
+for file in "$directory/"*.gz; do
+  test "$(wc -c < "$file")" -lt "$max_file_bytes"
+done
+parent=()
+if bash .github/scripts/site-git ls-remote --exit-code origin "$branch" > /dev/null; then
+  bash .github/scripts/site-git fetch --depth=1 origin "$branch"
+  parent=(-p "$(git -C site rev-parse FETCH_HEAD)")
+else
+  status=$?
+  test "$status" -eq 2
+fi
+state_blob=$(git -C site hash-object -w "$directory/state.json.gz")
+reports_blob=$(git -C site hash-object -w "$directory/reports.tar.gz")
+tree=$(printf '100644 blob %s\treports.tar.gz\n100644 blob %s\tstate.json.gz\n' "$reports_blob" "$state_blob" | git -C site mktree)
+commit=$(git -C site -c user.name='github-actions[bot]' \
+  -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+  commit-tree "$tree" "${parent[@]}" -m "Save catalog discovery reports for run $GITHUB_RUN_ID")
+bash .github/scripts/site-git push origin "$commit:$branch"

@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+key_file=$(mktemp "$RUNNER_TEMP/site-catalog-key.XXXXXX")
+hosts_file=$(mktemp "$RUNNER_TEMP/site-catalog-hosts.XXXXXX")
+trap 'rm -f "$key_file" "$hosts_file"' EXIT
+printf '%s\n' "${SITE_CATALOG_DEPLOY_KEY:?Missing site catalog deploy key}" > "$key_file"
+unset SITE_CATALOG_DEPLOY_KEY
+# GitHub's published Ed25519 host key.
+printf '%s\n' 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' > "$hosts_file"
+export GIT_SSH_COMMAND="ssh -i '$key_file' -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile='$hosts_file'"
+git -C site "$@"

@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+audience=$(python -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$1")
+token=$(curl -fsS --max-time 20 \
+  -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+  "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=$audience" \
+  | python -c 'import json, sys; print(json.load(sys.stdin)["value"])')
+test -n "$token"
+echo "::add-mask::$token" >&2
+printf '%s\n' "$token"
