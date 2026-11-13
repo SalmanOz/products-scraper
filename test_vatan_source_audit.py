@@ -130,7 +130,7 @@ class VatanRunnerAuditTests(unittest.TestCase):
         self.assertEqual([row['verified_offers'][0]['price'] for row in report['products']], list(PRICES))
         self.assertTrue(all(row['source_attempts'][0]['reason'] == 'observed_exact_offer'
                             for row in report['products']))
-        self.assertEqual(fetch.calls, [ROBOTS_URL, SITEMAP_URL, ROBOTS_URL, *URLS])
+        self.assertEqual(fetch.calls, [SITEMAP_URL, *URLS])
         self.assertIn('3/3 exact catalog profiles verified', format_summary(report))
 
     def test_access_denial_yields_partial_artifact_without_blocking_other_reviewed_urls(self):
@@ -147,14 +147,6 @@ class VatanRunnerAuditTests(unittest.TestCase):
             write_outputs(report, json_path, markdown_path)
             self.assertEqual(json.loads(json_path.read_text())['verified_products'], 2)
             self.assertIn('solver_http_503', markdown_path.read_text())
-
-    def test_unavailable_robots_never_requests_sitemap_or_pdp(self):
-        source, reader, fetch = components(robots_status=403)
-        report = run_audit(source, reader)
-        self.assertEqual(report['status'], 'failed')
-        self.assertEqual(report['verified_products'], 0)
-        self.assertEqual(fetch.calls, [ROBOTS_URL])
-        self.assertTrue(all(row['status'] == 'no_sitemap_candidate' for row in report['products']))
 
     def test_command_fails_after_writing_partial_result(self):
         source, reader, _ = components(xiaomi_status=403)

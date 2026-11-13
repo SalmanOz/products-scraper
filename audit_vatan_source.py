@@ -35,7 +35,7 @@ MAX_SOLVER_BYTES = 8 * 1024 * 1024
 
 
 def probe_browser_sitemap(post=None):
-    """One bounded browser GET of the already robots-approved sitemap."""
+    """One bounded browser GET of the fixed sitemap."""
     post = post or requests.post
     result = {'status': 'unavailable', 'http_status': None, 'url_count': 0}
     try:

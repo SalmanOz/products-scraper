@@ -31,19 +31,18 @@ class CandidateAuditTests(unittest.TestCase):
                     URL + '?gid=4223707987', URL + '#variant'):
             self.assertFalse(safe_candidate(url), url)
 
-    def test_unavailable_or_html_robots_never_causes_product_request(self):
+    def test_unavailable_or_invalid_product_stays_research_only(self):
         for content, status in [('User-agent: *\nDisallow: /', 200), ('<html>404</html>', 200), ('', 403)]:
             fetch = Mock(return_value=Response(content, status, URL))
             rows = probe_host([CANDIDATE], {PROFILE['slug']: PROFILE}, fetch=fetch, sleep=lambda _: None)
             self.assertEqual(fetch.call_count, 1)
             self.assertFalse(rows[0]['candidate_is_approved_for_ingestion'])
 
-    def test_stock_proof_stays_research_only_and_crawl_delay_is_respected(self):
-        fetch = Mock(side_effect=[Response('User-agent: *\nCrawl-delay: 30\nAllow: /', url=URL),
-                                  Response('<h1>POCO X7 Pro 8GB RAM 256GB</h1>', url=URL)])
+    def test_stock_proof_stays_research_only_and_reads_are_paced(self):
+        fetch = Mock(return_value=Response('<h1>POCO X7 Pro 8GB RAM 256GB</h1>', url=URL))
         sleep = Mock()
-        rows = probe_host([CANDIDATE], {PROFILE['slug']: PROFILE}, fetch=fetch, sleep=sleep, clock=lambda: 0)
-        sleep.assert_called_once_with(30)
+        rows = probe_host([CANDIDATE, CANDIDATE], {PROFILE['slug']: PROFILE}, fetch=fetch, sleep=sleep, clock=lambda: 0)
+        sleep.assert_called_once_with(0.5)
         self.assertTrue(rows[0]['heading_matches_full_memory_and_radio'])
         self.assertFalse(rows[0]['candidate_is_approved_for_ingestion'])
         self.assertTrue(all(c.kwargs['allow_redirects'] is False for c in fetch.call_args_list))
@@ -51,14 +50,13 @@ class CandidateAuditTests(unittest.TestCase):
     def test_denial_or_transport_error_opens_circuit_and_no_redirect_is_followed(self):
         second = {**CANDIDATE, 'url': URL + '-another-color'}
         for response in (Response('', 403, URL), requests.ReadTimeout()):
-            fetch = Mock(side_effect=[Response('User-agent: *\nAllow: /', url=URL), response])
+            fetch = Mock(side_effect=[response])
             rows = probe_host([CANDIDATE, second], {PROFILE['slug']: PROFILE}, fetch=fetch, sleep=lambda _: None)
-            self.assertEqual(fetch.call_count, 2)
+            self.assertEqual(fetch.call_count, 1)
             self.assertEqual(rows[1]['reason'], 'host_circuit_open')
-        fetch = Mock(side_effect=[Response('User-agent: *\nAllow: /', url=URL),
-                                  Response('', 302, URL, {'Location': 'https://evil.test/'})])
+        fetch = Mock(return_value=Response('', 302, URL, {'Location': 'https://evil.test/'}))
         rows = probe_host([CANDIDATE], {PROFILE['slug']: PROFILE}, fetch=fetch, sleep=lambda _: None)
-        self.assertEqual(fetch.call_count, 2)
+        self.assertEqual(fetch.call_count, 1)
         self.assertFalse(rows[0]['candidate_is_approved_for_ingestion'])
 
     def test_wrong_capacity_rejected_and_matching_title_stays_research_only(self):

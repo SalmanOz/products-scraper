@@ -6,7 +6,7 @@ from test_pasaj_source import Response
 
 
 class BudgetTests(unittest.TestCase):
-    def test_hepsiburada_model_search_shares_robots_and_product_document_budget(self):
+    def test_hepsiburada_model_search_shares_product_document_budget(self):
         calls = []
 
         def transport(rules):
@@ -22,14 +22,9 @@ class BudgetTests(unittest.TestCase):
         allowed = transport('User-agent: *\nAllow: /\n')
         self.assertEqual(allowed.read_hepsiburada_search(query)[1], 'document_read')
         self.assertEqual(allowed.read_document(pdp)[1], 'pdp_budget_exhausted')
-        self.assertEqual(calls, [robots, search])
+        self.assertEqual(calls, [search])
         report = allowed.report()['Hepsiburada']
         self.assertEqual((report['search_requests'], report['pdp_requests'], report['document_requests']), (1, 0, 1))
-
-        calls.clear()
-        denied = transport('User-agent: *\nDisallow: /ara\n')
-        self.assertEqual(denied.read_hepsiburada_search(query)[1], 'robots_disallowed')
-        self.assertEqual(calls, [robots])
 
     def test_trendyol_native_tail_page_indexes_do_not_expand_the_shared_100_request_quota(self):
         calls = []
@@ -42,7 +37,7 @@ class BudgetTests(unittest.TestCase):
             self.assertEqual(source.read_trendyol_category(base + f'?pi={page}')[1], 'document_read')
         self.assertEqual(source.read_trendyol_category(base + '?pi=201')[1], 'category_budget_exhausted')
         self.assertEqual(source.read_trendyol_category(base + '?pi=1000')[1], 'invalid_catalog_category')
-        self.assertEqual(len(calls), 101)  # One robots GET, exactly 100 category GETs.
+        self.assertEqual(len(calls), 100)
         self.assertEqual(source.report()['Trendyol']['category_requests'], 100)
 
     def test_expanded_observed_hb_category_budget_stays_bounded_and_preserves_product_quota(self):
@@ -57,7 +52,7 @@ class BudgetTests(unittest.TestCase):
             url = CATEGORY_URL + (f'?sayfa={page}' if page > 1 else '')
             self.assertEqual(source.read_hepsiburada_category(url)[1], 'document_read')
         self.assertEqual(source.read_hepsiburada_category(CATEGORY_URL + '?sayfa=81')[1], 'category_budget_exhausted')
-        self.assertEqual(len(calls), 81)  # The 81st category was not requested; robots was.
+        self.assertEqual(len(calls), 80)
         pdp = 'https://www.hepsiburada.com/samsung-galaxy-a54-128gb-p-HBCV0000TEST01'
         self.assertEqual(source.read_document(pdp)[1], 'document_read')
         self.assertEqual(source.read_document(pdp + '2')[1], 'pdp_budget_exhausted')

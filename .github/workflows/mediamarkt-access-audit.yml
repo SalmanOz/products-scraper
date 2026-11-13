@@ -29,7 +29,7 @@ jobs:
           done
           docker logs mediamarkt-audit-browser
           exit 1
-      - name: Probe robots, advertised sitemaps, and three public PDPs
+      - name: Probe fixed sitemaps and three public PDPs
         env:
           MEDIAMARKT_AUDIT_OUTPUT_DIR: ${{ runner.temp }}
           MEDIAMARKT_AUDIT_BROWSER_GET: '1'

@@ -117,7 +117,6 @@ class Fold8PreflightTests(unittest.TestCase):
             lambda a: a['verified_offers'][0].update(source_title='Samsung Galaxy Z Fold8 Ultra 12/512GB'),
             lambda a: a['verified_offers'][1].update(merchant='Marketplace'),
             lambda a: a['source_attempts'][1].update(reason='no_selected_cash_offer'),
-            lambda a: a['sources']['pasaj'].update(robots_status='disallowed'),
             lambda a: a.update(checked_at=(datetime.now(timezone.utc) - timedelta(minutes=6)).isoformat()),
         ):
             changed = deepcopy(audit)

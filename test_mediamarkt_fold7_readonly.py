@@ -68,10 +68,7 @@ class Fold7AuditTests(unittest.TestCase):
         self.assertFalse(exact_seller_identity(SELLER_HTML.replace(TAX_NUMBER, '0000000000')))
 
     @patch('audit_mediamarkt_fold7_readonly.selected_marketplace_offer', return_value=EVIDENCE)
-    def test_audit_uses_only_robots_allowed_exact_pages_and_never_writes(self, parser):
-        blocked = Transport(allowed=False)
-        self.assertEqual(run_audit(blocked)['reason'], 'robots_disallowed')
-        self.assertEqual(blocked.urls, [])
+    def test_audit_uses_only_exact_pages_and_never_writes(self, parser):
         source = Transport()
         report = run_audit(source)
         self.assertTrue(report['verified'])

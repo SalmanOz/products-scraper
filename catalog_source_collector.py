@@ -29,7 +29,7 @@ def catalog_document_reader(scope):
             n11 = route.hostname == 'www.n11.com'
             purpose = 'public_n11_document' if n11 else 'public_catalog_source_document'
             stamp = datetime.fromisoformat(body['observed_at'].replace('Z', '+00:00'))
-            maximum = 64 * 1024 if route.path == '/robots.txt' else MAX_HTML_BYTES
+            maximum = MAX_HTML_BYTES
             status, document, content_type = body['source_status'], body['document'], body['content_type']
             if (body.get('purpose') != purpose or body.get('writes') is not False or body.get('url') != url
                     or type(status) is not int or not 100 <= status <= 599 or not isinstance(document, str)

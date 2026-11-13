@@ -207,7 +207,6 @@ def _source_offer(source_audit):
             or source_audit.get('catalog') != CATALOG
             or source_audit.get('url') != URL
             or source_audit.get('seller_url') != SELLER_URL
-            or source_audit.get('robots_allowed') is not True
             or source_audit.get('verified') is not True
             or source_audit.get('reason') !=
                 'selected_new_cash_offer_and_legal_seller_verified'

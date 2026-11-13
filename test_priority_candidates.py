@@ -87,7 +87,7 @@ class PriorityCandidateTests(unittest.TestCase):
                     response.headers['Location'] = URL
                 return response
             row = inspect_target(PriorityRetailerTransport(get=get, sleep=lambda _: None), old, client.product)
-            self.assertEqual(calls, ['https://www.n11.com/robots.txt', old, URL])
+            self.assertEqual(calls, [old, URL])
             fresh = FreshTransport(changed)
             result = refresh_candidates({'purpose': 'automatic_priority_retailer_diagnosis', 'writes': False,
                 'catalog_count': 1, 'rows': [row]}, client=client,

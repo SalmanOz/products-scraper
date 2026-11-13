@@ -34,8 +34,7 @@ def validated_offer(report, now=None):
                     'id': PROFILE['id'], 'slug': PROFILE['slug'],
                     'name': PROFILE['name'], 'specs': SPECS}
                 or report.get('url') != URL
-                or report.get('offer_verified') is not True
-                or report.get('vatan_source', {}).get('robots_status') != 'ready'):
+                or report.get('offer_verified') is not True):
             return None
         checked = _time(report['checked_at'])
         if not -60 <= (now - checked).total_seconds() <= MAX_PREFLIGHT_AGE_SECONDS:

@@ -13,7 +13,6 @@ import math
 import re
 import time
 from datetime import datetime, timezone
-from urllib.robotparser import RobotFileParser
 
 from bs4 import BeautifulSoup
 import requests
@@ -249,41 +248,13 @@ class HepsiburadaS25FeSource:
 
     def _read_with_fallback(self, url, maximum, *, accept):
         body, reason, status = self._read(url, maximum, accept=accept)
-        return (self._browser_read(url, maximum) if reason == 'http_403'
-                else (body, reason, status))
-
-    @staticmethod
-    def _robots_text(raw):
-        text = raw.decode('utf-8-sig', errors='strict')
-        if re.search(r'<\s*(?:html|body|pre)\b', text, re.I):
-            # Chromium may wrap a text/plain robots response in a single PRE.
-            soup = BeautifulSoup(text, 'html.parser')
-            blocks = soup.find_all('pre')
-            if (len(blocks) != 1 or soup.find(['script', 'form', 'iframe'])
-                    or _normalized(soup.get_text(' ', strip=True)) !=
-                       _normalized(blocks[0].get_text(' ', strip=True))):
-                return ''
-            text = blocks[0].get_text()
-        return text
+        if reason == 'http_403':
+            self._sleep(0.5)
+            return self._browser_read(url, maximum)
+        return body, reason, status
 
     def read_offer(self):
         try:
-            robots, reason, status = self._read_with_fallback(
-                ROBOTS_URL, MAX_ROBOTS_BYTES, accept='text/plain')
-            if reason != 'ready':
-                return None, 'robots_' + reason, status
-            text = self._robots_text(robots)
-            if not re.search(r'^\s*user-agent\s*:', text, re.I | re.M) or '<html' in text.lower():
-                return None, 'robots_invalid', status
-            rules = RobotFileParser()
-            rules.parse(text.splitlines())
-            if not rules.can_fetch(BOT, URL):
-                return None, 'robots_disallowed', None
-            delay = rules.crawl_delay(BOT) or 0
-            if delay > 30:
-                return None, 'robots_delay_exceeds_budget', None
-            if delay:
-                self._sleep(delay)
             html, reason, status = self._read_with_fallback(
                 URL, MAX_HTML_BYTES, accept='text/html')
             if reason != 'ready':

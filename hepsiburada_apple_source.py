@@ -4,7 +4,7 @@ The three exact URLs below were observed with a selected Hepsiburada buy box
 on 2026-11-02. JSON-LD names Apple as the Offer seller even when the visible
 buy box is Hepsiburada, so neither the schema nor a query-string seller hint
 is sufficient by itself. Every read rechecks the selected SKU, merchant,
-ordinary cash price, stock, and robots policy. No offer is retained here.
+ordinary cash price and stock. No offer is retained here.
 """
 
 from __future__ import annotations
@@ -16,13 +16,12 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from threading import Lock
-from urllib.robotparser import RobotFileParser
 
 from bs4 import BeautifulSoup
 import requests
 
 from hepsiburada_s25_fe_source import (
-    BOT, MAX_HTML_BYTES, MAX_ROBOTS_BYTES, ROBOTS_URL, SELLER_URL,
+    MAX_HTML_BYTES, SELLER_URL,
     HepsiburadaS25FeSource, _nodes, _normalized,
 )
 from tr_price_scraper import TRPriceScraper
@@ -193,7 +192,7 @@ def parse_exact_buy_box(html: str, url: str, final_url: str | None = None):
 
 
 class HepsiburadaAppleSource:
-    """One robots check and one bounded exact PDP read per requested target."""
+    """One bounded exact PDP read per requested target."""
 
     def __init__(self, get=None, post=None, sleep=time.sleep):
         self._get = get or requests.get
@@ -210,22 +209,6 @@ class HepsiburadaAppleSource:
             transport = HepsiburadaS25FeSource(
                 get=self._get, post=self._post, sleep=self._sleep)
             try:
-                robots, reason, status = transport._read_with_fallback(
-                    ROBOTS_URL, MAX_ROBOTS_BYTES, accept='text/plain')
-                if reason != 'ready':
-                    return None, 'robots_' + reason, status
-                text = transport._robots_text(robots)
-                if not re.search(r'^\s*user-agent\s*:', text, re.I | re.M) or '<html' in text.lower():
-                    return None, 'robots_invalid', status
-                rules = RobotFileParser()
-                rules.parse(text.splitlines())
-                if not rules.can_fetch(BOT, url):
-                    return None, 'robots_disallowed', None
-                delay = rules.crawl_delay(BOT) or 0
-                if delay > 30:
-                    return None, 'robots_delay_exceeds_budget', None
-                if delay:
-                    self._sleep(delay)
                 html, reason, status = transport._read_with_fallback(
                     url, MAX_HTML_BYTES, accept='text/html')
                 if reason != 'ready':

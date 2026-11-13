@@ -44,7 +44,6 @@ def run_audit(source=None):
 def format_summary(report):
     lines = ['## Turkcell Pasaj public PDP pilot',
              f"Status: {report['status']} ({report['verified_products']}/{report['required_products']}); "
-             f"robots {report['source']['robots_status']}; "
              f"PDP requests {report['source']['pdp_requests']}."]
     for row in report['products']:
         for attempt in row['source_attempts']:

@@ -254,7 +254,6 @@ def _source(source):
     offer, reason, status = source.read_offer(URL)
     state = source.report()
     if (reason != 'observed_exact_cash_offer' or status != 200
-            or state.get('robots_status') != 'allowed'
             or state.get('blocked') is not False
             or not _exact_offer(offer)):
         return None, {'reason': reason, 'http_status': status, 'source': state}
@@ -298,7 +297,6 @@ def verified_offer(report, now=None):
                 or report['source_attempt'].get('reason') !=
                     'observed_exact_cash_offer'
                 or report['source_attempt'].get('http_status') != 200
-                or report['source_attempt'].get('source', {}).get('robots_status')
                     != 'allowed'
                 or not _exact_offer(report.get('verified_offer'), now)):
             return None

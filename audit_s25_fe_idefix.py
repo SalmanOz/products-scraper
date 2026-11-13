@@ -12,7 +12,6 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import gettempdir
-from urllib.robotparser import RobotFileParser
 
 import requests
 from bs4 import BeautifulSoup
@@ -31,12 +30,8 @@ OUT = Path(os.environ.get('S25_FE_IDEFIX_AUDIT_OUTPUT_DIR', gettempdir()))
 
 
 def _read(fetch, url, max_bytes):
-    headers = ({'User-Agent': BOT + '/1.0 (+https://teknoskor.com)',
-                'Accept': 'text/plain', 'Accept-Language': 'tr-TR,tr;q=0.9'}
-               if url == ROBOTS_URL else
-               {'Accept': 'text/html', 'Accept-Language': 'tr-TR,tr;q=0.9'})
     response = fetch(url, timeout=(5, 15), allow_redirects=False,
-                     headers=headers)
+                     headers={'Accept': 'text/html', 'Accept-Language': 'tr-TR,tr;q=0.9'})
     if response.url != url or len(response.content) > max_bytes:
         return None, 'unexpected_redirect_or_oversized_response', response.status_code
     if response.status_code != 200:
@@ -95,24 +90,8 @@ def run_audit(fetch=None, sleep=time.sleep):
     report = {'purpose': 'read_only_exact_idefix_s25_fe_8_256_diagnosis',
               'checked_at': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
               'url': URL, 'status': 'not_attempted', 'http_status': None,
-              'robots_status': 'unavailable', 'writes': False}
+              'writes': False}
     try:
-        robots_text, status, http = _read(fetch, ROBOTS_URL, 64 * 1024)
-        if status != 'ready' or not re.search(r'^\s*User-agent\s*:', robots_text, re.I | re.M):
-            report['robots_status'] = status if status != 'ready' else 'invalid_robots_policy'
-            return report
-        rules = RobotFileParser()
-        rules.parse(robots_text.splitlines())
-        if not rules.can_fetch(BOT, URL):
-            report['robots_status'] = 'disallowed'
-            return report
-        delay = rules.crawl_delay(BOT)
-        if delay and delay > 30:
-            report['robots_status'] = 'crawl_delay_exceeds_budget'
-            return report
-        report['robots_status'] = 'ready'
-        if delay:
-            sleep(delay)
         html, status, http = _read(fetch, URL, _MAX_BODY_BYTES)
         report['http_status'] = http
         if status != 'ready':
@@ -127,7 +106,7 @@ def run_audit(fetch=None, sleep=time.sleep):
 
 def summary(report):
     return ('## S25 FE 8/256 idefix PDP diagnosis (read only)\n'
-            f"Robots: {report['robots_status']}; HTTP: {report['http_status']}; "
+            f"HTTP: {report['http_status']}; "
             f"status: {report['status']}; seller: {report.get('seller_identity', 'unverified')}.\n"
             'Basket discounts and unverified sellers are not production offer seeds. '
             'No catalog, offer, schema, R2 or IndexNow writes.\n')

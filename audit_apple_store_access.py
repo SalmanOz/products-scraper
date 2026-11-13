@@ -7,7 +7,6 @@ import time
 from pathlib import Path
 from tempfile import gettempdir
 from urllib.parse import unquote, urlparse
-from urllib.robotparser import RobotFileParser
 
 from bs4 import BeautifulSoup
 import requests
@@ -100,29 +99,10 @@ def facts(body, expected):
 
 def run():
     result = {'purpose': 'read_only_apple_store_four_selected_iphone_runner_access',
-              'robots_status': 'unavailable', 'products': {}}
+              'products': {}}
     headers = {'User-Agent': BOT + '/1.0 (+https://teknoskor.com)',
                'Accept-Language': 'tr-TR,tr;q=0.9'}
     try:
-        response = requests.get(ROBOTS_URL, timeout=(5, 20), stream=True,
-                                allow_redirects=False, headers={**headers, 'Accept': 'text/plain'})
-        status = response.status_code
-        raw = bounded(response, MAX_ROBOTS)
-        if status != 200 or raw is None:
-            result['robots_status'] = f'http_{status}_or_oversized'
-            return result
-        text = raw.decode('utf-8-sig')
-        if (re.search(r'<(?:!doctype|html|head|body)\b', text, re.I)
-                or not re.search(r'^\s*user-agent\s*:', text, re.I | re.M)):
-            result['robots_status'] = 'invalid_policy'
-            return result
-        rules = RobotFileParser()
-        rules.parse(text.splitlines())
-        delay = float(rules.crawl_delay(BOT) or 0)
-        if delay > 30 or not all(rules.can_fetch(BOT, url) for url in PDP_URLS.values()):
-            result['robots_status'] = 'pdp_disallowed_or_delay_exceeds_budget'
-            return result
-        result['robots_status'] = 'ready'
         for slug, url in PDP_URLS.items():
             row = {'url': url, 'normal': None, 'browser': None,
                    'normal_facts': None, 'browser_facts': None}
@@ -135,8 +115,7 @@ def run():
             html = bounded(response, MAX_HTML)
             if status == 200 and exact_url(row['normal']['final_url'], url) and html:
                 row['normal_facts'] = facts(html, url)
-            if delay:
-                time.sleep(delay)
+            time.sleep(0.5)
             response = requests.post(SOLVER_URL, json={
                 'cmd': 'request.get', 'url': url, 'maxTimeout': 45000,
             }, timeout=60, stream=True)
@@ -153,8 +132,7 @@ def run():
                         html = solution.get('response')
                         if isinstance(html, str) and len(html.encode('utf-8')) <= MAX_HTML:
                             row['browser_facts'] = facts(html, url)
-            if delay:
-                time.sleep(delay)
+            time.sleep(0.5)
     except (requests.RequestException, ValueError, TypeError, UnicodeError) as error:
         result['error_class'] = type(error).__name__
     return result

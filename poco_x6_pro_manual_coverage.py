@@ -60,7 +60,7 @@ def audit(*, client=None, source=None):
     client = client or OfferIngestionClient.from_env()
     source = source or MediaMarktSource()
     report = {'purpose': PURPOSE, 'writes': False, 'status': 'failed',
-              'checked_at': None, 'robots_status': None, 'catalog_status': 'failed',
+              'checked_at': None, 'catalog_status': 'failed',
               'catalog_error': None, 'catalog_collision': None,
               'source_attempt': None, 'verified_offer': None, 'source': None,
               'product': {'id': PROFILE['id'], 'slug': PROFILE['slug'],
@@ -77,10 +77,8 @@ def audit(*, client=None, source=None):
     offer, report['source_attempt'] = _read_selected(source, URL)
     if _offer_matches(offer, URL, PROFILE):
         report['verified_offer'] = offer
-    report['robots_status'] = source.report().get('robots_status')
     if (report['catalog_status'] == 'passed'
-            and report['verified_offer'] is not None
-            and report['robots_status'] == 'ready'):
+            and report['verified_offer'] is not None):
         report['status'] = 'passed'
     report['checked_at'] = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
     report['source'] = source.report()
@@ -94,7 +92,6 @@ def verified_offer(report, now=None):
                 or report.get('writes') is not False or report.get('status') != 'passed'
                 or report.get('catalog_status') != 'passed'
                 or report.get('catalog_error') is not None
-                or report.get('robots_status') != 'ready'
                 or now.tzinfo is None):
             return None
         checked = _utc(report['checked_at'])
@@ -200,7 +197,7 @@ def summary(report):
     attempt = report.get('source_attempt') or {}
     collision = report.get('catalog_collision') or {}
     return (f"POCO X6 Pro 8/256 MediaMarkt tek SKU denetimi: {report['status']}; "
-            f"robots {report.get('robots_status')}; katalog "
+            f"katalog "
             f"{report.get('catalog_status')}.\n"
             f"- Kaynak: {attempt.get('reason')} HTTP {attempt.get('http_status')}; "
             f"{offer.get('seller_name') or '?'} {offer.get('price') or '?'} TRY; "

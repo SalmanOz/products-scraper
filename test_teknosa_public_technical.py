@@ -274,8 +274,6 @@ class PublicTechnicalTests(unittest.TestCase):
         self.assertEqual(transport.report()['Teknosa']['classification_requests'], 1)
         for wrong in [FEATURE_URL + '&x=1', FEATURE_URL.replace('125079845', '125079843'), FEATURE_URL.replace('https:', 'http:')]:
             self.assertEqual(transport.read_teknosa_classification(URL, wrong)[1], 'invalid_selected_technical_url')
-        denied = PriorityRetailerTransport(get=lambda url, **_: Response(url, 'User-agent: *\nDisallow: /getClassificationData\n'), sleep=lambda _: None)
-        self.assertEqual(denied.read_teknosa_classification(URL, FEATURE_URL)[1], 'robots_disallowed')
         def blocked_get(url, **_):
             return Response(url, 'User-agent: *\nAllow: /\n' if url.endswith('robots.txt') else '', status=200 if url.endswith('robots.txt') else 429)
         denied = PriorityRetailerTransport(get=blocked_get, sleep=lambda _: None)

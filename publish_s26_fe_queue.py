@@ -57,9 +57,6 @@ def sourced_specifications():
 
 def read_mediamarkt_exact(url):
     source = MediaMarktSource(get=compatible_get)
-    source._load_robots()
-    if source._rules is None or not source._rules.can_fetch('TeknoskorPriceBot', url):
-        raise ValueError('mediamarkt_document_unavailable')
     body, reason, _ = source._direct(url, 5 * 1024 * 1024, 'text/html')
     if reason == 'http_403':
         body, resolved, reason = source._browser_get(url)

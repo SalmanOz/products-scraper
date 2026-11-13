@@ -89,8 +89,7 @@ def run_audit(reader=None, catalog_client=None, now=None):
                        and not isinstance(offers[0].get('price'), bool)
                        and 0 < offers[0]['price'] <= 5_000_000
                        and _fresh(offers[0].get('observed_at'), checked_at))
-    status = ('passed' if catalog_confirmed and attempt_confirmed and offer_confirmed
-              and source.get('robots_status') == 'ready' else 'partial')
+    status = ('passed' if catalog_confirmed and attempt_confirmed and offer_confirmed else 'partial')
     return {'purpose': 'read_only_vatan_vivo_exact_selected_pdp_proof',
             'checked_at': checked_at.isoformat().replace('+00:00', 'Z'),
             'status': status, 'catalog_status': catalog_status,
@@ -114,7 +113,6 @@ def summary(report):
     offer = report['offer'] or {}
     return ('## Vatan vivo X300 selected PDP audit (read only)\n'
             f"Status: {report['status']}; catalog {report['catalog_confirmed']}; "
-            f"robots {report['vatan_source'].get('robots_status')}; "
             f"selected PDP {report['offer_confirmed']}; "
             f"{attempt.get('reason', 'not_attempted')} HTTP {attempt.get('http_status')}; "
             f"cash TRY {offer.get('price')}; stock {offer.get('availability')}.\n"

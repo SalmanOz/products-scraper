@@ -24,7 +24,7 @@ jobs:
           cache: pip
       - name: Install dependencies
         run: pip install -r requirements.txt
-      - name: Test exact SKU, selected seller, cash price, and robots denial
+      - name: Test exact SKU, selected seller, and cash price
         run: python -m unittest -q test_teknosa_reviewed_source
       - name: Start bounded read-only browser GET service
         run: |

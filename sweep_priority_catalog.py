@@ -539,7 +539,7 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                 cards, parser = public_model_search_cards(html, query)
                 entry.update(parser_status=parser, exact_family_destinations=len(cards))
                 process_category_cards('Hepsiburada', discovery, cards)
-            if reason in {'pdp_budget_exhausted', 'robots_disallowed', 'source_cooldown', 'source_circuit_open'}:
+            if reason in {'pdp_budget_exhausted', 'source_cooldown', 'source_circuit_open'}:
                 break
             if checkpoint:
                 checkpoint(result)
@@ -828,7 +828,7 @@ def sweep(*, client, publish=False, transport=None, reader=None, checkpoint=None
                     checkpoint(result)
         # Other retailers and the ordinary seed queue supply useful independent
         # work while the source's existing cooldown runs. Resume only observed
-        # pending pages once; retain the same transport, robots, circuit and
+        # pending pages once; retain the same transport, circuit and
         # total page/PDP limits. Explicit denials are never retried here.
         for retailer, report_key, module, read_category, continuation in deferred_categories:
             if transport.report().get(retailer, {}).get('blocked') is True:

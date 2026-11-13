@@ -254,15 +254,6 @@ class MarketplaceCandidateAuditTests(unittest.TestCase):
         self.assertEqual(report['error'], 'mediamarkt_discovery_unavailable')
         self.assertEqual(source.direct, [*CATEGORY_HINT_URLS, BASE_CATEGORY_URL])
         self.assertEqual(report['probed'], 0)
-        no_robots = Source(sitemap='robots_unavailable', robots='unavailable')
-        report = run_audit(catalog_get=self.catalog_get(rows), source=no_robots)
-        self.assertEqual(report['status'], 'failed')
-        self.assertEqual(no_robots.direct, [])
-        with self.assertRaisesRegex(ValueError, 'offset'):
-            run_audit(catalog_get=self.catalog_get(rows), source=source, offset=-1)
-        with self.assertRaisesRegex(ValueError, 'model_offset'):
-            run_audit(catalog_get=self.catalog_get(rows), source=source, model_offset=-1)
-
     def test_public_model_facet_pages_are_bounded_and_only_selected_pdp_proves_ram(self):
         rows = [product(277, 'samsung-galaxy-a36-5g', 'Samsung Galaxy A36 5G')]
         rows[0]['attributes']['ram_gb'] = 6

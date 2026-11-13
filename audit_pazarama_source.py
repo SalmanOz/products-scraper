@@ -15,7 +15,7 @@ from tempfile import gettempdir
 from bs4 import BeautifulSoup
 import requests
 
-from pazarama_category_source import (CATEGORY_URL, ROBOTS_URL, PazaramaCategorySource,
+from pazarama_category_source import (CATEGORY_URL, PazaramaCategorySource,
                                        _category_page_number, pazarama_product_url)
 from retailer_offer_refresh import RetailerOfferRefresher, _schema_nodes, _type_is
 
@@ -54,8 +54,7 @@ class BrowserResponse:
 class BrowserGetTransport:
     """Bounded GET-only runner probe through the existing local browser service.
 
-    The source fetches robots first and checks its policy before any category or
-    PDP URL reaches this adapter. No cart, search, login or write URL is allowed.
+    Only bounded category and product URLs may reach this adapter.
     """
 
     def __init__(self, post=None):
@@ -63,7 +62,7 @@ class BrowserGetTransport:
         self.diagnostics = []
 
     def __call__(self, url, **_kwargs):
-        if url != ROBOTS_URL and _category_page_number(url) is None and not pazarama_product_url(url):
+        if _category_page_number(url) is None and not pazarama_product_url(url):
             raise requests.RequestException('Unreviewed Pazarama browser GET URL')
         diagnostic = {'url': url, 'solver_http_status': None,
                       'solver_response_bytes': 0, 'solver_status': None,
@@ -243,18 +242,17 @@ def run_audit(recorder=None, source=None, refresher=None):
 
 def format_summary(report):
     events = report['http_events']
-    robots = next((event['http_status'] for event in events if event['url'] == ROBOTS_URL), None)
     category = [event['http_status'] for event in events if event['url'] == CATEGORY_URL
                 or '/cep-telefonu-k-K03043?' in event['url']]
     lines = ['## Pazarama Android offer source audit',
              f"Status: {report['status']} — {report['verified_products']}/{report['required_products']} exact variants verified.",
              f"Transport: {report.get('transport', 'normal_http_get')}.",
-             f"Robots HTTP {robots}; category pages {report['category']['category_pages']} "
+             f"Category pages {report['category']['category_pages']} "
              f"(statuses: {', '.join(map(str, sorted(set(category)))) or 'none'}); "
              f"eligible cards {report['category']['eligible_card_urls']}."]
     for diagnostic in report.get('transport_diagnostics', [])[:1]:
         lines.append(
-            f"Browser GET robots: {diagnostic['reason']}; service HTTP {diagnostic['solver_http_status']}; "
+            f"Browser GET: {diagnostic['reason']}; service HTTP {diagnostic['solver_http_status']}; "
             f"service status {diagnostic['solver_status']}; site HTTP {diagnostic['solution_status']}; "
             f"URL matched {diagnostic['solution_url_matches']}; response bytes {diagnostic['solver_response_bytes']}; "
             f"error {diagnostic.get('solver_error_excerpt')}."

@@ -77,29 +77,20 @@ class PazaramaCategorySourceTests(unittest.TestCase):
         self.assertEqual(source.discover('Tecno Camon 40', {'ram_gb': 8, 'storage_gb': 256}), [])
         self.assertEqual(source.discover('Samsung Galaxy A37 5G', SPECS), [])
         self.assertEqual(source.discover('Samsung Galaxy A26 5G', {'ram_gb': 8, 'storage_gb': 256}), [])
-        self.assertEqual([url for url, _ in fetch.calls], [ROBOTS_URL, CATEGORY_URL, page2])
+        self.assertEqual([url for url, _ in fetch.calls], [CATEGORY_URL, page2])
         self.assertEqual(source.report()['category_pages'], 2)
 
-    def test_pdp_fetch_checks_robots_and_caches_same_url(self):
+    def test_pdp_fetch_caches_same_url(self):
         fetch = Fetch({ROBOTS_URL: ROBOTS, A26: b'<html>product</html>'})
         source = PazaramaCategorySource(fetch=fetch, sleep=lambda _: None)
         self.assertEqual(source.fetch(A26).text, '<html>product</html>')
         self.assertEqual(source.fetch(A26).text, '<html>product</html>')
-        self.assertEqual([url for url, _ in fetch.calls], [ROBOTS_URL, A26])
+        self.assertEqual([url for url, _ in fetch.calls], [A26])
         self.assertEqual(source.report()['pdp_requests'], 1)
         for url in (A26 + '?magaza=other', A26.replace('www.pazarama.com', 'pazarama.com.evil.test'),
                     A26.replace('https:', 'http:'), A26 + '#offer'):
             with self.subTest(url=url), self.assertRaisesRegex(Exception, 'clean'):
                 source.fetch(url)
-
-    def test_unavailable_or_disallowing_robots_fails_closed_once(self):
-        for rules in (b'<html>blocked</html>', b'User-agent: *\nDisallow: /\n'):
-            with self.subTest(rules=rules):
-                fetch = Fetch({ROBOTS_URL: rules})
-                source = PazaramaCategorySource(fetch=fetch)
-                self.assertEqual(source.discover('Samsung Galaxy A26 5G', SPECS), [])
-                self.assertEqual(source.discover('Samsung Galaxy A26 5G', SPECS), [])
-                self.assertEqual([url for url, _ in fetch.calls], [ROBOTS_URL])
 
     def test_oversize_category_and_external_pagination_fail_closed(self):
         huge = Response(CATEGORY_URL, b'<html></html>', content_length=5 * 1024 * 1024)
@@ -108,23 +99,23 @@ class PazaramaCategorySourceTests(unittest.TestCase):
                 fetch = Fetch({ROBOTS_URL: ROBOTS, CATEGORY_URL: value})
                 source = PazaramaCategorySource(fetch=fetch, sleep=lambda _: None)
                 self.assertEqual(source.discover('Samsung Galaxy A26 5G', SPECS), [])
-                self.assertEqual(len(fetch.calls), 2)
+                self.assertEqual(len(fetch.calls), 1)
                 if value is huge:
                     self.assertNotEqual(source.report()['status'], 'ready')
 
-    def test_robots_delay_and_denied_category_stop_requests(self):
-        delayed = ROBOTS.replace(b'Disallow: /arama', b'Crawl-delay: 2\nDisallow: /arama')
+    def test_document_pacing_and_denied_category_stop_requests(self):
         delays = []
-        fetch = Fetch({ROBOTS_URL: delayed, CATEGORY_URL: category()})
+        fetch = Fetch({CATEGORY_URL: category(), A26: b"<html>product</html>"})
         source = PazaramaCategorySource(fetch=fetch, sleep=delays.append, clock=lambda: 0)
         source.discover('Samsung Galaxy A26 5G', SPECS)
-        self.assertEqual(delays, [2.0])
+        source.fetch(A26)
+        self.assertEqual(delays, [0.5])
         denied = Fetch({ROBOTS_URL: ROBOTS,
                         CATEGORY_URL: Response(CATEGORY_URL, b'blocked', status=403)})
         blocked = PazaramaCategorySource(fetch=denied, sleep=lambda _: None)
         self.assertEqual(blocked.discover('Samsung Galaxy A26 5G', SPECS), [])
         self.assertEqual(blocked.discover('Samsung Galaxy A26 5G', SPECS), [])
-        self.assertEqual([url for url, _ in denied.calls], [ROBOTS_URL, CATEGORY_URL])
+        self.assertEqual([url for url, _ in denied.calls], [CATEGORY_URL])
         self.assertEqual(blocked.report()['http_status'], 403)
 
     def test_url_boundary_and_bounded_category_pages(self):

@@ -22,7 +22,7 @@ def run_audit(reader=None, catalog_client=None):
     catalog_client = catalog_client or OfferIngestionClient.from_env()
     report = {'purpose': 'read_only_mediamarkt_marketplace_two_selected_offers',
               'writes': False, 'status': 'failed', 'checked_at': None,
-              'robots_status': None, 'rows': []}
+              'rows': []}
     try:
         catalog = catalog_client.get_published_products()
         if not isinstance(catalog, list):
@@ -55,9 +55,8 @@ def run_audit(reader=None, catalog_client=None):
                     or attempt.get('reason') != 'observed_exact_new_marketplace_offer'
                     or attempt.get('http_status') != 200):
                 raise ValueError('no_exact_new_selected_offer')
-        report['robots_status'] = reader.mediamarkt_source.report().get('robots_status')
-        if report['robots_status'] != 'ready' or len(report['rows']) != len(PROFILES):
-            raise ValueError('robots_or_offer_count_failed')
+        if len(report['rows']) != len(PROFILES):
+            raise ValueError('offer_count_failed')
         report['status'] = 'passed'
     except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError) as error:
         report['error'] = str(error) if isinstance(error, ValueError) else type(error).__name__
@@ -68,7 +67,7 @@ def run_audit(reader=None, catalog_client=None):
 def summary(report):
     lines = ['## MediaMarkt pazar yeri: iki seçili yeni satıcı teklifi (salt okuma)',
              f"Durum: {report['status']}; doğrulanan {sum(bool(r.get('verified_offer')) for r in report['rows'])}/2; "
-             f"robots {report['robots_status']}."]
+             "."]
     for row in report['rows']:
         attempt = row.get('source_attempt') or {}
         offer = row.get('verified_offer') or {}

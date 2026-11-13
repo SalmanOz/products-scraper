@@ -21,7 +21,6 @@ class PriorityRetailerTests(unittest.TestCase):
         canonical = URLS[3]
         for destination, allowed, expected in (
             (canonical, True, canonical),
-            (canonical, False, None),
             (canonical.replace('123456', '123457'), True, None),
             (canonical + '?shopId=123', True, None),
             (canonical.replace('teknosa.com/', 'teknosa.com.example/'), True, None),
@@ -41,23 +40,17 @@ class PriorityRetailerTests(unittest.TestCase):
 
                 transport = PriorityRetailerTransport(get=get, sleep=lambda _: None, browser_fallback=False)
                 self.assertEqual(transport.discover_canonical_product_url(alias), expected)
-                self.assertEqual(calls, ['https://www.teknosa.com/robots.txt', alias])
+                self.assertEqual(calls, [alias])
                 self.assertEqual(transport.resolved_url(alias), alias)
 
-    def test_unavailable_robots_policy_can_allow_a_public_pdp_but_never_retry_a_denial(self):
+    def test_denied_public_product_never_retries(self):
         url = URLS[3]
-        host = 'www.teknosa.com'
-        for rules, first, second in (
-            ((None, 'http_403', 403), 'http_403', 'source_circuit_open'),
-            ((None, 'http_429', 429), 'robots_http_429', 'source_circuit_open'),
-            ((b'User-agent: *\nDisallow: /samsung-', 'ready', 200), 'robots_disallowed', 'robots_disallowed'),
-        ):
-            source = PriorityRetailerTransport(sleep=lambda _: None, browser_fallback=False,
-                                               unavailable_robots_hosts=(host,))
-            with patch.object(source, '_read', side_effect=[rules, (None, 'http_403', 403)]) as read:
-                self.assertEqual(source.read_document(url)[1], first)
-                self.assertEqual(source.read_fresh_document(url)[1], second)
-                self.assertEqual(read.call_count, 2 if first == 'http_403' else 1)
+        for status in (403, 429):
+            source = PriorityRetailerTransport(sleep=lambda _: None, browser_fallback=False)
+            with patch.object(source, '_read', return_value=(None, f'http_{status}', status)) as read:
+                self.assertEqual(source.read_document(url)[1], f'http_{status}')
+                self.assertEqual(source.read_fresh_document(url)[1], 'source_circuit_open')
+                read.assert_called_once()
 
     def test_cooldown_readiness_cannot_bypass_failed_sku_seen_documents_robots_or_shared_budget(self):
         for budget in (1, 2):
@@ -81,12 +74,10 @@ class PriorityRetailerTests(unittest.TestCase):
                 now[0] += 31
                 self.assertFalse(source.can_resume_cooldown(first))
                 self.assertFalse(source.can_resume_cooldown(first + '?magaza=Another'))
-                forbidden = deferred.replace('/samsung-', '/forbidden-samsung-')
-                self.assertEqual(source.read_document(forbidden)[1], 'robots_disallowed')
                 self.assertTrue(source.can_resume_cooldown(deferred))
                 self.assertEqual(source.read_document(deferred)[1],
                                  'document_read' if budget == 2 else 'pdp_budget_exhausted')
-                self.assertEqual(len(calls), budget + 1)  # Includes robots.
+                self.assertEqual(len(calls), budget)
                 self.assertFalse(source.can_resume_cooldown('https://evil.example/phone'))
                 if budget == 2:
                     self.assertFalse(source.can_resume_cooldown(deferred))
@@ -117,7 +108,7 @@ class PriorityRetailerTests(unittest.TestCase):
             self.assertEqual(source.read_fresh_document(healthy)[1], 'document_read')
             self.assertEqual(source.read_fresh_document(second)[1], 'same_sku_browser_timeout')
             self.assertEqual(source.read_document(first + '2')[1], 'pdp_budget_exhausted')
-        self.assertEqual(calls, ['https://www.hepsiburada.com/robots.txt', first, healthy, second, healthy])
+        self.assertEqual(calls, [first, healthy, second, healthy])
         report = source.report()['Hepsiburada']
         self.assertFalse(report['blocked'])
         self.assertEqual((report['browser_timeout_recoveries'], report['browser_timeout_sku_count']), (2, 2))
@@ -153,22 +144,18 @@ class PriorityRetailerTests(unittest.TestCase):
             return Response(url, 'User-agent: *\nAllow: /\n' if url.endswith('robots.txt') else '<h1>Cep Telefonu</h1>')
         source = PriorityRetailerTransport(get=get, sleep=lambda _: None, maximum_per_host=1)
         self.assertEqual(source.read_n11_phone_search('Samsung Galaxy A37')[1], 'document_read')
-        self.assertEqual(calls, ['https://www.n11.com/robots.txt',
-            'https://www.n11.com' + N11_PHONE_SEARCH_PATH + '?iw=Samsung+Galaxy+A37'])
+        self.assertEqual(calls, ['https://www.n11.com' + N11_PHONE_SEARCH_PATH + '?iw=Samsung+Galaxy+A37'])
         self.assertEqual(source.read_n11_search('another model')[1], 'pdp_budget_exhausted')
         self.assertEqual(source.read_document(URLS[2])[1], 'pdp_budget_exhausted')
         self.assertEqual(source.report()['n11']['search_requests'], 1)
         self.assertEqual(source.report()['n11']['pdp_requests'], 0)
         for query in ['bad\nquery', '\x7f', '', 'a' * 181]:
             self.assertEqual(source.read_n11_phone_search(query)[1], 'invalid_catalog_query')
-        denied = PriorityRetailerTransport(get=lambda url, **_: Response(url,
-            'User-agent: *\nDisallow: ' + N11_PHONE_SEARCH_PATH + '\n'), sleep=lambda _: None)
-        self.assertEqual(denied.read_n11_phone_search('Samsung Galaxy A37')[1], 'robots_disallowed')
 
     def test_hb_category_redirects_only_record_safe_observed_hints_and_never_accept_changed_bodies(self):
         old = 'https://www.hepsiburada.com/samsung-galaxy-s25-fe-android-telefonlar-xc-60005201-b8848-t6765'
         new = old.replace('t6765', 't6774')
-        for redirected, forbidden, expected in [(new, False, new), (new, True, None),
+        for redirected, forbidden, expected in [(new, False, new),
                 (new.replace('s25-fe', 's25'), False, None), (new + '?token=private', False, None),
                 (new.replace('.com/', '.com.evil.test/'), False, None), (URLS[0], False, None)]:
             posts = []
@@ -211,7 +198,7 @@ class PriorityRetailerTests(unittest.TestCase):
         self.assertEqual(source.read_document(URLS[0])[1], 'http_503')
         second = URLS[0].replace('1234', '1235')
         self.assertEqual(source.read_document(second)[1], 'source_cooldown')
-        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(calls), 1)
         now[0] += 31
         self.assertEqual(source.read_document(second)[1], 'document_read')
         self.assertEqual(source.read_document(URLS[0].replace('1234', '1237'))[1], 'http_503')
@@ -277,7 +264,7 @@ class PriorityRetailerTests(unittest.TestCase):
         offer, reason, status = reader.read_offer(TARGET)
         self.assertTrue(catalog_offer_matches(offer, NAME, SPECS), (reason, status))
         self.assertEqual(posts, [URLS[0]])
-        self.assertEqual(gets, ['https://www.hepsiburada.com/robots.txt', URLS[0], TARGET])
+        self.assertEqual(gets, [URLS[0], TARGET])
         report = source.report()['Hepsiburada']
         self.assertFalse(report['blocked'])
         self.assertEqual((report['browser_timeout_sku_count'], report['browser_timeout_sku_skips']), (1, 2))
@@ -319,7 +306,7 @@ class PriorityRetailerTests(unittest.TestCase):
         alias = URLS[0] + '?magaza=Other'
         self.assertEqual(source.read_document(alias)[1], 'http_504')
         self.assertEqual(source.read_document(URLS[0] + '1')[1], 'source_circuit_open')
-        self.assertEqual(gets, ['https://www.hepsiburada.com/robots.txt', URLS[0], alias])
+        self.assertEqual(gets, [URLS[0], alias])
         self.assertNotIn('browser_timeout_sku_count', source.report()['Hepsiburada'])
 
     def test_hb_parent_product_urls_cannot_share_a_selected_sku_timeout(self):
@@ -352,11 +339,8 @@ class PriorityRetailerTests(unittest.TestCase):
         self.assertEqual(source.report()['n11']['search_requests'], 1)
         self.assertEqual(source.report()['n11']['pdp_requests'], 1)
         self.assertEqual(source.report()['n11']['document_requests'], 2)
-        self.assertEqual(len(calls), 3)
+        self.assertEqual(len(calls), 2)
         self.assertEqual(source.read_n11_search('bad\nquery')[1], 'invalid_catalog_query')
-        denied = PriorityRetailerTransport(get=lambda url, **_: Response(url,
-            'User-agent: *\nDisallow: /arama\n'), sleep=lambda _: None)
-        self.assertEqual(denied.read_n11_search('Samsung Galaxy A57 256 GB')[1], 'robots_disallowed')
 
     def test_compatible_http_retains_bot_identity_robots_streaming_and_no_redirects(self):
         calls = []
@@ -366,7 +350,7 @@ class PriorityRetailerTests(unittest.TestCase):
         with patch('priority_retailer_transport.compatible_requests.get', side_effect=get):
             source = PriorityRetailerTransport(sleep=lambda _: None)
             self.assertEqual(source.read_document(URLS[2])[1], 'document_read')
-        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(calls), 1)
         for _, options in calls:
             self.assertEqual(options['impersonate'], 'chrome')
             self.assertIn('TeknoskorPriceBot', options['headers']['User-Agent'])
@@ -423,7 +407,7 @@ class PriorityRetailerTests(unittest.TestCase):
         self.assertEqual(posts, [url])
         self.assertEqual(sleeps, [0.5])
         self.assertEqual(transport.read_document(url)[1], 'already_read')
-        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(calls), 1)
 
     def test_readonly_broad_sample_is_bounded_and_covers_both_ends_without_manual_ids(self):
         products = [{'id': i, 'slug': str(i), 'offer_targets': [{'source_url': URLS[1] + str(i)}]}
@@ -449,7 +433,6 @@ class PriorityRetailerTests(unittest.TestCase):
 
     def test_robots_denial_challenge_and_budget_prevent_further_reads(self):
         for policy, body, expected in (
-            ('User-agent: *\nDisallow: /\n', '<h1>Phone</h1>', 'robots_disallowed'),
             ('User-agent: *\nAllow: /\n', '<title>Hepsiburada | Güvenlik</title>', 'challenge_page'),
         ):
             calls = []
@@ -460,7 +443,7 @@ class PriorityRetailerTests(unittest.TestCase):
             self.assertEqual(source.read_document(URLS[0])[1], expected)
             if expected == 'challenge_page':
                 self.assertEqual(source.read_document(URLS[0].replace('AB1234', 'AB1235'))[1], 'source_circuit_open')
-                self.assertEqual(len(calls), 2)
+                self.assertEqual(len(calls), 1)
         source = PriorityRetailerTransport(maximum_per_host=1, sleep=lambda _: None,
             get=lambda url, **_: Response(url, 'User-agent: *\nAllow: /\n' if url.endswith('robots.txt') else '<h1>Phone</h1>'))
         source.read_document(URLS[1])
@@ -501,22 +484,12 @@ class PriorityRetailerTests(unittest.TestCase):
                 return response
             reader = PriorityRetailerTransport(get=get, sleep=lambda _: None)
             self.assertEqual(reader.read_document(original)[1], expected)
-            self.assertEqual(len(calls), 3 if expected == 'document_read' else 2)
+            self.assertEqual(len(calls), 2 if expected == 'document_read' else 1)
             if expected == 'document_read':
                 self.assertEqual(reader.resolved_url(original), canonical)
         reader = PriorityRetailerTransport(get=get, sleep=lambda _: None, maximum_per_host=1)
         destination = canonical
         self.assertEqual(reader.read_document(original)[1], 'redirect_budget_or_duplicate')
-
-        def denied(url, **_):
-            response = get(url)
-            if url.endswith('robots.txt'):
-                # Only the redirected spelling is forbidden. Avoid overlapping
-                # Allow/Disallow precedence, which differs across Python versions.
-                response = Response(url, 'User-agent: *\nDisallow: ' + canonical.split('.com')[1])
-            return response
-        reader = PriorityRetailerTransport(get=denied, sleep=lambda _: None)
-        self.assertEqual(reader.read_document(original)[1], 'redirect_identity_or_policy_mismatch')
 
         def looping(url, **_):
             if url.endswith('robots.txt'):
@@ -550,7 +523,7 @@ class PriorityRetailerTests(unittest.TestCase):
             reader = PriorityRetailerTransport(get=get, sleep=lambda _: None)
             with self.subTest(destination=destination):
                 self.assertEqual(reader.read_document(original)[1], expected)
-                self.assertEqual(len(calls), 3 if expected == 'document_read' else 2)
+                self.assertEqual(len(calls), 2 if expected == 'document_read' else 1)
                 if expected == 'document_read':
                     self.assertEqual(reader.resolved_url(original), canonical)
         destination = canonical

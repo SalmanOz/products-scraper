@@ -38,8 +38,7 @@ def validated_offers(report, now=None):
         if (not isinstance(report, dict)
                 or report.get('purpose') != 'read_only_xiaomi_17t_first_party_runner_proof'
                 or report.get('writes') is not False
-                or report.get('verified_products') != 2
-                or report.get('mediamarkt_source', {}).get('robots_status') != 'ready'):
+                or report.get('verified_products') != 2):
             return None
         checked = _time(report['checked_at'])
         if now.tzinfo is None or not -60 <= (now - checked).total_seconds() <= MAX_PREFLIGHT_AGE_SECONDS:

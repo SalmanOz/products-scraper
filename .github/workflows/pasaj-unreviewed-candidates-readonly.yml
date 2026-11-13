@@ -36,7 +36,7 @@ jobs:
           cache: pip
       - name: Install dependencies
         run: pip install -r requirements.txt
-      - name: Test clean URL, selected cash, robots and request bounds
+      - name: Test clean URL, selected cash and request bounds
         run: python -m unittest -q test_pasaj_unreviewed_candidates test_pasaj_source
       - name: Read six clean unpriced Pasaj PDP hints without writes
         env:

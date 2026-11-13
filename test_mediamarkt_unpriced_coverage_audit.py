@@ -103,7 +103,7 @@ class UnpricedCoverageAuditTests(unittest.TestCase):
         self.assertIsNone(offer)
         self.assertEqual((reason, status), ('no_exact_product_offer', 200))
         self.assertEqual(rejected[READER_URL]['category'], 'marketplace_seller')
-        self.assertEqual(fetch.calls, [ROBOTS_URL, READER_URL])
+        self.assertEqual(fetch.calls, [READER_URL])
 
     def test_public_catalog_rejects_redirects_and_oversized_payloads(self):
         rows = [product(1, 'Apple iPhone 16 Pro', 'apple-iphone-16-pro', None)]

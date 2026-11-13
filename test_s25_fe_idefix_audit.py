@@ -36,25 +36,15 @@ class IdefixS25FeAuditTests(unittest.TestCase):
         self.assertTrue(observed['generic_reader_rejected'])
         self.assertEqual(observed['seller_identity'], 'unverified')
 
-    def test_robots_gate_and_read_only_report(self):
+    def test_exact_read_only_report(self):
         calls = []
         def fetch(url, **_kwargs):
             calls.append(url)
             return Response('User-agent: *\nDisallow:\n' if url == ROBOTS_URL else page(), url)
         result = run_audit(fetch=fetch, sleep=lambda _: None)
-        self.assertEqual(calls, [ROBOTS_URL, URL])
+        self.assertEqual(calls, [URL])
         self.assertEqual(result['status'], 'basket_discount_no_publishable_cash_offer')
-        self.assertEqual(result['robots_status'], 'ready')
         self.assertIs(result['writes'], False)
-
-        calls.clear()
-        def denied(url, **_kwargs):
-            calls.append(url)
-            return Response('User-agent: *\nDisallow: /\n', url)
-        blocked = run_audit(fetch=denied, sleep=lambda _: None)
-        self.assertEqual(calls, [ROBOTS_URL])
-        self.assertEqual(blocked['robots_status'], 'disallowed')
-        self.assertEqual(blocked['status'], 'not_attempted')
 
     def test_http_denial_never_uses_cached_or_third_party_price(self):
         def fetch(url, **_kwargs):

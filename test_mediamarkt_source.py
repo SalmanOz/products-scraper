@@ -78,16 +78,6 @@ class Fetch:
 
 
 class MediaMarktSourceTests(unittest.TestCase):
-    def test_compatible_client_dns_failure_is_reported_as_unavailable_robots(self):
-        def offline(url, **options):
-            self.assertEqual(url, ROBOTS_URL)
-            raise RequestsError('DNS unavailable')
-
-        source = MediaMarktSource(get=offline)
-        source._load_robots()
-        self.assertEqual(source.report()['robots_status'], 'unavailable')
-        self.assertIsNone(source._rules)
-
     def test_full_catalog_can_read_a_verified_offer_after_seed_batch_quota(self):
         fetch = Fetch({ROBOTS_URL: ROBOTS, URL: Response(URL, status=403)})
         calls = []
@@ -176,7 +166,7 @@ class MediaMarktSourceTests(unittest.TestCase):
         self.assertTrue(product_url(url.replace('honor-600-pro-5g-12512-gb-android-telefon-siyah',
                                                'vivo-x300-pro-16512-gb-black')))
 
-    def test_robots_and_sitemap_are_cached_and_only_variant_hints_return(self):
+    def test_sitemaps_are_cached_and_only_variant_hints_return(self):
         wrong_storage = URL.replace('256gb', '512gb')
         other = URL.replace('www.mediamarkt.com.tr', 'attacker.example')
         fetch = Fetch({ROBOTS_URL: ROBOTS,
@@ -186,7 +176,7 @@ class MediaMarktSourceTests(unittest.TestCase):
         specs = {'ram_gb': 8, 'storage_gb': 256, 'network_generation': '5g'}
         self.assertEqual(source.discover('Apple iPhone 17', specs), [{'source_url': URL}])
         self.assertEqual(source.discover('Apple iPhone 17', specs), [{'source_url': URL}])
-        self.assertEqual(fetch.calls, [ROBOTS_URL, *SITEMAP_URLS])
+        self.assertEqual(fetch.calls, [*SITEMAP_URLS])
         self.assertEqual(source.report()['sitemap_status'], 'ready')
 
     def test_runner_403_browser_get_must_select_the_final_first_party_offer(self):
@@ -219,16 +209,15 @@ class MediaMarktSourceTests(unittest.TestCase):
         self.assertEqual(source._browser_failures, 0)
         offer, reason, status = source.read_offer(OLD_URL)
         self.assertEqual((offer['price'], reason, status), (89999, 'observed_exact_offer', 200))
-        self.assertEqual(fetch.calls, [ROBOTS_URL, URL, OLD_URL])
+        self.assertEqual(fetch.calls, [URL, OLD_URL])
         self.assertEqual(source.report()['browser_requests'], MAX_BROWSER_REQUESTS)
 
     def test_direct_quota_is_reported_without_transport_or_network_request(self):
         fetch = Fetch({ROBOTS_URL: ROBOTS})
         source = MediaMarktSource(get=fetch, sleep=lambda _: None)
-        source._load_robots()
         source._direct_count = MAX_DIRECT_REQUESTS
         self.assertEqual(source.read_offer(URL), (None, 'direct_budget_exhausted', None))
-        self.assertEqual(fetch.calls, [ROBOTS_URL])
+        self.assertEqual(fetch.calls, [])
         self.assertEqual(source._browser_failures, 0)
         self.assertFalse(source._blocked)
 
@@ -245,14 +234,10 @@ class MediaMarktSourceTests(unittest.TestCase):
         self.assertEqual(source.read_offer(URL), (None, 'transport_error', None))
         self.assertEqual(source.read_offer(OLD_URL), (None, 'transport_error', None))
         self.assertEqual(source.read_offer(URL), (None, 'source_circuit_open', None))
-        self.assertEqual(calls, [ROBOTS_URL, URL, OLD_URL])
+        self.assertEqual(calls, [URL, OLD_URL])
         self.assertTrue(source._blocked)
 
-    def test_missing_robots_or_marketplace_offer_never_publish(self):
-        blocked = Fetch({ROBOTS_URL: Response(ROBOTS_URL, b'denied', status=403)})
-        source = MediaMarktSource(get=blocked, sleep=lambda _: None)
-        self.assertEqual(source.read_offer(URL)[0], None)
-        self.assertEqual(blocked.calls, [ROBOTS_URL])
+    def test_marketplace_offer_never_publishes_as_first_party(self):
         first = Fetch({ROBOTS_URL: ROBOTS, URL: html(seller={'name': 'Bittibitiyor'})})
         source = MediaMarktSource(get=first, sleep=lambda _: None)
         self.assertEqual(source.read_offer(URL)[0], None)

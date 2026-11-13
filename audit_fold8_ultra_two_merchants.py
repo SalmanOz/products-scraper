@@ -67,9 +67,7 @@ def run_audit(reader=None, catalog_get=None):
         if (len(report['verified_offers']) == 2 and len(attempts) == 2
                 and all(row.get('reason') == 'observed_exact_cash_offer'
                         and row.get('http_status') == 200 for row in attempts)
-                and tt_status.get('status') == 'ready'
-                and tt_status.get('robots_status') == 'allowed'
-                and pasaj_status.get('robots_status') == 'allowed'):
+                and tt_status.get('status') == 'ready'):
             report['status'] = 'passed'
         else:
             report['status'] = 'no_two_exact_cash_offers'

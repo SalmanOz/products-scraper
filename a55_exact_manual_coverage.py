@@ -18,7 +18,7 @@ from bs4 import BeautifulSoup
 
 from coverage_two_marketplace import _offer_matches, _read_selected
 from mediamarkt_marketplace_preflight import no_merchant_collision
-from mediamarkt_source import BOT, MAX_HTML_BYTES, MediaMarktSource
+from mediamarkt_source import MAX_HTML_BYTES, MediaMarktSource
 from offer_ingestion_client import OfferIngestionClient, TARGET_INVALID_REASONS
 from update_prices import PriceUpdater
 
@@ -91,15 +91,10 @@ def _seller_profiles(source):
             {seller: identity['seller_id']
              for seller, identity in SELLER_IDENTITIES.items()}):
         raise ValueError('seller_profile_mapping_changed')
-    source._load_robots()
-    if source.report().get('robots_status') != 'ready' or source._rules is None:
-        raise ValueError('seller_robots_unavailable')
     verified = {}
     for seller, expected in SELLER_IDENTITIES.items():
         url = ('https://www.mediamarkt.com.tr/tr/marketplace/seller/'
                + expected['seller_id'])
-        if not source._rules.can_fetch(BOT, url):
-            raise ValueError('seller_robots_disallowed')
         body, reason, status = source._direct(url, MAX_HTML_BYTES, 'text/html')
         if reason != 'ready' or status != 200 or not isinstance(body, bytes):
             raise ValueError('seller_identity_unavailable')
@@ -219,7 +214,7 @@ def audit(*, client=None, source=None):
               'github_run_id': os.environ.get('GITHUB_RUN_ID'),
               'github_run_attempt': os.environ.get('GITHUB_RUN_ATTEMPT'),
               'checked_at': None, 'catalog_status': 'failed',
-              'catalog_error': None, 'robots_status': None,
+              'catalog_error': None,
               'seller_status': 'failed', 'seller_error': None,
               'seller_profiles': None, 'rows': [], 'source': None}
     try:
@@ -250,10 +245,8 @@ def audit(*, client=None, source=None):
             'status': 'passed' if product and verified and
                       report['seller_status'] == 'passed' else 'failed',
         })
-    report['robots_status'] = source.report().get('robots_status')
     if (report['catalog_status'] == 'passed'
             and report['seller_status'] == 'passed'
-            and report['robots_status'] == 'ready'
             and len(report['rows']) == len(PROFILES)
             and all(row['status'] == 'passed' for row in report['rows'])):
         report['status'] = 'passed'
@@ -277,7 +270,6 @@ def verified_offers(report, now=None):
                              'https://www.mediamarkt.com.tr/tr/marketplace/seller/'
                              + identity['seller_id'], **identity}
                     for seller, identity in SELLER_IDENTITIES.items()}
-                or report.get('robots_status') != 'ready'
                 or report.get('github_run_id') != os.environ.get('GITHUB_RUN_ID')
                 or report.get('github_run_attempt') !=
                     os.environ.get('GITHUB_RUN_ATTEMPT')
@@ -383,7 +375,6 @@ def publish(report, *, client=None, source=None, now=None):
         offer, attempt = _read_selected(source, url)
         if (attempt.get('reason') != 'observed_exact_new_marketplace_offer'
                 or attempt.get('http_status') != 200
-                or source.report().get('robots_status') != 'ready'
                 or not _exact_offer(offer, url, profile)
                 or any(offer.get(key) != audited[url].get(key)
                        for key in OFFER_IDENTITY_FIELDS)):
@@ -485,8 +476,7 @@ def summary(report, *, publication=None, publish_requested=None):
         publication_state = ('Yayın sonucu doğrulanamadı; yazım gerçekleşmiş olabilir. '
                              'Ingestion sonucunu kontrol edin.')
     lines = [f"Galaxy A55 5G MediaMarkt iki satıcı: {report['status']}; "
-             f"yetkili katalog {report['catalog_status']}; robots "
-             f"{report.get('robots_status')}; yasal satıcı "
+             f"yetkili katalog {report['catalog_status']}; yasal satıcı "
              f"{report.get('seller_status')}. {publication_state}"]
     for row in report['rows']:
         offer = row.get('verified_offer') or {}

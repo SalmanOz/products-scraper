@@ -13,13 +13,12 @@ import re
 import time
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
-from urllib.robotparser import RobotFileParser
 
 from bs4 import BeautifulSoup
 import requests
 
 from hepsiburada_s25_fe_source import (
-    BOT, MAX_HTML_BYTES, MAX_ROBOTS_BYTES, ROBOTS_URL,
+    MAX_HTML_BYTES,
     HepsiburadaS25FeSource, _nodes, _normalized,
 )
 from retailer_offer_refresh import _challenge_page, _is_conditional_price
@@ -407,7 +406,7 @@ def _phone_technical_evidence(soup, scope, variant, generic):
 
 
 class HepsiburadaIphone16PmAuditSource:
-    """Robots preflight followed by one bounded, exact public PDP read."""
+    """One bounded, exact public PDP read."""
 
     def __init__(self, get=None, sleep=time.sleep):
         self._get = get
@@ -418,22 +417,6 @@ class HepsiburadaIphone16PmAuditSource:
         # FlareSolverr POST endpoint or a production ingestion endpoint.
         reader = HepsiburadaS25FeSource(get=self._get, sleep=self._sleep)
         try:
-            robots, reason, status = reader._read(
-                ROBOTS_URL, MAX_ROBOTS_BYTES, accept='text/plain')
-            if reason != 'ready':
-                return None, 'robots_' + reason, status
-            text = reader._robots_text(robots)
-            if not re.search(r'^\s*user-agent\s*:', text, re.I | re.M) or '<html' in text.lower():
-                return None, 'robots_invalid', status
-            rules = RobotFileParser()
-            rules.parse(text.splitlines())
-            if not rules.can_fetch(BOT, URL):
-                return None, 'robots_disallowed', None
-            delay = rules.crawl_delay(BOT) or 0
-            if delay > 30:
-                return None, 'robots_delay_exceeds_budget', None
-            if delay:
-                self._sleep(delay)
             body, reason, status = reader._read(
                 URL, MAX_HTML_BYTES, accept='text/html')
             if reason != 'ready':

@@ -57,7 +57,7 @@ class TeknosaSitemapAuditTests(unittest.TestCase):
         report = TeknosaSitemapAudit(get=get, post=None, sleep=lambda _: None).run()
         self.assertEqual((report['status'], report['stage'], report['product_url_count']),
                          ('completed', None, 8))
-        self.assertEqual(calls, [ROBOTS_URL, INDEX_URL, CHILD])
+        self.assertEqual(calls, [INDEX_URL, CHILD])
         self.assertEqual(report['browser_requests'], 0)
         self.assertIs(report['writes'], False)
         self.assertEqual({key: len(urls) for key, urls in report['candidate_urls'].items()},
@@ -68,7 +68,7 @@ class TeknosaSitemapAuditTests(unittest.TestCase):
                           'apple-iphone-18-pro-12-256': 1,
                           'apple-iphone-18-pro-max-12-256': 1})
 
-    def test_403_browser_fallback_is_exact_url_and_three_request_bounded(self):
+    def test_403_browser_fallback_is_exact_url_and_two_request_bounded(self):
         viewer = ('<html><head><style id="xml-viewer-style"></style></head><body>'
                   '<div id="webkit-xml-viewer-source-xml">' + INDEX + '</div>'
                   '<div class="header"></div><div class="pretty-print"></div>'
@@ -88,12 +88,10 @@ class TeknosaSitemapAuditTests(unittest.TestCase):
             return Response(url, 200, body)
         report = TeknosaSitemapAudit(get=get, post=post, sleep=lambda _: None).run()
         self.assertEqual(report['status'], 'completed')
-        self.assertEqual(report['browser_requests'], 3)
+        self.assertEqual(report['browser_requests'], 2)
         self.assertEqual(report['transports'], {
-            ROBOTS_URL: 'browser', INDEX_URL: 'browser', CHILD: 'browser'})
-        self.assertEqual(calls, [('direct', ROBOTS_URL), ('browser', ROBOTS_URL),
-                                 ('direct', INDEX_URL), ('browser', INDEX_URL),
-                                 ('direct', CHILD), ('browser', CHILD)])
+            INDEX_URL: 'browser', CHILD: 'browser'})
+        self.assertEqual(calls, [('direct', INDEX_URL), ('browser', INDEX_URL), ('direct', CHILD), ('browser', CHILD)])
 
     def test_double_rendered_xml_can_exceed_15_mib_without_relaxing_xml_limit(self):
         # FlareSolverr serializes the browser's XML viewer as JSON. The pretty
@@ -117,16 +115,14 @@ class TeknosaSitemapAuditTests(unittest.TestCase):
         self.assertEqual(diagnostic['response_kind'], 'chromium_xml_viewer')
         self.assertLess(report['xml_diagnostics'][CHILD]['xml_bytes'], MAX_PRODUCT_BYTES)
 
-    def test_robots_or_xml_drift_stops_before_product_sitemap(self):
+    def test_xml_drift_stops_before_product_sitemap(self):
         cases = [
-            ({ROBOTS_URL: ROBOTS.replace('Disallow: /sepet', 'Disallow: /')},
-             'index_disallowed', [ROBOTS_URL]),
             ({ROBOTS_URL: ROBOTS, INDEX_URL: '<!DOCTYPE x><sitemapindex />'},
-             'unsafe_or_oversized_xml', [ROBOTS_URL, INDEX_URL]),
+             'unsafe_or_oversized_xml', [INDEX_URL]),
             ({ROBOTS_URL: ROBOTS,
               INDEX_URL: xml('sitemapindex', [
                   'https://example.com/medias/sys_master/sitemaps/sitemaps/1/Product-tr-TRY-0.xml'])},
-             'first_product_sitemap_missing_or_ambiguous', [ROBOTS_URL, INDEX_URL]),
+             'first_product_sitemap_missing_or_ambiguous', [INDEX_URL]),
         ]
         for overrides, error, expected_calls in cases:
             with self.subTest(error=error):

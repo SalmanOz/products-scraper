@@ -105,7 +105,6 @@ def run_audit(source=None, catalog_get=None):
             report['target'] = row
         report['source'] = source.report()
         if (report['target'] and report['target']['verified_offer'] and
-                report['source']['robots_status'] == 'allowed' and
                 report['source']['status'] == 'ready'):
             report['status'] = 'passed'
         else:
@@ -123,7 +122,7 @@ def summary(report):
              f"unpriced {report['catalog_unpriced']}, exact stock-card models "
              f"{report['matched_models']}, unpriced exact URL candidates "
              f"{len(report['unpriced_candidates'])}.",
-             f"Source: robots {source.get('robots_status')}, category "
+             f"Source: category "
              f"{source.get('category_requests')} requests, "
              f"{source.get('stock_card_urls')} stock-card URLs, "
              f"PDP {source.get('pdp_requests')} request."]

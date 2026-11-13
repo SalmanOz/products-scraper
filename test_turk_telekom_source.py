@@ -141,7 +141,7 @@ class TurkTelekomSourceTests(unittest.TestCase):
         self.assertEqual(source.discover('Samsung Galaxy A16 4G',
                                          {'ram_gb': 4, 'storage_gb': 128, 'network_generation': '4g'}), [])
         self.assertEqual(source.report()['category_requests'], 2)
-        self.assertEqual(fetch.calls, [ROBOTS_URL, CATEGORY_URL, CATEGORY_URL + '&page=1'])
+        self.assertEqual(fetch.calls, [CATEGORY_URL, CATEGORY_URL + '&page=1'])
 
     def test_read_only_runner_audit_verifies_three_and_reports_access_failure(self):
         source, _ = fixture()
@@ -165,7 +165,7 @@ class TurkTelekomSourceTests(unittest.TestCase):
         self.assertEqual(offers[0]['merchant'], 'Türk Telekom eMağaza')
         self.assertEqual(reader.target_report('Samsung Galaxy A57 5G', [URLS[0]], specs)[0]['reason'],
                          'observed_exact_cash_offer')
-        self.assertEqual(fetch.calls, [ROBOTS_URL, URLS[0]])
+        self.assertEqual(fetch.calls, [URLS[0]])
 
 
 if __name__ == '__main__':

@@ -77,8 +77,6 @@ class VivoExactReadonlyTests(unittest.TestCase):
                 self.assertEqual(run_audit(Reader(row), Catalog(), NOW)['status'], 'partial')
         self.assertEqual(run_audit(Reader(reason='no_exact_product_offer'),
                                    Catalog(), NOW)['status'], 'partial')
-        self.assertEqual(run_audit(Reader(robots='unavailable'), Catalog(), NOW)['status'],
-                         'partial')
         for changes in ({'slug': 'other'}, {'name': 'vivo X300 Pro'},
                         {'attributes': {'ram_gb': 8, 'storage_gb': 512,
                                         'Connectivity': {'5G': True}}},

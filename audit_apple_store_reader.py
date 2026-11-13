@@ -47,7 +47,7 @@ def summary(report):
     source = report['apple_store_source']
     lines = ['## Apple Store selected first-party PDP reader (read only)',
              f"Verified {report['verified_products']}/{report['total_products']} exact variants; "
-             f"robots {source['robots_status']}; browser GET "
+             f"browser GET "
              f"{source['browser_html_responses']}/{source['browser_requests']}."]
     for row in report['products']:
         offer = row['offer'] or {}

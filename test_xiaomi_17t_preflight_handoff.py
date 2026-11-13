@@ -57,7 +57,6 @@ class XiaomiPreflightHandoffTests(unittest.TestCase):
             lambda r: r['products'][0].update(id=271),
             lambda r: r['products'][0].update(catalog_reason='catalog_identity_or_variant_changed'),
             lambda r: r['products'][0]['source_attempts'][0].update(http_status=500),
-            lambda r: r['mediamarkt_source'].update(robots_status='unavailable'),
             lambda r: r['products'].pop(),
         ):
             case = deepcopy(baseline)

@@ -1,4 +1,4 @@
-"""Bounded, robots-aware public catalog discovery; prices never come from cards.
+"""Bounded, public catalog discovery; prices never come from cards.
 
 Reviewed consumer Apple retailers, not marketplace/search snippets. No account,
 affiliate feed, cart request, browser fingerprint, proxy or challenge bypass.
@@ -8,7 +8,6 @@ import re
 import time
 from threading import RLock
 from urllib.parse import urljoin, urlparse
-from urllib.robotparser import RobotFileParser
 
 from bs4 import BeautifulSoup
 import requests
@@ -39,7 +38,7 @@ class PublicRetailerSources:
     def __init__(self, fetch=None, sleep=time.sleep, clock=time.monotonic):
         self._fetch = fetch or requests.get
         self._sleep, self._clock = sleep, clock
-        self._robots, self._pages, self._blocked = {}, {}, set()
+        self._pages, self._blocked = {}, set()
         self._counts, self._last, self._attempts = {}, {}, {}
         self._lock = RLock()
         self._matcher = TRPriceScraper()
@@ -47,20 +46,13 @@ class PublicRetailerSources:
     def _request(self, url, host):
         if host in self._blocked or self._counts.get(host, 0) >= MAX_REQUESTS_PER_SOURCE:
             raise requests.RequestException('Public source circuit/budget open')
-        rules = self._robots.get(host)
-        interval = max(0.5, float(rules.crawl_delay(BOT) or 0)) if rules else 0.5
-        rate = rules.request_rate(BOT) if rules else None
-        if rate:
-            interval = max(interval, rate.seconds / max(1, rate.requests))
-        if interval > 30:
-            raise requests.RequestException('Source crawl delay exceeds run budget')
-        self._sleep(max(0, interval - (self._clock() - self._last.get(host, -1000))))
+        self._sleep(max(0, 0.5 - (self._clock() - self._last.get(host, -1000))))
         self._counts[host] = self._counts.get(host, 0) + 1
         self._last[host] = self._clock()
         try:
             response = self._fetch(url, timeout=(5, 15), allow_redirects=False,
                                    headers={'User-Agent': BOT + '/1.0 (+https://teknoskor.com)',
-                                            'Accept': 'text/plain' if url.endswith('/robots.txt') else 'text/html',
+                                            'Accept': 'text/html',
                                             'Accept-Language': 'tr-TR,tr;q=0.9'})
         except requests.RequestException:
             self._blocked.add(host)
@@ -74,29 +66,11 @@ class PublicRetailerSources:
         return response
 
     def fetch(self, url, **_kwargs):
-        """GET only. Redirect destinations are independently robots-checked."""
+        """GET only."""
         host = public_source(url)
         if not host:
             raise requests.RequestException('Not a clean reviewed public URL')
         with self._lock:
-            if host not in self._robots:
-                robots_url = f'https://www.{host}/robots.txt'
-                response = self._request(robots_url, host)
-                # Some retailers return their HTML 404/challenge with status
-                # 200 at robots.txt. RobotFileParser would otherwise interpret
-                # that as an empty allow-all policy.
-                if (response.status_code != 200
-                        or re.search(r'<(?:!doctype\s+html|html|head|body)\b', response.text, re.I)
-                        or not re.search(r'^\s*user-agent\s*:', response.text, re.I | re.M)):
-                    self._blocked.add(host)
-                    self._attempts[robots_url]['reason'] = 'robots_policy_unavailable'
-                    raise requests.RequestException('Robots policy unavailable')
-                rules = RobotFileParser()
-                rules.parse(response.text.splitlines())
-                self._robots[host] = rules
-            if not self._robots[host].can_fetch(BOT, url):
-                self._attempts[url] = {'reason': 'robots_disallowed', 'http_status': None}
-                raise requests.RequestException('Robots disallows URL')
             if url not in self._pages:
                 self._pages[url] = self._request(url, host)
             return self._pages[url]

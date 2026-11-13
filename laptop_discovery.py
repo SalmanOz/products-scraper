@@ -18,7 +18,7 @@ from laptop_retailer_sources import model_codes
 from mediamarkt_source import MediaMarktSource, SourceBudgetExhausted, SourceCircuitOpen
 from n11_catalog_source import discover_product_sellers
 from priority_retailer_transport import PriorityRetailerTransport, compatible_get, product_host
-from tws_retailer_sources import BOT, STOP_REASONS, _vatan_url
+from tws_retailer_sources import STOP_REASONS, _vatan_url
 from vatan_category_source import VatanCategorySource
 
 ROOTS = {
@@ -46,7 +46,6 @@ class Reader:
             self.source = VatanCategorySource(fetch=get) if host.startswith('www.vatan') else MediaMarktSource(get=get or compatible_get)
             if host.startswith('www.mediamarkt'):
                 self.source.configure_catalog_budget(maximum * 2 + 20)
-            self.source._load_robots()
         else:
             self.transport = PriorityRetailerTransport(maximum_per_host=maximum, get=get, browser_fallback=not get)
 
@@ -60,12 +59,6 @@ class Reader:
             self.pdp_count += 1
         try:
             if self.host in FIRST_PARTY:
-                if not self.source._rules:
-                    self.last_reason = f'robots_{self.source._robots_status}'
-                    return None, None
-                if not self.source._rules.can_fetch(BOT, url):
-                    self.last_reason = 'robots_disallowed'
-                    return None, None
                 if self.host.startswith('www.vatan'):
                     self.source._sleep(max(.75, self.source._delay))
                     raw, reason, _ = self.source._read(url, 5 * 1024 * 1024, 'text/html')

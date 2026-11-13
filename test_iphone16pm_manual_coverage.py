@@ -374,7 +374,6 @@ class Iphone16PMManualCoverageTests(unittest.TestCase):
                 - timedelta(minutes=6)).isoformat()),
             lambda row: row['verified_offer'].update(price=29999.0),
             lambda row: row['source_audit']['offer'].update(sku='other'),
-            lambda row: row['source_audit'].update(robots_allowed=False),
             lambda row: row['catalog_evidence'].update(target_count=61),
         )
         for change in changes:

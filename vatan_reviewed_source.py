@@ -5,15 +5,13 @@ selected Product, its own Offer, visible cash price and current stock.
 """
 
 import json
-import re
 import time
 from pathlib import Path
 from threading import RLock
-from urllib.robotparser import RobotFileParser
 
 import requests
 
-from vatan_sitemap_source import BOT, MAX_ROBOTS_BYTES, ROBOTS_URL, VatanSitemapSource
+from vatan_sitemap_source import VatanSitemapSource
 
 
 BATCH_PATH = Path(__file__).parent / 'offer_batches/vatan-exact-2026-11-02.json'
@@ -54,7 +52,6 @@ def reviewed_s25_fe_variant_urls():
 class VatanReviewedSource:
     def __init__(self, get=None, post=None, sleep=time.sleep, monotonic=time.monotonic,
                  additional_reviewed_urls=()):
-        self._get = get or requests.get
         self._post = post or requests.post
         self._sleep = sleep
         self._monotonic = monotonic
@@ -66,11 +63,8 @@ class VatanReviewedSource:
             url for profile in reviewed_profiles() for url in profile['targets']
             if VatanSitemapSource._safe_product_url(url)
         ) | frozenset(reviewed_s25_fe_variant_urls()) | frozenset(additional_reviewed_urls)
-        self._loaded = False
-        self._rules = None
-        self._delay = 0
+        self._delay = 0.5
         self._last_site_request = None
-        self._robots_status = 'not_loaded'
         self._browser_requests = 0
         self._browser_successes = 0
         self._catalog_urls = set()
@@ -100,53 +94,6 @@ class VatanReviewedSource:
                 raise RuntimeError('Configure the catalog budget before source requests')
             self._browser_limit = max(MAX_BROWSER_REQUESTS, min(80, product_count))
 
-    def _load_robots(self):
-        if self._loaded:
-            return
-        self._loaded = True
-        response = None
-        try:
-            response = self._get(
-                ROBOTS_URL, timeout=(5, 15), allow_redirects=False, stream=True,
-                headers={'User-Agent': BOT + '/1.0 (+https://teknoskor.com)',
-                         'Accept': 'text/plain'},
-            )
-            if response.status_code != 200 or response.url != ROBOTS_URL:
-                self._robots_status = f'http_{response.status_code}'
-                return
-            size = str(response.headers.get('Content-Length') or '')
-            if size.isdigit() and int(size) > MAX_ROBOTS_BYTES:
-                self._robots_status = 'oversized'
-                return
-            body = bytearray()
-            for chunk in response.iter_content(chunk_size=16 * 1024):
-                body.extend(chunk)
-                if len(body) > MAX_ROBOTS_BYTES:
-                    self._robots_status = 'oversized'
-                    return
-            robots = body.decode('utf-8-sig', errors='strict')
-            if (re.search(r'<(?:!doctype|html|head|body)\b', robots, re.I)
-                    or not re.search(r'^\s*user-agent\s*:', robots, re.I | re.M)):
-                self._robots_status = 'invalid_policy'
-                return
-            rules = RobotFileParser()
-            rules.parse(robots.splitlines())
-            delay = float(rules.crawl_delay(BOT) or 0)
-            rate = rules.request_rate(BOT)
-            if rate:
-                delay = max(delay, rate.seconds / max(1, rate.requests))
-            if delay > 30:
-                self._robots_status = 'crawl_delay_exceeds_budget'
-                return
-            self._rules = rules
-            self._delay = max(0.5, delay)
-            self._robots_status = 'ready'
-        except (requests.RequestException, ValueError, UnicodeError):
-            self._robots_status = 'unavailable'
-        finally:
-            if response is not None:
-                response.close()
-
     def prepare(self, url):
         """Authorize and pace a registered exact PDP, including direct GET."""
         with self._lock:
@@ -154,11 +101,6 @@ class VatanReviewedSource:
                 return False, 'source_circuit_open'
             if not self.is_reviewed(url):
                 return False, 'not_reviewed'
-            self._load_robots()
-            if self._rules is None:
-                return False, 'robots_unavailable'
-            if not self._rules.can_fetch(BOT, url):
-                return False, 'robots_disallowed'
             if self._last_site_request is not None and self._delay:
                 remaining = self._delay - (self._monotonic() - self._last_site_request)
                 if remaining > 0:
@@ -167,7 +109,7 @@ class VatanReviewedSource:
             return True, 'ready'
 
     def browser_get(self, url):
-        """Return exact-URL HTML after a robots check and global request budget."""
+        """Return exact-URL HTML within the global request budget."""
         allowed, reason = self.prepare(url)
         if not allowed:
             return None, reason
@@ -219,8 +161,7 @@ class VatanReviewedSource:
 
     def report(self):
         with self._lock:
-            return {'robots_status': self._robots_status,
-                    'reviewed_urls': len(self._urls),
+            return {'reviewed_urls': len(self._urls),
                     'catalog_discovered_urls': len(self._catalog_urls),
                     'browser_requests': self._browser_requests,
                     'browser_request_limit': self._browser_limit,

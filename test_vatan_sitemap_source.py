@@ -103,7 +103,7 @@ class VatanSitemapSourceTests(unittest.TestCase):
                 if expected == 'ready':
                     self.assertTrue(source.report()['browser_xml_viewer_unwrapped'])
 
-    def test_robots_allowed_sitemap_403_uses_one_bounded_browser_get(self):
+    def test_sitemap_403_uses_one_bounded_browser_get(self):
         exact = 'https://www.vatanbilgisayar.com/xiaomi-17t-12-256gb-akilli-telefon-siyah.html'
         direct = Fetch({ROBOTS_URL: ROBOTS,
                         SITEMAP_URL: Response(SITEMAP_URL, b'denied', status=403)})
@@ -120,7 +120,7 @@ class VatanSitemapSourceTests(unittest.TestCase):
         specs = {'ram_gb': 12, 'storage_gb': 256, 'network_generation': '5g'}
         self.assertEqual(source.discover('Xiaomi 17T', specs), [{'source_url': exact}])
         self.assertEqual(source.discover('Xiaomi 17T', specs), [{'source_url': exact}])
-        self.assertEqual(direct.calls, [ROBOTS_URL, SITEMAP_URL])
+        self.assertEqual(direct.calls, [SITEMAP_URL])
         self.assertEqual(browser_calls, [(SOLVER_URL, {
             'cmd': 'request.get', 'url': SITEMAP_URL, 'maxTimeout': 45000,
         })])
@@ -158,9 +158,8 @@ class VatanSitemapSourceTests(unittest.TestCase):
                 self.assertEqual(source.report()['eligible_urls'], 0)
                 self.assertEqual(source.report()['browser_requests'], 1)
 
-    def test_robots_denial_or_sitemap_rate_limit_never_calls_browser(self):
+    def test_sitemap_rate_limit_never_calls_browser(self):
         for pages in (
-            {ROBOTS_URL: Response(ROBOTS_URL, b'denied', status=403)},
             {ROBOTS_URL: ROBOTS,
              SITEMAP_URL: Response(SITEMAP_URL, b'rate limited', status=429)},
         ):
@@ -194,7 +193,7 @@ class VatanSitemapSourceTests(unittest.TestCase):
             'ram_gb': 12, 'storage_gb': 256,
         }), [{'source_url': exact}])
         self.assertEqual(source.discover('Xiaomi 17T', expected), [{'source_url': exact}])
-        self.assertEqual(fetch.calls, [ROBOTS_URL, SITEMAP_URL])
+        self.assertEqual(fetch.calls, [SITEMAP_URL])
         self.assertEqual(source.report()['status'], 'ready')
 
     def test_explicit_radio_conflict_is_rejected(self):
@@ -213,28 +212,13 @@ class VatanSitemapSourceTests(unittest.TestCase):
             'ram_gb': 8, 'storage_gb': 256, 'network_generation': '5g',
         }), [{'source_url': exact}])
 
-    def test_missing_or_disallowing_robots_fails_closed_once(self):
-        for robots in (b'<html>Unavailable</html>', f'User-agent: *\nDisallow: /\nSitemap: {SITEMAP_URL}\n'.encode()):
-            with self.subTest(robots=robots):
-                fetch = Fetch({ROBOTS_URL: robots})
-                source = VatanSitemapSource(fetch=fetch)
-                self.assertEqual(source.discover('Xiaomi 17T', {
-                    'ram_gb': 12, 'storage_gb': 256, 'network_generation': '5g',
-                }), [])
-                self.assertEqual(source.discover('Xiaomi 17T', {
-                    'ram_gb': 12, 'storage_gb': 256, 'network_generation': '5g',
-                }), [])
-                self.assertEqual(fetch.calls, [ROBOTS_URL])
-
     def test_reports_exact_failed_stage_and_http_status(self):
         cases = (
-            ({ROBOTS_URL: Response(ROBOTS_URL, b'blocked', status=403)},
-             'robots_http_403', 'robots', 403),
             ({ROBOTS_URL: ROBOTS,
               SITEMAP_URL: Response(SITEMAP_URL, b'blocked', status=429)},
              'sitemap_http_429', 'sitemap', 429),
-            ({ROBOTS_URL: Response('https://other.example/robots.txt', ROBOTS)},
-             'robots_unexpected_final_url', 'robots', 200),
+            ({SITEMAP_URL: Response('https://other.example/sitemap.xml', sitemap())},
+             'sitemap_unexpected_final_url', 'sitemap', 200),
         )
         for pages, status, stage, http_status in cases:
             with self.subTest(status=status):
@@ -257,17 +241,6 @@ class VatanSitemapSourceTests(unittest.TestCase):
                     'ram_gb': 12, 'storage_gb': 256, 'network_generation': '5g',
                 }), [])
                 self.assertNotEqual(source.report()['status'], 'ready')
-
-    def test_obeys_robots_crawl_delay_between_requests(self):
-        robots = ROBOTS.replace(b'Disallow: /arama/*', b'Crawl-delay: 2\nDisallow: /arama/*')
-        fetch = Fetch({ROBOTS_URL: robots, SITEMAP_URL: sitemap()})
-        delays = []
-        source = VatanSitemapSource(fetch=fetch, sleep=delays.append)
-        source.discover('Xiaomi 17T', {
-            'ram_gb': 12, 'storage_gb': 256, 'network_generation': '5g',
-        })
-        self.assertEqual(delays, [2.0])
-
 
 if __name__ == '__main__':
     unittest.main()

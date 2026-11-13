@@ -173,9 +173,6 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(transport.report()['Teknosa']['pdp_requests'], 1)
         self.assertEqual(transport.report()['Teknosa']['document_requests'], 2)
         self.assertEqual(transport.read_teknosa_category(CATEGORY_URL + '?page=40')[1], 'invalid_catalog_category')
-        denied = PriorityRetailerTransport(get=lambda url, **_: Response(url,
-            'User-agent: *\nDisallow: /cep-telefonu\n'), sleep=lambda _: None)
-        self.assertEqual(denied.read_teknosa_category(CATEGORY_URL)[1], 'robots_disallowed')
 
     def test_sweep_discovers_new_destination_but_uses_only_fresh_pdp_publication(self):
         from sweep_priority_catalog import sweep

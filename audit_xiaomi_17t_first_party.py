@@ -124,8 +124,8 @@ def run_audit(reader=None, catalog_get=None):
 def summary(report):
     source = report['mediamarkt_source']
     lines = ['## Xiaomi 17T and 17T Pro exact MediaMarkt PDP audit (read only)',
-             f"Verified {report['verified_products']}/{len(REVIEWED)}; robots "
-             f"{source.get('robots_status')}; browser GET "
+             f"Verified {report['verified_products']}/{len(REVIEWED)}; "
+             f"browser GET "
              f"{source.get('browser_html_responses')}/{source.get('browser_requests')}."]
     for row in report['products']:
         attempt = row['source_attempts'][0] if row['source_attempts'] else {}

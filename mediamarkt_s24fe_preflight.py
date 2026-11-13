@@ -27,7 +27,6 @@ def validated_offer(report, now=None):
         if (not isinstance(report, dict)
                 or report.get('purpose') != 'read_only_mediamarkt_s24fe_exact_gtin'
                 or report.get('status') != 'passed' or report.get('writes') is not False
-                or report.get('robots_status') != 'ready'
                 or report.get('radio_evidence') != S24FE_RADIO_EVIDENCE):
             return None
         checked = _time(report['checked_at'])

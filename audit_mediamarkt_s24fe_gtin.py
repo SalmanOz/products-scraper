@@ -26,7 +26,7 @@ def run_audit(reader=None, catalog_client=None):
     catalog_client = catalog_client or OfferIngestionClient.from_env()
     report = {'purpose': 'read_only_mediamarkt_s24fe_exact_gtin',
               'writes': False, 'status': 'failed', 'checked_at': None,
-              'robots_status': None, 'radio_evidence': S24FE_RADIO_EVIDENCE,
+              'radio_evidence': S24FE_RADIO_EVIDENCE,
               'rows': []}
     try:
         catalog = catalog_client.get_published_products()
@@ -57,9 +57,6 @@ def run_audit(reader=None, catalog_client=None):
                 or attempt.get('reason') != 'observed_exact_new_marketplace_offer'
                 or attempt.get('http_status') != 200):
             raise ValueError('no_exact_new_selected_offer')
-        report['robots_status'] = reader.mediamarkt_source.report().get('robots_status')
-        if report['robots_status'] != 'ready':
-            raise ValueError('robots_unavailable')
         report['status'] = 'passed'
     except (RuntimeError, ValueError, TypeError, KeyError, AttributeError, OSError) as error:
         report['error'] = str(error) if isinstance(error, ValueError) else type(error).__name__
@@ -71,7 +68,7 @@ def summary(report):
     lines = ['## MediaMarkt S24 FE 8/128 exact GTIN (salt okuma)',
              f"Durum: {report['status']}; doğrulanan "
              f"{sum(bool(r.get('verified_offer')) for r in report['rows'])}/1; "
-             f"robots {report['robots_status']}."]
+             "."]
     for row in report['rows']:
         attempt = row.get('source_attempt') or {}
         offer = row.get('verified_offer') or {}

@@ -17,7 +17,7 @@ from bs4 import BeautifulSoup
 import requests
 
 from offer_ingestion_client import OfferIngestionClient
-from pasaj_source import (BOT, MAX_HTML_BYTES, MAX_PDP_REQUESTS, SELLER,
+from pasaj_source import (MAX_HTML_BYTES, MAX_PDP_REQUESTS, SELLER,
                           PasajSource, _cash_text, _feature, _money, product_url)
 from tr_price_scraper import TRPriceScraper
 from update_prices import PriceUpdater
@@ -51,14 +51,13 @@ def clean_candidate_url(url):
 
 
 class PasajCandidateSource(PasajSource):
-    """Reuse the existing robots, redirect, byte, pace, and six-PDP boundaries."""
+    """Reuse the existing redirect, byte, pace, and six-PDP boundaries."""
 
     def read_document(self, url):
         if not clean_candidate_url(url) or product_url(url):
             return None, 'not_unreviewed_clean_pdp', None
         with self._lock:
             try:
-                self._ensure_robots(url)
                 if self._pdp_requests >= MAX_PDP_REQUESTS:
                     return None, 'pdp_budget_exhausted', None
                 self._pdp_requests += 1
@@ -277,7 +276,6 @@ def summary(report):
              f"legacy proof verified: {report['source_verified']}; "
              f"automatic prepared offers: {report.get('automatic_prepared_offers', 0)}; "
              f"priced catalog: {report.get('priced_catalog', False)}.",
-             f"Robots: {source.get('robots_status', 'unavailable')}; "
              f"PDP requests: {source.get('pdp_requests', 0)}."]
     for row in report['candidates']:
         prepared = '; '.join(f"{o['seller']} {o['price']} TRY" for o in row.get('automatic_prepared', []))

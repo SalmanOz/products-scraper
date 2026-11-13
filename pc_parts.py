@@ -5,7 +5,6 @@ from io import BytesIO
 from pathlib import Path
 from time import sleep
 from urllib.parse import urlsplit
-from urllib.robotparser import RobotFileParser
 import json
 import re
 import sys
@@ -99,18 +98,12 @@ def main():
     (out / 'photos').mkdir(exist_ok=True)
     session = requests.Session()
     session.headers['User-Agent'] = 'TeknoSkorBot/1.0 (+https://teknoskor.com)'
-    robots = RobotFileParser()
-    robots_response = session.get(ROOT + '/robots.txt', timeout=20, allow_redirects=False)
-    robots_response.raise_for_status()
-    robots.parse(robots_response.text.splitlines())
     rejected = Counter()
 
     class SourceStopped(Exception):
         pass
 
     def get(url, limit=6_000_000):
-        if not robots.can_fetch('TeknoSkorBot', url):
-            raise ValueError('robots_disallowed')
         sleep(.6)
         response = session.get(url, timeout=20, allow_redirects=False)
         if response.status_code in (403, 429):

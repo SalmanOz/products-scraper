@@ -141,7 +141,7 @@ class ManufacturerCatalogRadioTests(unittest.TestCase):
         observation = reader.observe(product())
         self.assertEqual(observation['model_code'], 'X6853')
         self.assertEqual(reader.documents, 2)
-        self.assertEqual(len(http.calls), 3)
+        self.assertEqual(len(http.calls), 2)
         for _, kwargs in http.calls:
             self.assertFalse(kwargs['allow_redirects'])
             self.assertTrue(kwargs['stream'])

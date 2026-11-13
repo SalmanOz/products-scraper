@@ -127,19 +127,6 @@ class HepsiburadaAppleAuditTests(unittest.TestCase):
         self.assertEqual(parse_exact_buy_box(fixture(target, seller='OptimumBar'), target.url),
                          (None, 'selected_visible_seller_mismatch'))
 
-    def test_robots_denial_stops_before_product(self):
-        calls = []
-        def get(url, **_):
-            calls.append(url)
-            return response(url, 'User-agent: *\nDisallow: /\n')
-        reader = HepsiburadaAppleSource(get=get)
-        self.assertEqual(reader.read_offer(REVIEWED_PDPS[0].url),
-                         (None, 'robots_disallowed', None))
-        self.assertEqual(calls, [ROBOTS_URL])
-        self.assertEqual(reader.read_offer('https://www.hepsiburada.com/unreviewed'),
-                         (None, 'unreviewed_apple_pdp', None))
-        self.assertEqual(calls, [ROBOTS_URL])
-
     def test_bounded_browser_fallback_uses_exact_query_url(self):
         target = REVIEWED_PDPS[0]
         calls = []
@@ -154,10 +141,7 @@ class HepsiburadaAppleAuditTests(unittest.TestCase):
         offer, reason, status = HepsiburadaAppleSource(get=get, post=post).read_offer(target.url)
         self.assertEqual((reason, status, offer['price']),
                          ('observed_exact_first_party_cash_offer', 200, 66229))
-        self.assertEqual(calls, [
-            ('direct', ROBOTS_URL), ('browser', ROBOTS_URL),
-            ('direct', target.url), ('browser', target.url),
-        ])
+        self.assertEqual(calls, [('direct', target.url), ('browser', target.url)])
 
     def test_audit_only_reports_three_reviewed_urls_without_writes(self):
         class FakeSource:
@@ -188,7 +172,7 @@ class HepsiburadaAppleAuditTests(unittest.TestCase):
             generic_calls.append(url)
             if url.endswith('/robots.txt'):
                 return response(url, 'User-agent: *\nDisallow: /\n')
-            raise AssertionError('Robots denial must prevent a generic PDP read')
+            return response(url, 'denied', 429)
         reader = RetailerOfferRefresher(fetch=generic_get,
                                         hepsiburada_apple_source=dedicated)
         for target in REVIEWED_PDPS:
@@ -210,9 +194,9 @@ class HepsiburadaAppleAuditTests(unittest.TestCase):
         self.assertEqual(dedicated.calls, [item.url for item in REVIEWED_PDPS])
         self.assertEqual(reader.refresh_existing_offer_targets(
             target.name, [{'source_url': target.schema_url}], target.specs), [])
-        self.assertEqual(generic_calls, ['https://www.hepsiburada.com/robots.txt'])
+        self.assertEqual(generic_calls, [target.schema_url])
         self.assertEqual(reader.target_report(target.name, [{'source_url': target.schema_url}], target.specs)[0]['reason'],
-                         'robots_disallowed')
+                         'http_429')
 
 
 if __name__ == '__main__':

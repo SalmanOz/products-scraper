@@ -110,7 +110,7 @@ hiç fiyat yazmadı. n11 erişimi ve Teknosa'nın mevcut stok/satıcı kanıtı 
 
 403/429/challenge cevabında o mağaza için aynı çalışmada devre kesici açılır.
 İncelenmiş Vatan ve MediaMarkt tam ürün bağlantılarında normal GET 403 dönerse
-`robots.txt` izni doğrulanarak mevcut FlareSolverr ile salt GET denenir;
+mevcut FlareSolverr ile salt GET denenir;
 Vatan'da en fazla altı, MediaMarkt'ta en fazla 16 tarayıcı isteği yapılır.
 Başka bağlantı ya da 429 bu yola girmez.
 Geçici okuma hatası mevcut
@@ -347,9 +347,10 @@ Bu işlem yeni ürün eklemez; günlük fiyat taramasının davranışını değ
 
 ## Fiyat yenileme / puan senkronizasyonu
 
-Günlük fiyat keşfi Vatan'ın `robots.txt` içinde ilan ettiği ve taramaya izin
-verdiği `sitemap.axd` dosyasını bir kez okur; yasaklı `/arama/*` yolunu kullanmaz.
-Robots ve XML yanıtları boyut, URL sayısı ve yönlendirme sınırlarıyla denetlenir;
+Scraper, robots.txt ön kontrolü yapmadan sabit kaynak adreslerini okur.
+
+Günlük fiyat keşfi Vatan'ın sabit `sitemap.axd` dosyasını bir kez okur.
+XML yanıtı boyut, URL sayısı ve yönlendirme sınırlarıyla denetlenir;
 her model için en fazla dört tam model/RAM/depolama URL'si seçilir. Açık 4G/5G
 çelişkisi elenir. Bu URL'ler yalnızca aday ürün sayfasıdır, fiyat veya stok kanıtı
 değildir. Her adayın canlı Product→Offer kaydı, seçili varyantı, görünür peşin
@@ -360,26 +361,26 @@ gerçek fiyat kapsamı ancak aday sayfalar doğrulandıktan sonra anlaşılır.
 
 GitHub runner'da Vatan sitemap'i ve normal ürün GET'i 403 dönebildiği için
 altı tam SKU bağlantısı ayrıca incelenmiş URL ipucu olarak tutulur. Bu kayıtlar
-fiyat veya stok taşımaz. Her bağlantı için canlı robots izni, tam URL, seçili
+fiyat veya stok taşımaz. Her bağlantı için tam URL, seçili
 Product→Offer, görünen peşin fiyat, satıcı, sepet ve stok yeniden doğrulanır;
 yanıt veya doğrulama başarısızsa teklif üretilmez. Tek çalışmada en fazla altı
-FlareSolverr GET yapılır; robots gecikmesine uyulur. Raporun
-`vatan_reviewed_pdp` alanı robots durumu ve tarayıcı istek sayısını gösterir.
+FlareSolverr GET yapılır; istekler arasında en az 0,5 saniye beklenir. Raporun
+`vatan_reviewed_pdp` alanı tarayıcı istek sayısını gösterir.
 Son salt okunur runner pilotunda altı incelenmiş ürün sayfası 6/6 doğrulandı.
 
-MediaMarkt'ın `robots.txt` içinde ilan ettiği iki ürün sitemap'i günlük işte
+MediaMarkt'ın iki sabit ürün sitemap'i günlük işte
 birer kez ve boyut sınırıyla okunur. On dört incelenmiş katalog varyantının tam
 ürün URL'si ayrıca yalnız keşif ipucu olarak saklanır. GitHub runner normal
-ürün GET'inde 403 alırsa, robots izinli ürün URL'si için mevcut FlareSolverr
+ürün GET'inde 403 alırsa, incelenmiş ürün URL'si için mevcut FlareSolverr
 üzerinden salt GET yapılır; tek çalışmada en fazla 16 tarayıcı isteği vardır.
 Fiyat ancak seçili sayfadaki H1, canonical URL, SKU, tek Product/Offer, görünür
 peşin fiyat, aktif sepet ve stok aynı varyanta bağlandığında alınır. Üçüncü
 taraf pazar yeri satıcısı, yenilenmiş ürün, koşullu fiyat ve URL/varyant
-çelişkisi reddedilir. `mediamarkt_source` raporu robots/sitemap ve tarayıcı
+çelişkisi reddedilir. `mediamarkt_source` raporu sitemap ve tarayıcı
 sonucunu ayırır. `MediaMarkt Reviewed SKU Price Refresh` manuel işi, günlük
 fiyat yazarıyla aynı kuyruğu kullanarak yalnız bu 14 varyantı yeniler.
 
-Pazarama keşfi, `robots.txt` izniyle Android telefon kategorisinin en fazla 16
+Pazarama keşfi, Android telefon kategorisinin en fazla 16
 yayınlanmış sayfasını bir kez okuyup çalışma boyunca önbelleğe alır. Kartlardan
 yalnızca tam model, RAM ve depolama eşleşen ürün URL'leri alınır; kart fiyatı
 kanıt değildir. Ürün sayfasında tek Product→Offer, H1, satıcı, yeni ürün/stok,

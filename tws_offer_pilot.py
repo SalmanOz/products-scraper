@@ -16,7 +16,7 @@ from bs4 import BeautifulSoup
 from curl_cffi.requests.exceptions import RequestException as CompatibleRequestException
 import requests
 
-from mediamarkt_source import BOT, MAX_HTML_BYTES, MediaMarktSource, _selected_offer
+from mediamarkt_source import MAX_HTML_BYTES, MediaMarktSource, _selected_offer
 from priority_retailer_transport import (
     PriorityRetailerTransport,
     TRENDYOL_TWS_CATEGORY,
@@ -296,22 +296,12 @@ def _mediamarkt_tws_url(url):
 
 def _mediamarkt_offers(source, failures):
     def read(url):
-        if not source._rules.can_fetch(BOT, url):
-            return None, 'robots_disallowed'
         try:
             body, reason, _ = source._direct(url, MAX_HTML_BYTES, 'text/html')
             return body if reason == 'ready' else None, reason
         except (requests.RequestException, CompatibleRequestException):
             return None, 'transport_error'
 
-    try:
-        source._load_robots()
-    except CompatibleRequestException:
-        failures['mediamarkt_robots_unavailable'] += 1
-        return {}
-    if source._rules is None:
-        failures[f'mediamarkt_{source._robots_status}'] += 1
-        return {}
     candidates = {}
     for category, heading in MEDIAMARKT_CATEGORIES:
         html, reason = read(category)

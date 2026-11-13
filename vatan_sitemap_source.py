@@ -1,6 +1,6 @@
 """Discover Vatan product URLs from its published sitemap, never prices.
 
-Vatan disallows ``/arama/*`` in robots.txt. Its advertised sitemap gives us
+Vatan’s fixed sitemap gives us
 bounded, public URL hints; the existing retailer PDP reader remains the only
 source of live price, availability and product identity evidence. A denied
 direct sitemap GET may retry once through the already running browser service.
@@ -11,7 +11,6 @@ import re
 import time
 import xml.etree.ElementTree as ET
 from urllib.parse import unquote, urlparse
-from urllib.robotparser import RobotFileParser
 
 import requests
 from bs4 import BeautifulSoup, Tag
@@ -37,7 +36,7 @@ _SITEMAP_NS = '{http://www.sitemaps.org/schemas/sitemap/0.9}'
 
 
 class VatanSitemapSource:
-    """One robots read and one sitemap read per updater run, including failure."""
+    """One sitemap read per updater run, including failure."""
 
     def __init__(self, fetch=None, post=None, sleep=time.sleep):
         self._fetch = fetch or requests.get
@@ -45,23 +44,20 @@ class VatanSitemapSource:
         self._sleep = sleep
         self._loaded = False
         self._urls = []
-        self._rules = None
         self._status = 'not_loaded'
         self._failed_stage = None
         self._http_status = None
-        self._crawl_delay = 0
         self._sitemap_transport = 'not_attempted'
         self._sitemap_direct_status = None
         self._browser_requests = 0
         self._browser_xml_unwrapped = False
 
     def _browser_sitemap(self):
-        """One exact-URL retry, only after a robots-approved sitemap GET is 403."""
-        if (self._rules is None or not self._rules.can_fetch(BOT, SITEMAP_URL)
-                or self._browser_requests >= MAX_BROWSER_REQUESTS):
+        """One exact-URL retry, only after a sitemap GET is 403."""
+        if self._browser_requests >= MAX_BROWSER_REQUESTS:
             raise ValueError('sitemap_browser_not_allowed')
         self._browser_requests += 1
-        self._sleep(max(0.5, self._crawl_delay))
+        self._sleep(0.5)
         response = self._post(SOLVER_URL, json={
             'cmd': 'request.get', 'url': SITEMAP_URL, 'maxTimeout': 45000,
         }, timeout=60, stream=True)
@@ -111,14 +107,14 @@ class VatanSitemapSource:
         return body
 
     def _read(self, url, limit):
-        stage = 'robots' if url == ROBOTS_URL else 'sitemap'
+        stage = 'sitemap'
         self._failed_stage = stage
         self._http_status = None
         response = self._fetch(
             url, timeout=(5, 15), allow_redirects=False, stream=True,
             headers={
                 'User-Agent': BOT + '/1.0 (+https://teknoskor.com)',
-                'Accept': 'text/plain' if url == ROBOTS_URL else 'application/xml,text/xml',
+                'Accept': 'application/xml,text/xml',
                 'Accept-Language': 'tr-TR,tr;q=0.9',
             },
         )
@@ -175,28 +171,6 @@ class VatanSitemapSource:
             return
         self._loaded = True
         try:
-            raw_robots = self._read(ROBOTS_URL, MAX_ROBOTS_BYTES)
-            robots = raw_robots.decode('utf-8-sig', errors='strict')
-            if (re.search(r'<(?:!doctype|html|head|body)\b', robots, re.I)
-                    or not re.search(r'^\s*user-agent\s*:', robots, re.I | re.M)
-                    or not re.search(r'^\s*sitemap\s*:\s*' + re.escape(SITEMAP_URL) + r'\s*$', robots, re.I | re.M)):
-                raise ValueError('robots_policy_unavailable')
-            rules = RobotFileParser()
-            rules.parse(robots.splitlines())
-            if not rules.can_fetch(BOT, SITEMAP_URL):
-                raise ValueError('sitemap_disallowed')
-            self._rules = rules
-
-            delay = float(rules.crawl_delay(BOT) or 0)
-            rate = rules.request_rate(BOT)
-            if rate:
-                delay = max(delay, rate.seconds / max(1, rate.requests))
-            if delay > 30:
-                raise ValueError('crawl_delay_exceeds_budget')
-            self._crawl_delay = delay
-            if delay:
-                self._sleep(delay)
-
             raw_sitemap = self._read(SITEMAP_URL, MAX_SITEMAP_BYTES)
             if b'<!DOCTYPE' in raw_sitemap.upper() or b'<!ENTITY' in raw_sitemap.upper():
                 raise ValueError('unsafe_xml')
@@ -211,7 +185,7 @@ class VatanSitemapSource:
                     continue
                 loc = row.find(_SITEMAP_NS + 'loc')
                 url = loc.text.strip() if loc is not None and isinstance(loc.text, str) else ''
-                if self._safe_product_url(url) and rules.can_fetch(BOT, url):
+                if self._safe_product_url(url):
                     urls.append(url)
             self._urls = list(dict.fromkeys(urls))
             self._status = 'ready'
@@ -263,8 +237,6 @@ class VatanSitemapSource:
         if not isinstance(product_name, str) or not isinstance(expected_specs, dict):
             return []
         self._load()
-        if not self._rules:
-            return []
         candidates = []
         for url in self._urls:
             parsed = urlparse(url)
@@ -276,7 +248,7 @@ class VatanSitemapSource:
 
     def report(self):
         return {'status': self._status, 'eligible_urls': len(self._urls),
-                'robots_url': ROBOTS_URL, 'sitemap_url': SITEMAP_URL,
+                'sitemap_url': SITEMAP_URL,
                 'sitemap_transport': self._sitemap_transport,
                 'sitemap_direct_http_status': self._sitemap_direct_status,
                 'browser_requests': self._browser_requests,

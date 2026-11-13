@@ -369,9 +369,6 @@ class HepsiburadaDiscoveryTests(unittest.TestCase):
         self.assertEqual(t.read_hepsiburada_category(CATEGORY_URL)[1], 'document_read')
         self.assertEqual(t.read_document(PDP)[1], 'document_read')
         self.assertEqual(t.report()['Hepsiburada']['category_requests'], 1)
-        denied = PriorityRetailerTransport(get=lambda url, **_: Response(url,
-            'User-agent: *\nDisallow: /cep-telefonlari\n'), sleep=lambda _: None)
-        self.assertEqual(denied.read_hepsiburada_category(CATEGORY_URL)[1], 'robots_disallowed')
 
     def test_one_changed_brand_heading_does_not_hide_other_observed_category_pages(self):
         from sweep_priority_catalog import sweep

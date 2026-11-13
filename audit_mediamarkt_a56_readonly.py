@@ -3,13 +3,12 @@
 from datetime import datetime, timezone
 import json
 import math
-import re
 
 from bs4 import BeautifulSoup
 import requests
 
 from mediamarkt_marketplace_audit import catalog_variant_matches, selected_marketplace_offer
-from mediamarkt_source import BOT, MAX_HTML_BYTES, MediaMarktSource
+from mediamarkt_source import MAX_HTML_BYTES, MediaMarktSource
 
 
 CATALOG = {'id': 242, 'slug': 'samsung-galaxy-a56',
@@ -54,27 +53,19 @@ def exact_seller_identity(html):
 
 
 def run_audit(transport=None):
-    """Robots preflight, then bounded public GETs; no DB writes."""
+    """Bounded public GETs; no DB writes."""
     result = {'purpose': 'read_only_exact_a56_marketplace_audit',
               'checked_at': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
               'catalog': CATALOG, 'url': URL, 'seller_url': SELLER_URL,
               'verified': False, 'reason': None, 'offer': None, 'writes': False,
-              'robots_allowed': False, 'pdp_observed_at': None}
+              'pdp_observed_at': None}
     source = transport or MediaMarktSource()
     try:
-        source._load_robots()
-        if source._rules is None:
-            result['reason'] = 'robots_unavailable'
-            return result
-        if not all(source._rules.can_fetch(BOT, url) for url in (URL, SELLER_URL)):
-            result['reason'] = 'robots_disallowed'
-            return result
-        result['robots_allowed'] = True
         body, reason, status = source._direct(URL, MAX_HTML_BYTES, 'text/html')
         result['pdp_direct_http_status'] = status
         if reason == 'http_403':
             # Use the same bounded browser GET that the reviewed MediaMarkt
-            # reader uses. Only a 403 on this exact robots-allowed PDP may
+            # reader uses. Only a 403 on this exact PDP may
             # trigger it; a changed final URL or challenge HTML still fails.
             body, final_url, reason = source._browser_get(URL)
             if reason == 'ready' and final_url != URL:

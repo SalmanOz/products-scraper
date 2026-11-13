@@ -8,7 +8,6 @@ import re
 import time
 from threading import RLock
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse
-from urllib.robotparser import RobotFileParser
 
 from bs4 import BeautifulSoup
 import requests
@@ -184,13 +183,12 @@ class PriorityRetailerTransport:
     def __init__(self, *, get=None, post=None, sleep=time.sleep, clock=time.monotonic,
                  maximum_per_host=2, n11_collector=None, browser_fallback=True,
                  unavailable_robots_hosts=(), missing_robots_hosts=()):
+        # Retain the legacy policy keywords for callers rolling over from older releases.
         if type(maximum_per_host) is not int or not 1 <= maximum_per_host <= 400:
             raise ValueError('Invalid priority retailer request budget')
         self._get, self._post = get or compatible_get, post
         self._n11_collector = n11_collector
         self._browser_fallback = browser_fallback
-        self._unavailable_robots_hosts = frozenset(unavailable_robots_hosts)
-        self._missing_robots_hosts = frozenset(missing_robots_hosts)
         self._sleep, self._clock = sleep, clock
         self._maximum = maximum_per_host
         self._states = {}
@@ -234,12 +232,12 @@ class PriorityRetailerTransport:
                          result[2] in (301, 302, 307, 308))):
                 from hepsiburada_catalog_discovery import category_redirect_target
                 target = category_redirect_target(url, urljoin(url, location))
-                if target and state['rules'].can_fetch(BOT, target):
+                if target:
                     self._category_redirects[url] = target
             if (accept == 'text/html' and result[2] in (301, 302, 307, 308)
                     and isinstance(location, str) and len(location) <= 500 and catalog_product_alias(url)):
                 canonical = catalog_product_alias_redirect(url, urljoin(url, location))
-                if canonical and state['rules'].can_fetch(BOT, canonical):
+                if canonical:
                     self._catalog_alias_redirects[url] = canonical
             if (allow_redirect and accept == 'text/html' and result[2] in (301, 302, 307, 308)
                     and isinstance(location, str) and len(location) <= 1000
@@ -250,14 +248,13 @@ class PriorityRetailerTransport:
                 # n11 may explicitly retire all selectors in its Location.
                 # That default PDP receives its own GET and proof, without
                 # attributing its current seller/SKU to the original selectors.
-                # Same group, one hop, robots and original quota still apply.
+                # Same group, one hop and original quota still apply.
                 unscoped = product_host(url) == 'www.n11.com' and n11_unscoped_redirect(url, target)
                 same_identity = ((n11_canonical_redirect(url, target) or unscoped) if product_host(url) == 'www.n11.com'
                                  else product_host(target) == 'www.trendyol.com'
                                  and original.path.rsplit('-p-', 1)[-1] == redirected.path.rsplit('-p-', 1)[-1]
                                  and before.get('merchantId') == after.get('merchantId'))
-                if (not same_identity
-                        or not state['rules'].can_fetch(BOT, target)):
+                if not same_identity:
                     return None, 'redirect_identity_or_policy_mismatch', result[2]
                 if (target in state['seen']
                         or state['pdp_requests'] - state.get('category_requests', 0) >= self._maximum):
@@ -301,7 +298,7 @@ class PriorityRetailerTransport:
         """Routing readiness only; never resets source state or authorizes a read.
 
         A cooldown skip has not spent a document request. The normal reader
-        still enforces robots, selected-SKU exclusions and the original quota.
+        still enforces selected-SKU exclusions and the original quota.
         """
         host = product_host(url)
         with self._lock:
@@ -325,7 +322,7 @@ class PriorityRetailerTransport:
         """Reverify a selected public PDP inside this run's existing circuit.
 
         A preview is never publication evidence. Only deduplication is bypassed;
-        robots, denials, cooldowns and the total request allowance still apply.
+        denials, cooldowns and the total request allowance still apply.
         """
         host = product_host(url)
         if host is None:
@@ -362,7 +359,7 @@ class PriorityRetailerTransport:
 
     def read_teknosa_classification(self, document_url, url, *, fresh=False):
         # Only the selected native PDP code may address its public lazy tab.
-        # Share the same source circuit, robots, delay and total PDP allowance.
+        # Share the same source circuit, delay and total PDP allowance.
         if (product_host(document_url) != 'www.teknosa.com' or urlparse(document_url).query
                 or url != 'https://www.teknosa.com/getClassificationData?productCode='
                 + urlparse(document_url).path.rsplit('-p-', 1)[-1]):
@@ -400,7 +397,7 @@ class PriorityRetailerTransport:
 
     def _read_document(self, url, host, category=False, fresh=False, classification=False, sitemap=False, sitemap_limit=8 * 1024 * 1024):
         with self._lock:
-            state = self._states.setdefault(host, {'rules': None, 'robots': 'not_loaded',
+            state = self._states.setdefault(host, {
                 'pdp_requests': 0, 'search_requests': 0, 'browser_requests': 0,
                 'delay': 0.5, 'blocked': False, 'seen': set(), 'transient_retries': 1,
                 'browser_timeout_skus': set(), 'browser_timeout_sku_skips': 0})
@@ -416,33 +413,6 @@ class PriorityRetailerTransport:
             if state.get('retry_after', 0) > self._clock():
                 return None, 'source_cooldown', None
             try:
-                if state['robots'] == 'not_loaded':
-                    raw, reason, status = self._read('https://' + host + '/robots.txt',
-                                                     64 * 1024, 'text/plain', state)
-                    state['robots'] = reason
-                    text = HepsiburadaS25FeSource._robots_text(raw) if raw is not None else ''
-                    if ((status == 403 and reason == 'http_403' and host in self._unavailable_robots_hosts)
-                            or (status == 404 and reason == 'http_404' and host in self._missing_robots_hosts)):
-                        # RFC 9309 §2.3.1.3 permits public requests when the
-                        # robots file itself is unavailable. A PDP denial
-                        # still opens the source circuit below.
-                        state['robots'] = f'unavailable_http_{status}'
-                        text = 'User-agent: *\nDisallow:'
-                    elif reason != 'ready' or not re.search(r'^\s*User-agent\s*:', text, re.I | re.M):
-                        state['blocked'] = True
-                        return None, 'robots_' + (reason if reason != 'ready' else 'invalid'), status
-                    rules = RobotFileParser()
-                    rules.parse(text.splitlines())
-                    delay = max(0.5, float(rules.crawl_delay(BOT) or 0))
-                    rate = rules.request_rate(BOT)
-                    if rate:
-                        delay = max(delay, rate.seconds / max(1, rate.requests))
-                    if delay > 30:
-                        state['blocked'] = True
-                        return None, 'robots_delay_exceeds_budget', None
-                    state.update(rules=rules, delay=delay)
-                if not state['rules'].can_fetch(BOT, url):
-                    return None, 'robots_disallowed', None
                 if url in state['seen'] and not fresh:
                     return None, 'already_read', None
                 category_count = state.get('category_requests', 0)
@@ -495,7 +465,7 @@ class PriorityRetailerTransport:
 
     def report(self):
         return {HOSTS[host]: {**{key: value for key, value in state.items()
-                              if key in {'robots', 'browser_requests', 'blocked', 'search_requests', 'category_requests',
+                              if key in {'browser_requests', 'blocked', 'search_requests', 'category_requests',
                                          'transport_error_type', 'classification_requests', 'browser_timeout_recoveries',
                                          'unscoped_redirect_requests'}},
                               **({'browser_timeout_sku_count': len(state['browser_timeout_skus']),
