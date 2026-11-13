@@ -110,6 +110,7 @@ def discovery_offers(observations, name, attributes):
     from automatic_memory_variants import variant_selected_evidence
     from selected_sku_evidence import selected_sku_evidence
     from update_prices import PriceUpdater
+    from tr_price_scraper import TRPriceScraper
 
     specs = PriceUpdater.get_expected_specs(attributes)
     keys = ('ram_gb', 'storage_gb', 'network_generation')
@@ -120,6 +121,17 @@ def discovery_offers(observations, name, attributes):
         offers = []
         for offer in pair:
             proof = selected_sku_evidence(offer) or variant_selected_evidence(offer, name, specs)
+            if not proof and offer['merchant'] == offer['platform'] and offer['platform'] in (
+                    'Vatan Bilgisayar', 'MediaMarkt'):
+                title = offer['source_title']
+                ram, storage, ambiguous = TRPriceScraper._unambiguous_listing_capacities(title)
+                radio = TRPriceScraper._radio_generation(title)
+                sku = offer.get('sku')
+                if sku and not ambiguous and (ram, storage, radio) == tuple(specs[k] for k in keys):
+                    proof = {'version': 'selected-retailer-sku-v1', 'platform': offer['platform'],
+                             'merchant_id': {'Vatan Bilgisayar': 'vatan-bilgisayar', 'MediaMarkt': 'mediamarkt'}[offer['platform']],
+                             'merchant_name': offer['merchant'], 'product_id': sku, 'sku': sku,
+                             'gtin13': offer['gtin13'], **{k: specs[k] for k in keys}}
             observed = offer['observed_at']
             if (not proof or any(proof.get(key) != specs[key] for key in keys) or
                     not timedelta(0) <= now - datetime.fromisoformat(observed) < timedelta(hours=1)):

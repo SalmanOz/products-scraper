@@ -75,7 +75,7 @@ def mediamarkt_selected(html, url):
 
     def variant(product, _title, _brand):
         gtin = retailer_gtin13(product.get('gtin13'))
-        return ({'gtin13': gtin, 'platform': 'MediaMarkt',
+        return ({'gtin13': gtin, 'platform': 'MediaMarkt', 'sku': str(product.get('sku', '')),
                  '_legal_name': 'media markt turkey ticaret limited sirketi'} if gtin else None)
 
     return mediamarkt_first_party(html, url, verify_product=variant)

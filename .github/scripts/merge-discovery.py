@@ -197,7 +197,10 @@ class Expansion:
                     self.known.add(('gtin', gtin))
                 products.append(model)
                 prices.extend(selected)
-                targets.update(selected_targets)
+                if len(selected) == 1:
+                    targets[model['name']] = next(iter(selected_targets.values()))
+                else:
+                    targets.update(selected_targets)
         if products:
             self.snapshot(catalog_name, {**catalog, 'reviewedAt': self.stamp, 'models': [*catalog['models'], *products]})
             self.snapshot(offer_name, {**snapshot, 'checked_at': self.stamp, 'models': [*snapshot['models'], *prices],
