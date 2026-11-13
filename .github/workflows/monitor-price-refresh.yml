@@ -88,6 +88,8 @@ jobs:
           fi
           if [ -s "$out/report.json" ]; then
             jq '{fresh_models, fresh_pairs, rejected}' "$out/report.json"
+          elif [[ "$result" != 0 ]]; then
+            grep -E '^  File ".*", line [0-9]+, in |^[A-Za-z.]+Error: GitHub Actions' "$out/collector.log" | tail -12 || true
           fi
           test "$result" -eq 0
           node site/frontend/scripts/verify-monitor-pilot.mjs --offers-only "$out/snapshot.json" \
