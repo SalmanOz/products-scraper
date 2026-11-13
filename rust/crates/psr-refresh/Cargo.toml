@@ -1,0 +1,20 @@
+[package]
+name = "psr-refresh"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+psr-core = { path = "../psr-core" }
+psr-fetch = { path = "../psr-fetch" }
+psr-parse = { path = "../psr-parse" }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+regex = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+wiremock = { workspace = true }
+reqwest = { workspace = true }

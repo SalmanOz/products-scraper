@@ -1,6 +1,7 @@
 venv/
 .env
 __pycache__/
+rust/target/
 debug_*.html
 *_raw.txt
 *.png

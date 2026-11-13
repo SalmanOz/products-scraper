@@ -1,0 +1,53 @@
+name: Rust Parity Probe (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'Product page URL to probe (read-only fetch + offer parse, nothing is ingested)'
+        required: true
+        type: string
+      permissive:
+        description: 'Relax the URL trust gate (only for hosts outside the manifest; wiremock/plain-HTTP probes)'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: 'rust'
+      - name: Build release binary
+        working-directory: rust
+        run: cargo build --release --locked -p psr-cli
+      - name: Probe one URL (read-only, JSON result)
+        working-directory: rust
+        env:
+          PROBE_URL: ${{ inputs.url }}
+          PROBE_PERMISSIVE: ${{ inputs.permissive }}
+        run: |
+          set -euo pipefail
+          set -- probe --url "$PROBE_URL"
+          if test "$PROBE_PERMISSIVE" = true; then
+            set -- "$@" --permissive
+          fi
+          ./target/release/psr "$@" | tee "${{ runner.temp }}/psr-probe.json"
+      - name: Upload probe evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-parity-probe-${{ github.run_id }}
+          path: ${{ runner.temp }}/psr-probe.json
+          if-no-files-found: warn
+          retention-days: 30
