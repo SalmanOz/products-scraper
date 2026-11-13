@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 import json
 import re
-from urllib.parse import parse_qs, urljoin, urlparse
+from urllib.parse import parse_qs, urlencode, urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
@@ -29,6 +29,36 @@ def _product_id(url):
     if product_host(url) != 'www.trendyol.com':
         return None
     return re.search(r'-p-(\d+)$', urlparse(url).path)[1]
+
+
+def other_seller_links(url, others, selected_seller, item, gtin):
+    """Price-free same-SKU alternate routes observed on the selected product page."""
+    if type(item) is not int or item <= 0 or not gtin:
+        return []
+    links = []
+    for other in others if isinstance(others, list) else []:
+        if not isinstance(other, dict):
+            continue
+        seller_id, raw, variants = (other.get(k) for k in ('id', 'url', 'variants'))
+        if (type(seller_id) is not int or seller_id <= 0 or seller_id == selected_seller
+                or not isinstance(raw, str) or not raw.startswith('/') or len(raw) > 1000
+                or not isinstance(variants, list) or not any(
+                    isinstance(v, dict) and v.get('inStock') is True and v.get('sellable') is True
+                    and v.get('itemNumber') == item and retailer_gtin13(v.get('barcode')) == gtin for v in variants)):
+            continue
+        try:
+            route = urlparse(urljoin(url, raw))
+            params = parse_qs(route.query, keep_blank_values=True, max_num_fields=4)
+        except ValueError:
+            continue
+        if (route.path != urlparse(url).path or params.pop('sav', ['true']) != ['true']
+                or params.get('merchantId') != [str(seller_id)] or set(params) - {'merchantId', 'boutiqueId'}
+                or any(len(values) != 1 for values in params.values())):
+            continue
+        target = route._replace(query=urlencode({key: values[0] for key, values in sorted(params.items())})).geturl()
+        if product_host(target) == 'www.trendyol.com' and (target, seller_id) not in links:
+            links.append((target, seller_id))
+    return links
 
 
 def catalog_request_url(url):

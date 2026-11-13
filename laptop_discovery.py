@@ -34,7 +34,7 @@ STOP = STOP_REASONS | {'redirect', 'unexpected_final_url'}
 
 
 class Reader:
-    def __init__(self, host, maximum, *, get=None):
+    def __init__(self, host, maximum, *, get=None, browser_fallback=None):
         self.host = host
         self.stop = False
         self.last_reason = None
@@ -47,7 +47,8 @@ class Reader:
             if host.startswith('www.mediamarkt'):
                 self.source.configure_catalog_budget(maximum * 2 + 20)
         else:
-            self.transport = PriorityRetailerTransport(maximum_per_host=maximum, get=get, browser_fallback=not get)
+            self.transport = PriorityRetailerTransport(maximum_per_host=maximum, get=get,
+                browser_fallback=not get if browser_fallback is None else browser_fallback)
 
     def read(self, url, category=False):
         self.last_reason = None
@@ -76,7 +77,7 @@ class Reader:
             self.last_reason = 'source_budget_or_circuit'
             return None, None
         self.last_reason = reason
-        if reason in STOP:
+        if reason in STOP or reason and reason.startswith('robots_http_'):
             self.stop = True
         return (html, final) if reason in ('ready', 'document_read') else (None, None)
 

@@ -633,5 +633,69 @@
       "hdmi": "2 × HDMI 2.0b",
       "dp": "1 × DisplayPort 1.2a"
     }
+  },
+  "0766907002959": {
+    "code": "vx3276",
+    "discovery_code": "vx32762kmhd2"
+  },
+  "0766907002966": {
+    "code": "vx3276",
+    "discovery_code": "vx32764kmhd"
+  },
+  "4711377281690": {
+    "code": "273qp",
+    "brand": "MSI",
+    "model": "MAG 273QP QD-OLED X24",
+    "url": "https://www.msi.com/Monitor/MAG-273QP-QD-OLED-X24/Specification",
+    "facts": {
+      "panel": "QD-OLED"
+    },
+    "equivalent_facts": {
+      "panel": [
+        "OLED"
+      ]
+    }
+  },
+  "8806096435144": {
+    "code": "32g810sa",
+    "brand": "LG",
+    "model": "32G810SA-W",
+    "url": "https://www.lg.com/de/monitore/gaming/32g810sa-w/",
+    "facts": {
+      "size": 31.5
+    },
+    "equivalent_facts": {
+      "size": [
+        32
+      ]
+    }
+  },
+  "4038986183444": {
+    "code": "27g50z",
+    "brand": "AOC",
+    "model": "27G50Z",
+    "url": "https://www.aoc.com/us/gaming/monitors/27g50z",
+    "facts": {
+      "refresh": 260
+    },
+    "equivalent_facts": {
+      "refresh": [
+        240
+      ]
+    }
+  },
+  "8680096133428": {
+    "code": "cr25r180",
+    "brand": "Rampage",
+    "model": "CRIMSON CR25R180",
+    "url": "https://www.rampage.com.tr/en/products/crimson-cr25r180-25-200hz-0-5ms-fast-ips-oyuncu-monitoru",
+    "facts": {
+      "size": 24.5
+    },
+    "equivalent_facts": {
+      "size": [
+        25
+      ]
+    }
   }
 }

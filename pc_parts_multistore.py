@@ -392,7 +392,7 @@ class PcRetailer:
             return n11_pc_offer(html, url)
         if self.host == TEKNOSA:
             return teknosa_pc_offer(html, url)
-        offer, reason = selected_direct_laptop(html, url, read_facts=lambda _title, brand: {'brand': brand})
+        offer, reason = selected_direct_laptop(html, url, read_facts=lambda _title, brand, _attrs: {'brand': brand})
         if offer:
             offer['brand'] = offer['facts']['brand']
         return offer, reason

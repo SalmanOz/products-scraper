@@ -4,6 +4,67 @@ Bu depo, Türkiye'nin en kapsamlı cep telefonu özellik ve fiyat karşılaştı
 
 [Teknoskor](https://teknoskor.com), kullanıcılara en güncel cep telefonu teknik özelliklerini sunmakta ve farklı mağazalardaki en ucuz fiyatları karşılaştırmalı olarak listelemektedir. 
 
+## Kalıcı mağaza tarama kuyruğu
+
+`catalog_crawl.py` monitör, laptop ve kablosuz kulaklık bağlantılarını aynı
+yerel SQLite veritabanında işler. JSON hedef listeleri ve satır bazlı JSON
+dosyaları fiyat alanları atılarak alınır. Monitör keşfi, eldeki GTIN'ler için
+bulduğu yeni mağaza bağlantılarını aynı kuyruğa ekler. Ürün sayfası okuyucuları
+GTIN, model, seçili satıcı, fiyat ve stoku yeniden doğrular. Rapor farklı
+platformlardaki bağımsız satıcı çiftlerini kategori bazında sayar.
+
+```sh
+python catalog_crawl.py crawl.sqlite enqueue monitor monitor_pilot_targets.json
+python catalog_crawl.py crawl.sqlite enqueue laptop laptop_pilot_targets.json
+python catalog_crawl.py crawl.sqlite discover monitor-plan.json --search-budget 8
+python catalog_crawl.py crawl.sqlite sitemap monitor-plan.json --store www.vatanbilgisayar.com
+python catalog_crawl.py crawl.sqlite verify --routes-per-store 30
+python catalog_crawl.py crawl.sqlite report
+python catalog_crawl.py crawl.sqlite export monitor verified-monitor-offers.jsonl
+```
+
+`sitemap` aynı alan adındaki bilinen sitemap'leri ve onların ürün listelerini
+okur. Diğer mağazalar için adresi `--sitemap-url` ile belirtin. Yetkili mağaza XML'i
+geldiğinde `feed` komutuyla Google Merchant RSS (`google`) veya Akakçe ürün
+XML'i (`akakce`) kullanılabilir. `--file` bir yerel dosyayı, `--url-env` ise
+mağazanın kendi alan adındaki URL'yi içeren ortam değişkenini okur. Yeni
+mağazaların ürün ve satıcı okuyucuları ayrıca doğrulanır.
+
+```sh
+python catalog_crawl.py crawl.sqlite feed monitor monitor-plan.json www.sinerji.gen.tr --format google --url-env SINERJI_FEED_URL
+```
+
+Feed'den yalnız katalogdaki barkodlarla tam eşleşen ürün adresleri kuyruğa
+girer. Fiyat, stok ve satıcı alanlarını mevcut canlı doğrulama adımı okur.
+`feed --audit-live 20` aynı çalışmada XML'deki TRY fiyatını ve stok durumunu
+en fazla 20 ürünün taze mağaza kanıtıyla karşılaştırır. Uyuşmazlıklar ve canlı
+sayfada kanıtlanamayan teklifler ayrı raporlanır. XML fiyatı ve stoku kalıcı
+kuyruğa veya üretim verisine yazılmaz.
+
+Çalıştırmalar arasında aynı veritabanını yerel kalıcı diskte tutun. Mağaza
+başına aynı anda bir çalışan istek atar. Varsayılan kota kayan 24 saatte 60
+HTTP isteğidir. Kategori, arama, yönlendirme ve satıcı istekleri bu
+kotaya dahildir. `configure-store HOST --budget N --interval S` ilgili mağaza
+için sağlanan kota ve istek aralığını kaydeder. 403 ve 429 yanıtları mağaza
+durumuna yazılır. Yeniden başlatma kotayı ya da bekleme süresini sıfırlamaz.
+
+`minimum_refresh_days` her bağlantının bir istek gerektirdiği iyimser alt
+sınırdır. Rapor ayrıca 24 saat içinde doğrulanmış varyant ve bağımsız satıcı
+çifti sayılarını gösterir. `export` dosyası yalnız süresi dolmamış teklifleri
+içerir ve tamamlandığında sahibine özel izinlerle oluşur. Bu komutlar yerel
+denetim içindir. Telefon senkronizasyonu ve üretim yayını mevcut iş akışlarında
+çalışır.
+
+100 adaylık monitör denetiminde aynı fiyat kuyruğunda yalnız monitörleri
+çalıştırmak için `verify --category monitor` kullanılır. Süresi yaklaşan
+teklifleri tazeledikten sonra belirli modelleri önce taramak için
+`--focus-gtins` ile benzersiz GTIN dizisi içeren bir JSON dosyası verilebilir.
+Her taramanın ardından
+`python monitor_daily.py monitor-plan.json capture crawl.sqlite gun.json`
+komutu o İstanbul gününde yeniden doğrulanmış teklifleri sayar.
+`python monitor_daily.py monitor-plan.json history gun1.json gun2.json gun3.json --output gecmis.json`
+aynı GTIN grubunda üç ardışık günün her birinde en az 80 bağımsız çift arar.
+
 ## İncelenmiş telefon grubu ekleme
 
 ### Günlük fiyatların yeniden doğrulanması

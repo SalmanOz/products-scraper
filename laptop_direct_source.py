@@ -45,6 +45,12 @@ DIRECT_STORES = {
         'İncehesap', 'div.prod div.price',
         'div.prod button',
         '/icerik/kisisel-verilerin-korunmasi', 'İncehesap Sanal Mağazacılık Ticaret Anonim Şirketi'),
+    'www.sinerji.gen.tr': (
+        'Sinerji', '.productDetail .priceWrapper > .price', '.productDetail button.addToCart[type="submit"]',
+        '/degisim-iptal-ve-iade-politikasi-cp-480', 'Sinerji Bilgisayar Elektronik ve Sanal Mağazacılık Limited Şirketi'),
+    'www.uzmanlarpc.com': (
+        'UzmanlarPC', 'div:has(> .pPriceTitle:-soup-contains("Kredi Kartı Fiyatı")) > .pPriceDeger[name="tryPrice"].d-block',
+        'button.wc-buy-cart', '/sartlar-kosullar', 'Uzmanlar oto gıda bilgisayar inş san tic ltd şti'),
     'www.teknostim.com': (
         'Teknostim', '.product-right .product-price-new',
         '.product-right a.add-to-cart-button',
@@ -108,24 +114,29 @@ def selected_direct_laptop(html, url, *, read_facts=None):
         schema_title = schema_title.removesuffix(' | Neva AVM')
     if not title or WORDS(title) != WORDS(schema_title):
         return None, 'direct_selected_title_mismatch'
-    facts = read_facts(title, brand_node.get('name') if isinstance(brand_node, dict) else brand_node) if read_facts else (
-        laptop_facts(title, {}, brand, product.get('mpn', '')))
+    attrs = {}
     gtin = retailer_gtin13(product.get('gtin13') or product.get('gtin'))
     if host == 'tasozbilgisayar.com':
         gtin = _tasoz_gtin(soup, gtin)
+    elif host == 'www.sinerji.gen.tr':
+        barcodes = []
+        for row in soup.select('#nav-technical-specs table tr'):
+            cells = row.find_all('td', recursive=False)
+            if len(cells) == 2:
+                label, value = WORDS(cells[0].get_text(' ', strip=True)), cells[1].get_text(' ', strip=True)
+                if label == 'barkod gtin':
+                    barcodes.append(retailer_gtin13(value))
+                else:
+                    attrs[label] = value
+        if barcodes != [gtin] or not product.get('mpn') or product['mpn'] != product.get('sku'):
+            return None, 'direct_selected_identity_missing'
     elif host == 'www.uzmanlarpc.com':
         barcodes = [retailer_gtin13(node.get_text(' ', strip=True))
                     for node in soup.select('span.bid:-soup-contains("Barkod:") > span.pDeger')]
         if barcodes != [gtin]:
             return None, 'direct_selected_identity_missing'
-    elif host == 'www.sinerji.gen.tr':
-        barcodes = []
-        for row in soup.select('#nav-technical-specs table tr'):
-            cells = row.find_all('td', recursive=False)
-            if len(cells) == 2 and WORDS(cells[0].get_text(' ', strip=True)) == 'barkod gtin':
-                barcodes.append(retailer_gtin13(cells[1].get_text(' ', strip=True)))
-        if barcodes != [gtin] or not product.get('mpn') or product['mpn'] != product.get('sku'):
-            return None, 'direct_selected_identity_missing'
+    facts = read_facts(title, brand_node.get('name') if isinstance(brand_node, dict) else brand_node, attrs) if read_facts else (
+        laptop_facts(title, {}, brand, product.get('mpn', '')))
     if not facts or not gtin:
         return None, 'direct_selected_identity_missing'
 

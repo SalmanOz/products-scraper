@@ -18,7 +18,8 @@ def matches_model(offer, model):
     if offer['gtin13'] != model['gtin'] or facts['brand'] != model['brand']:
         return False
     official = MANUFACTURER_SPECS.get(model['gtin'], {})
-    overrides = official.get('facts', {}) if offer['code'] == official.get('code') else {}
+    overrides = official.get('facts', {}) if (
+        offer['code'] == official.get('code') and official.get('brand', model['brand']) == model['brand']) else {}
     for key in CORE:
         observed = facts[key]
         if observed is None or overrides.get(key) == model[key] or observed == model[key]:
