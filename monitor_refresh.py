@@ -10,6 +10,7 @@ from threading import Lock, local
 from actions_collector_oidc import actions_collector_token
 from laptop_pilot import _public_offers
 from monitor_pilot import CORE, CROSS_PLATFORM_MINIMUM, MANUFACTURER_SPECS, PILOT_SIZE, candidates, collect_observations
+from monitor_scale import MAX_RESCAN_TARGETS
 from monitor_sources import code_key
 from offer_ingestion_client import OfferIngestionClient
 from retailer_barcode import retailer_gtin13
@@ -108,7 +109,7 @@ def main():
     started = datetime.now(timezone.utc)
     direct_hosts = {'www.mediamarkt.com.tr'} if args.collection == 'mixed' else ()
     groups, rejected = collect_observations(targets, read_document if token or get_token else None,
-                                            direct_hosts=direct_hosts)
+                                            direct_hosts=direct_hosts, maximum=MAX_RESCAN_TARGETS)
     snapshot, fresh, paired = refresh(catalog, groups, datetime.now(timezone.utc))
     discovery_gtins = {row['gtin'] for row in catalog.get('discoveryTargets', [])}
     report = {'fresh_models': fresh, 'fresh_pairs': paired, 'rejected': rejected,

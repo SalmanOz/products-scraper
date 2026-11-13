@@ -346,8 +346,8 @@ def group_targets(targets, maximum=MAX_TARGETS):
     return by_host
 
 
-def collect_observations(targets, collector=None, *, direct_hosts=()):
-    by_host = group_targets(targets)
+def collect_observations(targets, collector=None, *, direct_hosts=(), maximum=MAX_TARGETS):
+    by_host = group_targets(targets, maximum)
     groups, rejections = defaultdict(list), Counter()
     with ThreadPoolExecutor(max_workers=len(by_host)) as pool:
         jobs = {host: pool.submit(read_targets, host, rows, collector if host not in direct_hosts else None)
