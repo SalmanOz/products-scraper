@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta, timezone
 import unittest
 
 from laptop_price_stage import stage, targets_for_catalog
@@ -23,6 +24,23 @@ class LaptopPriceStageTest(unittest.TestCase):
         self.assertEqual(report['staged'][0]['platforms'], ['Trendyol', 'n11'])
         self.assertEqual([offer['url'] for offer in result['models'][0]['offers']], ['first', 'second'])
         self.assertEqual(catalog['models'][0]['offers'][0]['observed_at'], 'original')
+
+    def test_refreshes_a_known_single_store_without_fabricating_a_second_offer(self):
+        now = datetime.now(timezone.utc)
+        prior = {'platform': 'Gaming.Gen.TR', 'merchant': 'Gaming.Gen.TR', 'url': 'listing',
+                 'price': 39000, 'observed_at': (now - timedelta(hours=1)).isoformat()}
+        model = {'slug': 'lenovo-82xx00fktx', 'mpn': '82XX00FKTX', 'gtin': '0198156932587',
+                 'brand': 'Lenovo', 'cpu': 'AMD Ryzen 5 5625U', 'ram': 16, 'ssd': 512,
+                 'discrete': None, 'os': 'Windows 11', 'screen': '14', 'offers': [prior]}
+        catalog = {'checkedAt': prior['observed_at'], 'models': [model]}
+        key = model['mpn'], model['gtin']
+        fresh = {**prior, 'price': 40000, 'facts': model, 'gtin13': model['gtin'],
+                 'observed_at': now.isoformat()}
+        result, _ = stage(catalog, {key: [fresh]}, allow_single=True)
+        self.assertEqual(len(result['models'][0]['offers']), 1)
+        self.assertEqual(result['models'][0]['offers'][0]['price'], 40000)
+        result, _ = stage(catalog, {key: [{**fresh, 'merchant': 'Unexpected'}]}, allow_single=True)
+        self.assertIs(result, catalog)
 
     def test_refuses_a_retained_url_owned_by_another_configuration(self):
         first = {'mpn': '82XX00FKTX', 'gtin': '0198156932587', 'offers': [{'url': 'listing'}]}

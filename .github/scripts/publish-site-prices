@@ -2,6 +2,7 @@
 set -euo pipefail
 
 case "$1" in
+  laptop) file=laptopPilot.json; message='Refresh verified laptop offers' ;;
   monitor) file=monitorPilot.json; message='Refresh verified monitor offers' ;;
   earbuds) file=twsOfferSnapshot.json; message='Refresh verified earbud offers' ;;
   pc-parts) file=pcParts.json; message='Refresh verified PC component offers' ;;
@@ -27,6 +28,10 @@ for attempt in 1 2 3; do
   fi
 
   case "$1" in
+    laptop)
+      node site/frontend/scripts/verify-laptop-pilot.mjs --offers-only "$snapshot" > "$RUNNER_TEMP/site-validation.log" 2>&1 \
+        || { echo 'Laptop snapshot did not pass publication validation.' >&2; exit 1; }
+      ;;
     monitor)
       node site/frontend/scripts/verify-monitor-pilot.mjs --offers-only "$snapshot" > "$RUNNER_TEMP/site-validation.log" 2>&1 \
         || { echo 'Monitor snapshot did not pass publication validation.' >&2; exit 1; }

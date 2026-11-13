@@ -2,7 +2,7 @@ name: Competitor catalog discovery
 
 on:
   schedule:
-    - cron: '23 1 * * *'
+    - cron: '23 1,9,17 * * *'
   workflow_dispatch:
     inputs:
       dry_run:

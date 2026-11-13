@@ -1,9 +1,10 @@
+from collections import Counter
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import Mock, patch
 
-from comparison_component_candidates import INCEHESAP, SINERJI, candidate_groups, selected_images, stage
+from comparison_component_candidates import INCEHESAP, SINERJI, candidate_groups, selected_images, stage, stage_gaming_feed
 
 PRIMARY = 'https://www.incehesap.com/board-fiyati-12345/'
 NEXT = 'https://www.incehesap.com/board-fiyati-23456/'
@@ -68,6 +69,33 @@ class ComponentDiscoveryTest(unittest.TestCase):
             self.assertEqual(part['offerTargets'], [SIBLING, reserve])
             self.assertTrue((Path(directory) / 'photos' / f'{gtin}.webp').is_file())
             download.assert_called_once_with(image, allowed_hosts={SINERJI, 'static.sinerji.gen.tr'})
+
+    def test_publication_requires_feed_barcode_to_match_the_selected_component(self):
+        gaming = 'https://www.gaming.gen.tr/urun/12345/board/'
+        gtin = '4718466017901'
+        state = {'products': {'board': {'category': 'motherboard', 'source': 'www.gaming.gen.tr', 'url': gaming,
+                                        'feedGtin': gtin, 'retailerLeads': [gaming]}}}
+        model = {'gtin': gtin, 'sourceUrl': gaming, '_photo': gaming,
+                 'offer': {'url': gaming, 'platform': 'Gaming.Gen.TR', 'price': 100}}
+        rejects = Counter()
+
+        def verify(seller):
+            seller['_legal_name'] = 'Beta Oyun Teknoloji Anonim Şirketi'
+            return True
+
+        with TemporaryDirectory() as directory, patch('comparison_component_candidates.PcRetailer') as reader, \
+                patch('comparison_component_candidates.parse_part') as parse, \
+                patch('comparison_component_candidates._image', return_value=b'photo'):
+            reader.return_value.transport._read_document.return_value = 'product', 'document_read', 200
+            reader.return_value.verify_seller.side_effect = verify
+            parse.return_value = {**model, 'gtin': '4711081273981'}
+            self.assertEqual(stage_gaming_feed(state, {'parts': []}, Path(directory), 1, set(), rejects), (1, []))
+            self.assertEqual(rejects, {'gaming_feed_barcode_or_price_mismatch': 1})
+            parse.return_value = model
+            _, (result,) = stage_gaming_feed(state, {'parts': []}, Path(directory), 1, set(), rejects)
+            self.assertEqual(result['feedGtin'], gtin)
+            self.assertEqual(result['offerTargets'], [gaming])
+            self.assertEqual(result['offers'][0]['gtin'], gtin)
 
     def test_selected_photo_stays_on_the_primary_product_gallery(self):
         html = ('<div class="prod"><img itemprop="image" alt="Board" src="/resim/urun/202611/a_500.webp"></div>'

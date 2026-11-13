@@ -105,6 +105,28 @@ class ComparisonAccessoryTests(unittest.TestCase):
             self.assertEqual(monitor_codes(title), {'274qpfx30mv'})
         self.assertEqual(monitor_codes('MSI MAG 274QPF Monitör'), {'274qpf'})
 
+    def test_feed_barcode_joins_a_retailer_url_without_the_model_code(self):
+        barcode = '4711081273981'
+        gaming = 'https://www.gaming.gen.tr/urun/10000/asus-pa278cv-monitor/'
+        sinerji = 'https://www.sinerji.gen.tr/asus-monitor-p-52859'
+        state = {'products': {
+            'gaming': {'category': 'monitor', 'title': 'Asus PA278CV Monitör', 'source': 'www.gaming.gen.tr',
+                       'url': gaming, 'retailerLeads': [gaming], 'feedGtin': barcode},
+            'sinerji': {'category': 'monitor', 'title': 'Asus PA278CV Monitör', 'source': 'www.sinerji.gen.tr',
+                        'url': sinerji, 'retailerLeads': [sinerji], 'feedGtin': barcode},
+        }}
+        self.assertEqual(dict(candidate_targets(state, ['monitor'], 5, allow_single=True)), {
+            'www.gaming.gen.tr': [('monitor', gaming, 'pa278cv', barcode)],
+            'www.sinerji.gen.tr': [('monitor', sinerji, 'pa278cv', barcode)],
+        })
+        self.assertFalse(candidate_targets(state, ['monitor'], 5, allow_single=True,
+                                           existing_barcodes={'monitor': {barcode}}))
+
+    def test_feed_signal_stays_bound_to_its_own_store(self):
+        bogus = {'category': 'monitor', 'title': 'ASUS PA278CV', 'source': 'www.gaming.gen.tr',
+                 'url': N11, 'retailerLeads': [N11], 'feedGtin': '4711081273981'}
+        self.assertFalse(candidate_targets({'products': {'bad': bogus}}, ['monitor'], 5, allow_single=True))
+
     def test_single_platform_or_existing_barcode_cannot_stage_an_addition(self):
         barcode = '4711081273981'
         other = '0198155418945'
