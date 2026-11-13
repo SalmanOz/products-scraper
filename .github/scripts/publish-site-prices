@@ -46,12 +46,12 @@ for attempt in 1 2 3; do
   esac
   if cmp -s "site/$file" "$snapshot"; then exit 0; fi
   cp "$snapshot" "site/$file"
-  git -C site add -- "$file"
+  git_remote add -- "$file"
   if [[ "$1" != pc-parts ]]; then
     node site/frontend/scripts/update-accessory-price-history.mjs
-    git -C site add -- "$history"
+    git_remote add -- "$history"
   fi
-  git -C site -c user.name='github-actions[bot]' \
+  git_remote -c user.name='github-actions[bot]' \
     -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit --quiet -m "$message"
 
   if git_remote push origin HEAD:refs/heads/master; then
