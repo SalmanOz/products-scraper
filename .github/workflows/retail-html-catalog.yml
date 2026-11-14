@@ -22,6 +22,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 concurrency:
   group: site-catalog-price-refresh
@@ -56,6 +57,7 @@ jobs:
       - name: Restore and advance the private HTML queue
         env:
           SITE_CATALOG_DEPLOY_KEY: ${{ secrets.SITE_CATALOG_READ_KEY }}
+          CATALOG_SOURCE_ACTIONS_OIDC: 'true'
           VERIFICATION_RUN: ${{ inputs.verification_run == true }}
         run: |
           set -euo pipefail

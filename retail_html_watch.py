@@ -9,6 +9,9 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from lxml.etree import ParserError
+from requests import RequestException
+
+from catalog_source_collector import catalog_document_reader
 
 from retail_catalog_publish import served_image, valid_row
 from retail_html_catalog import (
@@ -28,7 +31,7 @@ def targets():
     return configured
 
 
-async def read_watch(db, configured):
+async def read_watch(db, configured, site_reader=None):
     hosts = {}
     matches = defaultdict(list)
     counts = defaultdict(dict)
@@ -36,6 +39,17 @@ async def read_watch(db, configured):
     async def probe(gtin, item, url):
         host = urlsplit(url).netloc
         status, raw = await hosts.setdefault(host, Host(.5)).get(url)
+        fetched_from_site = False
+        if not raw and site_reader and url in item['urls'] and status in (0, 301, 302, 307, 308, 403, 429, 503):
+            try:
+                witness = await asyncio.to_thread(site_reader, url)
+                if witness.status_code == 200 and 'html' in witness.headers.get('Content-Type', ''):
+                    raw = b''.join(witness.iter_content())
+                    fetched_from_site = True
+                else:
+                    counts[gtin][url] = f'http_{status}/site_http_{witness.status_code}'
+            except (RequestException, RuntimeError):
+                counts[gtin][url] = f'http_{status}/site_unavailable'
         row = None
         if raw:
             final, body = raw if isinstance(raw, tuple) else (url, raw)
@@ -50,7 +64,10 @@ async def read_watch(db, configured):
         else:
             matches[gtin].append(row)
             result = 'in_stock' if row['offer'] else 'no_verified_offer'
-        counts[gtin][url] = result
+        if fetched_from_site:
+            counts[gtin][url] = 'site_' + result
+        else:
+            counts[gtin].setdefault(url, result)
 
     jobs = []
     metadata = {}
@@ -101,8 +118,9 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     configured = targets()
+    reader = catalog_document_reader('retail-watch')
     with closing(database(args.db)) as db:
-        watched = asyncio.run(read_watch(db, configured))
+        watched = asyncio.run(read_watch(db, configured, reader))
     # Keep the targeted observation authoritative, including when the general
     # export still has an older offer that was unavailable on this run.
     general = json.loads(args.output.read_text()) if args.output.exists() else []

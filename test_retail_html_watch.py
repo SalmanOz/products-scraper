@@ -4,6 +4,7 @@ from tempfile import TemporaryDirectory
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import patch
 
+from offer_ingestion_client import PublicDocumentResponse
 from retail_html_catalog import database
 from retail_html_watch import read_watch, targets
 import test_retail_html_catalog as fixtures
@@ -27,6 +28,19 @@ class StockWatchTest(IsolatedAsyncioTestCase):
             proof, = await read_watch(db, config)
             self.assertEqual((proof['gtin'], proof['offers'][0]['price'], proof['image']), (GTIN, 31000, IMAGE))
             self.assertEqual(proof['checkedSources'].keys(), {URL})
+
+    async def test_uses_scoped_site_reader_when_runner_is_denied(self):
+        config = {GTIN: {'urls': [URL], 'kind': 'laptop', 'brand': 'Lenovo',
+                         'model': '83K10016TR', 'photo': IMAGE}}
+        fixture = fixtures.RetailHtmlCatalogTest()
+        def collect(url):
+            self.assertEqual(url, URL)
+            return PublicDocumentResponse(url, 200, fixture.listing().decode(), 'text/html')
+        with TemporaryDirectory() as directory, closing(database(Path(directory) / 'queue.sqlite')) as db, \
+                patch('retail_html_watch.served_image', return_value=True), \
+                patch('retail_html_watch.Host.get', return_value=(403, b'')):
+            row, = await read_watch(db, config, collect)
+            self.assertEqual(row['offers'][0]['price'], 31000)
 
     def test_every_configured_store_url_is_an_exact_product_destination(self):
         self.assertEqual(set(targets()), {'0781387324506', '6937574855337', '8806091651983'})
