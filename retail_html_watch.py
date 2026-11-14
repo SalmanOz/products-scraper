@@ -31,7 +31,7 @@ def targets():
     return configured
 
 
-async def read_watch(db, configured, site_reader=None):
+async def read_watch(db, configured, site_reader=None, browser=None, browser_hosts=()):
     hosts = {}
     matches = defaultdict(list)
     counts = defaultdict(dict)
@@ -39,17 +39,27 @@ async def read_watch(db, configured, site_reader=None):
     async def probe(gtin, item, url):
         host = urlsplit(url).netloc
         status, raw = await hosts.setdefault(host, Host(.5)).get(url)
-        fetched_from_site = False
+        transport = ''
+        blocked = status in (301, 302, 307, 308, 403)
+        access = [f'http_{status}']
         if not raw and site_reader and url in item['urls'] and status in (0, 301, 302, 307, 308, 403, 429, 503):
             try:
                 witness = await asyncio.to_thread(site_reader, url)
                 if witness.status_code == 200 and 'html' in witness.headers.get('Content-Type', ''):
                     raw = b''.join(witness.iter_content())
-                    fetched_from_site = True
+                    transport = 'site_'
                 else:
-                    counts[gtin][url] = f'http_{status}/site_http_{witness.status_code}'
+                    blocked = blocked or witness.status_code in (301, 302, 307, 308, 403)
+                    access.append(f'site_http_{witness.status_code}')
             except (RequestException, RuntimeError):
-                counts[gtin][url] = f'http_{status}/site_unavailable'
+                access.append('site_unavailable')
+        if browser and url in item['urls'] and (host in browser_hosts or (blocked and not raw)):
+            reason, rendered = await browser.get(url)
+            access.append(f'browser_{reason}')
+            print(f'Browser {gtin} {url}: {reason}', flush=True)
+            if rendered:
+                raw = rendered
+                transport = 'browser_'
         row = None
         if raw:
             final, body = raw if isinstance(raw, tuple) else (url, raw)
@@ -58,16 +68,13 @@ async def read_watch(db, configured, site_reader=None):
             except (AttributeError, KeyError, TypeError, ValueError, ParserError):
                 pass
         if not row:
-            result = 'not_verified' if raw else f'http_{status}'
+            result = 'not_verified' if raw else '/'.join(access)
         elif row['gtin'] != gtin or words(row['brand']) != words(item['brand']):
             result = 'different_identity'
         else:
             matches[gtin].append(row)
             result = 'in_stock' if row['offer'] else 'no_verified_offer'
-        if fetched_from_site:
-            counts[gtin][url] = 'site_' + result
-        else:
-            counts[gtin].setdefault(url, result)
+        counts[gtin][url] = transport + result
 
     jobs = []
     metadata = {}
@@ -116,11 +123,23 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--db', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--browser-fallback', action='store_true', help='Retry blocked watch URLs in Chromium')
+    parser.add_argument('--browser-host', action='append', default=[],
+                        help='Also use Chromium for this configured host when the direct request succeeds')
+    parser.add_argument('--browser-executable', type=Path, help='Local Chromium executable override')
     args = parser.parse_args()
     configured = targets()
     reader = catalog_document_reader('retail-watch')
-    with closing(database(args.db)) as db:
-        watched = asyncio.run(read_watch(db, configured, reader))
+
+    async def run():
+        with closing(database(args.db)) as db:
+            if args.browser_fallback or args.browser_host:
+                from retail_watch_browser import StockWatchBrowser
+                async with StockWatchBrowser(args.browser_executable) as browser:
+                    return await read_watch(db, configured, reader, browser, args.browser_host)
+            return await read_watch(db, configured, reader)
+
+    watched = asyncio.run(run())
     # Keep the targeted observation authoritative, including when the general
     # export still has an older offer that was unavailable on this run.
     general = json.loads(args.output.read_text()) if args.output.exists() else []

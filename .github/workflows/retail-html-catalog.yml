@@ -54,6 +54,7 @@ jobs:
         run: |
           python -m pip install -r requirements.txt
           python -m unittest -q test_retail_html_catalog test_retail_html_watch
+          python -m playwright install --with-deps chromium
       - name: Restore and advance the private HTML queue
         env:
           SITE_CATALOG_DEPLOY_KEY: ${{ secrets.SITE_CATALOG_READ_KEY }}
@@ -79,7 +80,7 @@ jobs:
             python retail_html_catalog.py --db "$path/queue.sqlite" --pages 38 --maximum 900
             python retail_html_catalog.py --db "$path/queue.sqlite" --refresh --maximum 900 --output "$path/staged.json"
           fi
-          python retail_html_watch.py --db "$path/queue.sqlite" --output "$path/staged.json"
+          python retail_html_watch.py --db "$path/queue.sqlite" --output "$path/staged.json" --browser-fallback
       - name: Validate and publish the private catalog
         env:
           SITE_CATALOG_DEPLOY_KEY: ${{ secrets.SITE_CATALOG_WRITE_KEY }}
@@ -90,7 +91,4 @@ jobs:
         run: |
           set -euo pipefail
           catalog="$RUNNER_TEMP/html-catalog/merged.json"
-          if python verify_retail_html_watch_live.py "$catalog" --has-products; then
-            python -m playwright install --with-deps chromium
-          fi
           python verify_retail_html_watch_live.py "$catalog"
