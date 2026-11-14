@@ -71,11 +71,20 @@ def valid_row(row):
 
 def merge(rows, site, image_check, catalog):
     known, codes, source_urls = inventory(site)
-    output = {p['gtin']: p for p in read(catalog)} if catalog.exists() else {}
-    for item in output.values():
-        item['specs'] = {k: v for k, v in item['specs'].items() if technical_field(k, v)}
-    source_owners = {p['source']: p['gtin'] for p in output.values()}
     counters = Counter()
+    output = {}
+    for item in read(catalog) if catalog.exists() else ():
+        model_key = words(item['brand']), normalized_model(item['model'])
+        if (item['gtin'] in known or model_key in codes.get(item['kind'], set())
+                or item['source'] in source_urls):
+            counters['removed_existing_identity'] += 1
+            continue
+        item['specs'] = {k: v for k, v in item['specs'].items() if technical_field(k, v)}
+        if valid_row(item):
+            output[item['gtin']] = item
+        else:
+            counters['removed_invalid'] += 1
+    source_owners = {p['source']: p['gtin'] for p in output.values()}
     for row in rows:
         row = {**row, 'specs': {k: v for k, v in row['specs'].items() if technical_field(k, v)}}
         barcode = row['gtin']

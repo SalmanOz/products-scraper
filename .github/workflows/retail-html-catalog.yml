@@ -14,7 +14,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: retail-html-catalog
+  group: site-catalog-price-refresh
+  queue: max
   cancel-in-progress: false
 
 jobs:

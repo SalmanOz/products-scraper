@@ -73,6 +73,15 @@ class Expansion:
                 self.known.add(('gtin', model['gtin']))
             self.urls.update(o['url'] for o in model['offers'])
 
+        html_catalog = frontend / 'public/retail-catalog.json'
+        if html_catalog.is_file():
+            for row in read(html_catalog):
+                self.known.add(('gtin', row['gtin']))
+                if row['model']:
+                    self.known.add(('mpn', key(row['brand']), key(row['model'])))
+                self.urls.add(row['source'])
+                self.urls.update(o['url'] for o in row['offers'])
+
     def catalog(self, name):
         return read(self.frontend / 'src/data' / f'{name}.json')
 

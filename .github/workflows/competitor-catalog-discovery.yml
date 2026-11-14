@@ -38,6 +38,7 @@ jobs:
         with:
           key: ${{ secrets.SITE_CATALOG_READ_KEY }}
           expansion: |
+            /frontend/public/retail-catalog.json
             /frontend/package.json
             /frontend/package-lock.json
             /frontend/scripts/verify-laptop-pilot.mjs
