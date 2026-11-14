@@ -401,9 +401,13 @@ def selected_ty(doc, url, kind, nodes, title):
     category = as_dict(product.get('category'))
     brand = brand_name(product.get('brand'))
     name = clean(product.get('name'), 350)
+    category_verified = matches_category(kind, [category.get('name'), str(category.get('hierarchy', '')).rsplit('/', 1)[-1]])
+    fan_splitter = kind == 'pc-parts' and words(category.get('name')) == 'kablo adaptor' and (
+        re.search(r'\b([34]) pin fan coklayici y pwm\b', words(title))
+    )
     if (not name or not brand or not url.endswith('-p-' + str(product.get('id')))
             or words(title) != words(brand + ' ' + name)
-            or not matches_category(kind, [category.get('name'), str(category.get('hierarchy', '')).rsplit('/', 1)[-1]])):
+            or not (category_verified or fan_splitter)):
         return None
     variant = select_one([row for row in product.get('variants', []) if row.get('isSelected') is True]) or {}
     listing = as_dict(product.get('merchantListing'))
@@ -451,6 +455,9 @@ def selected_ty(doc, url, kind, nodes, title):
             if schema_price == selling or visible is not None and turkish_amount(text(visible)) == selling:
                 price = selling
     specs = properties(product.get('attributes', []) + schema.get('additionalProperty', []))
+    if fan_splitter:
+        specs['Bağlantı'] = fan_splitter[1] + ' pin'
+        specs['Kablo tipi'] = 'Y tipi PWM fan çoklayıcı'
     return make_row(TY, kind, url, title, brand, gtin, identifier(schema) or model_from_specs(specs),
                     product.get('images', []), specs, price, clean(as_dict(listing.get('merchant')).get('name'), 100))
 
