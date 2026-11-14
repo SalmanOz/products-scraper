@@ -13,7 +13,7 @@ from curl_cffi import CurlError
 from curl_cffi.requests import Session, RequestsError
 
 from retail_html_catalog import (
-    IMAGE_HOSTS, KIND_WORDS, STORES, amount, catalog_gtin, clean, images, product_url, technical_field, words,
+    IMAGE_HOSTS, KIND_WORDS, STORES, amount, catalog_gtin, clean, images, retail_listing_url, technical_field, words,
 )
 
 
@@ -64,7 +64,7 @@ def valid_row(row):
         return False
     source = row.get('source', '')
     host = urlsplit(source).netloc
-    if host not in STORES or product_url(source, source) != source:
+    if host not in STORES or retail_listing_url(source, source) != source:
         return False
     image_host = urlsplit(row.get('image', '')).netloc
     if not any(image_host in allowed and images(h, [row['image']]) for h, allowed in IMAGE_HOSTS.items()):
@@ -77,7 +77,7 @@ def valid_row(row):
     for offer in row['offers']:
         url = offer['url']
         host = urlsplit(url).netloc
-        if (url != product_url(url, url) or STORES.get(host) != offer['platform'] or not amount(offer['price'])
+        if (url != retail_listing_url(url, url) or STORES.get(host) != offer['platform'] or not amount(offer['price'])
                 or not clean(offer['merchant'], 100) or offer['platform'] in platforms):
             return False
         platforms.add(offer['platform'])

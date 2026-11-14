@@ -23,6 +23,7 @@ from lxml.etree import ParserError
 from mediamarkt_marketplace_audit import product_features as mediamarkt_product_features
 from pazarama_category_source import HOST as PAZARAMA
 from pazarama_offer_source import NUXT_IDENTIFIER, NUXT_STRING, native_script, native_string, pazarama_selected
+from priority_retailer_transport import n11_product_selectors
 from retailer_barcode import retailer_gtin13
 
 HB, MM, N11, TY, VATAN = ('www.hepsiburada.com', 'www.mediamarkt.com.tr', 'www.n11.com',
@@ -130,6 +131,18 @@ def product_url(raw, base):
         if (rule := PDP.get(route.netloc)) and re.fullmatch(rule, route.path):
             return url
     return None
+
+
+def retail_listing_url(raw, base):
+    canonical = product_url(raw, base)
+    if canonical and urlsplit(canonical).netloc == N11:
+        candidate = urljoin(base, raw)
+        try:
+            selectors = n11_product_selectors(candidate)
+        except ValueError:
+            return None
+        return candidate if selectors is not None else None
+    return canonical
 
 
 def jsonld(doc):
@@ -333,21 +346,46 @@ def selected_hb(doc, url, kind, nodes, title):
 def selected_n11(doc, url, kind, nodes, title):
     product = as_dict(as_dict(js_state(doc, 'window.__INITIAL_STATE__').get('productStore')).get('product'))
     category = as_dict(product.get('category'))
+    canonical = product_url(url, url)
+    selectors = n11_product_selectors(url)
     connector = (kind == 'network' and words(category.get('name')) == 'ag urunleri yedek parca aksesuarlari'
                  and ethernet_connector(title))
     if (product.get('bundleProduct') is True or product.get('secondHand') is not False
             or not (matches_category(kind, [category.get('name'), category.get('seoUrl')]) or connector)
-            or clean_url(product.get('productUrlWithoutSellerShop'), url) != url
+            or clean_url(product.get('productUrlWithoutSellerShop'), url) != canonical
             or words(product.get('title')) != words(title)):
         return None
     schema = select_one([n for n in nodes if n.get('@type') == 'Product'
-                         and as_dict(n.get('offers')).get('url') == url]) or {}
+                         and as_dict(n.get('offers')).get('url') == canonical]) or {}
     sku = product.get('defaultSkuId')
     if not sku or str(schema.get('sku')) != str(sku):
         return None
     variants = product.get('skus', [])
     matched = select_one([n for n in variants if n.get('id') == sku]) if isinstance(variants, list) else None
     gtin = exact_barcode(product.get('defaultGtin'), as_dict(matched).get('gtin'), schema.get('gtin13'))
+    if selectors:
+        legacy = js_state(doc, 'window.model')
+        meta = as_dict(legacy.get('productMeta'))
+        seller = as_dict(product.get('seller'))
+        seller_links = doc.xpath('//*[contains(concat(" ",normalize-space(@class)," ")," sidebarSellerArea-top-name ")]')
+        sku_rows = legacy.get('skus')
+        sku_rows = json.loads(sku_rows) if isinstance(sku_rows, str) else sku_rows
+        picked = select_one([s for s in sku_rows if str(s.get('id')) == str(sku)
+                             and catalog_gtin(s.get('gtin')) == gtin]) if isinstance(sku_rows, list) else None
+        if (set(selectors) != {'magaza', 'renk'} or picked is None
+                or picked.get('stock') != product.get('stock') or picked.get('outOfStock') is not False
+                or not seller.get('id') or str(seller['id']) != str(meta.get('sellerId'))
+                or str(meta.get('productId')) != str(product.get('id')) or str(meta.get('skuId')) != str(sku)
+                or len(seller_links) != 1
+                or seller_links[0].get('href') != '/magaza/' + selectors['magaza']
+                or words(text(seller_links[0])) != words(seller.get('nickName'))):
+            return None
+        color = select_one([a for a in picked.get('skuAttributes', [])
+                            if as_dict(a.get('skuDefinition')).get('seoName') == 'renk'
+                            and a.get('seoName') == selectors['renk']])
+        if color is None or not clean(color.get('name'), 50):
+            return None
+        title += ' · ' + color['name']
     brand = brand_name(schema.get('brand'))
     gallery = [row['path'].replace('{0}', '640') for row in product.get('images', [])
                if row.get('isVideoBannerImage') is False and isinstance(row.get('path'), str)]
@@ -361,7 +399,7 @@ def selected_n11(doc, url, kind, nodes, title):
         specs['Bağlantı'] = f'RJ45 Cat{connector[1]}'
         specs['Paket adedi'] = connector[2]
     offer = as_dict(schema.get('offers'))
-    price = price_value(offer, url) if product.get('availableToBuy') is True else None
+    price = price_value(offer, canonical) if product.get('availableToBuy') is True else None
     listed = amount(product.get('displayPriceNumber'))
     if (not price or product.get('hasInstantDiscount') is not False
             or any(product.get(k) is True for k in ('preSale', 'isPreSale', 'privateProduct', 'isPrivateProduct',
@@ -646,7 +684,8 @@ def read_product(raw, url, kind):
     host = urlsplit(url).netloc
     doc = document(raw)
     canonical = product_url(select_one(doc.xpath('//link[@rel="canonical"]/@href')), url)
-    if canonical != url:
+    if canonical != url and not (host == N11 and canonical == product_url(url, url)
+                                 and retail_listing_url(url, url) == url):
         incoming = re.fullmatch(PDP[host], urlsplit(url).path)
         target = re.fullmatch(PDP[host], urlsplit(canonical).path) if canonical else None
         # Hepsiburada category cards often carry a selected SKU URL while its
@@ -742,7 +781,9 @@ class Host:
                         if len(data) > 6_000_000:
                             return 413, b''
                     return code, bytes(data)
-            next_url = product_url(location, url)
+            next_url = retail_listing_url(location, url)
+            if urlsplit(url).query and next_url and urlsplit(next_url).query != urlsplit(url).query:
+                return code, b''
             if next_url and next_url != url:
                 other = urlsplit(next_url)
                 source = urlsplit(url)
