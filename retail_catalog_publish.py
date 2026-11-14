@@ -2,6 +2,7 @@
 import argparse
 import asyncio
 from collections import Counter
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import json
 import sqlite3
@@ -18,6 +19,11 @@ from retail_html_catalog import (
 
 def read(path):
     return json.loads(path.read_text())
+
+
+def ready_for_publication(row, image_check, now):
+    cutoff = (now - timedelta(hours=72)).isoformat()
+    return image_check(row['image']) and any(offer['checkedAt'] >= cutoff for offer in row['offers'])
 
 
 def normalized_model(value):
@@ -184,6 +190,10 @@ def main():
         db.execute('CREATE TABLE IF NOT EXISTS images (url TEXT PRIMARY KEY, verified INT NOT NULL)')
         verified = asyncio.run(verify_images((row['image'] for row in eligible), db))
     merged, counters = merge(rows, args.site, verified.__contains__, args.catalog)
+    now = datetime.now(timezone.utc)
+    ready = [row for row in merged if ready_for_publication(row, verified.__contains__, now)]
+    counters['awaiting_current_price_or_image'] = len(merged) - len(ready)
+    merged = ready
     args.output.write_text('[\n' + ',\n'.join(json.dumps(p, ensure_ascii=False, separators=(',', ':')) for p in merged) + '\n]\n')
     print(json.dumps({'counts': counters, 'total': len(merged),
                       'byKind': Counter(p['kind'] for p in merged)}, ensure_ascii=False))

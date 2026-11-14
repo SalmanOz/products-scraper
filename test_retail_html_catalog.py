@@ -1,10 +1,11 @@
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
 
 from retail_html_catalog import HB, TY, catalog_gtin, database, export, product_url, read_category, read_product
-from retail_catalog_publish import merge
+from retail_catalog_publish import merge, ready_for_publication
 
 
 URL = 'https://www.trendyol.com/lenovo/ideapad-83k10016tr-p-1132995554'
@@ -70,6 +71,14 @@ class RetailHtmlCatalogTest(TestCase):
         self.assertEqual(accepted['offer']['price'], 32000)
         mismatch = read_product(self.listing(price=33000, campaign=True), URL, 'laptop')
         self.assertIsNone(mismatch['offer'])
+
+    def test_publish_requires_a_current_offer_and_a_verified_image(self):
+        now = datetime(2026, 11, 14, tzinfo=timezone.utc)
+        row = {'image': IMAGE, 'offers': [{'checkedAt': now.isoformat()}]}
+        self.assertTrue(ready_for_publication(row, lambda _: True, now))
+        self.assertFalse(ready_for_publication(row, lambda _: False, now))
+        self.assertFalse(ready_for_publication({**row, 'offers': []}, lambda _: True, now))
+        self.assertFalse(ready_for_publication(row, lambda _: True, now + timedelta(hours=73)))
 
     def test_merge_keeps_one_barcode_and_excludes_existing_site_products(self):
         row = read_product(self.listing(), URL, 'laptop')
