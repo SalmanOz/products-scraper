@@ -55,6 +55,15 @@ KIND_WORDS = {
     'drone': r'\b(?:drone|dron|multikopter)\b',
     'projector': r'\b(?:projeksiyon|projector)\b',
     'power-bank': r'\b(?:power ?bank|tasinabilir (?:pilli )?sarj cihaz(?:i|lari))\b',
+    'network': r'\b(?:modem|router|yonlendirici|ag anahtari|switch|wi fi menzil genisletici)\b',
+    'storage': r'\b(?:harici (?:disk|harddisk|hard disk)|usb bellek|hafiza kart(?:i|lari)|tasinabilir ssd)\b',
+    'security-camera': r'\b(?:guvenlik kamera(?:si|lari)|ip kamera|network kamera)\b',
+    'microphone': r'\b(?:mikrofon(?:lar)?|microphone)\b',
+    'air-purifier': r'\b(?:hava temizleyici|hava temizleme cihaz(?:i|lari)|air purifier)\b',
+    'air-conditioner': r'\b(?:klima(?:lar|si)?|air conditioner)\b',
+    'refrigerator': r'\b(?:buzdolabi|buzdolaplari|derin dondurucu|refrigerator|freezer)\b',
+    'washing-machine': r'\b(?:camasir makine(?:si|leri)|washing machine)\b',
+    'dishwasher': r'\b(?:bulasik makine(?:si|leri)|dishwasher)\b',
 }
 USED = re.compile(r'\b(?:ikinci el|2 el|teshir|yenilenmis|refurbished|outlet|kullanilmis)\b')
 ACCESSORY = re.compile(r'\b(?:on panel|anakart tamir|kilif|ekran koruyucu|uyumlu sarj|sarj kablosu|aski aparati|yedek parca|toner|kartus)\b')

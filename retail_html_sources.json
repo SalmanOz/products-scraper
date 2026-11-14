@@ -61,6 +61,36 @@
     ],
     "power-bank": [
       "/tasinabilir-pilli-sarj-cihazlari-c-60004584"
+    ],
+    "network": [
+      "/ag-modemler-c-3013122",
+      "/ag-modem-switchleri-c-121"
+    ],
+    "storage": [
+      "/veri-depolama-urunleri-c-3013121",
+      "/tasinabilir-ssd-c-80081047"
+    ],
+    "security-camera": [
+      "/guvenlik-sistemleri-c-161719"
+    ],
+    "microphone": [
+      "/bilgisayar-mikrofonu-c-60001543"
+    ],
+    "air-purifier": [
+      "/hava-temizleme-nem-alma-cihazlari-c-17175"
+    ],
+    "air-conditioner": [
+      "/klimalar-c-17453"
+    ],
+    "refrigerator": [
+      "/buzdolaplari-c-22154",
+      "/derin-dondurucular-c-22266"
+    ],
+    "washing-machine": [
+      "/camasir-makineleri-c-155121"
+    ],
+    "dishwasher": [
+      "/bulasik-makineleri-c-22156"
     ]
   },
   "www.mediamarkt.com.tr": {
@@ -124,6 +154,37 @@
     ],
     "power-bank": [
       "/tr/category/tasinabilir-sarj-cihazlari-612548.html"
+    ],
+    "network": [
+      "/tr/category/network-urunleri-798016.html"
+    ],
+    "storage": [
+      "/tr/category/harici-diskler-504973.html",
+      "/tr/category/usb-bellekler-504972.html",
+      "/tr/category/hafiza-kartlari-811061.html"
+    ],
+    "security-camera": [
+      "/tr/category/guvenlik-kamerasi-817508.html"
+    ],
+    "microphone": [
+      "/tr/category/mikrofon-795529.html",
+      "/tr/category/yayinci-mikrofonu-829012.html"
+    ],
+    "air-purifier": [
+      "/tr/category/hava-temizleme-cihazlari-90361.html"
+    ],
+    "air-conditioner": [
+      "/tr/category/klimalar-465752.html"
+    ],
+    "refrigerator": [
+      "/tr/category/buzdolabi-465709.html",
+      "/tr/category/derin-dondurucular-678524.html"
+    ],
+    "washing-machine": [
+      "/tr/category/camasir-makineleri-809009.html"
+    ],
+    "dishwasher": [
+      "/tr/category/bulasik-makineleri-712509.html"
     ]
   },
   "www.n11.com": {
@@ -150,6 +211,9 @@
     ],
     "printer": [
       "/bilgisayar/yazici-tarayici-ve-aksesuarlari"
+    ],
+    "keyboard": [
+      "/bilgisayar/cevre-birimleri/klavye-ve-mouse-setleri"
     ]
   },
   "www.trendyol.com": {
@@ -167,6 +231,39 @@
     ],
     "earbuds": [
       "/kulak-ici-bluetooth-kulaklik-x-c165994"
+    ],
+    "desktop": [
+      "/masaustu-bilgisayar-x-c103670",
+      "/mini-masaustu-bilgisayar-x-c151416"
+    ],
+    "keyboard": [
+      "/klavye-x-c103671"
+    ],
+    "mouse": [
+      "/mouse-x-c108664"
+    ],
+    "pc-parts": [
+      "/ekran-karti-x-c108443",
+      "/islemci-x-c108543"
+    ],
+    "smartwatch": [
+      "/akilli-saat-x-c1240"
+    ],
+    "speaker": [
+      "/hoparlor-x-c1067",
+      "/bluetooth-hoparlor-x-c150061"
+    ],
+    "camera": [
+      "/aksiyon-kamera-x-c104245"
+    ],
+    "network": [
+      "/4g-tasinabilir-modem-x-c152188"
+    ],
+    "refrigerator": [
+      "/buzdolabi-x-c103623"
+    ],
+    "washing-machine": [
+      "/camasir-makinesi-x-c103625"
     ]
   },
   "www.vatanbilgisayar.com": {
