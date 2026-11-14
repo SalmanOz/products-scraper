@@ -681,6 +681,7 @@ def export(db, destination):
         if key not in products:
             offer = row.pop('offer')
             row['offers'] = [offer] if offer else []
+            row['checkedSources'] = {row['source']: row['checkedAt']}
             products[key] = row
             continue
         seen = products[key]
@@ -690,6 +691,7 @@ def export(db, destination):
         if row['model'] and seen['model'] and words(row['model']) != words(seen['model']):
             conflicts.add(key)
             continue
+        seen['checkedSources'].setdefault(row['source'], row['checkedAt'])
         offer = row['offer']
         if offer and not any(p['platform'] == offer['platform'] or words(p['merchant']) == words(offer['merchant'])
                              for p in seen['offers']):
@@ -743,7 +745,12 @@ def main():
             db.execute('INSERT OR IGNORE INTO pages SELECT * FROM part.pages')
             db.execute(
                 "INSERT INTO queue SELECT * FROM part.queue WHERE 1 "
-                "ON CONFLICT(url) DO UPDATE SET status=excluded.status,data=excluded.data,checked_at=excluded.checked_at "
+                "ON CONFLICT(url) DO UPDATE SET status=excluded.status, "
+                "data=CASE WHEN json_extract(queue.data,'$.gtin')=json_extract(excluded.data,'$.gtin') "
+                "AND (SELECT count(*) FROM json_each(queue.data,'$.specs')) > "
+                "(SELECT count(*) FROM json_each(excluded.data,'$.specs')) "
+                "THEN json_set(excluded.data, '$.specs', json_extract(queue.data,'$.specs')) "
+                "ELSE excluded.data END, checked_at=excluded.checked_at "
                 "WHERE excluded.status='verified' AND "
                 "(queue.status!='verified' OR json_extract(excluded.data, '$.checkedAt') >= json_extract(queue.data, '$.checkedAt'))"
             )

@@ -94,6 +94,7 @@ def merge(rows, site, image_check, catalog):
     source_owners = {p['source']: p['gtin'] for p in output.values()}
     for row in rows:
         row = {**row, 'specs': {k: v for k, v in row['specs'].items() if technical_field(k, v)}}
+        checked_sources = row.pop('checkedSources', {})
         barcode = row['gtin']
         if not valid_row(row):
             counters['invalid_or_insufficient_specs'] += 1
@@ -117,7 +118,8 @@ def merge(rows, site, image_check, catalog):
         if existing:
             if len(existing['specs']) > len(row['specs']):
                 row = {**row, 'specs': existing['specs'], 'source': existing['source']}
-            old = {offer['platform']: offer for offer in existing['offers']}
+            old = {offer['platform']: offer for offer in existing['offers']
+                   if checked_sources.get(offer['url'], '') < offer['checkedAt']}
             for offer in row['offers']:
                 platform = offer['platform']
                 if platform not in old or offer['checkedAt'] >= old[platform]['checkedAt']:

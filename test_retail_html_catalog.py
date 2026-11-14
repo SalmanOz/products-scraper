@@ -87,5 +87,7 @@ class RetailHtmlCatalogTest(TestCase):
             merged, counts = merge([other], folder, lambda _: True, catalog)
             self.assertEqual([item['gtin'] for item in merged], [GTIN])
             self.assertEqual(counts['existing_identity'], 1)
+            checked = {**rows[0], 'offers': [], 'checkedSources': {URL: rows[0]['checkedAt']}}
+            self.assertEqual(merge([checked], folder, lambda _: True, catalog)[0][0]['offers'], [])
             (folder / 'laptopPilot.json').write_text(json.dumps({'models': [{'gtin': GTIN}]}))
             self.assertFalse(merge(rows, folder, lambda _: True, catalog)[0])

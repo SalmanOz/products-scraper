@@ -7,7 +7,7 @@ remote() { bash .github/scripts/site-git "$@"; }
 catalog=frontend/public/retail-catalog.json
 for attempt in 1 2 3; do
   remote fetch --depth=1 origin master
-  git -C site reset --hard FETCH_HEAD >/dev/null
+  remote reset --hard FETCH_HEAD >/dev/null
   test -f "site/$catalog"
   python retail_catalog_publish.py "$path/staged.json" site/frontend/src/data \
     --catalog "site/$catalog" --image-cache "$path/images.sqlite" --output "$path/merged.json"
