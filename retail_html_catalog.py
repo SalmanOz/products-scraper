@@ -158,11 +158,16 @@ def matches_category(kind, category):
     return any(re.search(KIND_WORDS[kind], words(leaf)) for leaf in category if leaf)
 
 
+def ethernet_connector(title):
+    return re.search(r'\brj45 cat([56])\b.*\bkonnektor\b.*\b([1-9]\d?) lu paket\b', words(title))
+
+
 def valid_title(title, kind):
     current = words(title)
     if USED.search(current) or ACCESSORY.search(current):
         return False
-    if kind == 'network' and re.search(r'\b(?:kablo|konnektor|pense|crimp|fiber adaptor|anten soketi)\b', current):
+    if (kind == 'network' and not ethernet_connector(title)
+            and re.search(r'\b(?:kablo|konnektor|pense|crimp|fiber adaptor|anten soketi)\b', current)):
         return False
     if kind in OTHER_KIND:
         # Category path is verified on the PDP. Reject named add-ons even
@@ -328,8 +333,10 @@ def selected_hb(doc, url, kind, nodes, title):
 def selected_n11(doc, url, kind, nodes, title):
     product = as_dict(as_dict(js_state(doc, 'window.__INITIAL_STATE__').get('productStore')).get('product'))
     category = as_dict(product.get('category'))
+    connector = (kind == 'network' and words(category.get('name')) == 'ag urunleri yedek parca aksesuarlari'
+                 and ethernet_connector(title))
     if (product.get('bundleProduct') is True or product.get('secondHand') is not False
-            or not matches_category(kind, [category.get('name'), category.get('seoUrl')])
+            or not (matches_category(kind, [category.get('name'), category.get('seoUrl')]) or connector)
             or clean_url(product.get('productUrlWithoutSellerShop'), url) != url
             or words(product.get('title')) != words(title)):
         return None
@@ -350,6 +357,9 @@ def selected_n11(doc, url, kind, nodes, title):
             specs.update(properties([raw]))
     facts = properties(doc_rows_n11(doc))
     specs.update(facts)
+    if connector:
+        specs['Bağlantı'] = f'RJ45 Cat{connector[1]}'
+        specs['Paket adedi'] = connector[2]
     offer = as_dict(schema.get('offers'))
     price = price_value(offer, url) if product.get('availableToBuy') is True else None
     listed = amount(product.get('displayPriceNumber'))
