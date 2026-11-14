@@ -19,6 +19,7 @@ from curl_cffi.requests import Session, RequestsError
 from lxml import html as lxml
 from lxml.etree import ParserError
 
+from mediamarkt_marketplace_audit import product_features as mediamarkt_product_features
 from retailer_barcode import retailer_gtin13
 
 HB, MM, N11, TY, VATAN = ('www.hepsiburada.com', 'www.mediamarkt.com.tr', 'www.n11.com',
@@ -55,7 +56,7 @@ KIND_WORDS = {
     'drone': r'\b(?:drone|dron|multikopter)\b',
     'projector': r'\b(?:projeksiyon|projector)\b',
     'power-bank': r'\b(?:power ?bank|tasinabilir (?:pilli )?sarj cihaz(?:i|lari))\b',
-    'network': r'\b(?:modem|router|yonlendirici|ag anahtari|switch|wi fi menzil genisletici)\b',
+    'network': r'\b(?:modem(?:ler)?|router(?:lar)?|yonlendirici|ag anahtari|network urunleri|switch(?:ler)?|wi fi menzil genisletici)\b',
     'storage': r'\b(?:harici (?:disk|harddisk|hard disk)|usb bellek|hafiza kart(?:i|lari)|tasinabilir ssd)\b',
     'security-camera': r'\b(?:guvenlik kamera(?:si|lari)|ip kamera|network kamera)\b',
     'microphone': r'\b(?:mikrofon(?:lar)?|microphone)\b',
@@ -150,6 +151,8 @@ def matches_category(kind, category):
 def valid_title(title, kind):
     current = words(title)
     if USED.search(current) or ACCESSORY.search(current):
+        return False
+    if kind == 'network' and re.search(r'\b(?:kablo|konnektor|pense|crimp|fiber adaptor|anten soketi)\b', current):
         return False
     if kind in OTHER_KIND:
         # Category path is verified on the PDP. Reject named add-ons even
@@ -368,7 +371,7 @@ def selected_mm(doc, url, kind, nodes, title):
         return None
     crumbs = [c.get('name') for n in nodes if n.get('@type') == 'BreadcrumbList'
               for c in n.get('itemListElement', []) if c.get('item') != url]
-    if not matches_category(kind, crumbs[-2:]):
+    if not matches_category(kind, crumbs[-3:]):
         return None
     sku = str(product['sku'])
     states = doc.xpath('//script[contains(text(),"window.__PRELOADED_STATE__")]/text()')
@@ -381,6 +384,15 @@ def selected_mm(doc, url, kind, nodes, title):
             continue
         if str(row.get('id', '')).startswith('Media:tr:' + sku + ':'):
             features.append({'name': row.get('name'), 'value': row.get('values')})
+    state_match = re.match(r'window\.__PRELOADED_STATE__\s*=\s*', state)
+    if state_match:
+        try:
+            hydrated = json.loads(re.sub(r':undefined(?=[,}])', ':null', state[state_match.end():].strip().rstrip(';')))
+        except ValueError:
+            hydrated = {}
+        apollo = as_dict(hydrated.get('apolloState'))
+        graph = as_dict(apollo.get('GraphqlProductAggregate:Media:tr-TR:' + sku))
+        features += mediamarkt_product_features(apollo, graph, sku) or []
     specs = properties(product.get('additionalProperty', []) + features)
     offer = product.get('offers')
     if isinstance(offer, list):
