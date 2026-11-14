@@ -523,23 +523,35 @@ class Host:
             self.rejections[str(status)] += 1
         return status, data
 
-    def request(self, url):
+    def request(self, url, follow_alias=True):
         if not hasattr(self.clients, 'session'):
             self.clients.session = Session(impersonate='chrome', discard_cookies=True)
         try:
             with self.clients.session.stream('GET', url, headers={'Accept': 'text/html'}, timeout=18,
                                              allow_redirects=False) as response:
                 code = response.status_code
-                if code != 200:
-                    return code, b''
-                if 'html' not in response.headers.get('content-type', ''):
-                    return 415, b''
-                data = bytearray()
-                for chunk in response.iter_content():
-                    data.extend(chunk)
-                    if len(data) > 6_000_000:
-                        return 413, b''
-                return code, bytes(data)
+                location = response.headers.get('location') if follow_alias and code in (301, 302, 307, 308) else None
+                if code == 200:
+                    if 'html' not in response.headers.get('content-type', ''):
+                        return 415, b''
+                    data = bytearray()
+                    for chunk in response.iter_content():
+                        data.extend(chunk)
+                        if len(data) > 6_000_000:
+                            return 413, b''
+                    return code, bytes(data)
+            next_url = product_url(location, url)
+            if next_url and next_url != url:
+                other = urlsplit(next_url)
+                source = urlsplit(url)
+                rule = PDP.get(source.netloc)
+                before = re.fullmatch(rule, source.path)
+                after = re.fullmatch(rule, other.path)
+                if before and after and before[1] == after[1]:
+                    result, body = self.request(next_url, False)
+                    if body:
+                        return result, (next_url, body)
+            return code, b''
         except (CurlError, RequestsError, OSError, TimeoutError):
             return 0, b''
 
@@ -613,7 +625,8 @@ async def crawl(args, db):
             result = None
             if raw:
                 try:
-                    result = await asyncio.to_thread(read_product, raw, url, kind)
+                    final, body = raw if isinstance(raw, tuple) else (url, raw)
+                    result = await asyncio.to_thread(read_product, body, final, kind)
                 except (KeyError, AttributeError, ValueError, TypeError, ParserError):
                     pass
             outcome = 'verified' if result else f'http_{status}' if not raw else 'unverified'
@@ -629,13 +642,14 @@ async def crawl(args, db):
                 print(host, 'products', dict(counters), flush=True)
 
     async def work(host, reader):
-        if not (args.verify_only or args.refresh or args.retry_unverified):
+        if not (args.verify_only or args.refresh or args.retry_unverified or args.retry_redirects):
             await discover(host, reader)
         if args.discovery_only:
             return
         # Category and product requests share one host pacing budget.
         queue, counters = asyncio.Queue(), Counter()
-        status = 'verified' if args.refresh else 'unverified' if args.retry_unverified else 'pending'
+        status = ('verified' if args.refresh else 'unverified' if args.retry_unverified else
+                  'http_301' if args.retry_redirects else 'pending')
         order = 'checked_at, rowid' if args.refresh else 'rowid'
         rows = db.execute(f'SELECT url,kind FROM queue WHERE host=? AND status=? ORDER BY {order} LIMIT ?',
                           (host, status, args.maximum)).fetchall()
@@ -702,6 +716,7 @@ def main():
     mode.add_argument('--discovery-only', action='store_true')
     mode.add_argument('--verify-only', action='store_true')
     mode.add_argument('--retry-unverified', action='store_true')
+    mode.add_argument('--retry-redirects', action='store_true')
     mode.add_argument('--export-only', action='store_true')
     mode.add_argument('--refresh', action='store_true')
     args = parser.parse_args()
