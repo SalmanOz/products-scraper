@@ -22,8 +22,16 @@ def read(path):
 
 
 def ready_for_publication(row, image_check, now):
-    cutoff = (now - timedelta(hours=72)).isoformat()
-    return image_check(row['image']) and any(offer['checkedAt'] >= cutoff for offer in row['offers'])
+    if not image_check(row['image']):
+        return False
+    for offer in row['offers']:
+        try:
+            age = now - datetime.fromisoformat(offer['checkedAt'])
+        except (ValueError, TypeError, KeyError):
+            continue
+        if timedelta() <= age <= timedelta(hours=72):
+            return True
+    return False
 
 
 def normalized_model(value):
