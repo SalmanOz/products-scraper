@@ -584,6 +584,8 @@ def selected_pazarama(doc, url, kind, nodes, title, raw):
         for row in doc.xpath('//*[contains(concat(" ",normalize-space(@class)," ")," feature ")]/div[span]')
         if len(fields := row.xpath('./span')) == 2
     ])
+    if kind == 'earbuds' and 'bluetooth' in words(title).split():
+        specs.setdefault('Bağlantı türü', 'Bluetooth')
     return make_row(PAZARAMA, kind, url, title, brand_name(product.get('brand')), catalog_gtin(offer['gtin13']),
                     identifier(product) or model_from_specs(specs), product.get('image'), specs,
                     amount(offer['price']), clean(offer['merchant'], 100))
