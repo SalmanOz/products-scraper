@@ -3,7 +3,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
 
-from retail_html_catalog import HB, TY, database, export, product_url, read_category, read_product
+from retail_html_catalog import HB, TY, catalog_gtin, database, export, product_url, read_category, read_product
 from retail_catalog_publish import merge
 
 
@@ -53,6 +53,12 @@ class RetailHtmlCatalogTest(TestCase):
         self.assertIsNone(read_product(self.listing(title='Lenovo Ideapad ikinci el'), URL, 'laptop'))
         self.assertEqual(read_product(self.listing(price=30000), URL, 'laptop')['offer'], None)
 
+    def test_store_and_region_codes_are_not_global_product_ids(self):
+        for code in ('0000000022507', '2728119910147', '2482120394890'):
+            with self.subTest(code=code):
+                self.assertIsNone(catalog_gtin(code))
+        self.assertEqual(catalog_gtin(GTIN[1:]), GTIN)
+
     def test_merge_keeps_one_barcode_and_excludes_existing_site_products(self):
         row = read_product(self.listing(), URL, 'laptop')
         with TemporaryDirectory() as root:
@@ -75,5 +81,11 @@ class RetailHtmlCatalogTest(TestCase):
             merged, counts = merge(rows + rows, folder, lambda _: True, catalog)
             self.assertEqual(len(merged), 1)
             self.assertEqual(counts['added'], 1)
+            catalog.write_text(json.dumps(merged))
+            other = {**row, 'gtin': '4711081273981', 'offers': [],
+                     'source': URL.replace('1132995554', '1132995556')}
+            merged, counts = merge([other], folder, lambda _: True, catalog)
+            self.assertEqual([item['gtin'] for item in merged], [GTIN])
+            self.assertEqual(counts['existing_identity'], 1)
             (folder / 'laptopPilot.json').write_text(json.dumps({'models': [{'gtin': GTIN}]}))
             self.assertFalse(merge(rows, folder, lambda _: True, catalog)[0])

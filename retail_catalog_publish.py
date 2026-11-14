@@ -11,8 +11,9 @@ from urllib.parse import urlsplit
 from curl_cffi import CurlError
 from curl_cffi.requests import Session, RequestsError
 
-from retail_html_catalog import IMAGE_HOSTS, KIND_WORDS, STORES, amount, clean, images, product_url, technical_field, words
-from retailer_barcode import retailer_gtin13
+from retail_html_catalog import (
+    IMAGE_HOSTS, KIND_WORDS, STORES, amount, catalog_gtin, clean, images, product_url, technical_field, words,
+)
 
 
 def read(path):
@@ -43,7 +44,7 @@ def inventory(site):
 
 def valid_row(row):
     barcode = row.get('gtin')
-    if not barcode or retailer_gtin13(barcode) != barcode or row.get('kind') not in KIND_WORDS:
+    if not barcode or catalog_gtin(barcode) != barcode or row.get('kind') not in KIND_WORDS:
         return False
     if not clean(row.get('name'), 350) or not clean(row.get('brand'), 80):
         return False
@@ -73,6 +74,7 @@ def merge(rows, site, image_check, catalog):
     known, codes, source_urls = inventory(site)
     counters = Counter()
     output = {}
+    name_owners = {}
     for item in read(catalog) if catalog.exists() else ():
         model_key = words(item['brand']), normalized_model(item['model'])
         if (item['gtin'] in known or model_key in codes.get(item['kind'], set())
@@ -81,6 +83,11 @@ def merge(rows, site, image_check, catalog):
             continue
         item['specs'] = {k: v for k, v in item['specs'].items() if technical_field(k, v)}
         if valid_row(item):
+            name_key = item['kind'], model_key[0], words(item['name'])
+            if name_key in name_owners:
+                counters['removed_duplicate_name'] += 1
+                continue
+            name_owners[name_key] = item['gtin']
             output[item['gtin']] = item
         else:
             counters['removed_invalid'] += 1
@@ -92,8 +99,10 @@ def merge(rows, site, image_check, catalog):
             counters['invalid_or_insufficient_specs'] += 1
             continue
         model_key = words(row['brand']), normalized_model(row['model'])
+        name_key = row['kind'], model_key[0], words(row['name'])
         if (barcode in known or model_key in codes.get(row['kind'], set())
-                or row['source'] in source_urls or source_owners.get(row['source'], barcode) != barcode):
+                or row['source'] in source_urls or source_owners.get(row['source'], barcode) != barcode
+                or name_owners.get(name_key, barcode) != barcode):
             counters['existing_identity'] += 1
             continue
         existing = output.get(barcode)
@@ -104,6 +113,7 @@ def merge(rows, site, image_check, catalog):
             counters['image_unavailable'] += 1
             continue
         source_owners[row['source']] = barcode
+        name_owners[name_key] = barcode
         if existing:
             if len(existing['specs']) > len(row['specs']):
                 row = {**row, 'specs': existing['specs'], 'source': existing['source']}

@@ -209,8 +209,16 @@ def images(host, items):
     return list(dict.fromkeys(result))
 
 
+def catalog_gtin(value):
+    barcode = retailer_gtin13(value)
+    # GS1 restricted circulation numbers are retailer or region identifiers.
+    if barcode and not barcode.startswith(('00000', '02', '04', '05', '2', '977', '98', '99')):
+        return barcode
+    return None
+
+
 def exact_barcode(*values):
-    valid = {barcode for value in values if (barcode := retailer_gtin13(value))}
+    valid = {barcode for value in values if (barcode := catalog_gtin(value))}
     return next(iter(valid)) if len(valid) == 1 else None
 
 
