@@ -9,6 +9,10 @@ on:
         description: Check and save results without publishing to the site
         type: boolean
         default: false
+      verification_run:
+        description: Use the saved queue to check a small batch through the normal publisher
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -44,6 +48,7 @@ jobs:
       - name: Restore and advance the private HTML queue
         env:
           SITE_CATALOG_DEPLOY_KEY: ${{ secrets.SITE_CATALOG_READ_KEY }}
+          VERIFICATION_RUN: ${{ inputs.verification_run == true }}
         run: |
           set -euo pipefail
           path="$RUNNER_TEMP/html-catalog"
@@ -55,8 +60,13 @@ jobs:
           else
             test "$?" -eq 2
           fi
-          python retail_html_catalog.py --db "$path/queue.sqlite" --pages 38 --maximum 900
-          python retail_html_catalog.py --db "$path/queue.sqlite" --refresh --maximum 500 --output "$path/staged.json"
+          if [[ "$VERIFICATION_RUN" == true ]]; then
+            python retail_html_catalog.py --db "$path/queue.sqlite" --verify-only --maximum 12
+            python retail_html_catalog.py --db "$path/queue.sqlite" --refresh --maximum 12 --output "$path/staged.json"
+          else
+            python retail_html_catalog.py --db "$path/queue.sqlite" --pages 38 --maximum 900
+            python retail_html_catalog.py --db "$path/queue.sqlite" --refresh --maximum 500 --output "$path/staged.json"
+          fi
       - name: Validate and publish the private catalog
         env:
           SITE_CATALOG_DEPLOY_KEY: ${{ secrets.SITE_CATALOG_WRITE_KEY }}
