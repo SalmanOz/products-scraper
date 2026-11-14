@@ -159,6 +159,12 @@ def valid_title(title, kind):
     return True
 
 
+def technical_field(label, value):
+    key = words(label)
+    return ('@' not in value and not re.search(
+        r'\b(?:adres|uretici bilgisi|uretici iletisim|ithalatci|yetkili temsilci|uygunluk|mensei|garanti)\b', key))
+
+
 def properties(rows):
     result = {}
     for row in rows:
@@ -168,7 +174,7 @@ def properties(rows):
         value = row.get('unitText') or row.get('value')
         label = clean(as_dict(key).get('name') if isinstance(key, dict) else key, 80)
         value = clean(as_dict(value).get('name') if isinstance(value, dict) else str(value or ''), 110)
-        if label and value and words(label) not in {
+        if label and value and technical_field(label, value) and words(label) not in {
             'marka', 'brand', 'barkod', 'ean', 'gtin', 'garanti', 'garanti suresi',
             'garanti tipi', 'urun tipi', 'urun durumu', 'renk', 'color', 'mensei',
         }:

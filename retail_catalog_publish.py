@@ -11,7 +11,7 @@ from urllib.parse import urlsplit
 from curl_cffi import CurlError
 from curl_cffi.requests import Session, RequestsError
 
-from retail_html_catalog import IMAGE_HOSTS, KIND_WORDS, STORES, amount, clean, images, product_url, words
+from retail_html_catalog import IMAGE_HOSTS, KIND_WORDS, STORES, amount, clean, images, product_url, technical_field, words
 from retailer_barcode import retailer_gtin13
 
 
@@ -72,9 +72,12 @@ def valid_row(row):
 def merge(rows, site, image_check, catalog):
     known, codes, source_urls = inventory(site)
     output = {p['gtin']: p for p in read(catalog)} if catalog.exists() else {}
+    for item in output.values():
+        item['specs'] = {k: v for k, v in item['specs'].items() if technical_field(k, v)}
     source_owners = {p['source']: p['gtin'] for p in output.values()}
     counters = Counter()
     for row in rows:
+        row = {**row, 'specs': {k: v for k, v in row['specs'].items() if technical_field(k, v)}}
         barcode = row['gtin']
         if not valid_row(row):
             counters['invalid_or_insufficient_specs'] += 1
