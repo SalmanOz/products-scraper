@@ -506,6 +506,10 @@ def selected_ty(doc, url, kind, nodes, title):
     if fan_splitter:
         specs['Bağlantı'] = fan_splitter[1] + ' pin'
         specs['Kablo tipi'] = 'Y tipi PWM fan çoklayıcı'
+    if (kind == 'desktop' and words(brand) == 'genel markalar' and words(name).startswith('gmktec ')
+            and re.search(r'\bgtc g5 512\b', words(name))):
+        brand = 'GMKtec'
+        title = name
     return make_row(TY, kind, url, title, brand, gtin, identifier(schema) or model_from_specs(specs),
                     product.get('images', []), specs, price, clean(as_dict(listing.get('merchant')).get('name'), 100))
 
