@@ -165,22 +165,43 @@ def served_image(url):
 
 
 async def verify_images(urls, db):
-    existing = {url for url, in db.execute('SELECT url FROM images WHERE verified=1')}
-    new = sorted(set(urls) - existing)
+    existing = {url for url, in db.execute(
+        "SELECT url FROM images WHERE verified=1 AND checked_at >= datetime('now', '-3 days')"
+    )}
+    # Revalidate older image URLs in bounded batches and keep the remaining
+    # previously verified URLs eligible until they get their turn.
+    urls = set(urls)
+    stale = [url for url, in db.execute(
+        "SELECT url FROM images WHERE verified=1 AND checked_at < datetime('now', '-3 days') "
+        "ORDER BY checked_at, url"
+    ) if url in urls]
+    cache = existing | set(stale)
+    new = sorted(urls - cache) + stale[:600]
     limits = {host: asyncio.Semaphore(3) for host in {urlsplit(url).netloc for url in new}}
-    cache = set(existing)
 
     async def probe(url):
         async with limits[urlsplit(url).netloc]:
             if await asyncio.to_thread(served_image, url):
                 cache.add(url)
-                db.execute('INSERT OR REPLACE INTO images (url, verified) VALUES (?, 1)', (url,))
-                db.commit()
+                db.execute('INSERT OR REPLACE INTO images (url, verified, checked_at) VALUES (?, 1, CURRENT_TIMESTAMP)',
+                           (url,))
+            else:
+                cache.discard(url)
+                db.execute('DELETE FROM images WHERE url=?', (url,))
+            db.commit()
             await asyncio.sleep(.15)
 
     await asyncio.gather(*(probe(url) for url in new))
     db.commit()
     return cache
+
+
+def image_cache_schema(db):
+    db.execute('CREATE TABLE IF NOT EXISTS images (url TEXT PRIMARY KEY, verified INT NOT NULL, checked_at TEXT)')
+    if 'checked_at' not in {column[1] for column in db.execute('PRAGMA table_info(images)')}:
+        db.execute('ALTER TABLE images ADD COLUMN checked_at TEXT')
+    db.execute('UPDATE images SET checked_at=CURRENT_TIMESTAMP WHERE checked_at IS NULL')
+    db.commit()
 
 
 def main():
@@ -193,10 +214,13 @@ def main():
     args = parser.parse_args()
     rows = read(args.report)
     eligible = [p for p in rows if valid_row(p)]
+    current = read(args.catalog) if args.catalog.exists() else []
     with sqlite3.connect(args.image_cache, timeout=30) as db:
         db.execute('PRAGMA journal_mode=WAL')
-        db.execute('CREATE TABLE IF NOT EXISTS images (url TEXT PRIMARY KEY, verified INT NOT NULL)')
-        verified = asyncio.run(verify_images((row['image'] for row in eligible), db))
+        image_cache_schema(db)
+        verified = asyncio.run(verify_images(
+            (row['image'] for batch in (eligible, current) for row in batch if valid_row(row)), db
+        ))
     merged, counters = merge(rows, args.site, verified.__contains__, args.catalog)
     now = datetime.now(timezone.utc)
     ready = [row for row in merged if ready_for_publication(row, verified.__contains__, now)]
