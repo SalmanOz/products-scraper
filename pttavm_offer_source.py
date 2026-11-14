@@ -18,7 +18,9 @@ BASE = 'https://' + HOST
 PRODUCT_PATH = re.compile(r'/[a-z0-9-]{3,250}-p-([1-9]\d{5,11})')
 SELLER_PATH = re.compile(r'/magaza/([a-z0-9-]{2,100})')
 CATEGORIES = {'phone': {'cep-telefonu', 'android-telefonlar', 'iphone-ios-telefonlar'},
-              'tws': {'bluetooth-kulaklik'}}
+              'tws': {'bluetooth-kulaklik'}, 'laptop': {'dizustu-bilgisayar'},
+              'television': {'televizyon', 'televizyonlar'},
+              'monitor': {'monitor', 'led-monitor', 'oyuncu-monitoru'}}
 USED = re.compile(r'\b(?:yenilenmis|ikinci el|refurbished|outlet|teshir|muadil|replika|yedek)\b')
 CONDITIONAL = re.compile(r'\b(?:sepete ozel|sepette|kuponla|uyeye ozel|uyelere ozel|kart ile)\b')
 STATE_SCRIPT = re.compile(r'\s*window\.__staticRouterHydrationData = JSON\.parse\((".*")\);?\s*', re.S)

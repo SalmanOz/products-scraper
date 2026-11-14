@@ -60,6 +60,15 @@ class RetailHtmlCatalogTest(TestCase):
         self.assertIsNone(read_product(self.listing(title='Lenovo Ideapad ikinci el'), URL, 'laptop'))
         self.assertEqual(read_product(self.listing(price=30000), URL, 'laptop')['offer'], None)
 
+    def test_trendyol_seller_link_requires_that_seller_and_its_visible_price(self):
+        raw = self.listing().replace(b'"merchant": {', b'"merchant": {"id": 42, ')
+        raw = raw.replace(b'<script>', b'<div class="normal-price"><span class="price-container">31.000 TL</span></div><script>', 1)
+        url = URL + '?merchantId=42'
+        proof = read_product(raw, url, 'laptop')
+        self.assertEqual((proof['gtin'], proof['offer']['price'], proof['offer']['url']), (GTIN, 31000, url))
+        self.assertIsNone(read_product(raw, URL + '?merchantId=43', 'laptop'))
+        self.assertIsNone(read_product(raw.replace(b'31.000 TL', b'30.000 TL'), url, 'laptop')['offer'])
+
     def test_store_and_region_codes_are_not_global_product_ids(self):
         for code in ('0000000022507', '2728119910147', '2482120394890'):
             with self.subTest(code=code):

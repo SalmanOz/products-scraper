@@ -12,7 +12,7 @@ import re
 import sqlite3
 from unicodedata import normalize
 from threading import local
-from urllib.parse import urlencode, urljoin, urlsplit
+from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
 
 from curl_cffi import CurlError
 from curl_cffi.requests import Session, RequestsError
@@ -33,7 +33,10 @@ STORES[PAZARAMA] = 'Pazarama'
 ELEKTRONIKBURADA = 'www.elektronikburada.com.tr'
 STORES[ELEKTRONIKBURADA] = 'Elektronikburada'
 TEKNOSA, NETHOUSE = 'www.teknosa.com', 'www.nethouse.com.tr'
-STORES.update({TEKNOSA: 'Teknosa', NETHOUSE: 'Nethouse'})
+PTT, AMAZON, TCLSHOP, BILGIM = ('www.pttavm.com', 'www.amazon.com.tr', 'www.tclshoptr.com',
+                               'www.bilgimbilgisayar.com')
+STORES.update({TEKNOSA: 'Teknosa', NETHOUSE: 'Nethouse', PTT: 'PttAVM', AMAZON: 'Amazon',
+               TCLSHOP: 'TCL Shop Türkiye', BILGIM: 'Bilgim Bilgisayar'})
 PAGING = {HB: 'sayfa', MM: 'page', N11: 'pg', TY: 'pi', VATAN: 'page'}
 PDP = {
     HB: r'/[a-zA-Z0-9-]+-pm?-(HBCV?[A-Z0-9]{5,24}|[A-Z0-9]{6,24})',
@@ -45,6 +48,10 @@ PDP = {
     ELEKTRONIKBURADA: r'/([a-z0-9-]+)/',
     TEKNOSA: r'/[a-z0-9-]+-p-([1-9][0-9]{8,13})',
     NETHOUSE: r'/([a-z0-9]+(?:[.-][a-z0-9]+){2,40})',
+    PTT: r'/[a-z0-9-]{3,250}-p-([1-9][0-9]{5,11})',
+    AMAZON: r'/(?:[a-zA-Z0-9-]+/)?dp/([A-Z0-9]{10})',
+    TCLSHOP: r'/urun/([a-z0-9-]+)',
+    BILGIM: r'/urun/(ST[A-Z]?[0-9]{4,12})',
 }
 IMAGE_HOSTS = {
     HB: {'productimages.hepsiburada.net'}, MM: {'assets.mmsrg.com'}, N11: {
@@ -54,6 +61,10 @@ IMAGE_HOSTS = {
     ELEKTRONIKBURADA: {ELEKTRONIKBURADA},
     TEKNOSA: {'img-teknosa-sap.mncdn.com', 'reimg-teknosa-cloud-prod.mncdn.com'},
     NETHOUSE: {'static.ticimax.cloud'},
+    PTT: {'cdn-s3.pttavm.com'},
+    AMAZON: {'m.media-amazon.com', 'images-na.ssl-images-amazon.com'},
+    TCLSHOP: {TCLSHOP},
+    BILGIM: {BILGIM},
 }
 KIND_WORDS = {
     'laptop': r'\b(?:dizustu|laptop|notebook|macbook)\b',
@@ -148,6 +159,12 @@ def retail_listing_url(raw, base):
         except ValueError:
             return None
         return candidate if selectors is not None else None
+    if canonical and (route := urlsplit(canonical)).netloc in (TY, PAZARAMA):
+        query = urlsplit(urljoin(base, raw)).query
+        if route.netloc == TY and re.fullmatch(r'merchantId=[1-9][0-9]{0,11}', query):
+            return canonical + '?' + query
+        if route.netloc == PAZARAMA and re.fullmatch(r'magaza=[a-z0-9]+(?:-[a-z0-9]+)*', query):
+            return canonical + '?' + query
     return canonical
 
 
@@ -238,7 +255,10 @@ def images(host, items):
         if not isinstance(item, str) or len(item) > 500 or re.search(r'[\x00-\x20\\]', item):
             continue
         route = urlsplit(item)
-        if route.scheme == 'https' and route.netloc in IMAGE_HOSTS[host] and not route.query and not route.fragment:
+        valid_revision = (host == TCLSHOP and re.fullmatch(r'revision=[0-9]{1,16}', route.query)
+                          and re.fullmatch(r'/idea/[a-z0-9/]+/myassets/products/[0-9]+/[a-zA-Z0-9_.-]+', route.path))
+        if (route.scheme == 'https' and route.netloc in IMAGE_HOSTS[host]
+                and (not route.query or valid_revision) and not route.fragment):
             result.append(item)
     return list(dict.fromkeys(result))
 
@@ -378,7 +398,7 @@ def selected_n11(doc, url, kind, nodes, title):
         sku_rows = json.loads(sku_rows) if isinstance(sku_rows, str) else sku_rows
         picked = select_one([s for s in sku_rows if str(s.get('id')) == str(sku)
                              and catalog_gtin(s.get('gtin')) == gtin]) if isinstance(sku_rows, list) else None
-        if (set(selectors) != {'magaza', 'renk'} or picked is None
+        if (set(selectors) not in ({'magaza'}, {'magaza', 'renk'}) or picked is None
                 or picked.get('stock') != product.get('stock') or picked.get('outOfStock') is not False
                 or not seller.get('id') or str(seller['id']) != str(meta.get('sellerId'))
                 or str(meta.get('productId')) != str(product.get('id')) or str(meta.get('skuId')) != str(sku)
@@ -386,12 +406,13 @@ def selected_n11(doc, url, kind, nodes, title):
                 or seller_links[0].get('href') != '/magaza/' + selectors['magaza']
                 or words(text(seller_links[0])) != words(seller.get('nickName'))):
             return None
-        color = select_one([a for a in picked.get('skuAttributes', [])
-                            if as_dict(a.get('skuDefinition')).get('seoName') == 'renk'
-                            and a.get('seoName') == selectors['renk']])
-        if color is None or not clean(color.get('name'), 50):
-            return None
-        title += ' · ' + color['name']
+        if 'renk' in selectors:
+            color = select_one([a for a in picked.get('skuAttributes', [])
+                                if as_dict(a.get('skuDefinition')).get('seoName') == 'renk'
+                                and a.get('seoName') == selectors['renk']])
+            if color is None or not clean(color.get('name'), 50):
+                return None
+            title += ' · ' + color['name']
     brand = brand_name(schema.get('brand'))
     gallery = [row['path'].replace('{0}', '640') for row in product.get('images', [])
                if row.get('isVideoBannerImage') is False and isinstance(row.get('path'), str)]
@@ -451,6 +472,8 @@ def doc_rows_n11(doc):
 
 
 def selected_ty(doc, url, kind, nodes, title):
+    canonical = product_url(url, url)
+    merchant_id = parse_qs(urlsplit(url).query).get('merchantId', [None])[0]
     product = as_dict(js_state(doc, 'window["__envoy__SHARED_PROPS"]').get('product'))
     category = as_dict(product.get('category'))
     brand = brand_name(product.get('brand'))
@@ -459,29 +482,42 @@ def selected_ty(doc, url, kind, nodes, title):
     fan_splitter = kind == 'pc-parts' and words(category.get('name')) == 'kablo adaptor' and (
         re.search(r'\b([34]) pin fan coklayici y pwm\b', words(title))
     )
-    if (not name or not brand or not url.endswith('-p-' + str(product.get('id')))
+    if (not name or not brand or not canonical.endswith('-p-' + str(product.get('id')))
             or words(title) != words(brand + ' ' + name)
             or not (category_verified or fan_splitter)):
         return None
     variant = select_one([row for row in product.get('variants', []) if row.get('isSelected') is True]) or {}
     listing = as_dict(product.get('merchantListing'))
     winner = as_dict(listing.get('winnerVariant'))
+    merchant = as_dict(listing.get('merchant'))
+    if merchant_id and str(merchant.get('id')) != merchant_id:
+        return None
     if (not variant.get('itemNumber') or winner.get('itemNumber') != variant['itemNumber']
             or winner.get('barcode') != variant.get('barcode')):
         return None
     gtin = exact_barcode(variant.get('barcode'), product.get('productCode'))
-    schema = select_one([r for r in nodes if r.get('@type') == 'Product' and r.get('@id') == url]) or {}
+    schema = select_one([r for r in nodes if r.get('@type') == 'Product' and r.get('@id') == canonical]) or {}
     offer = as_dict(schema.get('offers'))
-    schema_price = price_value(offer, url)
+    schema_price = price_value(offer, canonical)
     cash = as_dict(winner.get('price'))
     selling = amount(as_dict(cash.get('sellingPrice')).get('value'))
     price = None
+    visible = select_one(doc.xpath(
+        '//*[contains(concat(" ",normalize-space(@class)," ")," normal-price ")]'
+        '//*[contains(concat(" ",normalize-space(@class)," ")," price-container ")]'
+        ' | //*[contains(concat(" ",normalize-space(@class)," ")," lowest-price ")]'
+        '//*[contains(concat(" ",normalize-space(@class)," ")," discounted ")]'))
     if (selling and cash.get('currency') == 'TRY' and product.get('inStock') is True
             and winner.get('sellable') is True and winner.get('inStock') is True
-            and (not offer or schema_price)):
+            and (merchant_id or not offer or schema_price)):
+        # Seller-scoped pages can carry the default seller's schema. Verify
+        # the selected seller against its own visible ordinary cash price.
         campaign = select_one(doc.xpath('//*[contains(concat(" ",normalize-space(@class)," ")," campaign-price-content ")]'))
         plus = select_one(doc.xpath('//*[contains(concat(" ",normalize-space(@class)," ")," ty-plus-price-content ")]'))
-        if campaign is not None:
+        if merchant_id:
+            if (campaign is None and plus is None and visible is not None and turkish_amount(text(visible)) == selling):
+                price = selling
+        elif campaign is not None:
             old = select_one(campaign.xpath('./*[contains(concat(" ",normalize-space(@class)," ")," old-price ")]'))
             current = select_one(campaign.xpath('.//*[contains(concat(" ",normalize-space(@class)," ")," new-price ")]'))
             label = select_one(campaign.xpath('.//*[contains(concat(" ",normalize-space(@class)," ")," text ")]'))
@@ -501,11 +537,6 @@ def selected_ty(doc, url, kind, nodes, title):
             ) and (schema_price is None or public >= schema_price):
                 price = public
         else:
-            visible = select_one(doc.xpath(
-                '//*[contains(concat(" ",normalize-space(@class)," ")," normal-price ")]'
-                '//*[contains(concat(" ",normalize-space(@class)," ")," price-container ")]'
-                ' | //*[contains(concat(" ",normalize-space(@class)," ")," lowest-price ")]'
-                '//*[contains(concat(" ",normalize-space(@class)," ")," discounted ")]'))
             if schema_price == selling or visible is not None and turkish_amount(text(visible)) == selling:
                 price = selling
     specs = properties(product.get('attributes', []) + schema.get('additionalProperty', []))
@@ -615,8 +646,10 @@ def selected_vatan(doc, url, kind, nodes, title):
 
 
 def selected_pazarama(doc, url, kind, nodes, title, raw):
-    offer = pazarama_selected(raw.decode('utf-8'), url)
-    if not offer:
+    canonical = product_url(url, url)
+    offer = pazarama_selected(raw.decode('utf-8'), canonical)
+    seller = parse_qs(urlsplit(url).query).get('magaza', [None])[0]
+    if not offer or seller and offer.get('merchant_id') != seller:
         return None
     soup = BeautifulSoup(raw, 'html.parser')
     native = native_script(soup)
@@ -624,7 +657,7 @@ def selected_pazarama(doc, url, kind, nodes, title, raw):
     category = re.search(r'\bcategoryName:(' + NUXT_STRING + '|' + NUXT_IDENTIFIER + r'),', detail)
     if not category or not matches_category(kind, [native_string(category[1], native)]):
         return None
-    product = select_one([n for n in nodes if n.get('@type') == 'Product' and n.get('url') == url])
+    product = select_one([n for n in nodes if n.get('@type') == 'Product' and n.get('url') == canonical])
     if not product or words(product.get('name')) != words(title):
         return None
     specs = properties([
@@ -686,6 +719,133 @@ def selected_elektronikburada(doc, url, kind, nodes, title):
                     product.get('image'), specs, price, STORES[ELEKTRONIKBURADA])
 
 
+def selected_ptt(nodes, raw, url, kind):
+    from pttavm_offer_source import selected_ptt_offer
+
+    offer, _ = selected_ptt_offer(raw.decode('utf-8'), url, kind)
+    if not offer:
+        return None
+    product = select_one([n for n in nodes if n.get('@type') == 'Product' and n.get('url') == url])
+    if not product:
+        return None
+    specs = properties(product.get('additionalProperty', []))
+    return make_row(PTT, kind, url, offer['source_title'], offer['brand'], offer['gtin13'],
+                    None, offer['_source_image'], specs, amount(offer['price']), offer['merchant'])
+
+
+def selected_tclshop(doc, url, kind, title):
+    scope = select_one(doc.xpath('//*[@itemtype="https://schema.org/Product"]'))
+    if scope is None:
+        return None
+    brand = select_one(scope.xpath('./*[@itemprop="brand"]/*[@itemprop="name"]/@content'))
+    barcode = select_one(scope.xpath('./*[@itemprop="gtin13"]/@content'))
+    sku = select_one(scope.xpath('./*[@itemprop="sku"]/text()'))
+    page_barcode = doc.xpath('//*[normalize-space(.)="Barkod Kodu" and contains(@class,"product-list-title")]'
+                             '/following-sibling::*[1]/text()')
+    name = select_one(scope.xpath('./*[@itemprop="name"]/text()'))
+    category = select_one(scope.xpath('./*[@itemprop="category"]/@content'))
+    if (words(name) != words(title) or not barcode or page_barcode != [barcode]
+            or not matches_category(kind, [category]) or not sku
+            or scope.xpath('./*[@itemprop="itemCondition"]/@content') not in (
+                ['http://schema.org/NewCondition'], ['https://schema.org/NewCondition'])):
+        return None
+    offers = select_one(scope.xpath('./*[@itemprop="offers"]'))
+    if offers is None or offers.xpath('./*[@itemprop="url"]/text()') != [url]:
+        return None
+    native = select_one([m for script in doc.xpath('//script/text()')
+                         if (m := re.search(r'pageParams\s*=\s*\{product:\s*\{id:\s*"([1-9]\d*)",'
+                             r'sku:\s*"([A-Z0-9]+)"[^\r\n]{0,1600}?currency:\s*"TRY"'
+                             r'[^\r\n]{0,1000}?quantity:\s*(\d+),salePrice:\s*(\d+(?:\.\d+)?),', script))])
+    cart = select_one(doc.xpath('//*[@data-selector="add-to-cart" and @data-context="detail"'
+                                 ' and not(@disabled) and not(@aria-disabled="true")]'))
+    display = select_one(doc.xpath('//*[contains(concat(" ",normalize-space(@class)," ")," product-price-new ")]'))
+    price = amount(select_one(offers.xpath('./*[@itemprop="price"]/@content')))
+    if (not native or native[2] != sku or int(native[3]) == 0 or not price
+            or round(float(native[4]), 2) != price or offers.xpath('./*[@itemprop="priceCurrency"]/@content') != ['TRY']
+            or offers.xpath('./*[@itemprop="availability"]/@href') != ['https://schema.org/InStock']
+            or cart is None or cart.get('data-product-id') != native[1] or words(text(cart)) != 'sepete ekle'
+            or display is None or turkish_amount(text(display)) != price):
+        price = None
+    photos = scope.xpath('./*[@itemprop="image"]/@src')
+    specs = properties([
+        {'name': text(cells[0]), 'value': text(cells[2])}
+        for line in doc.xpath('//*[contains(@class,"product-specs-table")]//tr')
+        if len(cells := line.xpath('./td')) == 3 and text(cells[1]) == ':'
+    ])
+    return make_row(TCLSHOP, kind, url, title, brand, catalog_gtin(barcode), None,
+                    [urljoin(url, img) for img in photos], specs, price, STORES[TCLSHOP])
+
+
+def selected_bilgim(doc, url, kind, expected):
+    def meta(key):
+        return select_one(doc.xpath('//meta[@property=$key]/@content', key=key))
+
+    detail = select_one(doc.xpath('//*[contains(concat(" ",normalize-space(@class)," ")," detail-grid ")]'))
+    if detail is None or meta('og:url') != url or meta('og:type') != 'product':
+        return None
+    heading = select_one(detail.xpath('.//*[contains(concat(" ",normalize-space(@class)," ")," urun-adi ")]'))
+    fields = {}
+    for line in doc.xpath('//*[contains(concat(" ",normalize-space(@class)," ")," spec-row ")]'):
+        children = line.xpath('./div')
+        if len(children) == 2:
+            key, value = children
+            fields.setdefault(words(text(key)), []).append(value)
+    barcode = select_one(fields.get('barkod', []))
+    brand = select_one(fields.get('marka', []))
+    categories = [text(n) for n in doc.xpath('//*[contains(concat(" ",normalize-space(@class)," ")," bc ")]/a')]
+    if (heading is None or barcode is None or catalog_gtin(text(barcode)) != expected
+            or brand is None or not matches_category(kind, categories)):
+        return None
+    stock = select_one(fields.get('stok durumu', []))
+    stock_marker = stock.xpath('.//*[contains(@class,"stock-ok") or contains(@class,"stock-low")]') if stock is not None else []
+    cart = select_one(detail.xpath('.//button[@id="addBtn" and not(@disabled) and not(@aria-disabled="true")]'))
+    display = select_one(detail.xpath('.//*[contains(concat(" ",normalize-space(@class)," ")," price-main ")]'))
+    price = amount(meta('product:price:amount'))
+    sku = urlsplit(url).path.rsplit('/', 1)[-1]
+    if (not stock_marker or cart is None or cart.get('onclick') != f'doAdd("{sku}", this)'
+            or words(text(cart)) != 'sepete ekle' or display is None or turkish_amount(text(display)) != price
+            or meta('product:price:currency') != 'TRY' or meta('og:price:currency') != 'TRY'
+            or amount(meta('og:price:amount')) != price):
+        price = None
+    picture = select_one(detail.xpath('.//img[@id="mainImg"]/@src'))
+    return make_row(BILGIM, kind, url, text(heading), text(brand), expected, None,
+                    urljoin(url, picture) if picture else None, {}, price, STORES[BILGIM])
+
+
+def selected_amazon(doc, url, kind, nodes):
+    title = select_one(doc.xpath('//*[@id="productTitle" and normalize-space()]'))
+    canonical = select_one(doc.xpath('//link[@rel="canonical"]/@href'))
+    if title is None or not canonical or canonical.rsplit('/', 1)[-1] != url.rsplit('/', 1)[-1]:
+        return None
+    product = select_one([n for n in nodes if n.get('@type') == 'Product'
+                          and words(n.get('name')) == words(text(title))
+                          and n.get('url') in (None, canonical)])
+    if not product:
+        return None
+    barcode = exact_barcode(*(product.get(key) for key in ('gtin', 'gtin12', 'gtin13')))
+    if not barcode or not matches_category(kind, [product.get('category'), text(title)]):
+        return None
+    offer = as_dict(product.get('offers'))
+    price = price_value(offer, canonical, ('InStock',))
+    availability = select_one(doc.xpath('//*[@id="availability" and normalize-space()]'))
+    cart = select_one(doc.xpath('//*[@id="add-to-cart-button" and not(@disabled) and not(@aria-disabled="true")]'))
+    display = select_one(doc.xpath('//*[@id="corePriceDisplay_desktop_feature_div"]'
+                                   '//*[contains(@class,"priceToPay")]'
+                                   '//*[contains(concat(" ",normalize-space(@class)," ")," a-offscreen ")]'))
+    seller = select_one(doc.xpath('//*[@id="sellerProfileTriggerId"]'))
+    seller_name = brand_name(offer.get('seller'))
+    visible = text(display) if display is not None else ''
+    visible = visible.removeprefix('₺').strip()
+    visible = visible.removesuffix('TL').removesuffix('₺').strip()
+    if (price is None or availability is None or not re.match(r'^stokta(?: |$)', words(text(availability)))
+            or cart is None or turkish_amount(visible) != price or seller is None
+            or words(text(seller)) != words(seller_name)):
+        price = None
+    return make_row(AMAZON, kind, url, text(title), brand_name(product.get('brand')), barcode,
+                    identifier(product), product.get('image'), properties(product.get('additionalProperty', [])),
+                    price, seller_name)
+
+
 def selected_teknosa(doc, url, kind, nodes, title, raw, expected):
     from teknosa_marketplace_source import _selected_marketplace_commerce
     from teknosa_reviewed_source import parse_exact_first_party_offer
@@ -737,7 +897,9 @@ def read_product(raw, url, kind, expected=None):
     host = urlsplit(url).netloc
     doc = document(raw)
     canonical = product_url(select_one(doc.xpath('//link[@rel="canonical"]/@href')), url)
-    if canonical != url and not (host == N11 and canonical == product_url(url, url)
+    if host == PTT:
+        return selected_ptt(list(jsonld(doc)), raw, url, kind) if expected else None
+    if canonical != url and not (host in (N11, TY, PAZARAMA) and canonical == product_url(url, url)
                                  and retail_listing_url(url, url) == url):
         incoming = re.fullmatch(PDP[host], urlsplit(url).path)
         target = re.fullmatch(PDP[host], urlsplit(canonical).path) if canonical else None
@@ -751,6 +913,8 @@ def read_product(raw, url, kind, expected=None):
         if (incoming[1] not in (product.get('sku'), product.get('productId')) or
                 target[1] not in (product.get('sku'), product.get('productId'))):
             return None
+    if host == BILGIM:
+        return selected_bilgim(doc, url, kind, expected) if expected else None
     headings = doc.xpath('//h1')
     if not headings:
         return None
@@ -760,6 +924,10 @@ def read_product(raw, url, kind, expected=None):
     nodes = list(jsonld(doc))
     if host == PAZARAMA:
         return selected_pazarama(doc, url, kind, nodes, title, raw)
+    if host == TCLSHOP:
+        return selected_tclshop(doc, url, kind, title) if expected else None
+    if host == AMAZON:
+        return selected_amazon(doc, url, kind, nodes) if expected else None
     if host == TEKNOSA:
         return selected_teknosa(doc, url, kind, nodes, title, raw, expected) if expected else None
     if host == NETHOUSE:
