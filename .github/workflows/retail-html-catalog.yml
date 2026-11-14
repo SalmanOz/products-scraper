@@ -65,7 +65,7 @@ jobs:
             python retail_html_catalog.py --db "$path/queue.sqlite" --refresh --maximum 12 --output "$path/staged.json"
           else
             python retail_html_catalog.py --db "$path/queue.sqlite" --pages 38 --maximum 900
-            python retail_html_catalog.py --db "$path/queue.sqlite" --refresh --maximum 500 --output "$path/staged.json"
+            python retail_html_catalog.py --db "$path/queue.sqlite" --refresh --maximum 900 --output "$path/staged.json"
           fi
       - name: Validate and publish the private catalog
         env:
