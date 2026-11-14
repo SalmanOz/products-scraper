@@ -392,25 +392,37 @@ def selected_ty(doc, url, kind, nodes, title):
     gtin = exact_barcode(variant.get('barcode'), product.get('productCode'))
     schema = select_one([r for r in nodes if r.get('@type') == 'Product' and r.get('@id') == url]) or {}
     offer = as_dict(schema.get('offers'))
-    price = price_value(offer, url) if winner.get('sellable') is True and winner.get('inStock') is True else None
+    schema_price = price_value(offer, url)
     cash = as_dict(winner.get('price'))
     selling = amount(as_dict(cash.get('sellingPrice')).get('value'))
-    campaign = doc.xpath('//*[contains(concat(" ",normalize-space(@class)," ")," campaign-price-content ")]')
-    if not price or cash.get('currency') != 'TRY' or product.get('inStock') is not True:
-        price = None
-    elif campaign:
-        old = campaign[0].xpath('./*[contains(concat(" ",normalize-space(@class)," ")," old-price ")]')
-        current = campaign[0].xpath('.//*[contains(concat(" ",normalize-space(@class)," ")," new-price ")]')
-        label = campaign[0].xpath('.//*[contains(concat(" ",normalize-space(@class)," ")," text ")]')
-        if (len(campaign) == len(old) == len(current) == len(label) == 1 and words(text(label[0])) == 'sepette'
-                and selling and selling > price and price == turkish_amount(text(current[0]))
-                and selling == turkish_amount(text(old[0]))
-                and selling == amount(as_dict(cash.get('discountedPriceAfterNoLimitPromotions')).get('value'))):
-            price = selling
+    price = None
+    if (selling and cash.get('currency') == 'TRY' and product.get('inStock') is True
+            and winner.get('sellable') is True and winner.get('inStock') is True
+            and (not offer or schema_price)):
+        campaign = select_one(doc.xpath('//*[contains(concat(" ",normalize-space(@class)," ")," campaign-price-content ")]'))
+        plus = select_one(doc.xpath('//*[contains(concat(" ",normalize-space(@class)," ")," ty-plus-price-content ")]'))
+        if campaign is not None:
+            old = select_one(campaign.xpath('./*[contains(concat(" ",normalize-space(@class)," ")," old-price ")]'))
+            current = select_one(campaign.xpath('.//*[contains(concat(" ",normalize-space(@class)," ")," new-price ")]'))
+            label = select_one(campaign.xpath('.//*[contains(concat(" ",normalize-space(@class)," ")," text ")]'))
+            discount = turkish_amount(text(current)) if current is not None else None
+            if (old is not None and label is not None and words(text(label)) == 'sepette'
+                    and discount and selling > discount and selling == turkish_amount(text(old))
+                    and discount == (schema_price or amount(as_dict(cash.get('discountedPrice')).get('value')))):
+                price = selling
+        elif plus is not None:
+            normal = select_one(plus.xpath('.//*[contains(concat(" ",normalize-space(@class)," ")," ty-plus-price-original-price ")]'))
+            public = turkish_amount(text(normal)) if normal is not None else None
+            if public and public <= selling and public in (
+                selling, amount(as_dict(cash.get('discountedPriceAfterNoLimitPromotions')).get('value'))
+            ) and (schema_price is None or public >= schema_price):
+                price = public
         else:
-            price = None
-    elif selling != price:
-        price = None
+            visible = select_one(doc.xpath(
+                '//*[contains(concat(" ",normalize-space(@class)," ")," normal-price ")]'
+                '//*[contains(concat(" ",normalize-space(@class)," ")," price-container ")]'))
+            if schema_price == selling or visible is not None and turkish_amount(text(visible)) == selling:
+                price = selling
     specs = properties(product.get('attributes', []) + schema.get('additionalProperty', []))
     return make_row(TY, kind, url, title, brand, gtin, identifier(schema) or model_from_specs(specs),
                     product.get('images', []), specs, price, clean(as_dict(listing.get('merchant')).get('name'), 100))
