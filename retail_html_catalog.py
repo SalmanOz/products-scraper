@@ -252,6 +252,13 @@ def amount(raw):
     return value if math.isfinite(value) and 1 <= value <= 5_000_000 else None
 
 
+def turkish_amount(raw):
+    value = clean(raw, 40).removesuffix(' TL').removesuffix(' ₺')
+    if not re.fullmatch(r'(?:\d+|\d{1,3}(?:\.\d{3})+)(?:,\d{2})?', value):
+        return None
+    return amount(value.replace('.', '').replace(',', '.'))
+
+
 def make_row(host, kind, url, title, brand, gtin, mpn, photos, specs, price=None, seller=None):
     title = clean(title, 350)
     photos = images(host, photos)
@@ -294,9 +301,15 @@ def selected_hb(doc, url, kind, nodes, title):
             and merchant.get('name') == product.get('merchantName') and product.get('listingId')
             and product.get('isProductLive') is True and product.get('quantity', 0) > 0
             and product.get('isInStock') is True and product.get('isPreOrder') is False)
-    price = price_value(offer, url) if live else None
-    public_price = select_one(product.get('prices', []))
-    if not public_price or public_price.get('value') != price:
+    offer_url = product_url(offer.get('url'), url)
+    ids = (product['sku'], product['productId'])
+    price = price_value(offer, offer_url) if live and offer_url and (
+        re.fullmatch(PDP[HB], urlsplit(offer_url).path)[1] in ids) else None
+    listed = product.get('prices') or []
+    public_prices = {p['value'] for p in listed
+                     if p.get('currency') == 0 and amount(p.get('value')) and
+                     turkish_amount(p.get('formattedPrice')) == p['value']}
+    if price not in public_prices or price != min(public_prices, default=None):
         price = None
     return make_row(HB, kind, url, title, brand, gtin, identifier(schema) or model_from_specs(specs), galleries, specs,
                     price, clean(product.get('merchantName'), 100))
@@ -327,9 +340,26 @@ def selected_n11(doc, url, kind, nodes, title):
             specs.update(properties([raw]))
     facts = properties(doc_rows_n11(doc))
     specs.update(facts)
-    price = price_value(as_dict(schema.get('offers')), url) if product.get('availableToBuy') is True else None
-    if not price or amount(product.get('displayPriceNumber')) != price or product.get('hasInstantDiscount') is True:
+    offer = as_dict(schema.get('offers'))
+    price = price_value(offer, url) if product.get('availableToBuy') is True else None
+    listed = amount(product.get('displayPriceNumber'))
+    if (not price or product.get('hasInstantDiscount') is not False
+            or any(product.get(k) is True for k in ('preSale', 'isPreSale', 'privateProduct', 'isPrivateProduct',
+                                                   'mobileDiscountExist', 'sellerHasMinimumCartAmount'))):
         price = None
+    elif price != listed:
+        # The selected SKU JSON-LD can advertise the basket price. Retain the
+        # ordinary listing price only when all selected product price fields agree.
+        if (listed and listed > price and price == amount(product.get('priceFloat'))
+                and product.get('hasDiscount') is False and product.get('outOfStock') is False
+                and type(product.get('stock')) is int and product['stock'] > 0
+                and product.get('hasOptionPrice') is False
+                and product.get('notPrivateProduct') is True
+                and listed == amount(product.get('displayPriceFloat')) == turkish_amount(product.get('displayPrice'))
+                and price == turkish_amount(product.get('price'))):
+            price = listed
+        else:
+            price = None
     return make_row(N11, kind, url, title, brand, gtin, clean(product.get('defaultSkuOem'), 80) or model_from_specs(specs),
                     gallery, specs, price, clean(as_dict(product.get('seller')).get('nickName'), 100))
 
@@ -364,8 +394,22 @@ def selected_ty(doc, url, kind, nodes, title):
     offer = as_dict(schema.get('offers'))
     price = price_value(offer, url) if winner.get('sellable') is True and winner.get('inStock') is True else None
     cash = as_dict(winner.get('price'))
-    if (not price or cash.get('currency') != 'TRY' or as_dict(cash.get('sellingPrice')).get('value') != price
-            or product.get('inStock') is not True or doc.xpath('//*[contains(@class,"campaign-price-content")]')):
+    selling = amount(as_dict(cash.get('sellingPrice')).get('value'))
+    campaign = doc.xpath('//*[contains(concat(" ",normalize-space(@class)," ")," campaign-price-content ")]')
+    if not price or cash.get('currency') != 'TRY' or product.get('inStock') is not True:
+        price = None
+    elif campaign:
+        old = campaign[0].xpath('./*[contains(concat(" ",normalize-space(@class)," ")," old-price ")]')
+        current = campaign[0].xpath('.//*[contains(concat(" ",normalize-space(@class)," ")," new-price ")]')
+        label = campaign[0].xpath('.//*[contains(concat(" ",normalize-space(@class)," ")," text ")]')
+        if (len(campaign) == len(old) == len(current) == len(label) == 1 and words(text(label[0])) == 'sepette'
+                and selling and selling > price and price == turkish_amount(text(current[0]))
+                and selling == turkish_amount(text(old[0]))
+                and selling == amount(as_dict(cash.get('discountedPriceAfterNoLimitPromotions')).get('value'))):
+            price = selling
+        else:
+            price = None
+    elif selling != price:
         price = None
     specs = properties(product.get('attributes', []) + schema.get('additionalProperty', []))
     return make_row(TY, kind, url, title, brand, gtin, identifier(schema) or model_from_specs(specs),

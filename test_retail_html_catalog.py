@@ -13,7 +13,8 @@ IMAGE = 'https://cdn.dsmcdn.com/ty1000/image.jpg'
 
 
 class RetailHtmlCatalogTest(TestCase):
-    def listing(self, *, title=None, identity=1132995554, barcode=GTIN, winner_barcode=GTIN, price=31000):
+    def listing(self, *, title=None, identity=1132995554, barcode=GTIN, winner_barcode=GTIN, price=31000,
+                campaign=False):
         heading = title or 'Lenovo Ideapad 83K10016TR'
         state = {
             'id': identity, 'name': 'Ideapad 83K10016TR', 'brand': {'name': 'Lenovo'},
@@ -30,7 +31,12 @@ class RetailHtmlCatalogTest(TestCase):
             '@type': 'Offer', 'availability': 'https://schema.org/InStock', 'url': URL,
             'priceCurrency': 'TRY', 'itemCondition': 'https://schema.org/NewCondition', 'price': 31000,
         }}
-        return (f'<link rel="canonical" href="{URL}"><h1>{heading}</h1><script>'
+        banner = ''
+        if campaign:
+            state['merchantListing']['winnerVariant']['price']['discountedPriceAfterNoLimitPromotions'] = {'value': price}
+            banner = ('<div class="campaign-price-content"><p class="text">Sepette</p>'
+                      '<p class="new-price">31.000 TL</p><p class="old-price">32.000 TL</p></div>')
+        return (f'<link rel="canonical" href="{URL}"><h1>{heading}</h1>{banner}<script>'
                 f'window["__envoy__SHARED_PROPS"] = {json.dumps({"product": state})}</script>'
                 f'<script type="application/ld+json">{json.dumps(schema)}</script>').encode()
 
@@ -58,6 +64,12 @@ class RetailHtmlCatalogTest(TestCase):
             with self.subTest(code=code):
                 self.assertIsNone(catalog_gtin(code))
         self.assertEqual(catalog_gtin(GTIN[1:]), GTIN)
+
+    def test_trendyol_uses_the_normal_price_when_a_conditional_offer_is_advertised(self):
+        accepted = read_product(self.listing(price=32000, campaign=True), URL, 'laptop')
+        self.assertEqual(accepted['offer']['price'], 32000)
+        mismatch = read_product(self.listing(price=33000, campaign=True), URL, 'laptop')
+        self.assertIsNone(mismatch['offer'])
 
     def test_merge_keeps_one_barcode_and_excludes_existing_site_products(self):
         row = read_product(self.listing(), URL, 'laptop')
