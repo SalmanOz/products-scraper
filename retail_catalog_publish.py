@@ -211,21 +211,36 @@ def main():
     parser.add_argument('--catalog', type=Path, required=True)
     parser.add_argument('--image-cache', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--scope', type=Path, help='Modify only the GTINs listed in this JSON object')
     args = parser.parse_args()
+    scope = set(read(args.scope)) if args.scope else None
     rows = read(args.report)
+    if scope is not None and any(row['gtin'] not in scope for row in rows):
+        parser.error('Report is outside the requested GTIN scope')
     eligible = [p for p in rows if valid_row(p)]
     current = read(args.catalog) if args.catalog.exists() else []
     with sqlite3.connect(args.image_cache, timeout=30) as db:
         db.execute('PRAGMA journal_mode=WAL')
         image_cache_schema(db)
         verified = asyncio.run(verify_images(
-            (row['image'] for batch in (eligible, current) for row in batch if valid_row(row)), db
+            (row['image'] for batch in (eligible, current) for row in batch
+             if (scope is None or row['gtin'] in scope) and valid_row(row)), db
         ))
     merged, counters = merge(rows, args.site, verified.__contains__, args.catalog)
     now = datetime.now(timezone.utc)
-    ready = [row for row in merged if ready_for_publication(row, verified.__contains__, now)]
-    counters['awaiting_current_price_or_image'] = len(merged) - len(ready)
-    merged = ready
+    candidates = [row for row in merged if scope is None or row['gtin'] in scope]
+    merged = [row for row in candidates if ready_for_publication(row, verified.__contains__, now)]
+    counters['awaiting_current_price_or_image'] = len(candidates) - len(merged)
+    if scope is not None:
+        # The scoped stock job must not expire, reformat or repair other products.
+        scoped = {row['gtin']: row for row in merged}
+        before = {row['gtin']: row for row in current if row['gtin'] in scope}
+        if before == scoped and args.catalog.exists():
+            args.output.write_bytes(args.catalog.read_bytes())
+            print('No watched product changed')
+            return
+        merged = sorted([row for row in current if row['gtin'] not in scope] + list(scoped.values()),
+                        key=lambda row: row['gtin'])
     args.output.write_text('[\n' + ',\n'.join(json.dumps(p, ensure_ascii=False, separators=(',', ':')) for p in merged) + '\n]\n')
     print(json.dumps({'counts': counters, 'total': len(merged),
                       'byKind': Counter(p['kind'] for p in merged)}, ensure_ascii=False))

@@ -32,6 +32,8 @@ STORES = {HB: 'Hepsiburada', MM: 'MediaMarkt', N11: 'n11', TY: 'Trendyol', VATAN
 STORES[PAZARAMA] = 'Pazarama'
 ELEKTRONIKBURADA = 'www.elektronikburada.com.tr'
 STORES[ELEKTRONIKBURADA] = 'Elektronikburada'
+TEKNOSA, NETHOUSE = 'www.teknosa.com', 'www.nethouse.com.tr'
+STORES.update({TEKNOSA: 'Teknosa', NETHOUSE: 'Nethouse'})
 PAGING = {HB: 'sayfa', MM: 'page', N11: 'pg', TY: 'pi', VATAN: 'page'}
 PDP = {
     HB: r'/[a-zA-Z0-9-]+-pm?-(HBCV?[A-Z0-9]{5,24}|[A-Z0-9]{6,24})',
@@ -41,6 +43,8 @@ PDP = {
     VATAN: r'/([a-z0-9-]+)\.html',
     PAZARAMA: r'/[a-z0-9-]+-p-([0-9]{12,13})',
     ELEKTRONIKBURADA: r'/([a-z0-9-]+)/',
+    TEKNOSA: r'/[a-z0-9-]+-p-([1-9][0-9]{8,13})',
+    NETHOUSE: r'/([a-z0-9]+(?:[.-][a-z0-9]+){2,40})',
 }
 IMAGE_HOSTS = {
     HB: {'productimages.hepsiburada.net'}, MM: {'assets.mmsrg.com'}, N11: {
@@ -48,6 +52,8 @@ IMAGE_HOSTS = {
     VATAN: {'cdn.vatanbilgisayar.com'},
     PAZARAMA: {'img.pzrmcdn.com'},
     ELEKTRONIKBURADA: {ELEKTRONIKBURADA},
+    TEKNOSA: {'img-teknosa-sap.mncdn.com', 'reimg-teknosa-cloud-prod.mncdn.com'},
+    NETHOUSE: {'static.ticimax.cloud'},
 }
 KIND_WORDS = {
     'laptop': r'\b(?:dizustu|laptop|notebook|macbook)\b',
@@ -680,11 +686,54 @@ def selected_elektronikburada(doc, url, kind, nodes, title):
                     product.get('image'), specs, price, STORES[ELEKTRONIKBURADA])
 
 
+def selected_teknosa(doc, url, kind, nodes, title, raw, expected):
+    from teknosa_marketplace_source import _selected_marketplace_commerce
+    from teknosa_reviewed_source import parse_exact_first_party_offer
+
+    def verify(cart, selected_title, schema):
+        if (catalog_gtin(cart.get('data-product-ean')) == expected
+                and all(catalog_gtin(str(schema[key])) == expected
+                        for key in ('gtin', 'gtin12', 'gtin13', 'gtin14') if key in schema)
+                and words(selected_title) == words(title)
+                and valid_title(selected_title, kind)):
+            return {'brand': clean(cart.get('data-product-brand'), 80)}
+
+    html = raw.decode('utf-8')
+    offer, _ = parse_exact_first_party_offer(html, url, verify_product=verify)
+    if not offer:
+        offer, _ = _selected_marketplace_commerce(html, url, verify_product=verify)
+    if not offer:
+        return None
+    product = select_one([n for n in nodes if n.get('@type') == 'Product'
+                          and str(n.get('sku')) == url.rsplit('-p-', 1)[1]])
+    if not product:
+        return None
+    specs = properties(product.get('additionalProperty', []))
+    return make_row(TEKNOSA, kind, url, offer['source_title'], offer['brand'], expected,
+                    identifier(product), product.get('image', []), specs,
+                    amount(offer['price']), clean(offer['merchant'], 100))
+
+
+def selected_nethouse(url, kind, nodes, title, raw, expected):
+    from nethouse_offer_source import selected_nethouse_offer
+
+    # The existing reader binds the selected document, cart and GTIN.
+    offer, _ = selected_nethouse_offer(raw.decode('utf-8'), url, title, lambda name, brand: name)
+    if not offer or offer['gtin13'] != expected:
+        return None
+    product = select_one([n for n in nodes if n.get('@type') == 'Product' and n.get('sku') == expected])
+    if not product:
+        return None
+    specs = properties(product.get('additionalProperty', []))
+    return make_row(NETHOUSE, kind, url, offer['source_title'], brand_name(product.get('brand')),
+                    expected, identifier(product), offer['_image'], specs, amount(offer['price']), offer['merchant'])
+
+
 PARSERS = {HB: selected_hb, N11: selected_n11, TY: selected_ty, MM: selected_mm, VATAN: selected_vatan,
            ELEKTRONIKBURADA: selected_elektronikburada}
 
 
-def read_product(raw, url, kind):
+def read_product(raw, url, kind, expected=None):
     host = urlsplit(url).netloc
     doc = document(raw)
     canonical = product_url(select_one(doc.xpath('//link[@rel="canonical"]/@href')), url)
@@ -711,6 +760,11 @@ def read_product(raw, url, kind):
     nodes = list(jsonld(doc))
     if host == PAZARAMA:
         return selected_pazarama(doc, url, kind, nodes, title, raw)
+    if host == TEKNOSA:
+        return selected_teknosa(doc, url, kind, nodes, title, raw, expected) if expected else None
+    if host == NETHOUSE:
+        heading = select_one(doc.xpath('//h1[./*[@id="divUrunKodu"]]/span[1]'))
+        return selected_nethouse(url, kind, nodes, text(heading), raw, expected) if expected and heading is not None else None
     return PARSERS[host](doc, url, kind, nodes, title)
 
 
@@ -820,7 +874,7 @@ def database(path):
 
 
 async def crawl(args, db):
-    hosts = {host: Host(args.spacing) for host in (args.host or STORES)}
+    hosts = {host: Host(args.spacing) for host in (args.host or (*PAGING, PAZARAMA, ELEKTRONIKBURADA))}
 
     async def discover(host, reader):
         for kind, paths in args.sources.get(host, {}).items():
@@ -952,7 +1006,7 @@ def main():
     parser.add_argument('--db', type=Path, required=True)
     parser.add_argument('--output', type=Path)
     parser.add_argument('--attach', type=Path, action='append', default=[], help='Merge audited HTML queues')
-    parser.add_argument('--host', choices=STORES, action='append')
+    parser.add_argument('--host', choices=(*PAGING, PAZARAMA, ELEKTRONIKBURADA), action='append')
     parser.add_argument('--kind', choices=KIND_WORDS, action='append')
     parser.add_argument('--start-page', type=int, default=1)
     parser.add_argument('--rediscover-after', type=int, default=168, metavar='HOURS')
@@ -973,7 +1027,7 @@ def main():
             or args.start_page < 1 or args.rediscover_after < 1 or args.maximum < 1 or args.export_only and not args.output:
         parser.error('Invalid page, product or request limits')
     args.sources = json.loads(args.sources.read_text()) if args.sources else SOURCES
-    if any(host not in STORES or any(kind not in KIND_WORDS or any(
+    if any(host not in (*PAGING, PAZARAMA, ELEKTRONIKBURADA) or any(kind not in KIND_WORDS or any(
             not re.fullmatch(r'/[a-z0-9./-]+', path) for path in paths)
             for kind, paths in categories.items()) for host, categories in args.sources.items()):
         parser.error('Invalid retailer category paths')

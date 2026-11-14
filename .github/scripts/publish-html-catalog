@@ -5,14 +5,20 @@ path="$RUNNER_TEMP/html-catalog"
 branch=refs/heads/scraper-retail-html
 remote() { bash .github/scripts/site-git "$@"; }
 catalog=frontend/public/retail-catalog.json
+scope=()
+if [[ "${WATCH_ONLY:-false}" == true ]]; then scope=(--scope retail_html_watch.json); fi
 for attempt in 1 2 3; do
   remote fetch --depth=1 origin master
   remote reset --hard FETCH_HEAD >/dev/null
   test -f "site/$catalog"
   python retail_catalog_publish.py "$path/staged.json" site/frontend/src/data \
-    --catalog "site/$catalog" --image-cache "$path/images.sqlite" --output "$path/merged.json"
+    --catalog "site/$catalog" --image-cache "$path/images.sqlite" --output "$path/merged.json" "${scope[@]}"
 
-  if [[ "$DRY_RUN" == true ]] || cmp -s "$path/merged.json" "site/$catalog"; then break; fi
+  if cmp -s "$path/merged.json" "site/$catalog"; then
+    if [[ "${WATCH_ONLY:-false}" == true ]]; then exit 0; fi
+    break
+  fi
+  if [[ "$DRY_RUN" == true ]]; then break; fi
   cp "$path/merged.json" "site/$catalog"
   remote add -- "$catalog"
   remote -c user.name='github-actions[bot]' \

@@ -1,0 +1,39 @@
+{
+  "0781387324506": {
+    "kind": "laptop",
+    "brand": "Lenovo",
+    "model": "83HT000QTR020",
+    "urls": [
+      "https://www.trendyol.com/lenovo/ideapad-slim-5-83ht000qtr020-ryzen7-7735hs-16gb-512ssd-14-wuxga-w11p-dizustu-bilgisayar-p-1074477481",
+      "https://www.pazarama.com/lenovo-ideapad-slim-5-83ht000qtr020-ryzen7-7735hs-16gb-512ssd-14-wuxga-w11p-dizustu-bilgisayar-p-0781387324506"
+    ],
+    "photo": "https://cdn.dsmcdn.com/ty1803/prod/QC_PREP/20251222/15/17b8a91f-bd82-349a-a6ad-814eb19f97b7/1_org_zoom.jpg"
+  },
+  "6937574855337": {
+    "kind": "television",
+    "brand": "TCL",
+    "model": "55T6D",
+    "urls": [
+      "https://www.trendyol.com/tcl/55t6d-55-inc-4k-uhd-uydu-alicili-google-smart-qled-tv-p-1142677065",
+      "https://www.mediamarkt.com.tr/tr/product/_tcl-55t6d-55-inc-139-ekran-google-qled-tv-1255450.html",
+      "https://www.pazarama.com/tcl-55t6d-55-qled-google-tv-p-6937574855337",
+      "https://www.teknosa.com/tcl-55t6d-55-qled-google-tv-p-780680876",
+      "https://www.nethouse.com.tr/tcl-55t6d-55inc-qled-google-tv",
+      "https://www.n11.com/urun/tcl-55t6d-55-qled-google-tv-126739426",
+      "https://www.hepsiburada.com/tcl-55t6d-55-139-ekran-uydu-alicili-4k-ultra-hd-google-smart-qled-tv-p-HBCV0000EK97ZL"
+    ],
+    "photo": "https://cdn.dsmcdn.com/ty1000475/product/media/images/prod/PIM/20261104/06/3abdcb89-8144-44d7-a88d-30e6e777c4ec/1_org_zoom.jpg"
+  },
+  "8806091651983": {
+    "kind": "monitor",
+    "brand": "LG",
+    "model": "29WQ600-W.APD",
+    "urls": [
+      "https://www.trendyol.com/lg/ultrawide-29wq600-w-apd-29-2560-x-1080-wfhd-beyaz-wide-monitor-p-768854925",
+      "https://www.trendyol.com/lg/ultrawide-29wq600-w-29-full-hd-ips-5ms-100hz-hdr10-monitor-p-669028933",
+      "https://www.teknosa.com/lg-ultrawide-29wq600-wapd-29-2560-x-1080-wfhd-beyaz-wide-monitor-p-125022396",
+      "https://www.vatanbilgisayar.com/lg-29-ultrawide-29wq600-w-5ms-100hz-ips-full-hd-freesync-monitor.html"
+    ],
+    "photo": "https://cdn.dsmcdn.com/ty1437/product/media/images/prod/QC/20240723/16/10b5732a-b925-3cf0-bf56-4a9b53fdb255/1_org_zoom.jpg"
+  }
+}
