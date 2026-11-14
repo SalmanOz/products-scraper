@@ -16,15 +16,19 @@ from urllib.parse import urlencode, urljoin, urlsplit
 
 from curl_cffi import CurlError
 from curl_cffi.requests import Session, RequestsError
+from bs4 import BeautifulSoup
 from lxml import html as lxml
 from lxml.etree import ParserError
 
 from mediamarkt_marketplace_audit import product_features as mediamarkt_product_features
+from pazarama_category_source import HOST as PAZARAMA
+from pazarama_offer_source import NUXT_IDENTIFIER, NUXT_STRING, native_script, native_string, pazarama_selected
 from retailer_barcode import retailer_gtin13
 
 HB, MM, N11, TY, VATAN = ('www.hepsiburada.com', 'www.mediamarkt.com.tr', 'www.n11.com',
                           'www.trendyol.com', 'www.vatanbilgisayar.com')
 STORES = {HB: 'Hepsiburada', MM: 'MediaMarkt', N11: 'n11', TY: 'Trendyol', VATAN: 'Vatan Bilgisayar'}
+STORES[PAZARAMA] = 'Pazarama'
 PAGING = {HB: 'sayfa', MM: 'page', N11: 'pg', TY: 'pi', VATAN: 'page'}
 PDP = {
     HB: r'/[a-zA-Z0-9-]+-pm?-(HBCV?[A-Z0-9]{5,24}|[A-Z0-9]{6,24})',
@@ -32,11 +36,13 @@ PDP = {
     N11: r'/urun/[a-z0-9-]+-([1-9][0-9]{3,12})',
     TY: r'/[a-z0-9-]+/[a-z0-9-]+-p-([1-9][0-9]{3,11})',
     VATAN: r'/([a-z0-9-]+)\.html',
+    PAZARAMA: r'/[a-z0-9-]+-p-([0-9]{12,13})',
 }
 IMAGE_HOSTS = {
     HB: {'productimages.hepsiburada.net'}, MM: {'assets.mmsrg.com'}, N11: {
         'n11scdn.akamaized.net', 'n11scdn2-im.akamaized.net'}, TY: {'cdn.dsmcdn.com'},
     VATAN: {'cdn.vatanbilgisayar.com'},
+    PAZARAMA: {'img.pzrmcdn.com'},
 }
 KIND_WORDS = {
     'laptop': r'\b(?:dizustu|laptop|notebook|macbook)\b',
@@ -539,6 +545,29 @@ def selected_vatan(doc, url, kind, nodes, title):
                     identifier(product), photos, specs, price, STORES[VATAN])
 
 
+def selected_pazarama(doc, url, kind, nodes, title, raw):
+    offer = pazarama_selected(raw.decode('utf-8'), url)
+    if not offer:
+        return None
+    soup = BeautifulSoup(raw, 'html.parser')
+    native = native_script(soup)
+    detail = native.split('UI_PRODUCT_DETAIL:{', 1)[-1][:30000]
+    category = re.search(r'\bcategoryName:(' + NUXT_STRING + '|' + NUXT_IDENTIFIER + r'),', detail)
+    if not category or not matches_category(kind, [native_string(category[1], native)]):
+        return None
+    product = select_one([n for n in nodes if n.get('@type') == 'Product' and n.get('url') == url])
+    if not product or words(product.get('name')) != words(title):
+        return None
+    specs = properties([
+        {'name': text(fields[0]), 'value': text(fields[1])}
+        for row in doc.xpath('//*[contains(concat(" ",normalize-space(@class)," ")," feature ")]/div[span]')
+        if len(fields := row.xpath('./span')) == 2
+    ])
+    return make_row(PAZARAMA, kind, url, title, brand_name(product.get('brand')), catalog_gtin(offer['gtin13']),
+                    identifier(product) or model_from_specs(specs), product.get('image'), specs,
+                    amount(offer['price']), clean(offer['merchant'], 100))
+
+
 PARSERS = {HB: selected_hb, N11: selected_n11, TY: selected_ty, MM: selected_mm, VATAN: selected_vatan}
 
 
@@ -565,7 +594,10 @@ def read_product(raw, url, kind):
     title = text(headings[0])
     if not title or not valid_title(title, kind):
         return None
-    return PARSERS[host](doc, url, kind, list(jsonld(doc)), title)
+    nodes = list(jsonld(doc))
+    if host == PAZARAMA:
+        return selected_pazarama(doc, url, kind, nodes, title, raw)
+    return PARSERS[host](doc, url, kind, nodes, title)
 
 
 def read_category(raw, url, host):
@@ -672,7 +704,7 @@ def database(path):
 
 
 async def crawl(args, db):
-    hosts = {host: Host(args.spacing) for host in (args.host or args.sources)}
+    hosts = {host: Host(args.spacing) for host in (args.host or STORES)}
 
     async def discover(host, reader):
         for kind, paths in args.sources.get(host, {}).items():
@@ -804,7 +836,7 @@ def main():
     parser.add_argument('--db', type=Path, required=True)
     parser.add_argument('--output', type=Path)
     parser.add_argument('--attach', type=Path, action='append', default=[], help='Merge audited HTML queues')
-    parser.add_argument('--host', choices=SOURCES, action='append')
+    parser.add_argument('--host', choices=STORES, action='append')
     parser.add_argument('--kind', choices=KIND_WORDS, action='append')
     parser.add_argument('--start-page', type=int, default=1)
     parser.add_argument('--rediscover-after', type=int, default=168, metavar='HOURS')
