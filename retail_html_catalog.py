@@ -490,7 +490,7 @@ def selected_ty(doc, url, kind, nodes, title):
             public = turkish_amount(text(normal)) if normal is not None else None
             if public and public <= selling and public in (
                 selling, amount(as_dict(cash.get('discountedPriceAfterNoLimitPromotions')).get('value')),
-                amount(as_dict(cash.get('originalPrice')).get('value')) if strike is not None
+                amount(as_dict(cash.get('discountedPrice')).get('value')) if strike is not None
                 and turkish_amount(text(strike)) == selling else None,
             ) and (schema_price is None or public >= schema_price):
                 price = public
