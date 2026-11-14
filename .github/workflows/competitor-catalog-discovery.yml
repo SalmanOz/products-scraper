@@ -87,7 +87,7 @@ jobs:
           python competitor_catalog_gaps.py \
             --site-data site/frontend/src/data \
             --phone-sitemap "$RUNNER_TEMP/site-sitemap.xml" \
-            --pages 3 --lead-limit 36 --site-lead-fallback --akakce-budget 26 --cimri-sitemap-only 4 --epey-sitemap-only 4 \
+            --no-merchant-feeds --pages 3 --lead-limit 36 --site-lead-fallback --akakce-budget 26 --cimri-sitemap-only 4 --epey-sitemap-only 4 \
             --import-akakce-snapshot .competitor-source-snapshots/akakce-discovery.json.gz \
             --import-epey-snapshot .competitor-source-snapshots/epey-discovery.json.gz \
             --import-cimri-snapshot .competitor-source-snapshots/cimri-discovery.json.gz \
@@ -139,7 +139,7 @@ jobs:
           exec > "$RUNNER_TEMP/discovery-expansion.log" 2>&1
           python comparison_component_candidates.py --state .competitor-discovery/state.json \
             --catalog site/frontend/src/data/pcParts.json --specs pc_component_specs.json \
-            --maximum-per-kind 5 --feed-budget 100 --output .competitor-discovery/components
+            --maximum-per-kind 5 --output .competitor-discovery/components
           python comparison_accessory_candidates.py --native-search 8 --state .competitor-discovery/state.json \
             --site-data site/frontend/src/data --output .competitor-discovery/accessories
       - name: Set up Node.js for the site validators

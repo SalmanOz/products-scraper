@@ -1278,6 +1278,7 @@ def main():
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('--category', action='append', choices=CATEGORIES)
     parser.add_argument('--source', action='append', choices=SOURCES)
+    parser.add_argument('--no-merchant-feeds', action='store_true')
     parser.add_argument('--collection', choices=('runner', 'site'), default='runner')
     cimri = parser.add_mutually_exclusive_group()
     cimri.add_argument('--cimri-sitemap', action='store_true', help='Read one Cimri sitemap shard before the categories')
@@ -1327,6 +1328,8 @@ def main():
     inventory = load_inventory(args.site_data, args.phone_sitemap)
     indexes = {kind: identity_index(inventory[kind]) for kind in kinds}
     state = read_state(args.state)
+    if args.no_merchant_feeds:
+        state['products'] = {key: row for key, row in state['products'].items() if row['source'] not in FEEDS}
     source_snapshots = {}
     for host, path in ((AKAKCE, args.import_akakce_snapshot), (EPEY, args.import_epey_snapshot),
                        (CIMRI, args.import_cimri_snapshot), (UCUZYUM, args.import_ucuzyum_snapshot),
@@ -1342,6 +1345,10 @@ def main():
         unpriced = {row['slug'] for row in public_phone_catalog() if row.get('fresh_offer_count') in (0, '0')}
         priority.update(unpriced, map(phone_catalog_family, unpriced))
     hosts = list(dict.fromkeys(args.source or SOURCES))
+    if args.no_merchant_feeds:
+        hosts = [host for host in hosts if host not in FEEDS]
+        if not hosts:
+            parser.error('Select at least one non-feed source')
     def source_collection(host):
         return 'site' if host == onual.HOST and args.site_lead_fallback else args.collection
 

@@ -10,3 +10,4 @@ google-genai
 pydantic
 curl_cffi
 pypdf
+lxml>=5,<7

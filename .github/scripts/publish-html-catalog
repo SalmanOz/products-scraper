@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+path="$RUNNER_TEMP/html-catalog"
+branch=refs/heads/scraper-retail-html
+remote() { bash .github/scripts/site-git "$@"; }
+catalog=frontend/public/retail-catalog.json
+for attempt in 1 2 3; do
+  remote fetch --depth=1 origin master
+  git -C site reset --hard FETCH_HEAD >/dev/null
+  test -f "site/$catalog"
+  python retail_catalog_publish.py "$path/staged.json" site/frontend/src/data \
+    --catalog "site/$catalog" --image-cache "$path/images.sqlite" --output "$path/merged.json"
+
+  if [[ "$DRY_RUN" == true ]] || cmp -s "$path/merged.json" "site/$catalog"; then break; fi
+  cp "$path/merged.json" "site/$catalog"
+  git -C site add -- "$catalog"
+  git -C site -c user.name='github-actions[bot]' \
+    -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+    commit --quiet -m 'Refresh the HTML-verified electronics catalog'
+  if remote push origin HEAD:refs/heads/master; then break; fi
+  test "$attempt" -lt 3
+done
+
+parent=()
+if remote ls-remote --exit-code origin "$branch" >/dev/null; then
+  remote fetch --depth=1 origin "$branch"
+  parent=(-p "$(git -C site rev-parse FETCH_HEAD)")
+else
+  test "$?" -eq 2
+fi
+for file in queue images; do
+  gzip -n -c "$path/$file.sqlite" > "$path/$file.sqlite.gz"
+  test "$(wc -c < "$path/$file.sqlite.gz")" -lt "$((95 * 1024 * 1024))"
+done
+queue=$(git -C site hash-object -w "$path/queue.sqlite.gz")
+images=$(git -C site hash-object -w "$path/images.sqlite.gz")
+tree=$(printf '100644 blob %s\timages.sqlite.gz\n100644 blob %s\tqueue.sqlite.gz\n' "$images" "$queue" | git -C site mktree)
+commit=$(git -C site -c user.name='github-actions[bot]' \
+  -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+  commit-tree "$tree" "${parent[@]}" -m "Save HTML crawl state for run $GITHUB_RUN_ID")
+remote push origin "$commit:$branch"

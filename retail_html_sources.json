@@ -1,0 +1,197 @@
+{
+  "www.hepsiburada.com": {
+    "laptop": [
+      "/laptop-notebook-dizustu-bilgisayarlar-c-98",
+      "/oyuncu-laptoplari-c-95583"
+    ],
+    "tablet": [
+      "/tablet-c-3008012"
+    ],
+    "television": [
+      "/led-tv-televizyonlar-c-163192"
+    ],
+    "smartwatch": [
+      "/akilli-saatler-c-60003676"
+    ],
+    "monitor": [
+      "/monitorler-c-57"
+    ],
+    "earbuds": [
+      "/bluetooth-kulakliklar-c-16218"
+    ],
+    "pc-parts": [
+      "/anakartlar-c-152",
+      "/ekran-kartlari-c-204",
+      "/islemciler-c-46",
+      "/ssd-solid-state-drive-c-114814",
+      "/bilgisayar-parcalari-c-8"
+    ],
+    "desktop": [
+      "/masaustu-bilgisayarlar-c-34"
+    ],
+    "keyboard": [
+      "/klavyeler-c-1"
+    ],
+    "mouse": [
+      "/mouse-c-52"
+    ],
+    "printer": [
+      "/yazicilar-c-3013118",
+      "/3d-yazici-c-60008975",
+      "/lazer-yazicilar-c-6",
+      "/tankli-yazici-c-80194056"
+    ],
+    "speaker": [
+      "/tasinabilir-hoparlorler-c-376097",
+      "/bluetooth-hoparlorler-c-60004557"
+    ],
+    "robot-vacuum": [
+      "/robot-supurge-c-80160033"
+    ],
+    "camera": [
+      "/dijital-fotograf-makineleri-c-248",
+      "/aynasiz-kompakt-slr-makineler-c-60002029",
+      "/aksiyon-kameralari-c-22018092"
+    ],
+    "drone": [
+      "/drone-multikopter-c-60006033"
+    ],
+    "projector": [
+      "/projeksiyon-cihazlari-c-15530"
+    ],
+    "power-bank": [
+      "/tasinabilir-pilli-sarj-cihazlari-c-60004584"
+    ]
+  },
+  "www.mediamarkt.com.tr": {
+    "laptop": [
+      "/tr/category/laptop-504926.html"
+    ],
+    "tablet": [
+      "/tr/category/tabletler-639520.html"
+    ],
+    "television": [
+      "/tr/category/televizyon-465019.html"
+    ],
+    "smartwatch": [
+      "/tr/category/akilli-saatler-862018.html"
+    ],
+    "monitor": [
+      "/tr/category/monitor-818179.html",
+      "/tr/category/oyuncu-monitoru-818180.html"
+    ],
+    "earbuds": [
+      "/tr/category/bluetooth-kulakliklar-795539.html"
+    ],
+    "pc-parts": [
+      "/tr/category/anakart-798063.html",
+      "/tr/category/islemci-679036.html",
+      "/tr/category/ekran-karti-679035.html",
+      "/tr/category/ram-798060.html",
+      "/tr/category/solid-state-disk-drive-ssd-798099.html",
+      "/tr/category/bilgisayar-kasasi-798061.html",
+      "/tr/category/tasinabilir-ssd-90469.html"
+    ],
+    "desktop": [
+      "/tr/category/masaustu-bilgisayarlar-504957.html"
+    ],
+    "keyboard": [
+      "/tr/category/klavye-798012.html",
+      "/tr/category/oyuncu-klavye-875086.html"
+    ],
+    "mouse": [
+      "/tr/category/mouse-798014.html",
+      "/tr/category/oyuncu-mouse-798054.html"
+    ],
+    "printer": [
+      "/tr/category/yazici-tarayici-797535.html"
+    ],
+    "speaker": [
+      "/tr/category/bluetooth-hoparlorler-795521.html"
+    ],
+    "robot-vacuum": [
+      "/tr/category/robot-supurge-465744.html"
+    ],
+    "camera": [
+      "/tr/category/fotograf-makineleri-811020.html",
+      "/tr/category/aksiyon-kamerasi-811039.html"
+    ],
+    "drone": [
+      "/tr/category/drone-811034.html"
+    ],
+    "projector": [
+      "/tr/category/projeksiyon-465020.html"
+    ],
+    "power-bank": [
+      "/tr/category/tasinabilir-sarj-cihazlari-612548.html"
+    ]
+  },
+  "www.n11.com": {
+    "laptop": [
+      "/bilgisayar/dizustu-bilgisayar"
+    ],
+    "television": [
+      "/televizyon-ve-ses-sistemleri/televizyon"
+    ],
+    "smartwatch": [
+      "/telefon-ve-aksesuarlari/giyilebilir-teknoloji/akilli-saat"
+    ],
+    "monitor": [
+      "/bilgisayar/cevre-birimleri/monitor-ve-ekran"
+    ],
+    "earbuds": [
+      "/telefon-ve-aksesuarlari/cep-telefonu-aksesuarlari/bluetooth-kulaklik"
+    ],
+    "desktop": [
+      "/bilgisayar/masaustu-bilgisayar"
+    ],
+    "pc-parts": [
+      "/bilgisayar/bilgisayar-bilesenleri"
+    ],
+    "printer": [
+      "/bilgisayar/yazici-tarayici-ve-aksesuarlari"
+    ]
+  },
+  "www.trendyol.com": {
+    "laptop": [
+      "/laptop-x-c103108"
+    ],
+    "tablet": [
+      "/tablet-x-c103665"
+    ],
+    "television": [
+      "/televizyon-x-c104156"
+    ],
+    "monitor": [
+      "/monitor-x-c103668"
+    ],
+    "earbuds": [
+      "/kulak-ici-bluetooth-kulaklik-x-c165994"
+    ]
+  },
+  "www.vatanbilgisayar.com": {
+    "laptop": [
+      "/notebook/"
+    ],
+    "tablet": [
+      "/tabletler/"
+    ],
+    "television": [
+      "/televizyon/"
+    ],
+    "smartwatch": [
+      "/akilli-saatler/"
+    ],
+    "pc-parts": [
+      "/islemciler/",
+      "/anakart/",
+      "/ekran-kartlari/"
+    ],
+    "printer": [
+      "/yazici/"
+    ],
+    "robot-vacuum": [
+      "/robot-supurgeler/"
+    ]
+  }
+}
