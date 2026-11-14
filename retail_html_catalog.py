@@ -424,15 +424,20 @@ def selected_ty(doc, url, kind, nodes, title):
                 price = selling
         elif plus is not None:
             normal = select_one(plus.xpath('.//*[contains(concat(" ",normalize-space(@class)," ")," ty-plus-price-original-price ")]'))
+            strike = select_one(plus.xpath('.//*[contains(concat(" ",normalize-space(@class)," ")," ty-plus-price-strikethrough-price ")]'))
             public = turkish_amount(text(normal)) if normal is not None else None
             if public and public <= selling and public in (
-                selling, amount(as_dict(cash.get('discountedPriceAfterNoLimitPromotions')).get('value'))
+                selling, amount(as_dict(cash.get('discountedPriceAfterNoLimitPromotions')).get('value')),
+                amount(as_dict(cash.get('originalPrice')).get('value')) if strike is not None
+                and turkish_amount(text(strike)) == selling else None,
             ) and (schema_price is None or public >= schema_price):
                 price = public
         else:
             visible = select_one(doc.xpath(
                 '//*[contains(concat(" ",normalize-space(@class)," ")," normal-price ")]'
-                '//*[contains(concat(" ",normalize-space(@class)," ")," price-container ")]'))
+                '//*[contains(concat(" ",normalize-space(@class)," ")," price-container ")]'
+                ' | //*[contains(concat(" ",normalize-space(@class)," ")," lowest-price ")]'
+                '//*[contains(concat(" ",normalize-space(@class)," ")," discounted ")]'))
             if schema_price == selling or visible is not None and turkish_amount(text(visible)) == selling:
                 price = selling
     specs = properties(product.get('attributes', []) + schema.get('additionalProperty', []))
@@ -520,11 +525,16 @@ def selected_vatan(doc, url, kind, nodes, title):
     specs.update(table_properties(doc, '//*[contains(@class,"product-table")]//tr'))
     offer = as_dict(product.get('offers'))
     price = price_value(offer, url)
-    price_region = doc.xpath('//*[contains(@class,"product-detail")]//*[contains(@class,"product-list__price")]')
-    visible = [amount(text(node).replace('.', '').replace(',', '.')) for node in price_region]
+    price_region = doc.xpath('//*[contains(concat(" ",normalize-space(@class)," ")," product-detail-price-big ")]'
+                             '//*[contains(concat(" ",normalize-space(@class)," ")," product-list__price ")]')
+    visible = {turkish_amount(text(node)) for node in price_region}
     checkout = doc.xpath('//*[@id="add-to-cart-button" and not(@disabled) and @onclick="addBasket()"]')
-    if not checkout or not price or price not in visible or brand_name(offer.get('seller')) != STORES[VATAN]:
+    if not checkout or not price or brand_name(offer.get('seller')) != STORES[VATAN]:
         price = None
+    elif price not in visible:
+        # Vatan renders integral Lira for listings whose schema ends in .01.
+        rounded = math.floor(price)
+        price = rounded if visible == {rounded} and round(price - rounded, 2) == .01 else None
     return make_row(VATAN, kind, url, title, brand, exact_barcode(barcode.get('ean'), product.get('gtin13')),
                     identifier(product), photos, specs, price, STORES[VATAN])
 
