@@ -29,6 +29,8 @@ HB, MM, N11, TY, VATAN = ('www.hepsiburada.com', 'www.mediamarkt.com.tr', 'www.n
                           'www.trendyol.com', 'www.vatanbilgisayar.com')
 STORES = {HB: 'Hepsiburada', MM: 'MediaMarkt', N11: 'n11', TY: 'Trendyol', VATAN: 'Vatan Bilgisayar'}
 STORES[PAZARAMA] = 'Pazarama'
+ELEKTRONIKBURADA = 'www.elektronikburada.com.tr'
+STORES[ELEKTRONIKBURADA] = 'Elektronikburada'
 PAGING = {HB: 'sayfa', MM: 'page', N11: 'pg', TY: 'pi', VATAN: 'page'}
 PDP = {
     HB: r'/[a-zA-Z0-9-]+-pm?-(HBCV?[A-Z0-9]{5,24}|[A-Z0-9]{6,24})',
@@ -37,12 +39,14 @@ PDP = {
     TY: r'/[a-z0-9-]+/[a-z0-9-]+-p-([1-9][0-9]{3,11})',
     VATAN: r'/([a-z0-9-]+)\.html',
     PAZARAMA: r'/[a-z0-9-]+-p-([0-9]{12,13})',
+    ELEKTRONIKBURADA: r'/([a-z0-9-]+)/',
 }
 IMAGE_HOSTS = {
     HB: {'productimages.hepsiburada.net'}, MM: {'assets.mmsrg.com'}, N11: {
         'n11scdn.akamaized.net', 'n11scdn2-im.akamaized.net'}, TY: {'cdn.dsmcdn.com'},
     VATAN: {'cdn.vatanbilgisayar.com'},
     PAZARAMA: {'img.pzrmcdn.com'},
+    ELEKTRONIKBURADA: {ELEKTRONIKBURADA},
 }
 KIND_WORDS = {
     'laptop': r'\b(?:dizustu|laptop|notebook|macbook)\b',
@@ -568,7 +572,55 @@ def selected_pazarama(doc, url, kind, nodes, title, raw):
                     amount(offer['price']), clean(offer['merchant'], 100))
 
 
-PARSERS = {HB: selected_hb, N11: selected_n11, TY: selected_ty, MM: selected_mm, VATAN: selected_vatan}
+def selected_elektronikburada(doc, url, kind, nodes, title):
+    if kind != 'earbuds':
+        return None
+    product = select_one([node for node in nodes if str(node.get('@type')).rsplit('/', 1)[-1] == 'Product'
+                          and words(node.get('name')) == words(title)])
+    if not product:
+        return None
+    offers = product.get('offers')
+    offer = as_dict(select_one(offers) if isinstance(offers, list) else offers)
+    price = price_value({**offer, '@type': str(offer.get('@type')).rsplit('/', 1)[-1]}, url)
+    if price is None:
+        return None
+    code = select_one(doc.xpath('//*[starts-with(@id,"product_code_") and normalize-space(.)=$sku]',
+                               sku=str(product.get('sku', ''))))
+    if code is None or not (gtin := catalog_gtin(text(code))):
+        return None
+    item = code.get('id').removeprefix('product_code_')
+    if not item.isascii() or not item.isdecimal():
+        return None
+    form = select_one(doc.xpath('//form[.//input[@name=$name and @value=$id]]',
+                                name=f'product_data[{item}][product_id]', id=item))
+    if form is None:
+        return None
+    cart = select_one(form.xpath('.//button[@id=$id and @type="submit" and not(@disabled)]',
+                                id=f'button_cart_{item}'))
+    visible = select_one(form.xpath('.//*[@id=$id]', id=f'sec_discounted_price_{item}'))
+    stock = select_one(form.xpath('.//*[@id=$id]', id=f'product_amount_update_{item}'))
+    if (cart is None or words(text(cart)) != 'sepete ekle' or stock is None
+            or words(text(stock)) != 'stokta stokta' or visible is None
+            or not re.fullmatch(r'(?:\d+|\d{1,3}(?:,\d{3})+)\.\d{2}', text(visible))
+            or amount(text(visible).replace(',', '')) != price):
+        return None
+    specs = properties([
+        {'name': text(fields[0]).rstrip(':'), 'value': text(fields[1])}
+        for row in doc.xpath('//*[contains(concat(" ",normalize-space(@class)," ")," ty-product-feature ")]')
+        if len(fields := row.xpath('./div')) == 2
+    ])
+    color = select_one(doc.xpath('//*[contains(concat(" ",normalize-space(@class)," ")," ty-product-feature ")]'
+                                 '/*[normalize-space(.)="Renk:"]/following-sibling::*[1]'))
+    if color is not None:
+        specs['Renk'] = text(color)
+    specs['Bağlantı türü'] = 'Bluetooth' if 'bluetooth' in words(title).split() else ''
+    specs = {name: value for name, value in specs.items() if value}
+    return make_row(ELEKTRONIKBURADA, kind, url, title, brand_name(product.get('brand')), gtin, None,
+                    product.get('image'), specs, price, STORES[ELEKTRONIKBURADA])
+
+
+PARSERS = {HB: selected_hb, N11: selected_n11, TY: selected_ty, MM: selected_mm, VATAN: selected_vatan,
+           ELEKTRONIKBURADA: selected_elektronikburada}
 
 
 def read_product(raw, url, kind):
