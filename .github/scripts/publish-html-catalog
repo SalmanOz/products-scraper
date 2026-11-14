@@ -14,8 +14,8 @@ for attempt in 1 2 3; do
 
   if [[ "$DRY_RUN" == true ]] || cmp -s "$path/merged.json" "site/$catalog"; then break; fi
   cp "$path/merged.json" "site/$catalog"
-  git -C site add -- "$catalog"
-  git -C site -c user.name='github-actions[bot]' \
+  remote add -- "$catalog"
+  remote -c user.name='github-actions[bot]' \
     -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
     commit --quiet -m 'Refresh the HTML-verified electronics catalog'
   if remote push origin HEAD:refs/heads/master; then break; fi
