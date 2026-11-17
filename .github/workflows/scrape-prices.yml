@@ -298,9 +298,11 @@ jobs:
           : "${SCRAPER_INGESTION_SECRET:?SCRAPER_INGESTION_SECRET is required}"
           python update_prices.py
 
+      # The weekly technical run has its own time budget; the daily schedule
+      # already refreshes prices and must not be repeated after that scan.
       - name: Run Price Update Scraper (TR Merchants)
         id: daily_prices
-        if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_technical_data != 'true') }}
+        if: ${{ github.event.schedule == '0 3 * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_technical_data != 'true') }}
         env:
           TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
           SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
@@ -335,7 +337,7 @@ jobs:
           retention-days: 30
 
       - name: Save daily merchant evidence and coverage report
-        if: ${{ always() && !cancelled() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_technical_data != 'true')) }}
+        if: ${{ always() && !cancelled() && (github.event.schedule == '0 3 * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_technical_data != 'true')) }}
         uses: actions/upload-artifact@v4
         with:
           name: daily-price-evidence-${{ github.run_id }}
@@ -343,7 +345,7 @@ jobs:
           retention-days: 30
 
       - name: Summarize verified merchant coverage
-        if: ${{ always() && !cancelled() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_technical_data != 'true')) }}
+        if: ${{ always() && !cancelled() && (github.event.schedule == '0 3 * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_technical_data != 'true')) }}
         run: |
           python - <<'PY'
           import json, os
@@ -364,7 +366,7 @@ jobs:
           PY
 
       - name: Audit Price Index Data Readiness
-        if: ${{ always() && !cancelled() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_technical_data != 'true')) }}
+        if: ${{ always() && !cancelled() && (github.event.schedule == '0 3 * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_technical_data != 'true')) }}
         env:
           TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
           SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
