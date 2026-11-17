@@ -33,6 +33,11 @@ on:
         required: false
         type: string
         default: '0'
+      technical_product_slugs:
+        description: 'Optional comma-separated existing product slugs to retry; empty refreshes the full catalog'
+        required: false
+        type: string
+        default: ''
       comparison_readiness_only:
         description: 'Audit the strict comparison readiness contract only'
         required: false
@@ -84,6 +89,7 @@ jobs:
           TECHNICAL_PENDING_ONLY: ${{ github.event.inputs.technical_pending_only }}
           TECHNICAL_SCHEMA_ONLY: ${{ github.event.inputs.technical_schema_only }}
           TECHNICAL_PRODUCT_LIMIT: ${{ github.event.inputs.technical_product_limit || '0' }}
+          TECHNICAL_PRODUCT_SLUGS: ${{ github.event.inputs.technical_product_slugs }}
           COMPARISON_READINESS_ONLY: ${{ github.event.inputs.comparison_readiness_only }}
           PRICE_INDEX_AUDIT_ONLY: ${{ github.event.inputs.price_index_audit_only }}
           RUN_PHASE2_BACKFILL: ${{ github.event.inputs.run_phase2_backfill }}
@@ -112,6 +118,10 @@ jobs:
           fi
           if [[ ! "${TECHNICAL_PRODUCT_LIMIT}" =~ ^[0-9]+$ ]]; then
             echo "technical_product_limit must be a non-negative integer." >&2
+            exit 1
+          fi
+          if [[ -n "${TECHNICAL_PRODUCT_SLUGS}" && ( "${RUN_TECHNICAL_DATA}" != "true" || "${TECHNICAL_SCHEMA_ONLY}" == "true" || "${COMPARISON_READINESS_ONLY}" == "true" || "${PRICE_INDEX_AUDIT_ONLY}" == "true" || "${REPAIR_SPEC_BATCH}" != "none" || "${CATALOG_EXPANSION_BATCH}" != "none" ) ]]; then
+            echo "Selected product retries require ordinary technical ingestion." >&2
             exit 1
           fi
           if [[ "${COMPARISON_READINESS_ONLY}" == "true" && "${RUN_TECHNICAL_DATA}" != "true" ]]; then
@@ -230,6 +240,7 @@ jobs:
           REFRESH_PHYSICAL: ${{ github.event_name == 'schedule' || github.event.inputs.refresh_physical == 'true' }}
           TECHNICAL_SCHEMA_ONLY: ${{ github.event.inputs.technical_schema_only }}
           TECHNICAL_PRODUCT_LIMIT: ${{ github.event.inputs.technical_product_limit || '0' }}
+          TECHNICAL_PRODUCT_SLUGS: ${{ github.event.inputs.technical_product_slugs }}
           COMPARISON_READINESS_ONLY: ${{ github.event.inputs.comparison_readiness_only }}
           PRICE_INDEX_AUDIT_ONLY: ${{ github.event.inputs.price_index_audit_only }}
           CATALOG_EXPANSION_BATCH: ${{ github.event.inputs.catalog_expansion_batch || 'none' }}
@@ -265,6 +276,9 @@ jobs:
           fi
           if [[ "${TECHNICAL_PRODUCT_LIMIT}" != "0" ]]; then
             args+=("--limit=${TECHNICAL_PRODUCT_LIMIT}")
+          fi
+          if [[ -n "${TECHNICAL_PRODUCT_SLUGS}" ]]; then
+            args+=("--only=${TECHNICAL_PRODUCT_SLUGS}")
           fi
           python main.py "${args[@]}"
 

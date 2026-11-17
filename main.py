@@ -52,12 +52,14 @@ class KimovilScraper:
         *,
         require_images=False,
         image_store=None,
+        technical_reader=None,
     ):
         self.ingestion_client = ingestion_client
         self.require_images = require_images
         self.image_store = image_store or R2ProductImageStore(
             required=require_images,
         )
+        self.technical_reader = technical_reader
         self.base_url = os.getenv("KIMOVIL_BASE_URL", "https://www.kimovil.com/en/")
         self.flaresolverr_url = "http://localhost:8191/v1"
         self.flaresolverr_session_id = "teknoskor-kimovil"
@@ -249,12 +251,15 @@ class KimovilScraper:
         record_sink=None,
         image_sink=None,
         expected_memory=None,
+        source_document=None,
+        observed_at=None,
+        include_estimates=True,
     ):
         try:
             # Kept for backward-compatible callers. Product category and all
             # publication decisions are owned by the website.
             _ = category_id
-            html = self.get_via_flaresolverr(url)
+            html = source_document if source_document is not None else self.get_via_flaresolverr(url)
             if not html:
                 logging.error(f"❌ Error: Source request returned no HTML for {url}")
                 return False
@@ -409,7 +414,7 @@ class KimovilScraper:
                 self.extract_number(battery_v),
                 nm_v,
             )
-            if gaming_performance:
+            if gaming_performance and include_estimates:
                 attributes["gaming_performance"] = gaming_performance
             target_slug = (
                 product_slug
@@ -424,7 +429,7 @@ class KimovilScraper:
                 product_slug=target_slug,
                 source_url=url,
                 attributes=attributes,
-                observed_at=utc_observation_time(),
+                observed_at=observed_at or utc_observation_time(),
             )
             if not existing_images:
                 source_images = extract_source_image_urls(soup, device_compare)
@@ -548,6 +553,7 @@ class KimovilScraper:
         pending_only=False,
         max_products=None,
         refresh_physical=False,
+        only_slugs=None,
     ):
         """Refresh provenance only for products approved in TeknoSkor.
 
@@ -564,6 +570,13 @@ class KimovilScraper:
             raise SourceIngestionError(
                 "Authenticated ingestion catalog returned no products",
             )
+        if only_slugs is not None:
+            if (not only_slugs or any(not isinstance(slug, str)
+                    or not re.fullmatch(r'[a-z0-9]+(?:-[a-z0-9]+)*', slug) for slug in only_slugs)):
+                raise IngestionConfigurationError("Selected product slugs must be nonempty valid catalog slugs")
+            unknown = set(only_slugs) - {product.slug for product in catalog_products}
+            if unknown:
+                raise IngestionConfigurationError("Unknown selected product slugs: " + ', '.join(sorted(unknown)))
 
         if pending_only and any(
             product.data_quality_status is None
@@ -576,9 +589,10 @@ class KimovilScraper:
             product
             for product in catalog_products
             if (
-                not pending_only
-                or product.data_quality_status != "verified"
-                or not product.spec_verified_at
+                (only_slugs is None or product.slug in only_slugs)
+                and (not pending_only
+                    or product.data_quality_status != "verified"
+                    or not product.spec_verified_at)
             )
         ]
         if max_products is not None:
@@ -592,6 +606,9 @@ class KimovilScraper:
         failed = []
         staged_records = []
         staged_images = []
+        variant_refreshes = []
+        variant_failures = {}
+        variant_diagnostics = {}
         logging.info(
             "🚀 Starting existing-product-only provenance sync for %s products",
             len(products),
@@ -629,21 +646,29 @@ class KimovilScraper:
                     f"{product.slug}"
                 ),
             )
-            success = self.scrape_product_details(
-                guessed_url,
-                product_slug=product.slug,
-                expected_name=expected_source_name,
-                existing_attributes=product.attributes,
-                existing_images=product.images,
-                seed_physical_attributes=(
-                    refresh_physical or product.data_quality_status != "verified"
-                    or not product.spec_verified_at
-                ),
-                record_sink=staged_records,
-                image_sink=staged_images,
-                expected_memory=expected_memory,
-            )
-            if not success:
+            catalog_memory_variant = False
+            if refresh_physical and expected_memory:
+                from tr_price_scraper import TRPriceScraper
+                catalog_model = TRPriceScraper._catalog_model_name(product.name, product.attributes)
+                catalog_memory_variant = catalog_model != product.name
+            success = False
+            if not catalog_memory_variant:
+                success = self.scrape_product_details(
+                    guessed_url,
+                    product_slug=product.slug,
+                    expected_name=expected_source_name,
+                    existing_attributes=product.attributes,
+                    existing_images=product.images,
+                    seed_physical_attributes=(
+                        refresh_physical or product.data_quality_status != "verified"
+                        or not product.spec_verified_at
+                    ),
+                    record_sink=staged_records,
+                    image_sink=staged_images,
+                    expected_memory=expected_memory,
+                    include_estimates=not refresh_physical,
+                )
+            if not success and not catalog_memory_variant:
                 matched_url = self.search_product_on_kimovil(
                     expected_source_name,
                 )
@@ -661,7 +686,42 @@ class KimovilScraper:
                         record_sink=staged_records,
                         image_sink=staged_images,
                         expected_memory=expected_memory,
+                        include_estimates=not refresh_physical,
                     )
+            if not success and refresh_physical and expected_memory:
+                # Catalog memory variants have their own website slugs, not
+                # provider URLs. Reuse observed provider links and require the
+                # freshly selected model, RAM, storage and radio proof.
+                from automatic_memory_variants import TechnicalVariantReader, parent_specs
+                parent = {'id': product.id, 'slug': product.slug, 'name': product.name,
+                          'attributes': product.attributes}
+                diagnostic_start = len(self.technical_reader.diagnostics) if self.technical_reader else 0
+                try:
+                    if not catalog_model:
+                        raise ValueError('catalog_memory_label_identity_conflict')
+                    specs = parent_specs(parent)
+                    if (specs.get('network_generation') not in ('4g', '5g')
+                            or any(specs.get(key) != expected_memory[key] for key in ('ram_gb', 'storage_gb'))):
+                        raise ValueError('exact_source_memory_radio_identity_missing')
+                    if self.technical_reader is None:
+                        self.technical_reader = TechnicalVariantReader(maximum_documents=max(48, len(products) * 8))
+                    document, proof = self.technical_reader.locate(parent, specs)
+                    success = self.scrape_product_details(
+                        proof['source_url'], product_slug=product.slug,
+                        expected_name=proof['model_name'], expected_memory=specs,
+                        existing_attributes=product.attributes, existing_images=product.images,
+                        seed_physical_attributes=True, record_sink=staged_records, image_sink=staged_images,
+                        source_document=document, observed_at=proof['observed_at'], include_estimates=False)
+                    if success:
+                        variant_refreshes.append({'slug': product.slug, 'source_url': proof['source_url'],
+                                                  'observed_at': proof['observed_at']})
+                    else:
+                        variant_failures[product.slug] = 'selected_technical_parser_failed'
+                except (ValueError, requests.RequestException) as error:
+                    variant_failures[product.slug] = str(error)
+                    if self.technical_reader:
+                        variant_diagnostics[product.slug] = self.technical_reader.diagnostics[diagnostic_start:][-8:]
+                    logging.error('Exact selected technical refresh failed for %s: %s', product.slug, error)
             if success:
                 succeeded += 1
             else:
@@ -669,6 +729,7 @@ class KimovilScraper:
             if index < len(products):
                 time.sleep(1)
 
+        ingestion_result = None
         if staged_records:
             ingestion_result = ingestion_client.submit_sources(
                 staged_records,
@@ -699,6 +760,13 @@ class KimovilScraper:
             "failed": failed,
             "existing_product_only": True,
             "refresh_physical": refresh_physical,
+            "selected_products": sorted(set(only_slugs)) if only_slugs is not None else None,
+            "exact_variant_refreshes": variant_refreshes,
+            "exact_variant_failures": variant_failures,
+            "exact_variant_diagnostics": variant_diagnostics,
+            "source_records": len(staged_records),
+            "observed_products": len({record['product_slug'] for record in staged_records}),
+            "ingestion": ingestion_result,
         }
         refreshed_products = ingestion_client.fetch_catalog(
             page_size=500,
@@ -783,11 +851,13 @@ if __name__ == "__main__":
             for argument in sys.argv[1:]
             if argument.startswith("--limit=")
         ]
+        selection_arguments = [argument for argument in sys.argv[1:] if argument.startswith('--only=')]
         unknown_arguments = {
             argument
             for argument in sys.argv[1:]
             if argument not in known_arguments
             and not argument.startswith("--limit=")
+            and not argument.startswith('--only=')
         }
         if unknown_arguments:
             raise IngestionConfigurationError(
@@ -799,6 +869,15 @@ if __name__ == "__main__":
             raise IngestionConfigurationError(
                 "--limit may be provided only once",
             )
+        only_slugs = None
+        if selection_arguments:
+            if (len(selection_arguments) != 1 or not re.fullmatch(
+                    r'[a-z0-9]+(?:-[a-z0-9]+)*(?:,[a-z0-9]+(?:-[a-z0-9]+)*)*',
+                    selection_arguments[0].split('=', 1)[1])):
+                raise IngestionConfigurationError('--only requires comma-separated existing product slugs')
+            if any(option in sys.argv[1:] for option in ('--schema-only', '--readiness-only', '--price-index-audit-only')):
+                raise IngestionConfigurationError('--only cannot be combined with diagnostic modes')
+            only_slugs = selection_arguments[0].split('=', 1)[1].split(',')
         max_products = None
         if limit_arguments:
             limit_value = limit_arguments[0].split("=", 1)[1]
@@ -871,6 +950,7 @@ if __name__ == "__main__":
                 pending_only="--pending-only" in sys.argv[1:],
                 max_products=max_products,
                 refresh_physical="--refresh-physical" in sys.argv[1:],
+                only_slugs=only_slugs,
             )
             with open("technical-sync-report.json", "w") as report:
                 json.dump(run_summary, report, ensure_ascii=False, indent=2)

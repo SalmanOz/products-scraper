@@ -1,4 +1,5 @@
 import os
+import json
 import unittest
 from unittest.mock import Mock, patch
 
@@ -1069,6 +1070,65 @@ class PhysicalRefreshTests(unittest.TestCase):
         self.assertEqual(summary['failed'], ['phone-one'])
         client.submit_sources.assert_not_called()
         self.assertEqual(client.fetch_catalog.return_value[0].spec_verified_at, '2026-01-01T00:00:00Z')
+
+    def test_catalog_variant_refresh_follows_observed_provider_url_and_source_timestamp(self):
+        from automatic_memory_variants import TechnicalVariantReader
+        from test_automatic_memory_variants import tech_document
+        from dataclasses import replace
+        model = 'Samsung Galaxy A54 5G'
+        base = 'https://www.kimovil.com/en/where-to-buy-samsung-galaxy-a54-5g'
+        target = base + 'global-8gb-256gb'
+        client = self.catalog_client()
+        variant = replace(client.fetch_catalog.return_value[0], name=model + ' 8GB 256GB',
+                          slug='samsung-galaxy-a54-5g-8gb-256gb',
+                          attributes={'ram_gb': 8, 'storage_gb': 256, 'Connectivity': {'5G': True}})
+        client.fetch_catalog.return_value = [variant]
+        source = Mock()
+        source.read.side_effect = lambda url: (json.dumps({'results': [{
+            'full_name': model, 'url': 'samsung-galaxy-a54-5g'}]}) if '_json/' in url else
+            tech_document(base, storage=128, name=model) + '<div class="versions-list"><a href="' + target + '">8GB 256GB</a></div>'
+            if url == base else tech_document(target, storage=256, name=model))
+        reader = TechnicalVariantReader(source)
+        scraper = KimovilScraper(ingestion_client=client, technical_reader=reader)
+        scraper.get_via_flaresolverr = Mock(return_value=None)
+        scraper.search_product_on_kimovil = Mock(return_value=None)
+        observed = '2026-11-17T09:00:00Z'
+        with patch('automatic_memory_variants.utc_observation_time', return_value=observed):
+            result = scraper.scrape_existing_products(refresh_physical=True, only_slugs=[variant.slug])
+        self.assertEqual(result['failed'], [])
+        self.assertEqual(result['exact_variant_refreshes'], [{'slug': variant.slug, 'source_url': target, 'observed_at': observed}])
+        records = client.submit_sources.call_args.args[0]
+        self.assertTrue(all(record['source_url'] == target and record['observed_at'] == observed for record in records))
+        values = {record['attribute_key']: record['value'] for record in records}
+        self.assertEqual(values['storage_gb'], 256)
+        self.assertNotIn('gaming_performance', values)
+        scraper.get_via_flaresolverr.assert_not_called()
+        scraper.search_product_on_kimovil.assert_not_called()
+        self.assertEqual([call.args[0] for call in source.read.call_args_list][-2:], [base, target])
+        # A freshly selected wrong capacity cannot refresh this product.
+        source.read.side_effect = lambda url: (json.dumps({'results': [{
+            'full_name': model, 'url': 'samsung-galaxy-a54-5g'}]}) if '_json/' in url else
+            tech_document(base, storage=128, name=model))
+        scraper.technical_reader = TechnicalVariantReader(source)
+        client.submit_sources.reset_mock()
+        result = scraper.scrape_existing_products(refresh_physical=True, only_slugs=[variant.slug])
+        self.assertEqual(result['failed'], [variant.slug])
+        client.submit_sources.assert_not_called()
+
+    def test_retry_selection_never_refreshes_other_or_unknown_products(self):
+        from dataclasses import replace
+        client = self.catalog_client()
+        other = replace(client.fetch_catalog.return_value[0], id=2, name='Phone Two', slug='phone-two')
+        client.fetch_catalog.return_value.append(other)
+        scraper = KimovilScraper(ingestion_client=client)
+        scraper.scrape_product_details = Mock(return_value=True)
+        result = scraper.scrape_existing_products(only_slugs=['phone-two'])
+        self.assertEqual(result['attempted_products'], 1)
+        self.assertEqual(scraper.scrape_product_details.call_args.kwargs['product_slug'], 'phone-two')
+        scraper.scrape_product_details.reset_mock()
+        with self.assertRaisesRegex(IngestionConfigurationError, 'Unknown selected product slugs'):
+            scraper.scrape_existing_products(only_slugs=['unknown-phone'])
+        scraper.scrape_product_details.assert_not_called()
 
 
 if __name__ == "__main__":
