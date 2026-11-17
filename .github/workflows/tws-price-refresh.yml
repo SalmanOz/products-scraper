@@ -81,7 +81,7 @@ jobs:
               or (.publicationMode == "verified_variants_only" and ($sufficient | not) and .refreshed > 0)
               or (.publicationMode == "held" and ($sufficient | not))
           ' "$out/report.json" > /dev/null
-          jq '{configuredTargets, completedTargetReads, verifiedOffers, refreshed, publicationMode}' "$out/report.json"
+          jq '{configuredTargets, completedTargetReads, verifiedOffers, refreshed, publicationMode, sourceCoverage, rejections}' "$out/report.json"
           mode=$(jq -r .publicationMode "$out/report.json")
           if [[ "$mode" != held ]]; then
             python .github/scripts/verify-earbud-snapshot.py "$source" "$out/snapshot.json" "$out/report.json" \
@@ -105,3 +105,11 @@ jobs:
         env:
           EXPECTED_SHA: ${{ steps.publish.outputs.sha }}
         run: bash .github/scripts/wait-for-site "$EXPECTED_SHA" earbuds
+      - name: Retain the price refresh coverage report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: earbud-price-refresh-report
+          path: ${{ runner.temp }}/site-price-refresh/report.json
+          if-no-files-found: warn
+          retention-days: 7
