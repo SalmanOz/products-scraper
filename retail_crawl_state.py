@@ -138,7 +138,7 @@ def refresh_summary(path, since):
                 'SELECT a.host,a.outcome,q.data FROM refresh_attempts a LEFT JOIN queue q USING(url) '
                 'WHERE julianday(a.attempted_at)>=julianday(?) AND julianday(a.attempted_at)<=julianday(\'now\')', (since,)):
             counts[host][outcome] += 1
-            offer = (json.loads(raw or '{}').get('offer') or {})
+            offer = ((json.loads(raw or '{}') or {}).get('offer') or {})
             if outcome == 'verified' and offer.get('price') and stamp(offer.get('checkedAt')) >= stamp(since):
                 priced += 1
     verified = sum(rows.get('verified', 0) for rows in counts.values())

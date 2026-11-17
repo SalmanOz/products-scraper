@@ -207,6 +207,10 @@ class LocalStateMergeTest(unittest.TestCase):
                 if not priced:
                     row['offer'] = None
                 put(db, url, row)
+                if outcome == 'http_403':
+                    # Older unsuccessful queue entries store JSON null rather
+                    # than SQL NULL; diagnostics must still count the attempt.
+                    db.execute('UPDATE queue SET data=? WHERE url=?', ('null', url))
                 db.execute('INSERT INTO refresh_attempts VALUES(?,?,?,?,?,?)',
                            (url, 'www.trendyol.com', 'earbuds', outcome, 403 if outcome == 'http_403' else 200, when))
             put(db, URL + 'unattempted', None, 'pending', None)
