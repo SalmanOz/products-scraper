@@ -13,6 +13,17 @@ GTIN, IMAGE, URL = fixtures.GTIN, fixtures.IMAGE, fixtures.URL
 
 
 class StockWatchTest(IsolatedAsyncioTestCase):
+    async def test_circuit_deferred_url_does_not_trigger_another_transport(self):
+        config = {GTIN: {'urls': [URL], 'kind': 'laptop', 'brand': 'Lenovo',
+                         'model': '83K10016TR', 'photo': IMAGE}}
+        site = Mock()
+        browser = Mock(get=AsyncMock())
+        with TemporaryDirectory() as directory, closing(database(Path(directory) / 'queue.sqlite')) as db, \
+                patch('retail_html_watch.Host.get', return_value=(None, b'')):
+            self.assertEqual(await read_watch(db, config, site, browser, ('www.trendyol.com',)), [])
+        site.assert_not_called()
+        browser.get.assert_not_awaited()
+
     async def test_only_exact_in_stock_listing_is_staged_on_retry(self):
         config = {GTIN: {'urls': [URL], 'kind': 'laptop', 'brand': 'Lenovo',
                          'model': '83K10016TR', 'photo': IMAGE}}

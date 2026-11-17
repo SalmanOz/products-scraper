@@ -1084,11 +1084,15 @@ class Host:
     async def get(self, url):
         async with self.schedule:
             if self.stopped:
-                return 0, b''
+                return None, b''
             clock = asyncio.get_running_loop()
             delay = self.next_start - clock.time()
             if delay > 0:
                 await asyncio.sleep(delay)
+            # Another in-flight request can open the circuit during pacing.
+            # None means no request was sent; 0 is an actual transport failure.
+            if self.stopped:
+                return None, b''
             self.next_start = clock.time() + self.spacing
         status, data = await asyncio.to_thread(self.request, url)
         if status in (403, 429, 503):
@@ -1205,6 +1209,12 @@ def seed_catalog(db, rows):
 
 
 async def crawl(args, db):
+    loop = asyncio.get_running_loop()
+    budget = getattr(args, 'time_budget_minutes', None)
+    deadline = loop.time() + budget * 60 if budget is not None else None
+    def within_budget():
+        return deadline is None or loop.time() < deadline
+
     hosts = {host: Host(args.spacing) for host in (args.host or STORES)}
 
     async def discover(host, reader):
@@ -1214,7 +1224,7 @@ async def crawl(args, db):
             for path in paths:
                 repeated = set()
                 for page in range(args.start_page, args.start_page + args.pages):
-                    if reader.stopped:
+                    if reader.stopped or not within_budget():
                         return
                     url = f'https://{host}{path}'
                     if page > 1:
@@ -1229,6 +1239,8 @@ async def crawl(args, db):
                             break
                         continue
                     status, raw = await reader.get(url)
+                    if status is None:
+                        return
                     rows = {}
                     if raw:
                         try:
@@ -1248,12 +1260,14 @@ async def crawl(args, db):
                 print(f'{host} {kind} discovery complete', flush=True)
 
     async def verify(host, reader, queue, counters):
-        while not reader.stopped:
+        while not reader.stopped and within_budget():
             try:
                 url, kind, previous, expected = queue.get_nowait()
             except asyncio.QueueEmpty:
                 return
             status, raw = await reader.get(url)
+            if status is None:
+                return
             previous_data = json.loads(previous) if previous else {}
             expected = expected or previous_data.get('gtin')
             result = None
@@ -1310,19 +1324,37 @@ async def crawl(args, db):
             stale = (" AND (q.data IS NULL OR (t.gtin IS NOT NULL AND json_extract(q.data,'$.gtin') != t.gtin) "
                      "OR julianday(json_extract(q.data,'$.checkedAt')) < julianday('now', ?))")
             values.append(f'-{args.stale_hours} hours')
-        order = ("coalesce(a.attempted_at,q.checked_at,''),"
-                 "CASE WHEN t.url IS NULL THEN 1 ELSE 0 END,q.rowid" if args.refresh else 'q.rowid')
-        rows = db.execute(
-            f'SELECT q.url,q.kind,q.data,t.gtin FROM queue q '
-            f'LEFT JOIN catalog_targets t USING(url) LEFT JOIN refresh_attempts a USING(url) '
-            f'WHERE q.host=? AND {selected}{kinds}{stale} ORDER BY {order} LIMIT ?',
-            (*values, args.maximum)).fetchall()
+        order = ("CASE WHEN t.url IS NULL THEN 1 ELSE 0 END,"
+                 "coalesce(a.attempted_at,q.checked_at,''),q.rowid" if args.refresh else 'q.rowid')
+        query = (f'SELECT q.url,q.kind,q.data,t.gtin FROM queue q '
+                 f'LEFT JOIN catalog_targets t USING(url) LEFT JOIN refresh_attempts a USING(url) '
+                 f'WHERE q.host=? AND {selected}{kinds}{stale}')
+        rows = db.execute(query + f' ORDER BY {order} LIMIT ?', (*values, args.maximum)).fetchall()
+        if args.refresh and args.maximum > 1:
+            # Pickup offers expire after 26h. Reserve at most a quarter of this
+            # host's batch for them; the rest follows oldest published attempts,
+            # so unresolved published identities cannot be starved by urgency.
+            urgent = db.execute(query + " AND t.url IS NOT NULL AND json_extract(q.data,'$.offer.storeOnly')=1"
+                                + f' ORDER BY {order} LIMIT ?',
+                                (*values, max(1, args.maximum // 4))).fetchall()
+            chosen = {row[0] for row in urgent}
+            ordinary = [row for row in rows if row[0] not in chosen]
+            interleaved = []
+            for offset in range(0, max(len(ordinary), len(urgent) * 3), 3):
+                if offset // 3 < len(urgent):
+                    interleaved.append(urgent[offset // 3])
+                interleaved.extend(ordinary[offset:offset + 3])
+            # Interleaving preserves the ordinary-target share even when a slow
+            # origin reaches its time budget partway through the selected batch.
+            rows = interleaved[:args.maximum]
         for row in rows:
             queue.put_nowait(row)
         if reader.stopped and rows:
             # A stopped origin stays deferred until the next invocation.
             print(host, 'source stopped', dict(reader.rejections), flush=True)
         await asyncio.gather(*(verify(host, reader, queue, counters) for _ in range(args.workers)))
+        if not within_budget() and not queue.empty():
+            print(host, 'time budget exhausted; deferred', queue.qsize(), 'selected pages', flush=True)
         print(host, 'complete', dict(counters), dict(reader.rejections), flush=True)
 
     await asyncio.gather(*(work(host, reader) for host, reader in hosts.items()))
@@ -1383,6 +1415,7 @@ def main():
     parser.add_argument('--pages', type=int, default=38)
     parser.add_argument('--sources', type=Path, help='Override category paths for the built-in stores')
     parser.add_argument('--maximum', type=int, default=5000, help='Maximum selected product pages per host')
+    parser.add_argument('--time-budget-minutes', type=float, help='Stop selecting requests after this time; retain progress and export normally')
     parser.add_argument('--spacing', type=float, default=.5)
     parser.add_argument('--workers', type=int, default=4)
     mode = parser.add_mutually_exclusive_group()
@@ -1395,7 +1428,8 @@ def main():
     args = parser.parse_args()
     if args.spacing < .35 or not 1 <= args.workers <= 8 or not 1 <= args.pages <= 200 \
             or args.start_page < 1 or args.rediscover_after < 1 or args.maximum < 1 or args.export_only and not args.output \
-            or args.stale_hours is not None and (not math.isfinite(args.stale_hours) or args.stale_hours < 0):
+            or args.stale_hours is not None and (not math.isfinite(args.stale_hours) or args.stale_hours < 0) \
+            or args.time_budget_minutes is not None and (not math.isfinite(args.time_budget_minutes) or args.time_budget_minutes <= 0):
         parser.error('Invalid page, product or request limits')
     args.sources = json.loads(args.sources.read_text()) if args.sources else SOURCES
     if any(host not in STORES or any(kind not in KIND_WORDS or any(

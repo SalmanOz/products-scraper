@@ -40,6 +40,9 @@ async def read_watch(db, configured, site_reader=None, browser=None, browser_hos
     async def probe(gtin, item, url):
         host = urlsplit(url).netloc
         status, raw = await hosts.setdefault(host, Host(.5)).get(url)
+        if status is None:
+            counts[gtin][url] = 'deferred_circuit'
+            return
         transport = ''
         blocked = status in (301, 302, 307, 308, 403)
         access = [f'http_{status}']

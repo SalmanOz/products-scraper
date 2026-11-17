@@ -53,7 +53,7 @@ jobs:
       - name: Install and test the scraper
         run: |
           python -m pip install -r requirements.txt
-          python -m unittest -q test_retail_catalog_format test_retail_product_intent test_retail_html_catalog test_retail_html_watch
+          python -m unittest -q test_retail_catalog_format test_retail_product_intent test_retail_refresh_scheduling test_retail_html_catalog test_retail_html_watch
           python -m playwright install --with-deps chromium
       - name: Restore and advance the private HTML queue
         env:
@@ -74,11 +74,15 @@ jobs:
           if [[ "$WATCH_ONLY" == true ]]; then
             rm -f "$path/staged.json"
           elif [[ "$VERIFICATION_RUN" == true ]]; then
-            python retail_html_catalog.py --db "$path/queue.sqlite" --verify-only --maximum 12
-            python retail_html_catalog.py --db "$path/queue.sqlite" --catalog site/frontend/public/retail-catalog.json --site-data site/frontend/src/data --refresh --maximum 12 --output "$path/staged.json"
+            python retail_html_catalog.py --db "$path/queue.sqlite" --verify-only --maximum 12 --time-budget-minutes 2
+            python retail_html_catalog.py --db "$path/queue.sqlite" --catalog site/frontend/public/retail-catalog.json --site-data site/frontend/src/data --refresh --maximum 12 --time-budget-minutes 2 --output "$path/staged.json"
           else
-            python retail_html_catalog.py --db "$path/queue.sqlite" --pages 38 --maximum 900
-            python retail_html_catalog.py --db "$path/queue.sqlite" --catalog site/frontend/public/retail-catalog.json --site-data site/frontend/src/data --refresh --stale-hours 6 --maximum 900 --output "$path/staged.json"
+            # Caps are per host. At the observed ~0.5s/page, 2,400 checks need
+            # ~20m; 30m bounds slow origins while retaining completed progress.
+            # Published offers take precedence over expanding the catalog.
+            python retail_html_catalog.py --db "$path/queue.sqlite" --catalog site/frontend/public/retail-catalog.json --site-data site/frontend/src/data --refresh --stale-hours 6 --maximum 2400 --time-budget-minutes 30
+            python retail_html_catalog.py --db "$path/queue.sqlite" --discovery-only --pages 38 --time-budget-minutes 10
+            python retail_html_catalog.py --db "$path/queue.sqlite" --verify-only --maximum 100 --time-budget-minutes 5 --output "$path/staged.json"
           fi
           python retail_html_watch.py --db "$path/queue.sqlite" --output "$path/staged.json" --browser-fallback
       - name: Validate and publish the private catalog
