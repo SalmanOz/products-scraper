@@ -112,6 +112,8 @@ def merge(rows, site, image_check, catalog):
         if 'specSources' in item:
             item['specSources'] = {k: v for k, v in item['specSources'].items() if k in item['specs']}
         if valid_row(item, require_specs=False):
+            # Persisted rows need the same conflict rules even without a new listing.
+            item.update(merge_specifications(item, {}, legacy_existing=True))
             name_key = item['kind'], model_key[0], words(item['name'])
             if name_key in name_owners:
                 counters['removed_duplicate_name'] += 1

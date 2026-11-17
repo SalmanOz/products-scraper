@@ -253,7 +253,7 @@ def properties(rows):
 
 
 def merge_specifications(existing, incoming, *, legacy_existing=False):
-    """Merge observed fields without assigning old facts a new observation time."""
+    """Merge formatting-equivalent labels while retaining raw labels and observation times."""
     def observed(item):
         return (datetime.fromisoformat(item['checkedAt']) if item.get('checkedAt')
                 else datetime.min.replace(tzinfo=timezone.utc))
@@ -267,17 +267,23 @@ def merge_specifications(existing, incoming, *, legacy_existing=False):
                 source = {'source': row['source']}
                 if row is not existing or not legacy_existing:
                     source['checkedAt'] = row['checkedAt']
-            observations.setdefault(words(label), []).append((label, {'value': value, **source}))
+            observations.setdefault(words(label).replace(' ', ''), []).append((label, {'value': value, **source}))
         for label, conflicts in row.get('specConflicts', {}).items():
-            observations.setdefault(words(label), []).extend((label, item) for item in conflicts)
+            observations.setdefault(words(label).replace(' ', ''), []).extend((label, item) for item in conflicts)
     specs, sources, conflicts = {}, {}, {}
     for candidates in observations.values():
         by_source = {}
         for label, item in candidates:
-            previous = by_source.get(item['source'])
-            if previous is None or observed(item) >= observed(previous[1]):
-                by_source[item['source']] = (label, item)
-        ordered = sorted(by_source.values(),
+            previous = by_source.get(item['source'], [])
+            if not previous or observed(item) > observed(previous[0][1]):
+                by_source[item['source']] = [(label, item)]
+            elif observed(item) == observed(previous[0][1]):
+                # Contradictory spellings in the same observation remain disputed.
+                # A later observation from that source can still correct them.
+                value_key = normalize('NFKC', item['value']).casefold()
+                by_source[item['source']] = [pair for pair in previous
+                    if normalize('NFKC', pair[1]['value']).casefold() != value_key] + [(label, item)]
+        ordered = sorted((pair for values in by_source.values() for pair in values),
                          key=lambda pair: (observed(pair[1]), pair[1]['source']), reverse=True)
         label, latest = ordered[0]
         values = {normalize('NFKC', item['value']).casefold() for _, item in ordered}

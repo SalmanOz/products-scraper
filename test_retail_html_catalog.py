@@ -161,6 +161,63 @@ class RetailHtmlCatalogTest(TestCase):
         self.assertFalse(resolved['specConflicts'])
         self.assertEqual(resolved['specs']['Bellek'], '16 GB')
 
+    def test_formatting_equivalent_spec_labels_share_evidence_and_keep_raw_display(self):
+        old = {'source': URL, 'checkedAt': '2026-11-16T00:00:00+00:00',
+               'specs': {'Harddisk Kapasitesi': 'Yok'}}
+        other_url = 'https://www.hepsiburada.com/lenovo-v15-p-HBCV0000ABC123'
+        new = {'source': other_url, 'checkedAt': '2026-11-17T00:00:00+00:00',
+               'specs': {'Hard Disk Kapasitesi': 'Yok'}}
+        same = merge_specifications(old, new, legacy_existing=True)
+        self.assertEqual(same['specs'], {'Hard Disk Kapasitesi': 'Yok'})
+        self.assertEqual(same['specSources']['Hard Disk Kapasitesi'],
+                         {'source': other_url, 'checkedAt': new['checkedAt']})
+        self.assertFalse(same['specConflicts'])
+        changed = merge_specifications(old, {**new, 'specs': {'HARD-DISK Kapasitesi': '512 GB'}},
+                                       legacy_existing=True)
+        self.assertFalse(changed['specs'])
+        claims = changed['specConflicts']['HARD-DISK Kapasitesi']
+        self.assertEqual({claim['value'] for claim in claims}, {'Yok', '512 GB'})
+        legacy = next(claim for claim in claims if claim['source'] == URL)
+        self.assertNotIn('checkedAt', legacy)
+        self.assertEqual(next(claim for claim in claims if claim['source'] == other_url)['checkedAt'],
+                         new['checkedAt'])
+
+    def test_same_observation_conflicting_label_spellings_do_not_choose_a_value(self):
+        row = {'source': URL, 'checkedAt': '2026-11-17T00:00:00+00:00',
+               'specs': {'Harddisk Kapasitesi': 'Yok', 'Hard Disk Kapasitesi': '512 GB'}}
+        merged = merge_specifications({}, row)
+        self.assertFalse(merged['specs'])
+        self.assertEqual(len(next(iter(merged['specConflicts'].values()))), 2)
+        corrected = {**row, 'checkedAt': '2026-11-17T01:00:00+00:00',
+                     'specs': {'Harddisk Kapasitesi': 'Yok'}}
+        resolved = merge_specifications(merged, corrected)
+        self.assertEqual(resolved['specs'], {'Harddisk Kapasitesi': 'Yok'})
+        self.assertFalse(resolved['specConflicts'])
+
+    def test_publisher_normalizes_persisted_label_conflicts_without_fresh_input(self):
+        row = read_product(self.listing(), URL, 'laptop')
+        row.update(offers=[row.pop('offer')], checkedAt='2026-11-17T00:00:00+00:00',
+                   specs={'Harddisk Kapasitesi': 'Yok'}, specSources={})
+        other_url = 'https://www.hepsiburada.com/lenovo-v15-p-HBCV0000ABC123'
+        third_url = URL.replace('1132995554', '1132995555')
+        row['specConflicts'] = {'Hard Disk Kapasitesi': [
+            {'value': '512 GB', 'source': other_url, 'checkedAt': '2026-11-16T00:00:00+00:00'},
+            {'value': 'Yok', 'source': third_url},
+        ]}
+        with TemporaryDirectory() as root:
+            folder = Path(root)
+            catalog = folder / 'catalog.json'
+            catalog.write_text(json.dumps([row]))
+            merged, _ = merge([], folder, lambda _: True, catalog)
+        self.assertEqual(len(merged), 1)
+        self.assertFalse(merged[0]['specs'])
+        self.assertFalse(merged[0]['specSources'])
+        claims = merged[0]['specConflicts']['Hard Disk Kapasitesi']
+        self.assertEqual(len(claims), 3)
+        self.assertEqual(next(claim for claim in claims if claim['source'] == other_url)['checkedAt'],
+                         '2026-11-16T00:00:00+00:00')
+        self.assertTrue(all('checkedAt' not in claim for claim in claims if claim['source'] != other_url))
+
     def test_export_combines_complementary_facts_from_exact_barcode(self):
         first = read_product(self.listing(), URL, 'laptop')
         first['specSources'] = {}
