@@ -52,6 +52,26 @@ def document(changes=None):
 
 
 class TrendyolCatalogTests(unittest.TestCase):
+    def test_confirmed_out_of_stock_is_distinct_from_unknown_or_changed_identity(self):
+        product = evidence()['state']['product']
+        product['inStock'] = False
+        for variant in (*product['variants'], *product['merchantListing']['variants'],
+                        product['merchantListing']['winnerVariant']):
+            variant['inStock'] = False
+        product['merchantListing']['winnerVariant']['stockStatus'] = 0
+        html = document({('state', 'product'): product})
+        html = html.replace('<button data-testid="buy-now-button" >Şimdi Al</button>', '<button disabled>Tükendi!</button>')
+        self.assertEqual(parse_catalog_listing(html, URL, NAME, SPECS), (None, 'selected_product_out_of_stock'))
+        # No offer is manufactured with a historical seller or price.
+        self.assertEqual(parse_catalog_listing(html.replace('Tükendi!', 'Kontrol ediliyor'), URL, NAME, SPECS),
+                         (None, 'selected_stock_unknown'))
+        self.assertNotEqual(parse_catalog_listing(html, URL, NAME, {**SPECS, 'storage_gb': 256})[1],
+                            'selected_product_out_of_stock')
+        self.assertNotEqual(parse_catalog_listing(html, URL.replace('657799', '999999'), NAME, SPECS)[1],
+                            'selected_product_out_of_stock')
+        # A later coherent in-stock read is independently accepted normally.
+        self.assertEqual(parse_catalog_listing(document(), URL, NAME, SPECS)[1], 'selected_new_cash_offer_observed')
+
     def test_reviewed_iphone_gtin_can_prove_an_offer_without_inventing_radio(self):
         name = 'Apple iPhone 16 Plus'
         title = name + ' 128 GB Deniz Mavisi'

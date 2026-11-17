@@ -300,6 +300,36 @@ def _scoped_seller_witness(default_html, soup, url, product, merchant, winner, v
             ]) == 1)
 
 
+def _confirmed_selected_out_of_stock(product, soup, url):
+    """Describe current selected stock only; never retire a former seller."""
+    listing = product.get('merchantListing')
+    if not isinstance(listing, dict):
+        return False
+    merchant, winner = listing.get('merchant'), listing.get('winnerVariant')
+    variant, merchant_variant = _selected(product.get('variants')), _selected(listing.get('variants'))
+    if (not isinstance(merchant, dict) or not isinstance(winner, dict)
+            or variant is None or merchant_variant is None
+            or type(merchant.get('id')) is not int or merchant['id'] <= 0
+            or not isinstance(merchant.get('name'), str) or not merchant['name'].strip()
+            or parse_qs(urlparse(url).query).get('merchantId', [str(merchant['id'])]) != [str(merchant['id'])]
+            or type(winner.get('itemNumber')) is not int or winner['itemNumber'] <= 0
+            or retailer_gtin13(winner.get('barcode')) is None
+            or variant.get('barcode') != winner['barcode']
+            or merchant_variant.get('barcode') not in (None, winner['barcode'])
+            or not isinstance(winner.get('listingId'), str)
+            or not re.fullmatch(r'[a-f0-9]{32}', winner['listingId'])
+            or product.get('inStock') is not False or winner.get('inStock') is not False
+            or type(winner.get('stockStatus')) is not int or winner['stockStatus'] != 0
+            or any(v.get('itemNumber') != winner['itemNumber'] or v.get('inStock') is not False
+                   for v in (variant, merchant_variant))):
+        return False
+    disabled = [button for button in soup.select('button[disabled], button[aria-disabled="true"]')
+                if re.fullmatch(r'Tükendi!?|Stokta Yok!?', _normalized(button.get_text(' ', strip=True)), re.I)]
+    active_carts = [button for button in soup.select('button[data-testid="buy-now-button"]')
+                    if not button.has_attr('disabled') and button.get('aria-disabled') != 'true']
+    return len(disabled) == 1 and not active_carts
+
+
 def _parse_selected_listing(html, url, read_variant, check_group, *, default_html=None):
     """Cross-check shared selected listing, SKU, merchant, cart and price."""
     identity = _product_id(url)
@@ -309,7 +339,7 @@ def _parse_selected_listing(html, url, read_variant, check_group, *, default_htm
     product, reason = selected_product_state(soup)
     if reason:
         return None, reason
-    if not isinstance(product, dict) or str(product.get('id')) != identity or product.get('inStock') is not True:
+    if not isinstance(product, dict) or str(product.get('id')) != identity:
         return None, 'selected_product_mismatch'
     headings = soup.select('h1[data-testid="product-title"]')
     title = _normalized(headings[0].get_text(' ', strip=True)) if len(headings) == 1 else ''
@@ -322,6 +352,11 @@ def _parse_selected_listing(html, url, read_variant, check_group, *, default_htm
     physical, reason = read_variant(product, title, brand)
     if physical is None:
         return None, reason
+    if product.get('inStock') is not True:
+        # A negative observation explains missing current coverage. It is not
+        # an offer for the historical seller, whose exact identity may differ.
+        return None, ('selected_product_out_of_stock' if _confirmed_selected_out_of_stock(product, soup, url)
+                      else 'selected_stock_unknown')
     listing = product.get('merchantListing')
     merchant = listing.get('merchant') if isinstance(listing, dict) else None
     winner = listing.get('winnerVariant') if isinstance(listing, dict) else None
