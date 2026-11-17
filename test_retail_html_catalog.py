@@ -1,11 +1,14 @@
+import asyncio
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from unittest import TestCase
+from unittest.mock import AsyncMock, patch
 
-from retail_html_catalog import HB, TY, catalog_gtin, database, export, product_url, read_category, read_product
-from retail_catalog_publish import merge, ready_for_publication
+from retail_html_catalog import HB, TY, catalog_gtin, crawl, database, export, make_row, merge_specifications, properties, product_url, read_category, read_product
+from retail_catalog_publish import main as publish_main, merge, ready_for_publication
 
 
 URL = 'https://www.trendyol.com/lenovo/ideapad-83k10016tr-p-1132995554'
@@ -121,3 +124,176 @@ class RetailHtmlCatalogTest(TestCase):
             self.assertEqual(merge([checked], folder, lambda _: True, catalog)[0][0]['offers'], [])
             (folder / 'laptopPilot.json').write_text(json.dumps({'models': [{'gtin': GTIN}]}))
             self.assertFalse(merge(rows, folder, lambda _: True, catalog)[0])
+
+
+    def test_full_selected_technical_sheet_is_not_truncated(self):
+        facts = properties([{'name': f'Teknik alan {i}', 'value': 'USB-C bağlantı ' * 20}
+                            for i in range(30)])
+        row = make_row(TY, 'laptop', URL, 'Lenovo Ideapad', 'Lenovo', GTIN, '83K10016TR', [IMAGE], facts)
+        self.assertEqual(len(row['specs']), 30)
+        self.assertEqual(row['specs']['Teknik alan 29'], ('USB-C bağlantı ' * 20).strip())
+        self.assertEqual(row['specSources']['Teknik alan 29'],
+                         {'source': URL, 'checkedAt': row['checkedAt']})
+
+    def test_newer_shorter_sheet_updates_values_without_redating_retained_facts(self):
+        old = {'source': URL, 'checkedAt': '2026-11-16T00:00:00+00:00',
+               'specs': {'Bellek': '8 GB', 'İşlemci': 'Intel Core i5'}}
+        new = {'source': URL, 'checkedAt': '2026-11-17T00:00:00+00:00', 'specs': {'Bellek': '16 GB'}}
+        merged = merge_specifications(old, new)
+        self.assertEqual(merged['specs'], {'Bellek': '16 GB', 'İşlemci': 'Intel Core i5'})
+        self.assertEqual(merged['specSources']['İşlemci']['checkedAt'], old['checkedAt'])
+        self.assertEqual(merged['specSources']['Bellek']['checkedAt'], new['checkedAt'])
+        self.assertFalse(merged['specConflicts'])
+
+    def test_cross_source_disagreement_is_retained_until_corrected(self):
+        first = {'source': URL, 'checkedAt': '2026-11-16T00:00:00+00:00',
+                 'specs': {'Bellek': '8 GB', 'İşlemci': 'Intel Core i5'}}
+        second_url = 'https://www.hepsiburada.com/ideapad-p-HBCV0000ABC123'
+        second = {'source': second_url, 'checkedAt': '2026-11-17T00:00:00+00:00',
+                  'specs': {'Bellek': '16 GB', 'Ekran': '15.6 inç'}}
+        merged = merge_specifications(first, second)
+        self.assertNotIn('Bellek', merged['specs'])
+        self.assertEqual(len(merged['specConflicts']['Bellek']), 2)
+        self.assertEqual(set(merged['specs']), {'İşlemci', 'Ekran'})
+        corrected = {**first, 'checkedAt': '2026-11-17T01:00:00+00:00', 'specs': {'Bellek': '16 GB'}}
+        resolved = merge_specifications(merged, corrected)
+        self.assertFalse(resolved['specConflicts'])
+        self.assertEqual(resolved['specs']['Bellek'], '16 GB')
+
+    def test_export_combines_complementary_facts_from_exact_barcode(self):
+        first = read_product(self.listing(), URL, 'laptop')
+        first['specSources'] = {}
+        other = {**first, 'source': 'https://www.hepsiburada.com/ideapad-p-HBCV0000ABC123',
+                 'specs': {'Ekran': '15.6 inç'}, 'offer': None}
+        with TemporaryDirectory() as root:
+            db = database(Path(root) / 'queue.sqlite')
+            for row in (first, other):
+                db.execute('INSERT INTO queue(url,host,kind,title,status,data) VALUES (?,?,?,?,?,?)',
+                           (row['source'], TY, 'laptop', row['name'], 'verified', json.dumps(row)))
+            destination = Path(root) / 'catalog.json'
+            export(db, destination)
+            db.close()
+            result = json.loads(destination.read_text())[0]
+            self.assertEqual(set(result['specs']), {'Model kodu', 'Bellek', 'Ekran'})
+            self.assertEqual(result['specSources']['Ekran']['source'], other['source'])
+
+
+    def test_publisher_refreshes_shorter_sheet_and_keeps_old_field_evidence(self):
+        row = read_product(self.listing(), URL, 'laptop')
+        row.update(offers=[row.pop('offer')], checkedAt='2026-11-16T00:00:00+00:00')
+        row.pop('specSources')
+        row['specs']['Bellek'] = '8 GB'
+        with TemporaryDirectory() as root:
+            folder = Path(root)
+            for name, key in (('laptopPilot', 'models'), ('monitorPilot', 'models'),
+                              ('pcParts', 'parts'), ('twsOfferSnapshot', 'models')):
+                (folder / (name + '.json')).write_text(json.dumps({key: []}))
+            catalog = folder / 'catalog.json'
+            catalog.write_text(json.dumps([row]))
+            fresh = {**row, 'checkedAt': '2026-11-17T00:00:00+00:00',
+                     'specs': {'Bellek': '16 GB', 'Ekran': '15.6 inç'}}
+            merged, _ = merge([fresh], folder, lambda _: True, catalog)
+            self.assertEqual(merged[0]['specs']['Bellek'], '16 GB')
+            self.assertEqual(merged[0]['specSources']['Model kodu'], {'source': URL})
+            wrong = {**fresh, 'model': 'DIFFERENT-MODEL'}
+            held, counters = merge([wrong], folder, lambda _: True, catalog)
+            self.assertEqual(counters['identity_conflict'], 1)
+            self.assertEqual(held[0]['specs']['Bellek'], '8 GB')
+
+
+    def test_refresh_respects_category_and_rejects_reused_product_url(self):
+        row = read_product(self.listing(), URL, 'laptop')
+        with TemporaryDirectory() as root:
+            db = database(Path(root) / 'queue.sqlite')
+            db.executemany('INSERT INTO queue(url,host,kind,title,status,data) VALUES (?,?,?,?,?,?)', [
+                (URL, TY, 'laptop', row['name'], 'verified', json.dumps(row)),
+                (URL + '-tablet', TY, 'tablet', 'Tablet', 'verified', json.dumps(row)),
+            ])
+            args = SimpleNamespace(spacing=.5, host=[TY], kind=['laptop'], refresh=True, verify_only=False,
+                                   retry_unverified=False, retry_redirects=False, discovery_only=False,
+                                   maximum=10, workers=1)
+            changed = {**row, 'gtin': '4711081273981'}
+            with patch('retail_html_catalog.Host.get', new_callable=AsyncMock, return_value=(200, b'html')) as get:
+                with patch('retail_html_catalog.read_product', return_value=changed):
+                    asyncio.run(crawl(args, db))
+            self.assertEqual(get.await_count, 1)
+            self.assertEqual(get.await_args.args, (URL,))
+            self.assertEqual(json.loads(db.execute('SELECT data FROM queue WHERE url=?', (URL,)).fetchone()[0]), row)
+            self.assertIsNone(db.execute('SELECT checked_at FROM queue WHERE kind="tablet"').fetchone()[0])
+            attempt = db.execute('SELECT outcome,status,attempted_at FROM refresh_attempts WHERE url=?', (URL,)).fetchone()
+            self.assertEqual(attempt[:2], ('identity_changed', 200))
+            self.assertTrue(attempt[2])
+            self.assertEqual(db.execute('SELECT count(*) FROM refresh_attempts').fetchone()[0], 1)
+
+            db.close()
+
+
+    def test_publisher_keeps_existing_specs_after_offer_expiry(self):
+        row = read_product(self.listing(), URL, 'laptop')
+        row['offers'] = [{**row.pop('offer'), 'checkedAt': '2020-01-01T00:00:00+00:00'}]
+        with TemporaryDirectory() as root:
+            folder = Path(root)
+            for name, key in (('laptopPilot', 'models'), ('monitorPilot', 'models'),
+                              ('pcParts', 'parts'), ('twsOfferSnapshot', 'models')):
+                (folder / (name + '.json')).write_text(json.dumps({key: []}))
+            catalog, report, output = [folder / name for name in ('catalog.json', 'report.json', 'out.json')]
+            catalog.write_text(json.dumps([row]))
+            report.write_text('[]')
+            command = ['retail_catalog_publish.py', str(report), str(folder), '--catalog', str(catalog),
+                       '--image-cache', str(folder / 'images.sqlite'), '--output', str(output)]
+            with patch('sys.argv', command), patch('retail_catalog_publish.verify_images',
+                                                  new_callable=AsyncMock, return_value={IMAGE}):
+                publish_main()
+            result = json.loads(output.read_text())
+            self.assertEqual(len(result), 1)
+            self.assertEqual(result[0]['specs'], row['specs'])
+            self.assertEqual(result[0]['offers'][0]['checkedAt'], '2020-01-01T00:00:00+00:00')
+            row['specs'] = {'Stok Adedi': '20', 'Stok Kodu': 'ABC123'}
+            catalog.write_text(json.dumps([row]))
+            with patch('sys.argv', command), patch('retail_catalog_publish.verify_images',
+                                                  new_callable=AsyncMock, return_value={IMAGE}):
+                publish_main()
+            incomplete = json.loads(output.read_text())
+            self.assertEqual(len(incomplete), 1)
+            self.assertEqual(incomplete[0]['specs'], {})
+
+
+
+    def test_property_values_keep_units_and_reject_contradictory_selected_fields(self):
+        self.assertEqual(properties([
+            {'name': 'Frekans', 'value': 5.1, 'unitText': 'GHz'},
+            {'name': 'Kodek', 'value': ['AAC', 'SBC']},
+            {'name': 'Bellek', 'value': '8 GB'},
+            {'name': 'Bellek', 'value': '16 GB'},
+        ]), {'Frekans': '5.1 GHz', 'Kodek': 'AAC, SBC'})
+
+
+    def test_stock_and_media_metadata_do_not_count_as_technical_details(self):
+        self.assertEqual(properties([
+            {'name': 'Stok Adedi', 'value': '20'},
+            {'name': 'Stok Kodu', 'value': 'ABC123'},
+            {'name': 'Paket Görseli (ön)', 'value': 'gorsel.png'},
+            {'name': 'Kullanım Talimatı/Uyarıları', 'value': 'https://example.com/manual.pdf'},
+            {'name': 'Bluetooth', 'value': '5.3'},
+        ]), {'Bluetooth': '5.3'})
+
+
+    def test_blocked_refresh_records_attempt_without_discarding_previous_evidence(self):
+        row = read_product(self.listing(), URL, 'laptop')
+        with TemporaryDirectory() as root:
+            db = database(Path(root) / 'queue.sqlite')
+            db.execute('INSERT INTO queue(url,host,kind,title,status,data) VALUES (?,?,?,?,?,?)',
+                       (URL, TY, 'laptop', row['name'], 'verified', json.dumps(row)))
+            args = SimpleNamespace(spacing=.5, host=[TY], kind=['laptop'], refresh=True, verify_only=False,
+                                   retry_unverified=False, retry_redirects=False, discovery_only=False,
+                                   maximum=10, workers=1)
+            for status in (403, 429, 503, 0):
+                with patch('retail_html_catalog.Host.get', new_callable=AsyncMock, return_value=(status, b'')):
+                    asyncio.run(crawl(args, db))
+                attempt = db.execute('SELECT outcome,status FROM refresh_attempts WHERE url=?', (URL,)).fetchone()
+                self.assertEqual(attempt, (f'http_{status}', status))
+                saved = db.execute('SELECT status,data FROM queue WHERE url=?', (URL,)).fetchone()
+                self.assertEqual(saved[0], 'verified')
+                self.assertEqual(json.loads(saved[1]), row)
+                self.assertEqual(db.execute('SELECT count(*) FROM refresh_attempts').fetchone()[0], 1)
+            db.close()

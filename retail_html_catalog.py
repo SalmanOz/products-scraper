@@ -114,7 +114,7 @@ def clean(value, limit=250):
 
 
 def text(node):
-    return clean(' '.join(node.itertext()), 600)
+    return clean(' '.join(node.itertext()), 2048)
 
 
 def as_dict(value):
@@ -215,25 +215,78 @@ def valid_title(title, kind):
 
 def technical_field(label, value):
     key = words(label)
-    return ('@' not in value and not re.search(
-        r'\b(?:adres|uretici bilgisi|uretici iletisim|ithalatci|yetkili temsilci|uygunluk|mensei|garanti)\b', key))
+    return ('@' not in value and not re.match(r'https?://', value.strip(), re.I) and not re.search(
+        r'\b(?:adres|uretici bilgisi|uretici iletisim|ithalatci|yetkili temsilci|uygunluk|mensei|garanti|'
+        r'stok adedi|stok kodu|paket gorseli|kullanim talimati|satici|kargo)\b', key))
 
 
 def properties(rows):
-    result = {}
+    result, seen, conflicts = {}, {}, set()
     for row in rows:
         if not isinstance(row, dict):
             continue
         key = row.get('name') or row.get('key')
-        value = row.get('unitText') or row.get('value')
+        value = row.get('value')
+        if isinstance(value, dict):
+            value = value.get('name')
+        if isinstance(value, list):
+            value = ', '.join(str(item) for item in value if isinstance(item, (str, int, float)))
+        unit = clean(row.get('unitText'), 80)
+        if value is not None and unit and not str(value).endswith(unit):
+            value = f'{value} {unit}'
+        elif value is None:
+            value = unit
         label = clean(as_dict(key).get('name') if isinstance(key, dict) else key, 80)
-        value = clean(as_dict(value).get('name') if isinstance(value, dict) else str(value or ''), 110)
+        value = clean(str(value) if value is not None else '', 2048)
         if label and value and technical_field(label, value) and words(label) not in {
             'marka', 'brand', 'barkod', 'ean', 'gtin', 'garanti', 'garanti suresi',
             'garanti tipi', 'urun tipi', 'urun durumu', 'renk', 'color', 'mensei',
         }:
-            result.setdefault(label, value)
+            normalized = words(label)
+            if normalized in seen and result.get(seen[normalized]) != value:
+                conflicts.add(normalized)
+                result.pop(seen[normalized], None)
+            if normalized not in conflicts:
+                canonical = seen.setdefault(normalized, label)
+                result[canonical] = value
     return result
+
+
+def merge_specifications(existing, incoming, *, legacy_existing=False):
+    """Merge observed fields without assigning old facts a new observation time."""
+    def observed(item):
+        return (datetime.fromisoformat(item['checkedAt']) if item.get('checkedAt')
+                else datetime.min.replace(tzinfo=timezone.utc))
+
+    observations = {}
+    for row in (existing, incoming):
+        sources = row.get('specSources', {})
+        for label, value in row.get('specs', {}).items():
+            source = sources.get(label)
+            if source is None:
+                source = {'source': row['source']}
+                if row is not existing or not legacy_existing:
+                    source['checkedAt'] = row['checkedAt']
+            observations.setdefault(words(label), []).append((label, {'value': value, **source}))
+        for label, conflicts in row.get('specConflicts', {}).items():
+            observations.setdefault(words(label), []).extend((label, item) for item in conflicts)
+    specs, sources, conflicts = {}, {}, {}
+    for candidates in observations.values():
+        by_source = {}
+        for label, item in candidates:
+            previous = by_source.get(item['source'])
+            if previous is None or observed(item) >= observed(previous[1]):
+                by_source[item['source']] = (label, item)
+        ordered = sorted(by_source.values(),
+                         key=lambda pair: (observed(pair[1]), pair[1]['source']), reverse=True)
+        label, latest = ordered[0]
+        values = {normalize('NFKC', item['value']).casefold() for _, item in ordered}
+        if len(values) > 1:
+            conflicts[label] = [item for _, item in ordered]
+        else:
+            specs[label] = latest['value']
+            sources[label] = {key: latest[key] for key in ('source', 'checkedAt') if key in latest}
+    return {'specs': specs, 'specSources': sources, 'specConflicts': conflicts}
 
 
 def table_properties(doc, expression):
@@ -320,7 +373,8 @@ def make_row(host, kind, url, title, brand, gtin, mpn, photos, specs, price=None
         return None
     checked = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     return {'gtin': gtin, 'name': title, 'brand': brand, 'kind': kind, 'model': mpn or None,
-            'image': photos[0], 'specs': dict(list(specs.items())[:20]), 'source': url,
+            'image': photos[0], 'specs': specs, 'source': url,
+            'specSources': {key: {'source': url, 'checkedAt': checked} for key in specs},
             'checkedAt': checked, 'offer': {'url': url, 'price': price, 'merchant': seller, 'platform': STORES[host],
                                            'checkedAt': checked} if price and seller else None}
 
@@ -1037,6 +1091,10 @@ def database(path):
             status TEXT NOT NULL DEFAULT 'pending', data TEXT, checked_at TEXT
         );
         CREATE INDEX IF NOT EXISTS queue_host_status ON queue (host, status);
+        CREATE TABLE IF NOT EXISTS refresh_attempts (
+            url TEXT PRIMARY KEY, host TEXT NOT NULL, kind TEXT NOT NULL,
+            outcome TEXT NOT NULL, status INT NOT NULL, attempted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
     ''')
     return db
 
@@ -1085,12 +1143,10 @@ async def crawl(args, db):
     async def verify(host, reader, queue, counters):
         while not reader.stopped:
             try:
-                url, kind = queue.get_nowait()
+                url, kind, previous = queue.get_nowait()
             except asyncio.QueueEmpty:
                 return
             status, raw = await reader.get(url)
-            if not raw and status in (0, 403, 429, 503):
-                continue
             result = None
             if raw:
                 try:
@@ -1098,8 +1154,18 @@ async def crawl(args, db):
                     result = await asyncio.to_thread(read_product, body, final, kind)
                 except (KeyError, AttributeError, ValueError, TypeError, ParserError):
                     pass
-            outcome = 'verified' if result else f'http_{status}' if not raw else 'unverified'
+            changed_identity = bool(args.refresh and result and previous
+                                    and result['gtin'] != json.loads(previous)['gtin'])
+            if changed_identity:
+                result = None
+            outcome = ('identity_changed' if changed_identity else 'verified' if result
+                       else f'http_{status}' if not raw else 'unverified')
             counters[outcome] += 1
+            db.execute('INSERT OR REPLACE INTO refresh_attempts (url,host,kind,outcome,status) VALUES (?,?,?,?,?)',
+                       (url, host, kind, outcome, status))
+            if not raw and status in (0, 403, 429, 503):
+                db.commit()
+                continue
             if args.refresh and not result:
                 db.execute('UPDATE queue SET checked_at=CURRENT_TIMESTAMP WHERE url=?', (url,))
                 db.commit()
@@ -1120,8 +1186,9 @@ async def crawl(args, db):
         status = ('verified' if args.refresh else 'unverified' if args.retry_unverified else
                   'http_301' if args.retry_redirects else 'pending')
         order = 'checked_at, rowid' if args.refresh else 'rowid'
-        rows = db.execute(f'SELECT url,kind FROM queue WHERE host=? AND status=? ORDER BY {order} LIMIT ?',
-                          (host, status, args.maximum)).fetchall()
+        kinds = ' AND kind IN (' + ','.join('?' for _ in args.kind) + ')' if args.kind else ''
+        rows = db.execute(f'SELECT url,kind,data FROM queue WHERE host=? AND status=?{kinds} ORDER BY {order} LIMIT ?',
+                          (host, status, *(args.kind or []), args.maximum)).fetchall()
         for row in rows:
             queue.put_nowait(row)
         if reader.stopped and rows:
@@ -1143,6 +1210,7 @@ def export(db, destination):
             offer = row.pop('offer')
             row['offers'] = [offer] if offer else []
             row['checkedSources'] = {row['source']: row['checkedAt']}
+            row.update(merge_specifications({}, row))
             products[key] = row
             continue
         seen = products[key]
@@ -1157,9 +1225,7 @@ def export(db, destination):
         if offer and not any(p['platform'] == offer['platform'] or words(p['merchant']) == words(offer['merchant'])
                              for p in seen['offers']):
             seen['offers'].append(offer)
-        if len(row['specs']) > len(seen['specs']):
-            seen.update(specs=row['specs'], source=row['source'], name=row['name'],
-                        image=row['image'], model=row['model'] or seen['model'])
+        seen.update(merge_specifications(seen, row))
     for gtin in conflicts:
         del products[gtin]
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -1207,11 +1273,7 @@ def main():
             db.execute(
                 "INSERT INTO queue SELECT * FROM part.queue WHERE 1 "
                 "ON CONFLICT(url) DO UPDATE SET status=excluded.status, "
-                "data=CASE WHEN json_extract(queue.data,'$.gtin')=json_extract(excluded.data,'$.gtin') "
-                "AND (SELECT count(*) FROM json_each(queue.data,'$.specs')) > "
-                "(SELECT count(*) FROM json_each(excluded.data,'$.specs')) "
-                "THEN json_set(excluded.data, '$.specs', json_extract(queue.data,'$.specs')) "
-                "ELSE excluded.data END, checked_at=excluded.checked_at "
+                "data=excluded.data, checked_at=excluded.checked_at "
                 "WHERE excluded.status='verified' AND "
                 "(queue.status!='verified' OR json_extract(excluded.data, '$.checkedAt') >= json_extract(queue.data, '$.checkedAt'))"
             )

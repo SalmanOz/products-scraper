@@ -92,3 +92,20 @@ jobs:
           set -euo pipefail
           catalog="$RUNNER_TEMP/html-catalog/merged.json"
           python verify_retail_html_watch_live.py "$catalog"
+      - name: Report product specifications and price coverage
+        if: always()
+        run: |
+          path="$RUNNER_TEMP/html-catalog"
+          catalog="$path/merged.json"
+          if [[ ! -f "$catalog" ]]; then catalog="site/frontend/public/retail-catalog.json"; fi
+          if [[ -f "$path/queue.sqlite" && -f "$catalog" ]]; then
+            python retail_catalog_coverage.py --catalog "$catalog" --db "$path/queue.sqlite" --output "$path/coverage.json"
+          fi
+      - name: Save catalog coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: retail-catalog-coverage
+          path: ${{ runner.temp }}/html-catalog/coverage.json
+          if-no-files-found: ignore
+          retention-days: 30

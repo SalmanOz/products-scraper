@@ -2,6 +2,7 @@
 import argparse
 import asyncio
 from collections import Counter
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import json
@@ -13,7 +14,8 @@ from curl_cffi import CurlError
 from curl_cffi.requests import Session, RequestsError
 
 from retail_html_catalog import (
-    IMAGE_HOSTS, KIND_WORDS, STORES, amount, catalog_gtin, clean, images, retail_listing_url, technical_field, words,
+    IMAGE_HOSTS, KIND_WORDS, STORES, amount, catalog_gtin, clean, images, merge_specifications,
+    retail_listing_url, technical_field, words,
 )
 
 
@@ -56,7 +58,7 @@ def inventory(site):
     return known, codes, source_urls
 
 
-def valid_row(row):
+def valid_row(row, *, require_specs=True):
     barcode = row.get('gtin')
     if not barcode or catalog_gtin(barcode) != barcode or row.get('kind') not in KIND_WORDS:
         return False
@@ -70,9 +72,31 @@ def valid_row(row):
     if not any(image_host in allowed and images(h, [row['image']]) for h, allowed in IMAGE_HOSTS.items()):
         return False
     specs = row.get('specs')
-    if not isinstance(specs, dict) or not 2 <= len(specs) <= 20 or not all(
-            clean(key, 80) and clean(value, 110) for key, value in specs.items()):
+    conflicts = row.get('specConflicts', {})
+    if (not isinstance(specs, dict) or not isinstance(conflicts, dict)
+            or not (2 if require_specs else 0) <= len(specs) + len(conflicts) <= 256 or not all(
+                clean(key, 80) and clean(value, 2048) for key, value in specs.items())):
         return False
+    sources = row.get('specSources', {})
+    if not isinstance(sources, dict) or set(sources) - set(specs):
+        return False
+    evidence = list(sources.values())
+    for label, values in conflicts.items():
+        if (label in specs or not clean(label, 80) or not isinstance(values, list) or len(values) < 2
+                or any(not isinstance(item, dict) or not clean(item.get('value'), 2048) for item in values)):
+            return False
+        evidence.extend(values)
+    for item in evidence:
+        if not isinstance(item, dict):
+            return False
+        url = item.get('source', '')
+        if urlsplit(url).netloc not in STORES or retail_listing_url(url, url) != url:
+            return False
+        try:
+            if 'checkedAt' in item and datetime.fromisoformat(item['checkedAt']).tzinfo is None:
+                return False
+        except (ValueError, TypeError, KeyError):
+            return False
     platforms = set()
     for offer in row['offers']:
         url = offer['url']
@@ -96,7 +120,9 @@ def merge(rows, site, image_check, catalog):
             counters['removed_existing_identity'] += 1
             continue
         item['specs'] = {k: v for k, v in item['specs'].items() if technical_field(k, v)}
-        if valid_row(item):
+        if 'specSources' in item:
+            item['specSources'] = {k: v for k, v in item['specSources'].items() if k in item['specs']}
+        if valid_row(item, require_specs=False):
             name_key = item['kind'], model_key[0], words(item['name'])
             if name_key in name_owners:
                 counters['removed_duplicate_name'] += 1
@@ -108,9 +134,11 @@ def merge(rows, site, image_check, catalog):
     source_owners = {p['source']: p['gtin'] for p in output.values()}
     for row in rows:
         row = {**row, 'specs': {k: v for k, v in row['specs'].items() if technical_field(k, v)}}
+        if 'specSources' in row:
+            row['specSources'] = {k: v for k, v in row['specSources'].items() if k in row['specs']}
         checked_sources = row.pop('checkedSources', {})
         barcode = row['gtin']
-        if not valid_row(row):
+        if not valid_row(row, require_specs=barcode not in output):
             counters['invalid_or_insufficient_specs'] += 1
             continue
         model_key = words(row['brand']), normalized_model(row['model'])
@@ -121,7 +149,9 @@ def merge(rows, site, image_check, catalog):
             counters['existing_identity'] += 1
             continue
         existing = output.get(barcode)
-        if existing and (words(existing['brand']) != words(row['brand']) or existing['kind'] != row['kind']):
+        if existing and (words(existing['brand']) != words(row['brand']) or existing['kind'] != row['kind']
+                         or existing.get('model') and row.get('model')
+                         and normalized_model(existing['model']) != normalized_model(row['model'])):
             counters['identity_conflict'] += 1
             continue
         if not image_check(row['image']):
@@ -130,8 +160,11 @@ def merge(rows, site, image_check, catalog):
         source_owners[row['source']] = barcode
         name_owners[name_key] = barcode
         if existing:
-            if len(existing['specs']) > len(row['specs']):
-                row = {**row, 'specs': existing['specs'], 'source': existing['source']}
+            facts = merge_specifications(existing, row, legacy_existing=True)
+            if datetime.fromisoformat(existing['checkedAt']) > datetime.fromisoformat(row['checkedAt']):
+                row = {**row, **{key: existing[key] for key in
+                                ('name', 'brand', 'kind', 'model', 'image', 'source', 'checkedAt')}}
+            row = {**row, **facts}
             old = {offer['platform']: offer for offer in existing['offers']
                    if checked_sources.get(offer['url'], '') < offer['checkedAt']}
             for offer in row['offers']:
@@ -139,6 +172,8 @@ def merge(rows, site, image_check, catalog):
                 if platform not in old or offer['checkedAt'] >= old[platform]['checkedAt']:
                     old[platform] = offer
             row = {**row, 'offers': sorted(old.values(), key=lambda o: (o['price'], o['url']))}
+        else:
+            row = {**row, **merge_specifications({}, row)}
         if existing != row:
             counters['updated' if existing else 'added'] += 1
         output[barcode] = row
@@ -217,20 +252,25 @@ def main():
     rows = read(args.report)
     if scope is not None and any(row['gtin'] not in scope for row in rows):
         parser.error('Report is outside the requested GTIN scope')
-    eligible = [p for p in rows if valid_row(p)]
     current = read(args.catalog) if args.catalog.exists() else []
-    with sqlite3.connect(args.image_cache, timeout=30) as db:
+    existing_barcodes = {row['gtin'] for row in current}
+    eligible = [p for p in rows if valid_row(p, require_specs=p['gtin'] not in existing_barcodes)]
+    with closing(sqlite3.connect(args.image_cache, timeout=30)) as db, db:
         db.execute('PRAGMA journal_mode=WAL')
         image_cache_schema(db)
         verified = asyncio.run(verify_images(
             (row['image'] for batch in (eligible, current) for row in batch
-             if (scope is None or row['gtin'] in scope) and valid_row(row)), db
+             if (scope is None or row['gtin'] in scope) and valid_row(row, require_specs=row['gtin'] not in existing_barcodes)), db
         ))
     merged, counters = merge(rows, args.site, verified.__contains__, args.catalog)
     now = datetime.now(timezone.utc)
     candidates = [row for row in merged if scope is None or row['gtin'] in scope]
-    merged = [row for row in candidates if ready_for_publication(row, verified.__contains__, now)]
+    merged = [row for row in candidates if row['gtin'] in existing_barcodes
+              or ready_for_publication(row, verified.__contains__, now)]
     counters['awaiting_current_price_or_image'] = len(candidates) - len(merged)
+    counters['specification_conflicts'] = sum(len(row.get('specConflicts', {})) for row in merged)
+    counters['retained_without_current_price'] = sum(not ready_for_publication(row, lambda _: True, now)
+                                                    for row in merged)
     if scope is not None:
         # The scoped stock job must not expire, reformat or repair other products.
         scoped = {row['gtin']: row for row in merged}
