@@ -15,7 +15,7 @@ from catalog_source_collector import catalog_document_reader
 
 from retail_catalog_publish import served_image, valid_row
 from retail_html_catalog import (
-    Host, KIND_WORDS, TY, catalog_gtin, database, images, read_product, retail_listing_url, words,
+    Host, KIND_WORDS, TY, catalog_gtin, database, images, read_product, retail_listing_url, words, merge_specifications,
 )
 
 
@@ -103,8 +103,9 @@ async def read_watch(db, configured, site_reader=None, browser=None, browser_hos
                   if urlsplit(r['image']).netloc != 'img.pzrmcdn.com']
         if rows:
             product = {k: v for k, v in rows[0].items() if k != 'offer'}
-            specs = max([*rows, *metadata[gtin]], key=lambda r: len(r['specs']))['specs']
-            product.update(model=item['model'], specs=specs, offers=list(offers.values()),
+            for observed in [*metadata[gtin], *rows]:
+                product.update(merge_specifications(product, observed))
+            product.update(model=item['model'], offers=list(offers.values()),
                            checkedSources={r['source']: r['checkedAt'] for r in rows})
             for photo in dict.fromkeys([*photos, item['photo']]):
                 product['image'] = photo

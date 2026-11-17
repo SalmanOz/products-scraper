@@ -1020,5 +1020,56 @@ class SourceIngestionClientTests(unittest.TestCase):
             client.submit_sources([{"record": 1}])
 
 
+class PhysicalRefreshTests(unittest.TestCase):
+    def catalog_client(self):
+        client = Mock()
+        client.fetch_catalog.return_value = [CatalogProduct(
+            1, 'Phone One', 'phone-one',
+            {'ram_gb': 8, 'storage_gb': 128, 'battery_mah': 5000, 'screen_size_inch': 6.1},
+            'verified', (), '2026-01-01T00:00:00Z', ('https://cdn.teknoskor.com/phone.webp',))]
+        client.submit_sources.return_value = {'accepted': 6, 'stale_ignored': 0, 'affected_products': 1}
+        return client
+
+    def test_verified_phone_refresh_uses_current_fields_and_exact_memory(self):
+        client = self.catalog_client()
+        scraper = KimovilScraper(ingestion_client=client)
+        scraper.get_via_flaresolverr = Mock(return_value="""
+            <meta name='deviceki' content='{"name":"Phone One","partials":{}}'>
+            <section class='container-sheet-hardware'><h2>Performance &amp; Hardware</h2>
+            <table class='k-dltable'>
+              <tr><th class='label'>Memory RAM</th><td class='value'>8 GB</td></tr>
+              <tr><th class='label'>Capacity</th><td class='value'>128 GB</td></tr>
+            </table></section>
+            <section class='container-sheet-battery'><h2>Battery</h2>
+            <table class='k-dltable'><tr><th class='label'>Capacity</th><td class='value'>6000 mAh</td></tr></table>
+            </section>
+        """)
+        summary = scraper.scrape_existing_products(refresh_physical=True)
+        self.assertEqual(summary['failed'], [])
+        records = client.submit_sources.call_args.args[0]
+        values = {record['attribute_key']: record['value'] for record in records}
+        self.assertEqual(values['battery_mah'], 6000)
+        self.assertEqual(values['ram_gb'], 8)
+        self.assertEqual(values['storage_gb'], 128)
+        self.assertNotIn('screen_size_inch', values)
+        self.assertTrue(all(record['observed_at'] != '2026-01-01T00:00:00Z' for record in records))
+        client.submit_sources.reset_mock()
+        scraper.get_via_flaresolverr.return_value = scraper.get_via_flaresolverr.return_value.replace('128 GB', '256 GB')
+        scraper.search_product_on_kimovil = Mock(return_value=None)
+        summary = scraper.scrape_existing_products(refresh_physical=True)
+        self.assertEqual(summary['failed'], ['phone-one'])
+        client.submit_sources.assert_not_called()
+
+    def test_failed_physical_read_does_not_submit_or_redate_existing_data(self):
+        client = self.catalog_client()
+        scraper = KimovilScraper(ingestion_client=client)
+        scraper.get_via_flaresolverr = Mock(return_value=None)
+        scraper.search_product_on_kimovil = Mock(return_value=None)
+        summary = scraper.scrape_existing_products(refresh_physical=True)
+        self.assertEqual(summary['failed'], ['phone-one'])
+        client.submit_sources.assert_not_called()
+        self.assertEqual(client.fetch_catalog.return_value[0].spec_verified_at, '2026-01-01T00:00:00Z')
+
+
 if __name__ == "__main__":
     unittest.main()

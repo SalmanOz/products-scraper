@@ -4,6 +4,8 @@ on:
   schedule:
     # Runs every day at 03:00 UTC (06:00 AM Turkish Time)
     - cron: '0 3 * * *'
+    # Full phone technical sources are refreshed weekly on Monday.
+    - cron: '30 4 * * 1'
   workflow_dispatch:
     inputs:
       run_technical_data:
@@ -11,6 +13,11 @@ on:
         required: false
         type: boolean
         default: false
+      refresh_physical:
+        description: 'Refresh actual physical specifications while preserving exact model RAM/storage identity'
+        required: false
+        type: boolean
+        default: true
       technical_pending_only:
         description: 'Skip products whose technical data is already verified'
         required: false
@@ -76,12 +83,12 @@ jobs:
           RUN_TECHNICAL_DATA: ${{ github.event.inputs.run_technical_data }}
           TECHNICAL_PENDING_ONLY: ${{ github.event.inputs.technical_pending_only }}
           TECHNICAL_SCHEMA_ONLY: ${{ github.event.inputs.technical_schema_only }}
-          TECHNICAL_PRODUCT_LIMIT: ${{ github.event.inputs.technical_product_limit }}
+          TECHNICAL_PRODUCT_LIMIT: ${{ github.event.inputs.technical_product_limit || '0' }}
           COMPARISON_READINESS_ONLY: ${{ github.event.inputs.comparison_readiness_only }}
           PRICE_INDEX_AUDIT_ONLY: ${{ github.event.inputs.price_index_audit_only }}
           RUN_PHASE2_BACKFILL: ${{ github.event.inputs.run_phase2_backfill }}
-          CATALOG_EXPANSION_BATCH: ${{ github.event.inputs.catalog_expansion_batch }}
-          REPAIR_SPEC_BATCH: ${{ github.event.inputs.repair_spec_batch }}
+          CATALOG_EXPANSION_BATCH: ${{ github.event.inputs.catalog_expansion_batch || 'none' }}
+          REPAIR_SPEC_BATCH: ${{ github.event.inputs.repair_spec_batch || 'none' }}
         run: |
           if [[ "${REPAIR_SPEC_BATCH}" != "none" && ( "${RUN_TECHNICAL_DATA}" != "true" || "${TECHNICAL_PENDING_ONLY}" == "true" || "${TECHNICAL_SCHEMA_ONLY}" == "true" || "${COMPARISON_READINESS_ONLY}" == "true" || "${PRICE_INDEX_AUDIT_ONLY}" == "true" || "${RUN_PHASE2_BACKFILL}" == "true" || "${TECHNICAL_PRODUCT_LIMIT}" != "0" || "${CATALOG_EXPANSION_BATCH}" != "none" ) ]]; then
             echo "Spec repair requires technical mode without other sync or diagnostic options." >&2
@@ -206,7 +213,7 @@ jobs:
         env:
           TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
           SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
-          CATALOG_EXPANSION_BATCH: ${{ github.event.inputs.catalog_expansion_batch }}
+          CATALOG_EXPANSION_BATCH: ${{ github.event.inputs.catalog_expansion_batch || 'none' }}
         run: |
           set -euo pipefail
           : "${TEKNOSKOR_INGESTION_URL:?TEKNOSKOR_INGESTION_URL is required}"
@@ -215,18 +222,18 @@ jobs:
           python catalog_expansion.py --batch "${CATALOG_EXPANSION_BATCH}"
 
       - name: Run Technical Data Scraper
-        # Manual-only until the existing-product source backfill is reviewed.
-        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.run_technical_data == 'true' }}
+        if: ${{ github.event.schedule == '30 4 * * 1' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_technical_data == 'true') }}
         env:
           TEKNOSKOR_INGESTION_URL: ${{ vars.TEKNOSKOR_INGESTION_URL || 'https://teknoskor.com' }}
           SCRAPER_INGESTION_SECRET: ${{ secrets.SCRAPER_INGESTION_SECRET }}
           TECHNICAL_PENDING_ONLY: ${{ github.event.inputs.technical_pending_only }}
+          REFRESH_PHYSICAL: ${{ github.event_name == 'schedule' || github.event.inputs.refresh_physical == 'true' }}
           TECHNICAL_SCHEMA_ONLY: ${{ github.event.inputs.technical_schema_only }}
-          TECHNICAL_PRODUCT_LIMIT: ${{ github.event.inputs.technical_product_limit }}
+          TECHNICAL_PRODUCT_LIMIT: ${{ github.event.inputs.technical_product_limit || '0' }}
           COMPARISON_READINESS_ONLY: ${{ github.event.inputs.comparison_readiness_only }}
           PRICE_INDEX_AUDIT_ONLY: ${{ github.event.inputs.price_index_audit_only }}
-          CATALOG_EXPANSION_BATCH: ${{ github.event.inputs.catalog_expansion_batch }}
-          REPAIR_SPEC_BATCH: ${{ github.event.inputs.repair_spec_batch }}
+          CATALOG_EXPANSION_BATCH: ${{ github.event.inputs.catalog_expansion_batch || 'none' }}
+          REPAIR_SPEC_BATCH: ${{ github.event.inputs.repair_spec_batch || 'none' }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
@@ -241,6 +248,9 @@ jobs:
             exit 0
           fi
           args=()
+          if [[ "${REFRESH_PHYSICAL}" == "true" && "${PRICE_INDEX_AUDIT_ONLY}" != "true" && "${COMPARISON_READINESS_ONLY}" != "true" && "${TECHNICAL_SCHEMA_ONLY}" != "true" ]]; then
+            args+=(--refresh-physical)
+          fi
           if [[ "${PRICE_INDEX_AUDIT_ONLY}" == "true" ]]; then
             args+=(--price-index-audit-only)
           elif [[ "${COMPARISON_READINESS_ONLY}" == "true" ]]; then
@@ -257,6 +267,15 @@ jobs:
             args+=("--limit=${TECHNICAL_PRODUCT_LIMIT}")
           fi
           python main.py "${args[@]}"
+
+      - name: Save phone technical refresh report
+        if: ${{ always() && !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: phone-technical-refresh-${{ github.run_id }}
+          path: technical-sync-report.json
+          if-no-files-found: ignore
+          retention-days: 30
 
       - name: Save spec mapping repair backup and result
         if: ${{ always() && github.event_name == 'workflow_dispatch' && github.event.inputs.repair_spec_batch != 'none' }}

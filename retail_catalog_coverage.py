@@ -1,10 +1,12 @@
 """Report observed catalog coverage and refresh failures without changing product evidence."""
 import argparse
 from collections import Counter
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import sqlite3
+from urllib.parse import urlsplit
 
 
 def current(value, now, hours=72):
@@ -42,7 +44,16 @@ def coverage(products, db, now=None):
         attempts = [dict(zip(('host', 'kind', 'outcome', 'count', 'lastAttempt'), row)) for row in db.execute(
             'SELECT host,kind,outcome,count(*),max(attempted_at) FROM refresh_attempts '
             'GROUP BY host,kind,outcome ORDER BY host,kind,outcome')]
-    return {'checkedAt': now.isoformat(), 'latestRefreshAttempts': attempts, 'categories': categories, 'missingCurrentPrices': missing_prices,
+    unrouted = []
+    target_issues = Counter()
+    if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='catalog_target_issues'").fetchone():
+        for url, kind, gtin, reason in db.execute('SELECT url,kind,gtin,reason FROM catalog_target_issues ORDER BY kind,url,gtin'):
+            host = urlsplit(url).netloc
+            target_issues[host, kind, reason] += 1
+            unrouted.append({'url': url, 'host': host, 'kind': kind, 'gtin': gtin, 'reason': reason})
+    issues = [{'host': host, 'kind': kind, 'reason': reason, 'count': count}
+              for (host, kind, reason), count in sorted(target_issues.items())]
+    return {'targetCoverageIssues': issues, 'unroutedPublishedTargets': unrouted, 'checkedAt': now.isoformat(), 'latestRefreshAttempts': attempts, 'categories': categories, 'missingCurrentPrices': missing_prices,
             'specificationConflicts': conflicts, 'queue': queue}
 
 
@@ -52,13 +63,13 @@ def main():
     parser.add_argument('--db', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
-    with sqlite3.connect(f'{args.db.resolve().as_uri()}?mode=ro', uri=True) as db:
+    with closing(sqlite3.connect(f'{args.db.resolve().as_uri()}?mode=ro', uri=True)) as db:
         result = coverage(json.loads(args.catalog.read_text()), db)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     temporary = args.output.with_suffix('.tmp')
     temporary.write_text(json.dumps(result, ensure_ascii=False, indent=2) + '\n')
     temporary.replace(args.output)
-    print(json.dumps({'categories': result['categories'],
+    print(json.dumps({'categories': result['categories'], 'unroutedPublishedTargets': len(result['unroutedPublishedTargets']),
                       'missingCurrentPrices': len(result['missingCurrentPrices']),
                       'specificationConflicts': len(result['specificationConflicts'])}, ensure_ascii=False))
 

@@ -1091,6 +1091,13 @@ def database(path):
             status TEXT NOT NULL DEFAULT 'pending', data TEXT, checked_at TEXT
         );
         CREATE INDEX IF NOT EXISTS queue_host_status ON queue (host, status);
+        CREATE TABLE IF NOT EXISTS catalog_target_issues (
+            url TEXT NOT NULL, kind TEXT NOT NULL, gtin TEXT NOT NULL, reason TEXT NOT NULL,
+            PRIMARY KEY (url,kind,gtin,reason)
+        );
+        CREATE TABLE IF NOT EXISTS catalog_targets (
+            url TEXT PRIMARY KEY, gtin TEXT NOT NULL, kind TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS refresh_attempts (
             url TEXT PRIMARY KEY, host TEXT NOT NULL, kind TEXT NOT NULL,
             outcome TEXT NOT NULL, status INT NOT NULL, attempted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -1099,8 +1106,45 @@ def database(path):
     return db
 
 
+def seed_catalog(db, rows):
+    """Persist exact published identities as targets without inventing observations."""
+    candidates, conflicts, counts = {}, set(), Counter()
+    db.execute('DELETE FROM catalog_target_issues')
+    for row in rows:
+        gtin, kind = row.get('gtin'), row.get('kind')
+        if catalog_gtin(gtin) != gtin or not gtin or kind not in KIND_WORDS:
+            counts['invalid_identity'] += 1
+            continue
+        urls = [row.get('source'), *row.get('offerTargets', []),
+                *(offer.get('url') for offer in row.get('offers', []))]
+        for url in urls:
+            if not url:
+                continue
+            if urlsplit(url).netloc not in STORES or retail_listing_url(url, url) != url:
+                counts['unsupported_url'] += 1
+                reason = 'unsupported_host' if urlsplit(url).netloc not in STORES else 'unsupported_product_url'
+                db.execute('INSERT OR IGNORE INTO catalog_target_issues VALUES (?,?,?,?)', (url, kind, gtin, reason))
+                continue
+            if url in candidates and candidates[url][:2] != (gtin, kind):
+                conflicts.add(url)
+            candidates[url] = (gtin, kind, row.get('name') or row.get('model') or gtin)
+    for url, (gtin, kind, name) in candidates.items():
+        if url in conflicts:
+            db.execute('INSERT OR IGNORE INTO catalog_target_issues VALUES (?,?,?,?)',
+                       (url, kind, gtin, 'ambiguous_identity'))
+            db.execute('DELETE FROM catalog_targets WHERE url=?', (url,))
+            continue
+        db.execute('INSERT OR REPLACE INTO catalog_targets(url,gtin,kind) VALUES (?,?,?)', (url, gtin, kind))
+        db.execute('INSERT OR IGNORE INTO queue(url,host,kind,title) VALUES (?,?,?,?)',
+                   (url, urlsplit(url).netloc, kind, name))
+        counts['seeded'] += 1
+    db.commit()
+    counts['ambiguous_urls'] = len(conflicts)
+    return counts
+
+
 async def crawl(args, db):
-    hosts = {host: Host(args.spacing) for host in (args.host or (*PAGING, PAZARAMA, ELEKTRONIKBURADA))}
+    hosts = {host: Host(args.spacing) for host in (args.host or STORES)}
 
     async def discover(host, reader):
         for kind, paths in args.sources.get(host, {}).items():
@@ -1113,6 +1157,8 @@ async def crawl(args, db):
                         return
                     url = f'https://{host}{path}'
                     if page > 1:
+                        if host not in PAGING:
+                            break
                         url += '?' + urlencode({PAGING[host]: page})
                     saved = db.execute(
                         "SELECT items FROM pages WHERE url=? AND status=200 AND checked_at >= datetime('now', ?)",
@@ -1143,25 +1189,27 @@ async def crawl(args, db):
     async def verify(host, reader, queue, counters):
         while not reader.stopped:
             try:
-                url, kind, previous = queue.get_nowait()
+                url, kind, previous, expected = queue.get_nowait()
             except asyncio.QueueEmpty:
                 return
             status, raw = await reader.get(url)
+            previous_data = json.loads(previous) if previous else {}
+            expected = expected or previous_data.get('gtin')
             result = None
             if raw:
                 try:
                     final, body = raw if isinstance(raw, tuple) else (url, raw)
-                    result = await asyncio.to_thread(read_product, body, final, kind)
+                    result = await asyncio.to_thread(read_product, body, final, kind, expected)
                 except (KeyError, AttributeError, ValueError, TypeError, ParserError):
                     pass
-            changed_identity = bool(args.refresh and result and previous
-                                    and result['gtin'] != json.loads(previous)['gtin'])
-            if changed_identity:
-                retained = json.loads(previous)
+            changed_identity = bool(result and expected and result['gtin'] != expected)
+            if changed_identity and previous_data.get('source'):
+                retained = previous_data
                 retained['offer'] = None
                 retained['offerCheckedAt'] = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
                 db.execute('UPDATE queue SET data=? WHERE url=?',
                            (json.dumps(retained, ensure_ascii=False), url))
+            if changed_identity:
                 result = None
             outcome = ('identity_changed' if changed_identity else 'verified' if result
                        else f'http_{status}' if not raw else 'unverified')
@@ -1190,10 +1238,21 @@ async def crawl(args, db):
         queue, counters = asyncio.Queue(), Counter()
         status = ('verified' if args.refresh else 'unverified' if args.retry_unverified else
                   'http_301' if args.retry_redirects else 'pending')
-        order = 'checked_at, rowid' if args.refresh else 'rowid'
-        kinds = ' AND kind IN (' + ','.join('?' for _ in args.kind) + ')' if args.kind else ''
-        rows = db.execute(f'SELECT url,kind,data FROM queue WHERE host=? AND status=?{kinds} ORDER BY {order} LIMIT ?',
-                          (host, status, *(args.kind or []), args.maximum)).fetchall()
+        kinds = ' AND q.kind IN (' + ','.join('?' for _ in args.kind) + ')' if args.kind else ''
+        selected = "(q.status='verified' OR t.url IS NOT NULL)" if args.refresh else 'q.status=?'
+        values = [host, *([] if args.refresh else [status]), *(args.kind or [])]
+        stale = ''
+        if args.refresh and getattr(args, 'stale_hours', None) is not None:
+            stale = (" AND (q.data IS NULL OR (t.gtin IS NOT NULL AND json_extract(q.data,'$.gtin') != t.gtin) "
+                     "OR julianday(json_extract(q.data,'$.checkedAt')) < julianday('now', ?))")
+            values.append(f'-{args.stale_hours} hours')
+        order = ("coalesce(a.attempted_at,q.checked_at,''),"
+                 "CASE WHEN t.url IS NULL THEN 1 ELSE 0 END,q.rowid" if args.refresh else 'q.rowid')
+        rows = db.execute(
+            f'SELECT q.url,q.kind,q.data,t.gtin FROM queue q '
+            f'LEFT JOIN catalog_targets t USING(url) LEFT JOIN refresh_attempts a USING(url) '
+            f'WHERE q.host=? AND {selected}{kinds}{stale} ORDER BY {order} LIMIT ?',
+            (*values, args.maximum)).fetchall()
         for row in rows:
             queue.put_nowait(row)
         if reader.stopped and rows:
@@ -1250,7 +1309,10 @@ def main():
     parser.add_argument('--db', type=Path, required=True)
     parser.add_argument('--output', type=Path)
     parser.add_argument('--attach', type=Path, action='append', default=[], help='Merge audited HTML queues')
-    parser.add_argument('--host', choices=(*PAGING, PAZARAMA, ELEKTRONIKBURADA), action='append')
+    parser.add_argument('--host', choices=STORES, action='append')
+    parser.add_argument('--catalog', type=Path, help='Seed every published retailer product URL for refresh')
+    parser.add_argument('--site-data', type=Path, help='Also seed existing laptop, monitor, PC and earbud GTIN targets')
+    parser.add_argument('--stale-hours', type=float, help='Refresh only observations older than this age')
     parser.add_argument('--kind', choices=KIND_WORDS, action='append')
     parser.add_argument('--start-page', type=int, default=1)
     parser.add_argument('--rediscover-after', type=int, default=168, metavar='HOURS')
@@ -1268,15 +1330,25 @@ def main():
     mode.add_argument('--refresh', action='store_true')
     args = parser.parse_args()
     if args.spacing < .35 or not 1 <= args.workers <= 8 or not 1 <= args.pages <= 200 \
-            or args.start_page < 1 or args.rediscover_after < 1 or args.maximum < 1 or args.export_only and not args.output:
+            or args.start_page < 1 or args.rediscover_after < 1 or args.maximum < 1 or args.export_only and not args.output \
+            or args.stale_hours is not None and (not math.isfinite(args.stale_hours) or args.stale_hours < 0):
         parser.error('Invalid page, product or request limits')
     args.sources = json.loads(args.sources.read_text()) if args.sources else SOURCES
-    if any(host not in (*PAGING, PAZARAMA, ELEKTRONIKBURADA) or any(kind not in KIND_WORDS or any(
+    if any(host not in STORES or any(kind not in KIND_WORDS or any(
             not re.fullmatch(r'/[a-z0-9./-]+', path) for path in paths)
             for kind, paths in categories.items()) for host, categories in args.sources.items()):
         parser.error('Invalid retailer category paths')
     args.db.parent.mkdir(parents=True, exist_ok=True)
     with closing(database(args.db)) as db:
+        targets = json.loads(args.catalog.read_text()) if args.catalog else []
+        if args.site_data:
+            for kind, filename, key in (('laptop', 'laptopPilot.json', 'models'),
+                                       ('monitor', 'monitorPilot.json', 'models'),
+                                       ('pc-parts', 'pcParts.json', 'parts'),
+                                       ('earbuds', 'twsOfferSnapshot.json', 'models')):
+                targets.extend({**row, 'kind': kind} for row in json.loads((args.site_data / filename).read_text())[key])
+        if targets:
+            print('catalog targets', dict(seed_catalog(db, targets)), flush=True)
         for path in args.attach:
             db.execute('ATTACH DATABASE ? AS part', (str(path),))
             db.execute('INSERT OR IGNORE INTO pages SELECT * FROM part.pages')

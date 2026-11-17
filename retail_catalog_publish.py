@@ -40,24 +40,6 @@ def normalized_model(value):
     return words(value).replace(' ', '')
 
 
-def inventory(site):
-    codes, source_urls, known = {}, set(), set()
-    for category, filename, key in (
-        ('laptop', 'laptopPilot.json', 'models'),
-        ('monitor', 'monitorPilot.json', 'models'),
-        ('pc-parts', 'pcParts.json', 'parts'),
-        ('earbuds', 'twsOfferSnapshot.json', 'models'),
-    ):
-        rows = read(site / filename)[key]
-        known.update(p['gtin'] for p in rows if p.get('gtin'))
-        codes[category] = {(words(p['brand']), normalized_model(p['mpn']))
-                           for p in rows if p.get('brand') and p.get('mpn')}
-        for p in rows:
-            source_urls.update(o['url'].split('?')[0] for o in p.get('offers', []))
-            source_urls.update(u.split('?')[0] for u in p.get('offerTargets', []))
-    return known, codes, source_urls
-
-
 def valid_row(row, *, require_specs=True):
     barcode = row.get('gtin')
     if not barcode or catalog_gtin(barcode) != barcode or row.get('kind') not in KIND_WORDS:
@@ -121,16 +103,11 @@ def valid_row(row, *, require_specs=True):
 
 
 def merge(rows, site, image_check, catalog):
-    known, codes, source_urls = inventory(site)
     counters = Counter()
     output = {}
     name_owners = {}
     for item in read(catalog) if catalog.exists() else ():
         model_key = words(item['brand']), normalized_model(item['model'])
-        if (item['gtin'] in known or model_key in codes.get(item['kind'], set())
-                or item['source'] in source_urls):
-            counters['removed_existing_identity'] += 1
-            continue
         item['specs'] = {k: v for k, v in item['specs'].items() if technical_field(k, v)}
         if 'specSources' in item:
             item['specSources'] = {k: v for k, v in item['specSources'].items() if k in item['specs']}
@@ -155,8 +132,7 @@ def merge(rows, site, image_check, catalog):
             continue
         model_key = words(row['brand']), normalized_model(row['model'])
         name_key = row['kind'], model_key[0], words(row['name'])
-        if (barcode in known or model_key in codes.get(row['kind'], set())
-                or row['source'] in source_urls or source_owners.get(row['source'], barcode) != barcode
+        if (source_owners.get(row['source'], barcode) != barcode
                 or name_owners.get(name_key, barcode) != barcode):
             counters['existing_identity'] += 1
             continue

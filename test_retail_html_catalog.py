@@ -7,7 +7,8 @@ from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import AsyncMock, patch
 
-from retail_html_catalog import HB, TY, catalog_gtin, crawl, database, export, make_row, merge_specifications, properties, product_url, read_category, read_product
+from retail_html_catalog import HB, TY, catalog_gtin, crawl, database, export, make_row, seed_catalog, merge_specifications, properties, product_url, read_category, read_product
+from retail_catalog_coverage import coverage
 from retail_catalog_publish import main as publish_main, invalidate_changed_identities, merge, ready_for_publication, valid_row
 
 
@@ -92,7 +93,7 @@ class RetailHtmlCatalogTest(TestCase):
         self.assertFalse(ready_for_publication({**row, 'offers': []}, lambda _: True, now))
         self.assertFalse(ready_for_publication(row, lambda _: True, now + timedelta(hours=73)))
 
-    def test_merge_keeps_one_barcode_and_excludes_existing_site_products(self):
+    def test_merge_keeps_one_barcode_and_refreshes_existing_site_products(self):
         row = read_product(self.listing(), URL, 'laptop')
         with TemporaryDirectory() as root:
             folder = Path(root)
@@ -123,7 +124,7 @@ class RetailHtmlCatalogTest(TestCase):
             checked = {**rows[0], 'offers': [], 'checkedSources': {URL: rows[0]['checkedAt']}}
             self.assertEqual(merge([checked], folder, lambda _: True, catalog)[0][0]['offers'], [])
             (folder / 'laptopPilot.json').write_text(json.dumps({'models': [{'gtin': GTIN}]}))
-            self.assertFalse(merge(rows, folder, lambda _: True, catalog)[0])
+            self.assertEqual(merge(rows, folder, lambda _: True, catalog)[0][0]['gtin'], GTIN)
 
 
     def test_full_selected_technical_sheet_is_not_truncated(self):
@@ -388,3 +389,51 @@ class RetailHtmlCatalogTest(TestCase):
             result, removed = invalidate_changed_identities([no_offer], path)
             self.assertEqual(removed, 0)
             self.assertEqual(result[0]['offerRejections'], {URL: cutoff})
+
+
+    def test_published_targets_seed_unconfigured_hosts_without_inventing_observations(self):
+        url = 'https://www.teknosa.com/headphones-p-123456789'
+        row = {'gtin': GTIN, 'kind': 'earbuds', 'name': 'Headphones', 'source': url, 'offers': []}
+        with TemporaryDirectory() as root:
+            db = database(Path(root) / 'queue.sqlite')
+            self.assertEqual(seed_catalog(db, [row])['seeded'], 1)
+            self.assertEqual(db.execute('SELECT status,data,checked_at FROM queue').fetchone(), ('pending', None, None))
+            args = SimpleNamespace(spacing=.5, host=['www.teknosa.com'], kind=None, refresh=True, verify_only=False,
+                                   retry_unverified=False, retry_redirects=False, discovery_only=False,
+                                   maximum=10, workers=1, stale_hours=6)
+            with patch('retail_html_catalog.Host.get', new_callable=AsyncMock, return_value=(200, b'html')):
+                with patch('retail_html_catalog.read_product', return_value=None) as parse:
+                    asyncio.run(crawl(args, db))
+            self.assertEqual(parse.call_args.args, (b'html', url, 'earbuds', GTIN))
+            conflict = {**row, 'gtin': '4711081273981'}
+            self.assertEqual(seed_catalog(db, [row, conflict])['ambiguous_urls'], 1)
+            self.assertEqual(db.execute('SELECT count(*) FROM catalog_targets').fetchone()[0], 0)
+            unsupported = {**row, 'source': 'https://www.gaming.gen.tr/urun/123/headphones/'}
+            seed_catalog(db, [row, unsupported])
+            report = coverage([], db)
+            self.assertEqual(report['targetCoverageIssues'], [{'host': 'www.gaming.gen.tr', 'kind': 'earbuds',
+                                                               'reason': 'unsupported_host', 'count': 1}])
+            self.assertEqual(report['unroutedPublishedTargets'][0]['gtin'], GTIN)
+
+            db.close()
+
+    def test_failed_refresh_rotates_and_recent_observations_are_skipped(self):
+        row = read_product(self.listing(), URL, 'laptop')
+        older = {**row, 'checkedAt': '2020-01-01T00:00:00+00:00'}
+        second_url = URL.replace('1132995554', '1132995555')
+        with TemporaryDirectory() as root:
+            db = database(Path(root) / 'queue.sqlite')
+            for url, data in ((URL, older), (second_url, row)):
+                db.execute('INSERT INTO queue(url,host,kind,title,status,data) VALUES (?,?,?,?,?,?)',
+                           (url, TY, 'laptop', row['name'], 'verified', json.dumps(data)))
+            args = SimpleNamespace(spacing=.5, host=[TY], kind=None, refresh=True, verify_only=False,
+                                   retry_unverified=False, retry_redirects=False, discovery_only=False,
+                                   maximum=1, workers=1, stale_hours=6)
+            with patch('retail_html_catalog.Host.get', new_callable=AsyncMock, return_value=(403, b'')) as get:
+                asyncio.run(crawl(args, db))
+            self.assertEqual(get.await_args.args, (URL,))
+            args.stale_hours = None
+            with patch('retail_html_catalog.Host.get', new_callable=AsyncMock, return_value=(403, b'')) as get:
+                asyncio.run(crawl(args, db))
+            self.assertEqual(get.await_args.args, (second_url,))
+            db.close()

@@ -327,15 +327,12 @@ class KimovilScraper:
                 "camera_score": partials.get('camera', 0), "performance_score": partials.get('hardware', 0),
                 "battery_score": partials.get('battery', 0), "screen_score": partials.get('design', 0), "partials": partials
             }
-            attributes.update(select_observed_physical_attributes(
-                existing_attributes or {},
-                raw_specs,
-            ))
+            if not seed_physical_attributes and existing_attributes:
+                attributes.update(select_observed_physical_attributes(existing_attributes, raw_specs))
 
-            # A reviewed catalog-expansion row starts empty. In that one case,
-            # seed the physical specification groups directly from the current,
-            # identity-checked source page. Existing products retain their
-            # localized values and only receive refreshed provenance.
+            # A physical refresh records only values observed on the current,
+            # identity-checked page. Unobserved sections and scalar values are
+            # omitted so their prior ingestion records are not redated.
             if seed_physical_attributes or not existing_attributes:
                 section_names = {
                     "technical": "Technical sheet",
@@ -550,6 +547,7 @@ class KimovilScraper:
         *,
         pending_only=False,
         max_products=None,
+        refresh_physical=False,
     ):
         """Refresh provenance only for products approved in TeknoSkor.
 
@@ -610,6 +608,20 @@ class KimovilScraper:
                 "expected_name",
                 product.name,
             )
+            expected_memory = None
+            if "expected_ram_gb" in source_override:
+                expected_memory = {"ram_gb": source_override["expected_ram_gb"],
+                                   "storage_gb": source_override["expected_storage_gb"]}
+            elif refresh_physical:
+                memory = {key: product.attributes.get(key) for key in ("ram_gb", "storage_gb")}
+                if all(isinstance(value, (int, float)) and not isinstance(value, bool)
+                       and math.isfinite(value) and value > 0 for value in memory.values()):
+                    expected_memory = memory
+                elif product.data_quality_status == "verified":
+                    logging.error("Physical refresh requires verified RAM/storage identity for %s", product.slug)
+                    failed.append(product.slug)
+                    continue
+
             guessed_url = source_override.get(
                 "url",
                 (
@@ -624,15 +636,12 @@ class KimovilScraper:
                 existing_attributes=product.attributes,
                 existing_images=product.images,
                 seed_physical_attributes=(
-                    product.data_quality_status != "verified"
+                    refresh_physical or product.data_quality_status != "verified"
                     or not product.spec_verified_at
                 ),
                 record_sink=staged_records,
                 image_sink=staged_images,
-                expected_memory={
-                    "ram_gb": source_override["expected_ram_gb"],
-                    "storage_gb": source_override["expected_storage_gb"],
-                } if "expected_ram_gb" in source_override else None,
+                expected_memory=expected_memory,
             )
             if not success:
                 matched_url = self.search_product_on_kimovil(
@@ -646,15 +655,12 @@ class KimovilScraper:
                         existing_attributes=product.attributes,
                         existing_images=product.images,
                         seed_physical_attributes=(
-                            product.data_quality_status != "verified"
+                            refresh_physical or product.data_quality_status != "verified"
                             or not product.spec_verified_at
                         ),
                         record_sink=staged_records,
                         image_sink=staged_images,
-                        expected_memory={
-                            "ram_gb": source_override["expected_ram_gb"],
-                            "storage_gb": source_override["expected_storage_gb"],
-                        } if "expected_ram_gb" in source_override else None,
+                        expected_memory=expected_memory,
                     )
             if success:
                 succeeded += 1
@@ -692,6 +698,7 @@ class KimovilScraper:
             "succeeded": succeeded,
             "failed": failed,
             "existing_product_only": True,
+            "refresh_physical": refresh_physical,
         }
         refreshed_products = ingestion_client.fetch_catalog(
             page_size=500,
@@ -769,6 +776,7 @@ if __name__ == "__main__":
             "--schema-only",
             "--readiness-only",
             "--require-images",
+            "--refresh-physical",
         }
         limit_arguments = [
             argument
@@ -799,6 +807,10 @@ if __name__ == "__main__":
                     "--limit must be a positive integer",
                 )
             max_products = int(limit_value)
+        if "--refresh-physical" in sys.argv[1:] and any(
+            option in sys.argv[1:] for option in ("--schema-only", "--readiness-only", "--price-index-audit-only")
+        ):
+            raise IngestionConfigurationError("--refresh-physical cannot be combined with diagnostic modes")
         if (
             "--pending-only" in sys.argv[1:]
             and "--schema-only" in sys.argv[1:]
@@ -858,7 +870,11 @@ if __name__ == "__main__":
             run_summary = scraper.scrape_existing_products(
                 pending_only="--pending-only" in sys.argv[1:],
                 max_products=max_products,
+                refresh_physical="--refresh-physical" in sys.argv[1:],
             )
+            with open("technical-sync-report.json", "w") as report:
+                json.dump(run_summary, report, ensure_ascii=False, indent=2)
+                report.write("\n")
         if run_summary["failed"]:
             sys.exit(1)
     except (IngestionConfigurationError, SourceIngestionError) as error:
