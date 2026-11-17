@@ -8,6 +8,8 @@ from pathlib import Path
 import sqlite3
 from urllib.parse import urlsplit
 
+from retail_catalog_format import decode_product
+
 
 def current(value, now, hours=72):
     try:
@@ -23,6 +25,7 @@ def coverage(products, db, now=None):
     missing_prices = []
     conflicts = []
     for product in products:
+        product = decode_product(product)
         kind = product['kind']
         counts = categories.setdefault(kind, Counter())
         counts['products'] += 1

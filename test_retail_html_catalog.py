@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, patch
 
 from retail_html_catalog import HB, TY, catalog_gtin, crawl, database, export, make_row, seed_catalog, merge_specifications, properties, product_url, read_category, read_product
 from retail_catalog_coverage import coverage
+from retail_catalog_format import decode_product, encode_product
 from retail_catalog_publish import main as publish_main, invalidate_changed_identities, merge, ready_for_publication, valid_row
 
 
@@ -126,6 +127,23 @@ class RetailHtmlCatalogTest(TestCase):
             (folder / 'laptopPilot.json').write_text(json.dumps({'models': [{'gtin': GTIN}]}))
             self.assertEqual(merge(rows, folder, lambda _: True, catalog)[0][0]['gtin'], GTIN)
 
+
+    def test_compact_sources_are_hydrated_by_publisher_and_coverage(self):
+        row = read_product(self.listing(), URL, 'laptop')
+        row['offers'] = [row.pop('offer')]
+        compact = encode_product(row)
+        self.assertTrue(valid_row(compact))
+        with TemporaryDirectory() as root:
+            folder = Path(root)
+            catalog = folder / 'catalog.json'
+            catalog.write_text(json.dumps([compact]))
+            merged, _ = merge([], folder, lambda _: True, catalog)
+            self.assertEqual(merged[0]['specSources'], row['specSources'])
+            self.assertNotIn('specSourceGroups', merged[0])
+            db = database(folder / 'queue.sqlite')
+            fixed = datetime(2026, 11, 17, tzinfo=timezone.utc)
+            self.assertEqual(coverage([compact], db, fixed), coverage([row], db, fixed))
+            db.close()
 
     def test_full_selected_technical_sheet_is_not_truncated(self):
         facts = properties([{'name': f'Teknik alan {i}', 'value': 'USB-C bağlantı ' * 20}
@@ -429,6 +447,9 @@ class RetailHtmlCatalogTest(TestCase):
             persisted = json.loads(output.read_text())[0]
             self.assertEqual(persisted['offers'], [])
             self.assertEqual(persisted['specs'], published['specs'])
+            self.assertNotIn('specSources', persisted)
+            self.assertIn('specSourceGroups', persisted)
+            self.assertEqual(decode_product(persisted)['specSources'], published['specSources'])
 
             self.assertEqual(persisted['offerRejections'], {URL: cutoff})
             # The next scheduler may have an older cloud queue without this rejection.

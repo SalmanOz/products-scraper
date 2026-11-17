@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 from curl_cffi import CurlError
 from curl_cffi.requests import Session, RequestsError
 
+from retail_catalog_format import decode_catalog, decode_product, encode_product
 from retail_html_catalog import (
     IMAGE_HOSTS, KIND_WORDS, STORES, amount, catalog_gtin, clean, images, merge_specifications,
     retail_listing_url, technical_field, words,
@@ -20,7 +21,7 @@ from retail_html_catalog import (
 
 
 def read(path):
-    return json.loads(path.read_text())
+    return decode_catalog(json.loads(path.read_text()))
 
 
 def ready_for_publication(row, image_check, now):
@@ -41,6 +42,7 @@ def normalized_model(value):
 
 
 def valid_row(row, *, require_specs=True):
+    row = decode_product(row)
     barcode = row.get('gtin')
     if not barcode or catalog_gtin(barcode) != barcode or row.get('kind') not in KIND_WORDS:
         return False
@@ -124,6 +126,7 @@ def merge(rows, site, image_check, catalog):
             counters['removed_invalid'] += 1
     source_owners = {p['source']: p['gtin'] for p in output.values()}
     for row in rows:
+        row = decode_product(row)
         row = {**row, 'specs': {k: v for k, v in row['specs'].items() if technical_field(k, v)}}
         if 'specSources' in row:
             row['specSources'] = {k: v for k, v in row['specSources'].items() if k in row['specs']}
@@ -340,7 +343,7 @@ def main():
             return
         merged = sorted([row for row in current if row['gtin'] not in scope] + list(scoped.values()),
                         key=lambda row: row['gtin'])
-    args.output.write_text('[\n' + ',\n'.join(json.dumps(p, ensure_ascii=False, separators=(',', ':')) for p in merged) + '\n]\n')
+    args.output.write_text('[\n' + ',\n'.join(json.dumps(encode_product(p), ensure_ascii=False, separators=(',', ':')) for p in merged) + '\n]\n')
     print(json.dumps({'counts': counters, 'total': len(merged),
                       'byKind': Counter(p['kind'] for p in merged)}, ensure_ascii=False))
 

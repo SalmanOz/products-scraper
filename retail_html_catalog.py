@@ -25,6 +25,7 @@ from pazarama_category_source import HOST as PAZARAMA
 from pazarama_offer_source import NUXT_IDENTIFIER, NUXT_STRING, native_script, native_string, pazarama_selected
 from priority_retailer_transport import n11_product_selectors
 from retailer_barcode import retailer_gtin13
+from retail_catalog_format import decode_catalog
 
 HB, MM, N11, TY, VATAN = ('www.hepsiburada.com', 'www.mediamarkt.com.tr', 'www.n11.com',
                           'www.trendyol.com', 'www.vatanbilgisayar.com')
@@ -1353,7 +1354,7 @@ def main():
         parser.error('Invalid retailer category paths')
     args.db.parent.mkdir(parents=True, exist_ok=True)
     with closing(database(args.db)) as db:
-        targets = json.loads(args.catalog.read_text()) if args.catalog else []
+        targets = decode_catalog(json.loads(args.catalog.read_text())) if args.catalog else []
         if args.site_data:
             for kind, filename, key in (('laptop', 'laptopPilot.json', 'models'),
                                        ('monitor', 'monitorPilot.json', 'models'),

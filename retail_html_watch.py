@@ -5,6 +5,7 @@ import asyncio
 from collections import defaultdict
 from contextlib import closing
 import json
+from retail_catalog_format import decode_catalog
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -143,7 +144,7 @@ def main():
     watched = asyncio.run(run())
     # Keep the targeted observation authoritative, including when the general
     # export still has an older offer that was unavailable on this run.
-    general = json.loads(args.output.read_text()) if args.output.exists() else []
+    general = decode_catalog(json.loads(args.output.read_text())) if args.output.exists() else []
     rows = [row for row in general if row['gtin'] not in configured] + watched
     args.output.write_text(json.dumps(rows, ensure_ascii=False) + '\n')
 
