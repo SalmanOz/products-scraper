@@ -339,6 +339,47 @@ class PriceRefreshOrchestrationTests(unittest.TestCase):
         self.assertEqual(updater.last_report['coverage']['protected_pair_failures'], [p['slug']])
         self.assertEqual(updater.last_report['status'], 'failed')
 
+    def test_server_rejected_listing_cannot_satisfy_protected_merchant_pair(self):
+        from offer_ingestion_client import AtomicListingRejected
+        p = {'id': 279, 'slug': 'samsung-galaxy-a27-5g', 'name': 'Samsung Galaxy A27 5G',
+             'attributes': {'ram_gb': 6, 'storage_gb': 128, 'Connectivity': {'5G': True}},
+             'offer_targets': []}
+        rows = [{**offer(i), 'source_title': 'Samsung Galaxy A27 5G 6GB RAM 128GB',
+                 'url': f'https://{MERCHANTS[i][1]}/samsung-galaxy-a27-5g-6gb-ram-128gb'} for i in (0, 1)]
+
+        class StrictClient(FakeIngestionClient):
+            def ingest_listing_offers(self, offers, *, require_all_accepted):
+                self_case.assertTrue(require_all_accepted)
+                if any(row['source_url'] == rows[1]['url'] for row in offers):
+                    raise AtomicListingRejected('confirmed full rollback')
+                return self.ingest_offers(offers)
+
+        self_case = self
+        client = StrictClient([p])
+        updater = PriceUpdater(client, FakeDiscovery(), FakeRefresher(rows))
+        with self.assertRaisesRegex(RuntimeError, 'Protected budget models'):
+            asyncio.run(updater.run_update(known_pdp_only=True))
+        self.assertEqual(updater.last_report['ingestion']['accepted'], 1)
+        self.assertEqual(updater.last_report['coverage']['with_purchasable_offer'], 1)
+        self.assertEqual(updater.last_report['coverage']['with_two_merchants'], 0)
+        self.assertEqual(updater.last_report['coverage']['protected_pair_failures'], [p['slug']])
+        report = updater.last_report['products'][0]
+        self.assertEqual(len(report['prepared_offers']), 2)
+        self.assertEqual(report['purchasable_merchants'], ['Teknosa'])
+        self.assertEqual(report['ingestion_rejected_offers'][0]['source_url'], rows[1]['url'])
+
+    def test_report_rejection_is_scoped_to_exact_product_seller_and_url(self):
+        rejected = {'product_slug': 'phone-one', 'source_url': 'https://store.test/one', 'seller': 'Store'}
+        def row(slug, url, seller):
+            return {'slug': slug, 'prepared_offers': [{'source_url': url, 'seller': seller, 'availability': 'in_stock'}]}
+        reports = [row('phone-one', rejected['source_url'], 'Store'),
+                   row('phone-two', rejected['source_url'], 'Store'),
+                   row('phone-three', 'https://store.test/other', 'Store')]
+        counts = PriceUpdater.report_merchant_counts(reports, {'atomic_rejected_offers': [rejected]})
+        self.assertEqual(counts, {'phone-one': 0, 'phone-two': 1, 'phone-three': 1})
+        self.assertEqual(PriceUpdater.report_merchant_counts(reports, {}),
+                         {'phone-one': 1, 'phone-two': 1, 'phone-three': 1})
+
     def test_scoped_refresh_reports_pair_loss_without_applying_full_catalog_gate(self):
         p = {'id': 279, 'slug': 'samsung-galaxy-a27-5g', 'name': 'Samsung Galaxy A27 5G',
              'attributes': {'ram_gb': 6, 'storage_gb': 128, 'Connectivity': {'5G': True}},

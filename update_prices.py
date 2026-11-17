@@ -501,6 +501,29 @@ class PriceUpdater:
             )
         pending_offers.clear()
 
+    @staticmethod
+    def report_merchant_counts(product_reports, ingestion):
+        """Exclude only listings positively rejected by the atomic writer.
+
+        Keep prepared observations as evidence; a prepared listing is not
+        current coverage when the server explicitly refused that exact row.
+        Unknown write outcomes are never classified here as rejections.
+        """
+        rejected = {(row['product_slug'], row['source_url'], row['seller'])
+                    for row in ingestion.get('atomic_rejected_offers', [])}
+        counts = {}
+        for product in product_reports:
+            merchants = {row['seller'] for row in product.get('prepared_offers', [])
+                         if row['availability'] in PURCHASABLE
+                         and (product['slug'], row['source_url'], row['seller']) not in rejected}
+            product['purchasable_merchants'] = sorted(merchants)
+            counts[product['slug']] = len({merchant.strip().casefold() for merchant in merchants})
+            rejected_rows = [row for row in ingestion.get('atomic_rejected_offers', [])
+                             if row['product_slug'] == product['slug']]
+            if rejected_rows:
+                product['ingestion_rejected_offers'] = rejected_rows
+        return counts
+
     async def run_update(self, product_id=None, phase2_backfill=False, *, dry_run=False,
                          product_slugs=None, known_pdp_only=False, report_path=None):
         self.last_report = {'mode': 'audit' if dry_run else 'apply',
@@ -930,6 +953,8 @@ class PriceUpdater:
             await asyncio.sleep(1)
 
         self.flush_offers(pending_offers, aggregate_result, isolate_products=isolate_products)
+        merchant_counts = self.report_merchant_counts(self.last_report['products'], aggregate_result)
+        products_with_offers = sum(count > 0 for count in merchant_counts.values())
         aggregate_result["changed_paths"] = list(
             dict.fromkeys(aggregate_result["changed_paths"])
         )
@@ -988,7 +1013,7 @@ class PriceUpdater:
         logging.info("\n🏁 Price update completed!")
         run_issues = []
         if rejected_products := aggregate_result.get("atomic_rejected_products"):
-            run_issues.append("Atomic offer ingestion rolled back for " + ", ".join(rejected_products))
+            run_issues.append("Strict listing validation rejected offers for " + ", ".join(rejected_products))
         if product_id is None and product_slugs is None and self.last_report['coverage']['protected_pair_failures']:
             run_issues.append('Protected budget models did not retain two live verified merchants: '
                               + ', '.join(self.last_report['coverage']['protected_pair_failures']))
