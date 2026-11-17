@@ -97,6 +97,18 @@ def valid_row(row, *, require_specs=True):
                 return False
         except (ValueError, TypeError, KeyError):
             return False
+    rejections = row.get('offerRejections', {})
+    if not isinstance(rejections, dict):
+        return False
+    for url, checked in rejections.items():
+        if (not isinstance(url, str) or urlsplit(url).netloc not in STORES
+                or retail_listing_url(url, url) != url):
+            return False
+        try:
+            if datetime.fromisoformat(checked).tzinfo is None:
+                return False
+        except (TypeError, ValueError):
+            return False
     platforms = set()
     for offer in row['offers']:
         url = offer['url']
@@ -128,7 +140,7 @@ def merge(rows, site, image_check, catalog):
                 counters['removed_duplicate_name'] += 1
                 continue
             name_owners[name_key] = item['gtin']
-            output[item['gtin']] = item
+            output[item['gtin']] = apply_offer_rejections(item)
         else:
             counters['removed_invalid'] += 1
     source_owners = {p['source']: p['gtin'] for p in output.values()}
@@ -174,6 +186,7 @@ def merge(rows, site, image_check, catalog):
             row = {**row, 'offers': sorted(old.values(), key=lambda o: (o['price'], o['url']))}
         else:
             row = {**row, **merge_specifications({}, row)}
+        row = apply_offer_rejections(row, existing.get('offerRejections', {}) if existing else {})
         if existing != row:
             counters['updated' if existing else 'added'] += 1
         output[barcode] = row
@@ -240,6 +253,20 @@ def image_cache_schema(db):
 
 
 
+
+def apply_offer_rejections(row, extra=None):
+    """Keep identity rejection evidence across runs with older crawler state."""
+    rejections = dict(row.get('offerRejections', {}))
+    for url, checked in (extra or {}).items():
+        if url not in rejections or datetime.fromisoformat(checked) > datetime.fromisoformat(rejections[url]):
+            rejections[url] = checked
+    if not rejections:
+        return row
+    offers = [offer for offer in row['offers'] if offer['url'] not in rejections
+              or datetime.fromisoformat(offer['checkedAt']) > datetime.fromisoformat(rejections[offer['url']])]
+    return {**row, 'offers': offers, 'offerRejections': rejections}
+
+
 def invalidate_changed_identities(rows, queue_path, scope=None):
     """Apply confirmed URL identity changes even when that product cannot export."""
     rejected = {}
@@ -267,14 +294,13 @@ def invalidate_changed_identities(rows, queue_path, scope=None):
                 rejected[key] = max(rejected.get(key, observed), observed)
     output, removed = [], 0
     for row in rows:
-        offers = []
-        for offer in row['offers']:
-            cutoff = rejected.get((row['gtin'], offer['url']))
-            if cutoff is not None and datetime.fromisoformat(offer['checkedAt']) <= cutoff:
-                removed += 1
-            else:
-                offers.append(offer)
-        output.append({**row, 'offers': offers} if offers != row['offers'] else row)
+        if scope is not None and row['gtin'] not in scope:
+            output.append(row)
+            continue
+        rejections = {url: checked.isoformat() for (gtin, url), checked in rejected.items() if gtin == row['gtin']}
+        updated = apply_offer_rejections(row, rejections)
+        removed += len(row['offers']) - len(updated['offers'])
+        output.append(updated)
     return output, removed
 
 

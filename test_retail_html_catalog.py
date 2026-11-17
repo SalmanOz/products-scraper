@@ -8,7 +8,7 @@ from unittest import TestCase
 from unittest.mock import AsyncMock, patch
 
 from retail_html_catalog import HB, TY, catalog_gtin, crawl, database, export, make_row, merge_specifications, properties, product_url, read_category, read_product
-from retail_catalog_publish import main as publish_main, invalidate_changed_identities, merge, ready_for_publication
+from retail_catalog_publish import main as publish_main, invalidate_changed_identities, merge, ready_for_publication, valid_row
 
 
 URL = 'https://www.trendyol.com/lenovo/ideapad-83k10016tr-p-1132995554'
@@ -371,3 +371,20 @@ class RetailHtmlCatalogTest(TestCase):
             persisted = json.loads(output.read_text())[0]
             self.assertEqual(persisted['offers'], [])
             self.assertEqual(persisted['specs'], published['specs'])
+
+            self.assertEqual(persisted['offerRejections'], {URL: cutoff})
+            # The next scheduler may have an older cloud queue without this rejection.
+            catalog.write_text(json.dumps([persisted]))
+            stale, _ = merge([published], Path(root), lambda _: True, catalog)
+            self.assertEqual(stale[0]['offers'], [])
+            self.assertEqual(stale[0]['offerRejections'], {URL: cutoff})
+            recovered, _ = merge([{**published, 'offers': [newer_offer]}], Path(root), lambda _: True, catalog)
+            self.assertEqual(recovered[0]['offers'], [newer_offer])
+            self.assertEqual(recovered[0]['offerRejections'], {URL: cutoff})
+            self.assertTrue(valid_row(recovered[0]))
+            for invalid in ([], {URL: 'yesterday'}, {'https://example.com/product': cutoff}, {URL: '2026-11-17'}):
+                self.assertFalse(valid_row({**persisted, 'offerRejections': invalid}))
+            no_offer = {**published, 'offers': []}
+            result, removed = invalidate_changed_identities([no_offer], path)
+            self.assertEqual(removed, 0)
+            self.assertEqual(result[0]['offerRejections'], {URL: cutoff})
