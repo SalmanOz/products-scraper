@@ -8,7 +8,7 @@ from unittest import TestCase
 from unittest.mock import AsyncMock, patch
 
 from retail_html_catalog import HB, TY, catalog_gtin, crawl, database, export, make_row, merge_specifications, properties, product_url, read_category, read_product
-from retail_catalog_publish import main as publish_main, merge, ready_for_publication
+from retail_catalog_publish import main as publish_main, invalidate_changed_identities, merge, ready_for_publication
 
 
 URL = 'https://www.trendyol.com/lenovo/ideapad-83k10016tr-p-1132995554'
@@ -319,3 +319,55 @@ class RetailHtmlCatalogTest(TestCase):
                 self.assertEqual(json.loads(saved[1]), row)
                 self.assertEqual(db.execute('SELECT count(*) FROM refresh_attempts').fetchone()[0], 1)
             db.close()
+
+
+    def test_queue_identity_rejections_apply_when_product_cannot_export(self):
+        row = read_product(self.listing(), URL, 'laptop')
+        cutoff = '2026-11-17T12:00:00+00:00'
+        old_offer = {**row['offer'], 'checkedAt': '2026-11-17T11:00:00+00:00'}
+        newer_offer = {**row['offer'], 'checkedAt': '2026-11-17T13:00:00+00:00'}
+        published = {**row, 'offers': [old_offer]}
+        other_gtin = {**published, 'gtin': '4711081273981'}
+        with TemporaryDirectory() as root:
+            path = Path(root) / 'queue.sqlite'
+            db = database(path)
+            unexportable = {**row, 'specs': {}, 'offer': None, 'offerCheckedAt': cutoff}
+            db.execute('INSERT INTO queue(url,host,kind,title,status,data) VALUES (?,?,?,?,?,?)',
+                       (URL, TY, 'laptop', row['name'], 'verified', json.dumps(unexportable)))
+            db.execute('INSERT INTO refresh_attempts(url,host,kind,outcome,status) VALUES (?,?,?,?,?)',
+                       (URL, TY, 'laptop', 'identity_changed', 200))
+            db.commit()
+            db.close()
+            result, count = invalidate_changed_identities([published, other_gtin], path)
+            self.assertEqual(count, 1)
+            self.assertEqual(result[0]['offers'], [])
+            self.assertEqual(result[0]['specs'], row['specs'])
+            self.assertEqual(result[0]['checkedAt'], row['checkedAt'])
+            self.assertEqual(result[1], other_gtin)
+            result, count = invalidate_changed_identities([{**published, 'offers': [newer_offer]}], path)
+            self.assertEqual(count, 0)
+            self.assertEqual(result[0]['offers'], [newer_offer])
+            result, count = invalidate_changed_identities([published], path, scope={other_gtin['gtin']})
+            self.assertEqual((result, count), ([published], 0))
+            # A later transport failure must not erase a confirmed identity rejection.
+            db = database(path)
+            db.execute('UPDATE refresh_attempts SET outcome="http_403", status=403 WHERE url=?', (URL,))
+            db.commit()
+            db.close()
+            result, count = invalidate_changed_identities([published], path)
+            self.assertEqual((result[0]['offers'], count), ([], 1))
+            for name, key in (('laptopPilot', 'models'), ('monitorPilot', 'models'),
+                              ('pcParts', 'parts'), ('twsOfferSnapshot', 'models')):
+                (Path(root) / (name + '.json')).write_text(json.dumps({key: []}))
+            catalog, staged, output = [Path(root) / name for name in ('catalog.json', 'staged.json', 'output.json')]
+            catalog.write_text(json.dumps([published]))
+            staged.write_text('[]')
+            command = ['retail_catalog_publish.py', str(staged), root, '--catalog', str(catalog),
+                       '--image-cache', str(Path(root) / 'images.sqlite'), '--output', str(output),
+                       '--queue', str(path)]
+            with patch('sys.argv', command), patch('retail_catalog_publish.verify_images',
+                                                  new_callable=AsyncMock, return_value={IMAGE}):
+                publish_main()
+            persisted = json.loads(output.read_text())[0]
+            self.assertEqual(persisted['offers'], [])
+            self.assertEqual(persisted['specs'], published['specs'])

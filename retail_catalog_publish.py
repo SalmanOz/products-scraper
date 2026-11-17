@@ -239,6 +239,45 @@ def image_cache_schema(db):
     db.commit()
 
 
+
+def invalidate_changed_identities(rows, queue_path, scope=None):
+    """Apply confirmed URL identity changes even when that product cannot export."""
+    rejected = {}
+    with closing(sqlite3.connect(queue_path.resolve().as_uri() + '?mode=ro', uri=True)) as db:
+        if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='refresh_attempts'").fetchone():
+            return rows, 0
+        attempts = db.execute(
+            "SELECT queue.url,queue.data FROM refresh_attempts JOIN queue USING(url) "
+            "WHERE refresh_attempts.outcome='identity_changed' "
+            "OR json_extract(queue.data,'$.offerCheckedAt') IS NOT NULL"
+        )
+        for url, raw in attempts:
+            data = json.loads(raw)
+            if scope is not None and data['gtin'] not in scope:
+                continue
+            checked = data.get('offerCheckedAt')
+            if not checked:
+                continue
+            observed = datetime.fromisoformat(checked)
+            if observed.tzinfo is None:
+                continue
+            # The stored source may be a confirmed same-product redirect target.
+            for target in {url, data['source']}:
+                key = data['gtin'], target
+                rejected[key] = max(rejected.get(key, observed), observed)
+    output, removed = [], 0
+    for row in rows:
+        offers = []
+        for offer in row['offers']:
+            cutoff = rejected.get((row['gtin'], offer['url']))
+            if cutoff is not None and datetime.fromisoformat(offer['checkedAt']) <= cutoff:
+                removed += 1
+            else:
+                offers.append(offer)
+        output.append({**row, 'offers': offers} if offers != row['offers'] else row)
+    return output, removed
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('report', type=Path)
@@ -247,6 +286,7 @@ def main():
     parser.add_argument('--image-cache', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--scope', type=Path, help='Modify only the GTINs listed in this JSON object')
+    parser.add_argument('--queue', type=Path, help='Apply confirmed identity changes from the persistent crawl queue')
     args = parser.parse_args()
     scope = set(read(args.scope)) if args.scope else None
     rows = read(args.report)
@@ -263,6 +303,8 @@ def main():
              if (scope is None or row['gtin'] in scope) and valid_row(row, require_specs=row['gtin'] not in existing_barcodes)), db
         ))
     merged, counters = merge(rows, args.site, verified.__contains__, args.catalog)
+    if args.queue:
+        merged, counters['invalidated_identity_offers'] = invalidate_changed_identities(merged, args.queue, scope)
     now = datetime.now(timezone.utc)
     candidates = [row for row in merged if scope is None or row['gtin'] in scope]
     merged = [row for row in candidates if row['gtin'] in existing_barcodes

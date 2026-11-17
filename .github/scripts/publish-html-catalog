@@ -12,7 +12,7 @@ for attempt in 1 2 3; do
   remote reset --hard FETCH_HEAD >/dev/null
   test -f "site/$catalog"
   python retail_catalog_publish.py "$path/staged.json" site/frontend/src/data \
-    --catalog "site/$catalog" --image-cache "$path/images.sqlite" --output "$path/merged.json" "${scope[@]}"
+    --catalog "site/$catalog" --queue "$path/queue.sqlite" --image-cache "$path/images.sqlite" --output "$path/merged.json" "${scope[@]}"
 
   if cmp -s "$path/merged.json" "site/$catalog"; then
     if [[ "${WATCH_ONLY:-false}" == true ]]; then exit 0; fi
