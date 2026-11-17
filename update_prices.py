@@ -464,11 +464,21 @@ class PriceUpdater:
             for record in pending_offers:
                 by_product.setdefault(record["product_id"], []).append(record)
             groups = list(by_product.values())
-            if len(groups) == 1:
-                slug = pending_offers[0]["product_slug"]
-                aggregate.setdefault("atomic_rejected_products", []).append(slug)
-                logging.warning("  Listing batch rolled back for %s (%s offers)", slug, len(pending_offers))
+            if len(groups) == 1 and len(pending_offers) == 1:
+                record = pending_offers[0]
+                slug = record["product_slug"]
+                rejected = aggregate.setdefault("atomic_rejected_products", [])
+                if slug not in rejected:
+                    rejected.append(slug)
+                aggregate.setdefault("atomic_rejected_offers", []).append({
+                    "product_slug": slug, "source_url": record["source_url"], "seller": record["seller"],
+                    "reason": "require_all_accepted_rejected",
+                })
+                logging.warning("  Listing rolled back for %s (%s)", slug, record["source_url"])
             else:
+                # The API proved the entire attempt rolled back. Independent
+                # listings can now be retried with the same strict validation.
+                groups = [[record] for record in pending_offers] if len(groups) == 1 else groups
                 midpoint = len(groups) // 2
                 for group_half in (groups[:midpoint], groups[midpoint:]):
                     self.flush_offers([record for group in group_half for record in group],

@@ -971,6 +971,7 @@ def test_catalog_listing_rollback_isolated_by_product_and_later_flush_continues(
     accepted = {'accepted': 1, 'stale_ignored': 0, 'variant_rejected': 0, 'variant_rejections': [],
                 'committed': True, 'require_all_accepted': True, 'offer_identity_contract': 'seller-source-url-v1'}
     session = FakeSession([FakeResponse(409, rollback), FakeResponse(200, accepted),
+                           FakeResponse(409, rollback), FakeResponse(200, accepted),
                            FakeResponse(409, rollback), FakeResponse(200, accepted)])
     client = OfferIngestionClient('https://teknoskor.com', TEST_SECRET, session=session)
     updater = PriceUpdater(ingestion_client=client)
@@ -979,10 +980,13 @@ def test_catalog_listing_rollback_isolated_by_product_and_later_flush_continues(
     updater.flush_offers(pending, total, isolate_products=True)
     assert not pending
     updater.flush_offers([later], total, isolate_products=True)
-    assert total['accepted'] == 2
+    assert total['accepted'] == 3
+    assert total['atomic_rejected_offers'] == [{'product_slug': second['product_slug'],
+                                               'source_url': other_store['source_url'], 'seller': 'Other',
+                                               'reason': 'require_all_accepted_rejected'}]
     assert total['atomic_rejected_products'] == [second['product_slug']]
     assert [call[2]['json']['offers'] for call in session.calls] == [
-        [first, second, other_store], [first], [second, other_store], [later]]
+        [first, second, other_store], [first], [second, other_store], [second], [other_store], [later]]
     assert all(call[1].endswith('/listing-offers') and call[2]['json']['require_all_accepted'] is True
                for call in session.calls)
 
