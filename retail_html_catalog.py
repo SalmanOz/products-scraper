@@ -1091,6 +1091,10 @@ def database(path):
             status TEXT NOT NULL DEFAULT 'pending', data TEXT, checked_at TEXT
         );
         CREATE INDEX IF NOT EXISTS queue_host_status ON queue (host, status);
+        CREATE TABLE IF NOT EXISTS identity_rejections (
+            url TEXT NOT NULL, gtin TEXT NOT NULL, checked_at TEXT NOT NULL,
+            PRIMARY KEY (url,gtin)
+        );
         CREATE TABLE IF NOT EXISTS catalog_target_issues (
             url TEXT NOT NULL, kind TEXT NOT NULL, gtin TEXT NOT NULL, reason TEXT NOT NULL,
             PRIMARY KEY (url,kind,gtin,reason)
@@ -1203,10 +1207,13 @@ async def crawl(args, db):
                 except (KeyError, AttributeError, ValueError, TypeError, ParserError):
                     pass
             changed_identity = bool(result and expected and result['gtin'] != expected)
-            if changed_identity and previous_data.get('source'):
+            if changed_identity:
+                rejected_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+                db.execute('INSERT OR REPLACE INTO identity_rejections VALUES (?,?,?)', (url, expected, rejected_at))
+            if changed_identity and previous_data.get('source') and previous_data.get('gtin') == expected:
                 retained = previous_data
                 retained['offer'] = None
-                retained['offerCheckedAt'] = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+                retained['offerCheckedAt'] = rejected_at
                 db.execute('UPDATE queue SET data=? WHERE url=?',
                            (json.dumps(retained, ensure_ascii=False), url))
             if changed_identity:

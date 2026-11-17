@@ -437,3 +437,33 @@ class RetailHtmlCatalogTest(TestCase):
                 asyncio.run(crawl(args, db))
             self.assertEqual(get.await_args.args, (second_url,))
             db.close()
+
+
+    def test_store_pickup_publication_requires_observation_within_26_hours(self):
+        now = datetime(2026, 11, 17, tzinfo=timezone.utc)
+        old = {'image': IMAGE, 'offers': [{'checkedAt': (now - timedelta(hours=48)).isoformat(), 'storeOnly': True}]}
+        self.assertFalse(ready_for_publication(old, lambda _: True, now))
+        old['offers'][0].pop('storeOnly')
+        self.assertTrue(ready_for_publication(old, lambda _: True, now))
+
+    def test_seeded_null_identity_change_uses_expected_gtin_and_real_attempt_time(self):
+        row = read_product(self.listing(), URL, 'laptop')
+        published = {**row, 'offers': [{**row['offer'], 'checkedAt': '2026-11-16T10:00:00+00:00'}]}
+        with TemporaryDirectory() as root:
+            path = Path(root) / 'queue.sqlite'
+            db = database(path)
+            seed_catalog(db, [{'gtin': GTIN, 'kind': 'laptop', 'source': URL, 'name': row['name']}])
+            db.execute('INSERT INTO refresh_attempts(url,host,kind,outcome,status,attempted_at) VALUES (?,?,?,?,?,?)',
+                       (URL, TY, 'laptop', 'identity_changed', 200, '2026-11-17 09:00:00'))
+            db.commit()
+            self.assertIsNone(db.execute('SELECT data FROM queue WHERE url=?', (URL,)).fetchone()[0])
+            result, removed = invalidate_changed_identities([published], path)
+            self.assertEqual(removed, 1)
+            self.assertEqual(result[0]['offerRejections'], {URL: '2026-11-17T09:00:00+00:00'})
+            self.assertEqual(result[0]['specSources'], row['specSources'])
+            db.execute('INSERT INTO identity_rejections VALUES (?,?,?)', (URL, GTIN, '2026-11-17T09:00:00+00:00'))
+            db.execute('UPDATE refresh_attempts SET outcome="http_403",status=403')
+            db.commit()
+            result, removed = invalidate_changed_identities([published], path)
+            self.assertEqual(removed, 1)
+            db.close()

@@ -31,7 +31,7 @@ def ready_for_publication(row, image_check, now):
             age = now - datetime.fromisoformat(offer['checkedAt'])
         except (ValueError, TypeError, KeyError):
             continue
-        if timedelta() <= age <= timedelta(hours=72):
+        if timedelta() <= age <= timedelta(hours=26 if offer.get('storeOnly') else 72):
             return True
     return False
 
@@ -247,27 +247,40 @@ def invalidate_changed_identities(rows, queue_path, scope=None):
     """Apply confirmed URL identity changes even when that product cannot export."""
     rejected = {}
     with closing(sqlite3.connect(queue_path.resolve().as_uri() + '?mode=ro', uri=True)) as db:
-        if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='refresh_attempts'").fetchone():
-            return rows, 0
-        attempts = db.execute(
-            "SELECT queue.url,queue.data FROM refresh_attempts JOIN queue USING(url) "
-            "WHERE refresh_attempts.outcome='identity_changed' "
-            "OR json_extract(queue.data,'$.offerCheckedAt') IS NOT NULL"
-        )
-        for url, raw in attempts:
-            data = json.loads(raw)
-            if scope is not None and data['gtin'] not in scope:
-                continue
-            checked = data.get('offerCheckedAt')
-            if not checked:
+        tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        observations = []
+        if 'identity_rejections' in tables:
+            observations.extend((url, gtin, checked) for url, gtin, checked in db.execute(
+                'SELECT url,gtin,checked_at FROM identity_rejections'))
+        if 'refresh_attempts' in tables:
+            expected = 't.gtin' if 'catalog_targets' in tables else 'NULL'
+            join = 'LEFT JOIN catalog_targets t ON t.url=queue.url' if 'catalog_targets' in tables else ''
+            attempts = db.execute(
+                f"SELECT queue.url,queue.data,{expected},refresh_attempts.attempted_at,refresh_attempts.outcome "
+                f"FROM refresh_attempts JOIN queue USING(url) {join} "
+                "WHERE refresh_attempts.outcome='identity_changed' "
+                "OR json_extract(queue.data,'$.offerCheckedAt') IS NOT NULL"
+            )
+            for url, raw, expected_gtin, attempted, outcome in attempts:
+                data = json.loads(raw) if raw else {}
+                checked = data.get('offerCheckedAt')
+                gtin = data.get('gtin') if checked else expected_gtin or data.get('gtin')
+                if not checked and outcome == 'identity_changed':
+                    # SQLite CURRENT_TIMESTAMP is the actual UTC attempt time.
+                    checked = datetime.fromisoformat(attempted).replace(tzinfo=timezone.utc).isoformat()
+                if not gtin or not checked:
+                    continue
+                observations.append((url, gtin, checked))
+                if data.get('source') and data.get('gtin') == gtin:
+                    observations.append((data['source'], gtin, checked))
+        for url, gtin, checked in observations:
+            if scope is not None and gtin not in scope:
                 continue
             observed = datetime.fromisoformat(checked)
             if observed.tzinfo is None:
                 continue
-            # The stored source may be a confirmed same-product redirect target.
-            for target in {url, data['source']}:
-                key = data['gtin'], target
-                rejected[key] = max(rejected.get(key, observed), observed)
+            key = gtin, url
+            rejected[key] = max(rejected.get(key, observed), observed)
     output, removed = [], 0
     for row in rows:
         if scope is not None and row['gtin'] not in scope:
