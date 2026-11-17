@@ -53,7 +53,7 @@ jobs:
       - name: Install and test the scraper
         run: |
           python -m pip install -r requirements.txt
-          python -m unittest -q test_retail_catalog_format test_retail_html_catalog test_retail_html_watch
+          python -m unittest -q test_retail_catalog_format test_retail_product_intent test_retail_html_catalog test_retail_html_watch
           python -m playwright install --with-deps chromium
       - name: Restore and advance the private HTML queue
         env:
@@ -106,6 +106,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: retail-catalog-coverage
-          path: ${{ runner.temp }}/html-catalog/coverage.json
+          path: |
+            ${{ runner.temp }}/html-catalog/coverage.json
+            ${{ runner.temp }}/html-catalog/merged.quarantine.json
           if-no-files-found: ignore
           retention-days: 30

@@ -16,7 +16,7 @@ from curl_cffi.requests import Session, RequestsError
 from retail_catalog_format import decode_catalog, decode_product, encode_product
 from retail_html_catalog import (
     IMAGE_HOSTS, KIND_WORDS, STORES, amount, catalog_gtin, clean, images, merge_specifications,
-    retail_listing_url, technical_field, words,
+    retail_listing_url, technical_field, words, product_intent_rejection,
 )
 
 
@@ -45,6 +45,8 @@ def valid_row(row, *, require_specs=True):
     row = decode_product(row)
     barcode = row.get('gtin')
     if not barcode or catalog_gtin(barcode) != barcode or row.get('kind') not in KIND_WORDS:
+        return False
+    if product_intent_rejection(row.get('name'), row.get('kind')):
         return False
     if not clean(row.get('name'), 350) or not clean(row.get('brand'), 80):
         return False
@@ -104,11 +106,21 @@ def valid_row(row, *, require_specs=True):
     return True
 
 
-def merge(rows, site, image_check, catalog):
+def merge(rows, site, image_check, catalog, quarantine=None):
     counters = Counter()
+    def quarantined(item, stage):
+        reason = product_intent_rejection(item.get('name'), item.get('kind'))
+        if reason:
+            counters['quarantined_' + reason] += 1
+            if quarantine is not None:
+                quarantine.append({**{key: item.get(key) for key in ('gtin', 'kind', 'name', 'source')},
+                                   'reason': reason, 'stage': stage})
+        return bool(reason)
     output = {}
     name_owners = {}
     for item in read(catalog) if catalog.exists() else ():
+        if quarantined(item, 'existing'):
+            continue
         model_key = words(item['brand']), normalized_model(item['model'])
         item['specs'] = {k: v for k, v in item['specs'].items() if technical_field(k, v)}
         if 'specSources' in item:
@@ -127,6 +139,8 @@ def merge(rows, site, image_check, catalog):
     source_owners = {p['source']: p['gtin'] for p in output.values()}
     for row in rows:
         row = decode_product(row)
+        if quarantined(row, 'incoming'):
+            continue
         row = {**row, 'specs': {k: v for k, v in row['specs'].items() if technical_field(k, v)}}
         if 'specSources' in row:
             row['specSources'] = {k: v for k, v in row['specSources'].items() if k in row['specs']}
@@ -306,6 +320,7 @@ def main():
     parser.add_argument('--image-cache', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--scope', type=Path, help='Modify only the GTINs listed in this JSON object')
+    parser.add_argument('--quarantine-report', type=Path, help='Machine-readable category intent rejections')
     parser.add_argument('--queue', type=Path, help='Apply confirmed identity changes from the persistent crawl queue')
     args = parser.parse_args()
     scope = set(read(args.scope)) if args.scope else None
@@ -322,7 +337,18 @@ def main():
             (row['image'] for batch in (eligible, current) for row in batch
              if (scope is None or row['gtin'] in scope) and valid_row(row, require_specs=row['gtin'] not in existing_barcodes)), db
         ))
-    merged, counters = merge(rows, args.site, verified.__contains__, args.catalog)
+    quarantine = []
+    merged, counters = merge(rows, args.site, verified.__contains__, args.catalog, quarantine)
+    quarantined_rows = [row for row in quarantine if scope is None or row['gtin'] in scope]
+    quarantine_path = args.quarantine_report or args.output.with_name(args.output.stem + '.quarantine.json')
+    quarantine_path.parent.mkdir(parents=True, exist_ok=True)
+    quarantine_path.write_text(json.dumps({
+        'counts': {'products': len({row['gtin'] for row in quarantined_rows}),
+                   'existingProducts': len({row['gtin'] for row in quarantined_rows if row['stage'] == 'existing'}),
+                   'incomingProducts': len({row['gtin'] for row in quarantined_rows if row['stage'] == 'incoming'})},
+        'quarantined': quarantined_rows,
+        'removalReasons': {row['gtin']: row['reason'] for row in quarantined_rows},
+    }, ensure_ascii=False, indent=2) + '\n')
     if args.queue:
         merged, counters['invalidated_identity_offers'] = invalidate_changed_identities(merged, args.queue, scope)
     now = datetime.now(timezone.utc)

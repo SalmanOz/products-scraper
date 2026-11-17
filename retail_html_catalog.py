@@ -199,9 +199,59 @@ def ethernet_connector(title):
     return re.search(r'\brj45 cat([56])\b.*\bkonnektor\b.*\b([1-9]\d?) lu paket\b', words(title))
 
 
+def product_intent_rejection(title, kind):
+    """Reject explicitly named category accessories, not bundled device features."""
+    current = words(title)
+    bundle = bool(re.search(r'\+|\b(?:hediyeli|hediye|dahil|bundle|ile birlikte)\b', str(title).casefold()))
+    primary = words(str(title).split('+', 1)[0])
+    device_nouns = {
+        'earbuds': r'\bkulaklik\b', 'keyboard': r'\bklavye\b',
+        'camera': r'\b(?:kamera|kamerasi|fotograf makinesi)\b',
+        'projector': r'\bprojeksiyon (?:cihazi|seti)\b',
+        'microphone': r'\bmikrofon(?: seti)?\b', 'drone': r'\bdrone\b',
+    }
+    if bundle:
+        bundle = bool(re.search(device_nouns.get(kind, r'(?!)'), primary)
+                      and not re.search(r'\b(?:yastigi|keycap|sticker|batarya|standi|aparati)\b', primary))
+    if kind == 'camera' and re.search(r'\b(?:kamera ve aksesuar seti|aksesuar kit aksiyon kamerasi)\b', current):
+        bundle = True
+    rules = {
+        'monitor': [('monitor_thermal_compound', r'\b(?:termal macun|isi iletken macun)\b')],
+        'earbuds': [('headphone_replacement_cushions', r'\b(?:kulaklik(?:lar)? (?:yastigi|yastiklari|pedi|pedleri)|replacement ear ?pads?|ear ?pads? set|replacement ear cushions)\b')],
+        'keyboard': [('keyboard_keycap_or_sticker', r'\b(?:keycap set|\d+ adet keycap|klavye koruyucu sticker|klavye tus sticker|tus kapagi sokme aparati)\b')],
+        'projector': [('projector_screen_or_stand', r'\b(?:perde|zemin standi|taban standi|power base standi|tripod destek plakasi)\b')],
+        'microphone': [('microphone_stand', r'\b(?:mikrofon standi|boom arm)\b')],
+        'television': [('television_audio_monitor_system', r'\bin ear monitor sistemi\b')],
+        'camera': [
+            ('camera_mount_or_accessory', r'\b(?:aksesuar seti|baglanti (?:seti|aparati|base seti)|kask cene (?:tutucu|tutma)|donusturucu cevirici adaptor paketi|quick release adapter mount|kavisli yapiskan taban|selfie screen|selfie stick|selfie cubugu|kamera montaji klipsi|cam (?:vantuz )?tutucu|car holder)\b'),
+            ('camera_printing_paper', r'\b(?:kamera(?:si)? baski kagidi|makinesi termal baski kagidi|fotograf makinesi kagidi|termal rulo seti)\b'),
+            ('camera_replacement_battery', r'\b(?:sarj edilebilir batarya|extreme battery(?: plus)?)\b'),
+        ],
+        'drone': [('drone_replacement_battery', r'\bucus bataryasi\b')],
+    }
+    for reason, pattern in rules.get(kind, []):
+        if re.search(pattern, current) and not bundle:
+            if kind == 'microphone' and re.search(r'\b(?:mikrofon seti|sehpas[iı] ile)\b', current):
+                continue
+            return reason
+    if kind == 'network' and re.search(r'\bkart okuyucu\b', current) and not re.search(
+            r'\b(?:router|modem|switch|yonlendirici|ethernet|wi fi)\b', current):
+        return 'network_memory_card_reader'
+    if kind == 'mouse' and not bundle:
+        without_pad = re.sub(r'\bmouse ?pad\b', '', current)
+        if re.search(r'\bmouse ?pad\b', current) and not re.search(r'\b(?:mouse|fare)\b', without_pad):
+            return 'mousepad_not_mouse'
+    if kind == 'air-purifier' and not re.search(r'\b(?:hediyeli|hediye|dahil|bundle)\b', current):
+        if (re.search(r'\b(?:filtre(?:si)?|prefilter|filter)\b', current)
+                and (re.search(r'\b(?:uyumlu|filtresi|prefilter)\b', current)
+                     or re.search(r'\b(?:filtre|filter)(?: (?:siyah|beyaz|gri|yesil|mavi|turuncu|cok renkli))?$', current))):
+            return 'air_purifier_replacement_filter'
+    return None
+
+
 def valid_title(title, kind):
     current = words(title)
-    if USED.search(current) or ACCESSORY.search(current):
+    if product_intent_rejection(title, kind) or USED.search(current) or ACCESSORY.search(current):
         return False
     if (kind == 'network' and not ethernet_connector(title)
             and re.search(r'\b(?:kablo|konnektor|pense|crimp|fiber adaptor|anten soketi)\b', current)):
