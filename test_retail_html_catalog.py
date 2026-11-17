@@ -218,8 +218,30 @@ class RetailHtmlCatalogTest(TestCase):
                     asyncio.run(crawl(args, db))
             self.assertEqual(get.await_count, 1)
             self.assertEqual(get.await_args.args, (URL,))
-            self.assertEqual(json.loads(db.execute('SELECT data FROM queue WHERE url=?', (URL,)).fetchone()[0]), row)
+            retained = json.loads(db.execute('SELECT data FROM queue WHERE url=?', (URL,)).fetchone()[0])
+            self.assertIsNone(retained['offer'])
+            self.assertEqual(retained['specs'], row['specs'])
+            self.assertEqual(retained['specSources'], row['specSources'])
+            self.assertEqual(retained['checkedAt'], row['checkedAt'])
+            self.assertGreaterEqual(retained['offerCheckedAt'], row['checkedAt'])
             self.assertIsNone(db.execute('SELECT checked_at FROM queue WHERE kind="tablet"').fetchone()[0])
+            db.execute('DELETE FROM queue WHERE kind="tablet"')
+            staged = Path(root) / 'staged.json'
+            export(db, staged)
+            output = json.loads(staged.read_text())[0]
+            self.assertEqual(output['offers'], [])
+            self.assertEqual(output['checkedSources'][URL], retained['offerCheckedAt'])
+            self.assertEqual(output['checkedAt'], row['checkedAt'])
+            for name, key in (('laptopPilot', 'models'), ('monitorPilot', 'models'),
+                              ('pcParts', 'parts'), ('twsOfferSnapshot', 'models')):
+                (Path(root) / (name + '.json')).write_text(json.dumps({key: []}))
+            published = {**row, 'offers': [row['offer']]}
+            published.pop('offer')
+            catalog = Path(root) / 'catalog.json'
+            catalog.write_text(json.dumps([published]))
+            merged, _ = merge([output], Path(root), lambda _: True, catalog)
+            self.assertEqual(merged[0]['offers'], [])
+            self.assertEqual(merged[0]['specs'], row['specs'])
             attempt = db.execute('SELECT outcome,status,attempted_at FROM refresh_attempts WHERE url=?', (URL,)).fetchone()
             self.assertEqual(attempt[:2], ('identity_changed', 200))
             self.assertTrue(attempt[2])

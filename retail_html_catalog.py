@@ -1157,6 +1157,11 @@ async def crawl(args, db):
             changed_identity = bool(args.refresh and result and previous
                                     and result['gtin'] != json.loads(previous)['gtin'])
             if changed_identity:
+                retained = json.loads(previous)
+                retained['offer'] = None
+                retained['offerCheckedAt'] = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+                db.execute('UPDATE queue SET data=? WHERE url=?',
+                           (json.dumps(retained, ensure_ascii=False), url))
                 result = None
             outcome = ('identity_changed' if changed_identity else 'verified' if result
                        else f'http_{status}' if not raw else 'unverified')
@@ -1206,10 +1211,11 @@ def export(db, destination):
     for raw, in db.execute("SELECT data FROM queue WHERE status='verified' ORDER BY checked_at DESC, url"):
         row = json.loads(raw)
         key = row['gtin']
+        offer_checked_at = row.pop('offerCheckedAt', row['checkedAt'])
         if key not in products:
             offer = row.pop('offer')
             row['offers'] = [offer] if offer else []
-            row['checkedSources'] = {row['source']: row['checkedAt']}
+            row['checkedSources'] = {row['source']: offer_checked_at}
             row.update(merge_specifications({}, row))
             products[key] = row
             continue
@@ -1220,7 +1226,8 @@ def export(db, destination):
         if row['model'] and seen['model'] and words(row['model']) != words(seen['model']):
             conflicts.add(key)
             continue
-        seen['checkedSources'].setdefault(row['source'], row['checkedAt'])
+        seen['checkedSources'][row['source']] = max(
+            seen['checkedSources'].get(row['source'], ''), offer_checked_at)
         offer = row['offer']
         if offer and not any(p['platform'] == offer['platform'] or words(p['merchant']) == words(offer['merchant'])
                              for p in seen['offers']):
@@ -1228,6 +1235,9 @@ def export(db, destination):
         seen.update(merge_specifications(seen, row))
     for gtin in conflicts:
         del products[gtin]
+    for row in products.values():
+        row['offers'] = [offer for offer in row['offers']
+                         if offer['checkedAt'] >= row['checkedSources'].get(offer['url'], offer['checkedAt'])]
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_suffix('.tmp')
     temporary.write_text(json.dumps([products[key] for key in sorted(products)], ensure_ascii=False) + '\n')
