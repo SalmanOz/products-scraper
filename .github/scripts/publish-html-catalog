@@ -7,42 +7,64 @@ remote() { bash .github/scripts/site-git "$@"; }
 catalog=frontend/public/retail-catalog.json
 scope=()
 if [[ "${WATCH_ONLY:-false}" == true ]]; then scope=(--scope retail_html_watch.json); fi
+started=$(cat "$path/started-at.txt" 2>/dev/null || date -u '+%Y-%m-%dT%H:%M:%S+00:00')
+local_state="$path"
 for attempt in 1 2 3; do
   remote fetch --depth=1 origin master
   remote reset --hard FETCH_HEAD >/dev/null
   test -f "site/$catalog"
-  python retail_catalog_publish.py "$path/staged.json" site/frontend/src/data \
-    --catalog "site/$catalog" --queue "$path/queue.sqlite" --image-cache "$path/images.sqlite" --output "$path/merged.json" "${scope[@]}"
 
+  # A Mac fallback may finish during this cloud crawl. Merge its observations
+  # before building a state child, and atomically reject either remote race.
+  parent=()
+  merged="$path/state-$attempt"
+  mkdir -p "$merged"
+  if remote ls-remote --exit-code origin "$branch" >/dev/null; then
+    remote fetch --depth=1 origin "$branch"
+    state_parent=$(git -C site rev-parse FETCH_HEAD)
+    parent=(-p "$state_parent")
+    for file in queue images; do
+      remote show "$state_parent:$file.sqlite.gz" | gzip -dc > "$merged/remote-$file.sqlite"
+    done
+    python retail_crawl_state.py \
+      --local-queue "$local_state/queue.sqlite" --remote-queue "$merged/remote-queue.sqlite" --output-queue "$merged/queue.sqlite" \
+      --local-images "$local_state/images.sqlite" --remote-images "$merged/remote-images.sqlite" --output-images "$merged/images.sqlite" \
+      --started "$started"
+  else
+    test "$?" -eq 2
+    for file in queue images; do cp "$local_state/$file.sqlite" "$merged/$file.sqlite"; done
+  fi
+
+  python retail_catalog_publish.py "$path/staged.json" site/frontend/src/data \
+    --catalog "site/$catalog" --queue "$merged/queue.sqlite" --image-cache "$merged/images.sqlite" --output "$path/merged.json" "${scope[@]}"
   if cmp -s "$path/merged.json" "site/$catalog"; then
     if [[ "${WATCH_ONLY:-false}" == true ]]; then exit 0; fi
-    break
+  elif [[ "$DRY_RUN" != true ]]; then
+    cp "$path/merged.json" "site/$catalog"
+    remote add -- "$catalog"
+    test "$(git -C site diff --cached --name-only)" = "$catalog"
+    remote -c user.name='github-actions[bot]' \
+      -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+      commit --quiet -m 'Refresh the HTML-verified electronics catalog'
   fi
-  if [[ "$DRY_RUN" == true ]]; then break; fi
-  cp "$path/merged.json" "site/$catalog"
-  remote add -- "$catalog"
-  remote -c user.name='github-actions[bot]' \
-    -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
-    commit --quiet -m 'Refresh the HTML-verified electronics catalog'
-  if remote push origin HEAD:refs/heads/master; then break; fi
-  test "$attempt" -lt 3
-done
 
-parent=()
-if remote ls-remote --exit-code origin "$branch" >/dev/null; then
-  remote fetch --depth=1 origin "$branch"
-  parent=(-p "$(git -C site rev-parse FETCH_HEAD)")
-else
-  test "$?" -eq 2
-fi
-for file in queue images; do
-  gzip -n -c "$path/$file.sqlite" > "$path/$file.sqlite.gz"
-  test "$(wc -c < "$path/$file.sqlite.gz")" -lt "$((95 * 1024 * 1024))"
+  for file in queue images; do
+    gzip -n -c "$merged/$file.sqlite" > "$path/$file.sqlite.gz"
+    test "$(wc -c < "$path/$file.sqlite.gz")" -lt "$((95 * 1024 * 1024))"
+  done
+  queue=$(git -C site hash-object -w "$path/queue.sqlite.gz")
+  images=$(git -C site hash-object -w "$path/images.sqlite.gz")
+  tree=$(printf '100644 blob %s\timages.sqlite.gz\n100644 blob %s\tqueue.sqlite.gz\n' "$images" "$queue" | git -C site mktree)
+  state_commit=$(git -C site -c user.name='github-actions[bot]' \
+    -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+    commit-tree "$tree" "${parent[@]}" -m "Save HTML crawl state for run $GITHUB_RUN_ID")
+  public_ref=()
+  if [[ "$DRY_RUN" != true ]]; then public_ref=(HEAD:refs/heads/master); fi
+  if remote push --atomic origin "${public_ref[@]}" "$state_commit:$branch"; then
+    # Report the exact durable state, including concurrent observations.
+    for file in queue images; do cp "$merged/$file.sqlite" "$path/$file.sqlite"; done
+    exit 0
+  fi
+  test "$attempt" -lt 3
+  local_state="$merged"
 done
-queue=$(git -C site hash-object -w "$path/queue.sqlite.gz")
-images=$(git -C site hash-object -w "$path/images.sqlite.gz")
-tree=$(printf '100644 blob %s\timages.sqlite.gz\n100644 blob %s\tqueue.sqlite.gz\n' "$images" "$queue" | git -C site mktree)
-commit=$(git -C site -c user.name='github-actions[bot]' \
-  -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
-  commit-tree "$tree" "${parent[@]}" -m "Save HTML crawl state for run $GITHUB_RUN_ID")
-remote push origin "$commit:$branch"
