@@ -493,6 +493,38 @@ class TechnicalVariantReader:
                             'model': model, 'source_url': hint, 'parent_memory_radio_verified': True,
                             'stored_facts_reused': False})
                         break
+                    # Existing capacity pages can share a model canonical.
+                    # The saved URL alone grants no authority: reverify its
+                    # active capacity and independently read that canonical's
+                    # complete model/memory/radio identity before using it.
+                    soup = BeautifulSoup(document, 'html.parser')
+                    canonicals = soup.select('link[rel="canonical"][href]')
+                    canonical = (urljoin(hint, canonicals[0]['href']).rstrip('/')
+                                 if len(canonicals) == 1 else None)
+                    if (not technical_url(canonical) or canonical == hint
+                            or selected_technical_document(document, hint, model, parent_specs(parent),
+                                canonical_model_url=canonical) is None):
+                        continue
+                    root_document = self.read(canonical)
+                    sections = extract_spec_sections(BeautifulSoup(root_document, 'html.parser'))
+                    defaults = {'ram_gb': exact_capacity(find_section_spec(sections, 'Hardware', 'Memory RAM', 'RAM')),
+                                'storage_gb': exact_capacity(find_section_spec(sections, 'Hardware', 'Capacity', 'Storage')),
+                                'network_generation': specs['network_generation']}
+                    if (not defaults['ram_gb'] or not defaults['storage_gb']
+                            or not 1 <= defaults['ram_gb'] <= 64 or not 32 <= defaults['storage_gb'] <= 4096
+                            or selected_technical_document(root_document, canonical, model, defaults) is None):
+                        continue
+                    self.base_documents[model] = (canonical, root_document)
+                    self.provider_variants[canonical] = []
+                    self.hinted_roots.add(canonical)
+                    self.diagnostics.append({'scope': 'fresh_persisted_technical_variant', 'model': model,
+                        'source_url': hint, 'canonical_model_url': canonical,
+                        'parent_memory_radio_verified': True, 'stored_facts_reused': False})
+                    proof = selected_technical_document(document, hint, model, specs, canonical_model_url=canonical)
+                    if proof:
+                        proof['observed_at'] = self.observed_at[hint]
+                        return document, proof
+                    break
         if model not in self.base_documents:
             candidates, variants_by_root = self.discover_roots(model, specs)
             if len(set(candidates)) != 1:

@@ -819,6 +819,25 @@ class SourceIngestionClientTests(unittest.TestCase):
             f"Bearer {SECRET}",
         )
         self.assertEqual(session.calls[1][2]["params"]["page"], "2")
+        self.assertEqual(session.calls[0][2]['params']['include_offer_targets'], '1')
+
+    def test_technical_source_hints_are_allowlisted_and_not_specification_evidence(self):
+        good = 'https://www.kimovil.com/en/where-to-buy-phone-one-global-8gb-128gb'
+        for hints, expected in [([good, good], (good,)),
+                ([good, 'http://www.kimovil.com/en/where-to-buy-phone-one'], (good,)),
+                (['https://www.kimovil.com.evil.test/en/where-to-buy-phone-one'], ()),
+                (['https://www.kimovil.com/en/where-to-buy-phone-one?token=private'], ()),
+                (['https://www.kimovil.com/en/where-to-buy-phone-one#variant'], ()),
+                (['https://user@www.kimovil.com/en/where-to-buy-phone-one'], ()),
+                ([good] * 5, ()), (None, ())]:
+            with self.subTest(hints=hints):
+                client, _ = self.make_client([FakeResponse(200, {'products': [{
+                    'id': 1, 'name': 'Phone One', 'slug': 'phone-one', 'attributes': {},
+                    'technical_source_urls': hints}], 'hasMore': False})])
+                product = client.fetch_catalog()[0]
+                self.assertEqual(product.technical_source_urls, expected)
+                self.assertEqual(product.attributes, {})
+                self.assertIsNone(product.spec_verified_at)
 
     def test_malformed_or_duplicate_catalog_entries_fail_closed(self):
         malformed, _ = self.make_client(
@@ -1129,6 +1148,38 @@ class PhysicalRefreshTests(unittest.TestCase):
         with self.assertRaisesRegex(IngestionConfigurationError, 'Unknown selected product slugs'):
             scraper.scrape_existing_products(only_slugs=['unknown-phone'])
         scraper.scrape_product_details.assert_not_called()
+
+    def test_persisted_variant_source_is_fetched_again_with_exact_memory_and_new_observation(self):
+        from dataclasses import replace
+        from automatic_memory_variants import TechnicalVariantReader
+        from test_automatic_memory_variants import tech_document
+        source_url = 'https://www.kimovil.com/en/where-to-buy-samsung-galaxy-a36-international-8gb-128gb-sm-a366e'
+        model = 'Samsung Galaxy A36'
+        client = self.catalog_client()
+        product = replace(client.fetch_catalog.return_value[0], name=model + ' 5G 8GB 128GB',
+                          slug='samsung-galaxy-a36-5g-8gb-128gb',
+                          attributes={'ram_gb': 8, 'storage_gb': 128, 'battery_mah': 9999, 'Connectivity': {'5G': True}},
+                          technical_source_urls=(source_url,))
+        client.fetch_catalog.return_value = [product]
+        source = Mock()
+        source.read.return_value = tech_document(source_url, ram=8, storage=128, name=model)
+        scraper = KimovilScraper(ingestion_client=client, technical_reader=TechnicalVariantReader(source))
+        observed = '2026-11-17T11:59:00Z'
+        with patch('automatic_memory_variants.utc_observation_time', return_value=observed):
+            report = scraper.scrape_existing_products(refresh_physical=True)
+        self.assertEqual(report['failed'], [])
+        source.read.assert_called_once_with(source_url)
+        records = client.submit_sources.call_args.args[0]
+        self.assertTrue(all(r['observed_at'] == observed and r['source_url'] == source_url for r in records))
+        self.assertEqual(next(r['value'] for r in records if r['attribute_key'] == 'battery_mah'), 5000)
+        # A previously used URL that now selects another capacity is no proof.
+        source.read.side_effect = lambda url: (json.dumps({'results': []}) if '_json/' in url
+                                              else tech_document(source_url, ram=8, storage=256, name=model))
+        scraper.technical_reader = TechnicalVariantReader(source)
+        client.submit_sources.reset_mock()
+        report = scraper.scrape_existing_products(refresh_physical=True)
+        self.assertEqual(report['failed'], [product.slug])
+        client.submit_sources.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -694,7 +694,8 @@ class KimovilScraper:
                 # freshly selected model, RAM, storage and radio proof.
                 from automatic_memory_variants import TechnicalVariantReader, parent_specs
                 parent = {'id': product.id, 'slug': product.slug, 'name': product.name,
-                          'attributes': product.attributes}
+                          'attributes': product.attributes,
+                          'technical_source_urls': list(product.technical_source_urls)}
                 diagnostic_start = len(self.technical_reader.diagnostics) if self.technical_reader else 0
                 try:
                     if not catalog_model:

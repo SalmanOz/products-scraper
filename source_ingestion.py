@@ -97,6 +97,7 @@ class CatalogProduct:
     data_quality_issues: tuple[dict[str, Any], ...] = ()
     spec_verified_at: str | None = None
     images: tuple[str, ...] = ()
+    technical_source_urls: tuple[str, ...] = ()
 
 
 def utc_observation_time() -> str:
@@ -481,6 +482,7 @@ class SourceIngestionClient:
                 params={
                     "page": str(page),
                     "limit": str(page_size),
+                    "include_offer_targets": "1",
                 },
                 authenticated=True,
             )
@@ -532,6 +534,14 @@ class SourceIngestionClient:
                     )
                 seen_ids.add(product_id)
                 seen_slugs.add(slug)
+                hints = raw.get('technical_source_urls')
+                technical_urls = []
+                if isinstance(hints, list) and len(hints) <= 4:
+                    for hint in hints:
+                        if (isinstance(hint, str) and len(hint) <= 2048
+                                and re.fullmatch(r'https://www\.kimovil\.com/en/where-to-buy-[a-z0-9-]+', hint)
+                                and hint not in technical_urls):
+                            technical_urls.append(hint)
                 products.append(
                     CatalogProduct(
                         id=product_id,
@@ -554,6 +564,7 @@ class SourceIngestionClient:
                             else None
                         ),
                         images=tuple(images),
+                        technical_source_urls=tuple(technical_urls),
                     ),
                 )
 

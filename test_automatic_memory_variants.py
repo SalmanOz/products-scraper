@@ -185,6 +185,34 @@ class AutomaticMemoryVariantTests(unittest.TestCase):
             self.assertEqual(len(calls), 2)
             self.assertEqual(calls[0], root)
 
+    def test_persisted_capacity_hint_with_shared_canonical_reverifies_both_pages(self):
+        from bs4 import BeautifulSoup
+        document = tech_document().replace(f'href="{ALT_TECH_URL}"', f'href="{TECH_URL}"')
+        soup = BeautifulSoup(document, 'html.parser')
+        compare = soup.select_one('meta[name="devicecompare"]')
+        compare['content'] = json.dumps({**json.loads(compare['content']),
+                                        'slug': ALT_TECH_URL.rsplit('where-to-buy-', 1)[1]})
+        document = str(soup).replace('</body>',
+            f'<ul class="versions-list"><li class="item active"><a href="{ALT_TECH_URL}">8GB 256GB</a></li></ul></body>')
+        parent = {**PARENT, 'name': NAME + ' 8GB 256GB',
+                  'attributes': {**SPECS, 'storage_gb': 256}, 'technical_source_urls': [ALT_TECH_URL]}
+        calls = []
+        docs = {ALT_TECH_URL: document, TECH_URL: tech_document(TECH_URL, storage=128)}
+        class Reader:
+            def read(self, url):
+                calls.append(url)
+                return json.dumps({'results': []}) if '_json/' in url else docs[url]
+        with patch('automatic_memory_variants.utc_observation_time', return_value='2026-11-17T11:00:00Z'):
+            _, proof = TechnicalVariantReader(Reader()).locate(parent, {**SPECS, 'storage_gb': 256})
+        self.assertEqual(calls, [ALT_TECH_URL, TECH_URL])
+        self.assertEqual(proof['source_url'], ALT_TECH_URL)
+        self.assertEqual(proof['observed_at'], '2026-11-17T11:00:00Z')
+        for changed in (tech_document(TECH_URL, storage=128, name='Samsung Galaxy A55 5G'),
+                        tech_document(TECH_URL, storage=128).replace('n78', 'No')):
+            docs[TECH_URL] = changed
+            with self.assertRaisesRegex(ValueError, 'technical_model_discovery_ambiguous_or_missing'):
+                TechnicalVariantReader(Reader()).locate(parent, {**SPECS, 'storage_gb': 256})
+
     def test_flagship_technical_discovery_never_follows_a_redmi_result_with_the_same_number(self):
         calls = []
         class Reader:
