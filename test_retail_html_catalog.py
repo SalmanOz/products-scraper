@@ -19,6 +19,38 @@ IMAGE = 'https://cdn.dsmcdn.com/ty1000/image.jpg'
 
 
 class RetailHtmlCatalogTest(TestCase):
+    def test_mediamarkt_pc_components_possessive_category_keeps_exact_second_seller_proof(self):
+        url = 'https://www.mediamarkt.com.tr/tr/product/_endorfy-spartan-5-144833294.html'
+        title = 'ENDORFY Spartan 5 İşlemci Soğutucu'
+        product = {'@type': 'Product', 'name': title, 'sku': '144833294', 'url': url,
+                   'gtin13': '5903018665788', 'brand': {'name': 'ENDORFY'},
+                   'image': ['https://assets.mmsrg.com/isr/166325/c1/-/ASSET_MP_144833303/fee_786_587_png'],
+                   'additionalProperty': [{'name': 'TDP', 'value': '160 W'}],
+                   'offers': [{'@type': 'Offer', 'url': url, 'price': 1299, 'priceCurrency': 'TRY',
+                               'availability': 'https://schema.org/InStock', 'itemCondition': 'https://schema.org/NewCondition',
+                               'seller': {'@type': 'Organization', 'name': 'BETA PLUS TEKNOLOJİ', 'id': '10980'}}]}
+        crumbs = {'@type': 'BreadcrumbList', 'itemListElement': [
+            {'name': name, 'item': 'https://www.mediamarkt.com.tr/tr/category/' + str(i)}
+            for i, name in enumerate(['Bilgisayar Bileşenleri', 'Soğutma Sistemleri', 'Fan'])]}
+
+        def page():
+            return (f'<link rel="canonical" href="{url}"><h1>{title}</h1>'
+                    '<span data-test="branded-price-whole-value">1.299</span>'
+                    f'<script type="application/ld+json">{json.dumps({"@type": "BuyAction", "object": product})}</script>'
+                    f'<script type="application/ld+json">{json.dumps(crumbs)}</script>').encode()
+
+        row = read_product(page(), url, 'pc-parts', '5903018665788')
+        self.assertEqual((row['gtin'], row['offer']['price'], row['offer']['merchant']),
+                         ('5903018665788', 1299, 'BETA PLUS TEKNOLOJİ'))
+        self.assertEqual(row['specs']['TDP'], '160 W')
+        product['offers'][0]['price'] = 1199
+        self.assertIsNone(read_product(page(), url, 'pc-parts')['offer'])
+        product['gtin13'] = '5903018665789'
+        self.assertIsNone(read_product(page(), url, 'pc-parts'))
+        product['gtin13'] = '5903018665788'
+        crumbs['itemListElement'][0]['name'] = 'Ev ve Yaşam'
+        self.assertIsNone(read_product(page(), url, 'pc-parts'))
+
     def listing(self, *, title=None, identity=1132995554, barcode=GTIN, winner_barcode=GTIN, price=31000,
                 campaign=False):
         heading = title or 'Lenovo Ideapad 83K10016TR'

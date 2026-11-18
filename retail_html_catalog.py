@@ -74,7 +74,7 @@ KIND_WORDS = {
     'smartwatch': r'\b(?:akilli (?:kol |cocuk )?saat(?:ler)?|smartwatch|apple watch)\b',
     'monitor': r'\b(?:monitor(?:ler|u)?|monitor ve ekran|bilgisayar ekrani)\b',
     'earbuds': r'\b(?:kulaklik(?:lar)?|earbuds|headphones|tws)\b',
-    'pc-parts': r'\b(?:bilesenler|bilgisayar parcalari|islemci(?:ler)?|anakart(?:lar)?|ekran kart(?:i|lari)|ram|ssd|bilgisayar kasasi|bilgisayar kasalari|guc kaynagi|guc kaynaklari|islemci sogutucu|sivi sogutma)\b',
+    'pc-parts': r'\b(?:bilesenler(?:i)?|bilgisayar parcalari|islemci(?:ler)?|anakart(?:lar)?|ekran kart(?:i|lari)|ram|ssd|bilgisayar kasasi|bilgisayar kasalari|guc kaynagi|guc kaynaklari|islemci sogutucu|sivi sogutma)\b',
     'desktop': r'\b(?:masaustu bilgisayar(?:lar)?|hazir sistem|all in one|mini pc|imac)\b',
     'keyboard': r'\b(?:klavye(?:ler)?|keyboard)\b',
     'mouse': r'\b(?:mouse|fare)\b',
