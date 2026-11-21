@@ -3,7 +3,7 @@ from unittest import TestCase
 from unittest.mock import Mock
 
 from gaming_catalog_evidence import identity, matching_products, selected_evidence
-from retail_gtin_evidence import AMAZON, N11, PAZARAMA, candidates, nuxt_code, selected_pazarama_specs, verify
+from retail_gtin_evidence import AMAZON, DIYALOG, N11, OCTO, PAZARAMA, candidates, nuxt_code, selected_diyalog_specs, selected_octo_specs, selected_pazarama_specs, verify
 
 
 GTIN = '5903018665788'
@@ -51,6 +51,28 @@ class EvidenceTest(TestCase):
         self.assertIsNone(nuxt_code(native.replace('return', 'b="other";return')))
         self.assertIsNone(selected_pazarama_specs(body.replace(native.encode(), native.replace(GTIN, OTHER).encode()), GTIN))
         self.assertIsNone(selected_pazarama_specs(body.replace(b'<h1>Acme Mouse', b'<h1>Other Mouse'), GTIN))
+
+    def test_diyalog_rejects_a_conflicting_barcode_in_the_selected_table(self):
+        url = f'https://{DIYALOG}/bilesenler/prd-ornek'
+        graph = {'@graph': [{'@type': 'Product', 'url': url, 'name': 'Acme Fan', 'brand': 'Acme', 'gtin13': GTIN}]}
+        page = f'''<link rel="canonical" href="{url}"><script type="application/ld+json">{json.dumps(graph)}</script>
+            <div class="product_meta"><span>Barkodu: <span>{GTIN}</span></span></div>
+            <div class="woocommerce-Tabs-panel"><table><tr><td>EAN / Barcode</td><td>{GTIN} (Ürün)</td></tr>
+            <tr><td>Fan Hızı</td><td>1200 RPM</td></tr></table></div>'''
+        self.assertEqual(selected_diyalog_specs(page.encode(), url, GTIN)['specs']['Fan Hızı'], '1200 RPM')
+        self.assertIsNone(selected_diyalog_specs(page.replace(f'{GTIN} (Ürün)', OTHER + ' (Ürün)').encode(), url, GTIN))
+        self.assertIsNone(selected_diyalog_specs(page.replace('Barkodu:', 'Mağaza Kodu:').encode(), url, GTIN))
+
+    def test_octo_product_microdata_and_legacy_encoding(self):
+        url = f'https://{OCTO}/Example-Fan::123.html'
+        raw = f'''<html><head><meta charset="iso-8859-15"><link rel="canonical" href="{url}"></head>
+            <div itemtype="https://schema.org/Product"><h1 itemprop="name">Beispiel Lüfter</h1>
+            <span itemprop="gtin13">{GTIN}</span><span itemprop="brand"><span itemprop="name">Acme</span></span>
+            <div><div class="ITSn">Geräuschpegel</div><div class="ITSv">37,6 dBA</div></div></div></html>'''
+        data = selected_octo_specs(raw.encode('iso-8859-15'), url, GTIN)
+        self.assertEqual(data['specs'], {'Geräuschpegel': '37,6 dBA'})
+        self.assertIsNone(selected_octo_specs(raw.encode('iso-8859-15'), url, OTHER))
+        self.assertIsNone(selected_octo_specs(raw.encode('iso-8859-15'), url.replace('123', '124'), GTIN))
 
     def test_search_cards_only_lead_to_selected_product_identity(self):
         amazon = b'<div data-component-type="s-search-result" data-asin="B00EXAMPLE"><h2>Acme Mouse</h2></div>'

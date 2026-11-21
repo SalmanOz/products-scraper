@@ -1,4 +1,4 @@
-"""Collect GTIN-matched specification evidence from n11, Pazarama and Amazon Türkiye.
+"""Collect GTIN-matched specification evidence from n11, Pazarama, Amazon Türkiye OCTO24 and Diyalog Bilgisayar.
 
 Reads a local JSONL queue (gtin, kind, optionally source and offers[].url).
 Writes private append-only observations to JSONL. The output includes misses
@@ -16,12 +16,81 @@ from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 
 import requests
+from lxml import html as lxml
 from lxml.etree import ParserError
 
 from n11_catalog_source import public_search_cards
 from pazarama_offer_source import NUXT_IDENTIFIER, NUXT_STRING
 from retail_html_catalog import (AMAZON, KIND_WORDS, N11, PAZARAMA, brand_name, catalog_gtin, document,
                                  jsonld, product_url, properties, read_product, select_one, text, words)
+
+
+
+OCTO = 'www.octo24.com'
+DIYALOG = 'diyalogbilgisayar.com'
+
+
+def selected_diyalog_specs(body, url, gtin):
+    parts = urlsplit(url)
+    if parts.scheme != 'https' or parts.netloc != DIYALOG or '/prd-' not in parts.path or parts.query:
+        return None
+    doc = document(body)
+    item = select_one([node for node in jsonld(doc) if node.get('@type') == 'Product' and node.get('url') == url])
+    if (doc.xpath('//link[@rel="canonical"]/@href') != [url] or not item
+            or catalog_gtin(item.get('gtin13')) != gtin):
+        return None
+    meta = doc.xpath('//*[contains(concat(" ",normalize-space(@class)," ")," product_meta ")]/span[span]')
+    visible = {catalog_gtin(text(child)) for row in meta if words(row.text or '') == 'barkodu'
+               for child in row.xpath('./span')}
+    if visible != {gtin}:
+        return None
+    fields = []
+    panels = doc.xpath('//*[contains(concat(" ",normalize-space(@class)," ")," woocommerce-Tabs-panel ")]')
+    for panel in panels:
+        for row in panel.xpath('.//table//tr'):
+            cells = row.xpath('./td|./th')
+            if len(cells) == 2:
+                fields.append({'name': text(cells[0]), 'value': text(cells[1])})
+        for li in panel.xpath('.//li[not(.//li)]'):
+            label, sep, value = text(li).partition(':')
+            if sep and ':' not in value and 0 < len(label.strip()) <= 60 and 0 < len(value.strip()) <= 260:
+                fields.append({'name': label.strip(), 'value': value.strip()})
+    for field in fields:
+        if words(field['name']) in {'ean', 'barkod', 'gtin', 'ean barcode', 'gtin ean'}:
+            codes = re.findall(r'(?<![0-9])[0-9]{12,14}(?![0-9])', field['value'])
+            if any(catalog_gtin(c[1:] if len(c) == 14 and c.startswith('0') else c) != gtin for c in codes):
+                return None
+    return {'gtin': gtin, 'name': item['name'], 'brand': brand_name(item.get('brand')), 'source': url,
+            'specs': properties(fields)}
+
+
+def octo_url(url):
+    parts = urlsplit(url)
+    return (parts.scheme == 'https' and parts.netloc == OCTO and not parts.query and not parts.fragment
+            and re.fullmatch(r'/[^/?#]+::[0-9]+\.html', parts.path))
+
+
+def octo_document(body):
+    # This store declares ISO-8859-15 in the document.
+    return lxml.fromstring(body, parser=lxml.HTMLParser(no_network=True, recover=True))
+
+
+def selected_octo_specs(body, url, gtin):
+    doc = octo_document(body)
+    product = select_one(doc.xpath('//*[@itemtype="https://schema.org/Product" or @itemtype="http://schema.org/Product"]'))
+    if product is None or not octo_url(url) or doc.xpath('//link[@rel="canonical"]/@href') != [url]:
+        return None
+    codes = {catalog_gtin(text(node)) for node in product.xpath('.//*[@itemprop="gtin13"]')}
+    title = select_one(product.xpath('.//h1[@itemprop="name"]'))
+    brand = select_one(product.xpath('.//*[@itemprop="brand"]//*[@itemprop="name"]'))
+    if codes != {gtin} or title is None or brand is None:
+        return None
+    fields = []
+    for key in product.xpath('.//div[@class="ITSn"]'):
+        value = select_one(key.xpath('../div[@class="ITSv"]'))
+        if value is not None:
+            fields.append({'name': text(key), 'value': text(value)})
+    return {'source': url, 'name': text(title), 'brand': text(brand), 'gtin': gtin, 'specs': properties(fields)}
 
 
 def nuxt_code(script):
@@ -79,6 +148,9 @@ def selected_pazarama_specs(body, gtin):
 
 
 def candidates(host, body):
+    if host == OCTO:
+        links = octo_document(body).xpath('//div[@class="prod_image"]/a/@href')
+        return list(dict.fromkeys(url for url in links if octo_url(url)))
     if host == N11:
         return [r['source_url'] for r in public_search_cards(body.decode('utf8'))]
     doc = document(body)
@@ -123,10 +195,13 @@ class Transport:
 
 
 def verify(host, gtin, kind, transport):
+    if host == DIYALOG:
+        page = transport.get(host, f'https://{host}/arama/?src={gtin}')
+        return selected_diyalog_specs(page[1], page[0], gtin) if page else None
     if host == PAZARAMA:
         page = transport.get(host, f'https://{host}/urun-p-{gtin}')
         return selected_pazarama_specs(page[1], gtin) if page else None
-    query = '/arama?q=' if host == N11 else '/s?k='
+    query = {N11: '/arama?q=', AMAZON: '/s?k=', OCTO: '/result.php?keywords='}[host]
     page = transport.get(host, f'https://{host}{query}{gtin}')
     if not page:
         return None
@@ -135,7 +210,11 @@ def verify(host, gtin, kind, transport):
         return None
     for url in links[:2]:
         page = transport.get(host, url)
-        if page and product_url(page[0], url):
+        if host == OCTO and page:
+            row = selected_octo_specs(page[1], page[0], gtin)
+            if row:
+                return row
+        elif page and product_url(page[0], url):
             row = read_product(page[1], page[0], kind, gtin)
             if row and row['gtin'] == gtin:
                 return row
@@ -146,7 +225,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('queue', type=Path)
     parser.add_argument('output', type=Path)
-    parser.add_argument('--store', choices=(N11, PAZARAMA, AMAZON), action='append')
+    parser.add_argument('--store', choices=(N11, PAZARAMA, AMAZON, OCTO, DIYALOG), action='append',
+                        help='Select one or more stores. Defaults to the three Turkish stores.')
     parser.add_argument('--spacing', type=float, default=1.0)
     args = parser.parse_args()
     if not math.isfinite(args.spacing) or args.spacing < 0.5:
