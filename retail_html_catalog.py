@@ -953,7 +953,42 @@ def selected_bilgim(doc, url, kind, expected):
                     urljoin(url, picture) if picture else None, {}, price, STORES[BILGIM])
 
 
-def selected_amazon(doc, url, kind, nodes):
+def amazon_native_product(doc, url, kind, title, expected):
+    """Read selected-variant specifications when a product has no JSON-LD offer."""
+    asin = urlsplit(url).path.rsplit('/', 1)[-1]
+    if select_one(doc.xpath('//input[@id="ASIN"]/@value')) != asin:
+        return None
+    fields = []
+    barcodes, brands, asins = set(), set(), set()
+    barcode_keys = {'global ticaret tanimlama numarasi', 'ean', 'upc', 'gtin', 'urun barkodu'}
+    for row in doc.xpath('//*[starts-with(@id, "productDetails")]//table//tr[th and td]'):
+        header, cell = select_one(row.xpath('./th')), select_one(row.xpath('./td'))
+        if header is None or cell is None:
+            continue
+        label, value = text(header), text(cell)
+        key = words(label)
+        if key in barcode_keys:
+            for raw in re.split(r'[,;]\s*', value):
+                # A leading zero denotes the individual trade item; other indicators identify packages.
+                gtin = raw[1:] if re.fullmatch(r'0[0-9]{13}', raw) else raw
+                barcodes.add(catalog_gtin(gtin))
+        elif key == 'asin':
+            asins.add(value)
+        elif key == 'marka adi':
+            brands.add(value)
+        elif key not in {'musteri yorumlari', 'en cok satanlar siralamasi'}:
+            fields.append({'name': label, 'value': value})
+    if barcodes != {expected} or len(brands) != 1 or (asins and asins != {asin}):
+        return None
+    categories = [text(a) for a in doc.xpath('//*[@id="wayfinding-breadcrumbs_feature_div"]//a')]
+    if not matches_category(kind, [*categories, title]):
+        return None
+    specs = properties(fields)
+    image = select_one(doc.xpath('//img[@id="landingImage"]/@src'))
+    return make_row(AMAZON, kind, url, title, brands.pop(), expected, model_from_specs(specs), image, specs)
+
+
+def selected_amazon(doc, url, kind, nodes, expected):
     title = select_one(doc.xpath('//*[@id="productTitle" and normalize-space()]'))
     canonical = select_one(doc.xpath('//link[@rel="canonical"]/@href'))
     if title is None or not canonical or canonical.rsplit('/', 1)[-1] != url.rsplit('/', 1)[-1]:
@@ -962,9 +997,11 @@ def selected_amazon(doc, url, kind, nodes):
                           and words(n.get('name')) == words(text(title))
                           and n.get('url') in (None, canonical)])
     if not product:
-        return None
+        if any(n.get('@type') == 'Product' and n.get('url') in (None, canonical) for n in nodes):
+            return None
+        return amazon_native_product(doc, canonical, kind, text(title), expected)
     barcode = exact_barcode(*(product.get(key) for key in ('gtin', 'gtin12', 'gtin13')))
-    if not barcode or not matches_category(kind, [product.get('category'), text(title)]):
+    if barcode != expected or not matches_category(kind, [product.get('category'), text(title)]):
         return None
     offer = as_dict(product.get('offers'))
     price = price_value(offer, canonical, ('InStock',))
@@ -1038,6 +1075,10 @@ def read_product(raw, url, kind, expected=None):
     host = urlsplit(url).netloc
     doc = document(raw)
     canonical = product_url(select_one(doc.xpath('//link[@rel="canonical"]/@href')), url)
+    if host == AMAZON and canonical and product_url(url, url) == url:
+        if url.rsplit('/', 1)[-1] == canonical.rsplit('/', 1)[-1]:
+            # Short /dp/ASIN links canonicalize to the same ASIN with a product-title slug.
+            url = canonical
     if host == PTT:
         return selected_ptt(list(jsonld(doc)), raw, url, kind) if expected else None
     if canonical != url and not (host in (N11, TY, PAZARAMA) and canonical == product_url(url, url)
@@ -1068,7 +1109,7 @@ def read_product(raw, url, kind, expected=None):
     if host == TCLSHOP:
         return selected_tclshop(doc, url, kind, title) if expected else None
     if host == AMAZON:
-        return selected_amazon(doc, url, kind, nodes) if expected else None
+        return selected_amazon(doc, url, kind, nodes, expected) if expected else None
     if host == TEKNOSA:
         return selected_teknosa(doc, url, kind, nodes, title, raw, expected) if expected else None
     if host == NETHOUSE:

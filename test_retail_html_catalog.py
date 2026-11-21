@@ -19,6 +19,27 @@ IMAGE = 'https://cdn.dsmcdn.com/ty1000/image.jpg'
 
 
 class RetailHtmlCatalogTest(TestCase):
+    def test_amazon_native_table_binds_asin_gtin_and_preserves_measured_units(self):
+        asin = 'B00EXAMPLE'
+        short = f'https://www.amazon.com.tr/dp/{asin}'
+        canonical = f'https://www.amazon.com.tr/usb-mikrofonu/dp/{asin}'
+        page = f'''<link rel="canonical" href="{canonical}"><h1><span id="productTitle">USB Mikrofon</span></h1>
+            <input id="ASIN" value="{asin}"><img id="landingImage" src="https://m.media-amazon.com/images/I/example.jpg">
+            <div id="productDetails_techSpec_section"><table>
+            <tr><th>ASIN</th><td>{asin}</td></tr><tr><th>Marka Adı</th><td>Acme</td></tr>
+            <tr><th>Global Ticaret Tanımlama Numarası</th><td>0{GTIN}</td></tr>
+            <tr><th>Sinyal Gürültü Oranı</th><td>65 dB</td></tr></table></div>
+            <div id="recommendations"><table><tr><th>Sinyal Gürültü Oranı</th><td>90 dB</td></tr></table></div>'''
+        row = read_product(page.encode(), short, 'microphone', GTIN)
+        self.assertEqual((row['source'], row['gtin'], row['specs'], row['offer']),
+                         (canonical, GTIN, {'Sinyal Gürültü Oranı': '65 dB'}, None))
+        for variant in (page.replace('value="' + asin, 'value="B00ANOTHER'),
+                        page.replace(f'0{GTIN}', f'1{GTIN}'),
+                        page.replace(f'0{GTIN}', f'0{GTIN}, 123456'),
+                        page.replace('productDetails_techSpec_section', 'recommendations')):
+            self.assertIsNone(read_product(variant.encode(), short, 'microphone', GTIN))
+        self.assertIsNone(read_product(page.encode(), short, 'microphone', '5903018665788'))
+
     def test_mediamarkt_native_measurements_keep_units_and_discard_disagreement(self):
         from retail_html_catalog import mediamarkt_properties
 
