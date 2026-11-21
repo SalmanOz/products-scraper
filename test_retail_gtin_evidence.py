@@ -19,6 +19,36 @@ def shop_product(number=34):
 
 
 class EvidenceTest(TestCase):
+    def test_selected_motherboard_rejects_a_different_chipset_in_both_readers(self):
+        board = shop_product()
+        board['name'] = 'Example AMD B550 Motherboard'
+        board['attributes'] = board['attributes'][:2] + [
+            {'name': 'Chipset', 'terms': [{'name': 'AMD A58'}]}]
+        target = {'gtin': GTIN, 'kind': 'pc-parts', 'partKind': 'motherboard'}
+        self.assertIsNone(selected_evidence(board, target, 34))
+        verified = {'name': 'Example AMD B550 Anakart', 'specs': {'Yonga Seti': 'A58'}}
+        with patch('retail_gtin_evidence.selected_product', return_value=verified):
+            self.assertIsNone(verify(N11, GTIN, 'pc-parts', Mock(), part_kind='motherboard'))
+            verified['specs']['Yonga Seti'] = 'AMD B550 Chipset'
+            self.assertIs(verify(N11, GTIN, 'pc-parts', Mock(), part_kind='motherboard'), verified)
+
+    def test_unrelated_and_ambiguous_chipset_mentions_do_not_reject_the_table(self):
+        cases = [
+            ({'Chipset': 'AMD A58'}, ['Example B550'], None),
+            ({'Chipset': 'AMD A58'}, ['DDR4 RAM for B550 Motherboard'], None),
+            ({'Chipset': 'AMD A58'}, ['B550 anakart uyumlu işlemci'], 'motherboard'),
+            ({'Chipset': 'AMD A58'}, ['B550 Motherboard'], 'ram'),
+            ({'Chipset': 'AMD A58'}, ['B550 Motherboard', 'Example B450 Anakart'], 'motherboard'),
+            ({'Chipset': 'AMD A58'}, ['B550/B450M Motherboard'], None),
+            ({'Chipset': 'A58/B450'}, ['B550 Motherboard'], 'motherboard'),
+            ({'Chipset': 'A58', 'Yonga Seti': 'B550'}, ['B550 Motherboard'], 'motherboard'),
+            ({'Çipset': 'AMD X670'}, ['Example X670E-A Motherboard'], 'motherboard'),
+            ({'Chipset Uyumluluğu': 'A58', 'Bellek Tipi': 'DDR2'}, ['B550 Motherboard'], None),
+        ]
+        for specs, names, part_kind in cases:
+            with self.subTest(specs=specs, names=names, part_kind=part_kind):
+                self.assertFalse(mismatched_spec_table('pc-parts', specs, *names, part_kind=part_kind))
+
     def test_selected_barcode_rejects_wrong_display_table_in_both_readers(self):
         monitor = shop_product()
         monitor['name'] = 'Acme Studio 75 inç'

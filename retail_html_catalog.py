@@ -111,10 +111,50 @@ def words(value):
 # still describe a different model. Compare only unambiguous physical traits.
 INCH_SIZE = re.compile(r'(?<![\d.,])([1-9]\d{0,2}(?:[.,]\d+)?)\s*(?:["″”]|inç\b|inch(?:es)?\b)', re.I)
 DDR_GENERATION = re.compile(r'(?<![A-Z0-9])DDR\s*([345])L?(?![A-Z0-9])', re.I)
+BOARD_CHIPSETS = frozenset("""
+    a55 a58 a68h a75 a78 a85x a88x a320 a520 a620
+    b350 b450 b550 b650 b650e b840 b850 x370 x470 x570 x670 x670e x870 x870e
+    h110 h170 h270 h310 h370 h410 h470 h510 h570 h610 h670 h770 h810
+    b150 b250 b360 b365 b460 b560 b660 b760 b860
+    z170 z270 z370 z390 z490 z590 z690 z790 z890
+""".split())
+BOARD_WORD = re.compile(r'\b(?:anakart|motherboard|mainboard)\b')
+CHIPSET_FIELDS = {'chipset', 'motherboard chipset', 'yonga seti', 'yonga seti chipset',
+                  'anakart yonga seti', 'cipset'}
+
+
+def mismatched_board_chipset(specs, titles):
+    names = [words(title) for title in titles]
+    if not any(BOARD_WORD.search(name) and BOARD_CHIPSETS.intersection(name.split()) for name in names):
+        return False
+    # A board named as an accessory's compatibility target is not the product.
+    if any(re.search(r'\b(?:for|icin|compatible|compatibility|uyumlu|adapter|adaptor|'
+                     r'shield|backplate|bracket|cooler|sogutucu|ram|memory|cpu|processor|islemci)\b',
+                     name) for name in names):
+        return False
+    # Unknown or suffixed model codes can name an alternative board. They
+    # count towards ambiguity but never establish a chipset on their own.
+    named = {token for name in names for token in name.split() if re.fullmatch(r'[abhqxzw][0-9]{2,3}[a-z0-9]*', token)}
+    if len(named) != 1 or not named.issubset(BOARD_CHIPSETS):
+        return False
+    expected, = named
+    listed = set()
+    for label, value in specs.items():
+        if words(label) not in CHIPSET_FIELDS:
+            continue
+        match = re.fullmatch(r'(?:(?:amd|intel) )?([a-z0-9]+)(?: chipset)?', words(value))
+        if not match or match[1] not in BOARD_CHIPSETS:
+            return False
+        # A table may abbreviate an Extreme model to its base chipset family.
+        listed.add(match[1].removesuffix('e'))
+    return len(listed) == 1 and expected.removesuffix('e') not in listed
 
 
 def mismatched_spec_table(kind, specs, *names, part_kind=None):
     titles = [name for name in names if isinstance(name, str) and name]
+    if kind in ('pc-parts', 'motherboard') and part_kind in (None, 'motherboard'):
+        if mismatched_board_chipset(specs, titles):
+            return True
     if kind in ('monitor', 'television'):
         # An inch figure in a range or bundle can denote a different screen.
         if any(re.search(r'\d\s*[-–/+]\s*\d+(?:[.,]\d+)?\s*(?:["″”]|inç|inch)', name, re.I)
