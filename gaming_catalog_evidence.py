@@ -19,7 +19,7 @@ from urllib.parse import urlsplit
 
 import requests
 
-from retail_html_catalog import catalog_gtin, clean, properties
+from retail_html_catalog import catalog_gtin, clean, mismatched_spec_table, properties
 
 HOST = 'www.gaming.gen.tr'
 PRODUCTS = f'https://{HOST}/wp-json/wc/store/v1/products'
@@ -66,7 +66,7 @@ def selected_evidence(product, target, number):
         if labels and all(isinstance(v, str) for v in labels):
             rows.append({'name': attr.get('name'), 'value': ', '.join(labels)})
     specs = properties(rows)
-    if not specs:
+    if not specs or mismatched_spec_table(target['kind'], specs, name, target.get('name'), part_kind=target.get('partKind')):
         return None
     return {'kind': target['kind'], 'gtin': expected, 'brand': brand.pop(), 'name': name,
             'source': product['permalink'], 'checkedAt': datetime.now(timezone.utc).isoformat(), 'specs': specs}
@@ -148,7 +148,7 @@ def main():
         if code and isinstance(row.get('kind'), str) and row['kind']:
             if code in targets and targets[code]['kind'] != row['kind']:
                 parser.error(f'Conflicting product kinds for GTIN {code}')
-            targets[code] = {'gtin': code, 'kind': row['kind']}
+            targets[code] = {**row, 'gtin': code}
     store = Store(args.spacing)
     try:
         with tempfile.NamedTemporaryFile(mode='w', encoding='utf8', dir=args.output.parent, delete=False) as output:

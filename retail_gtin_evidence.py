@@ -22,7 +22,7 @@ from lxml.etree import ParserError
 from n11_catalog_source import public_search_cards
 from pazarama_offer_source import NUXT_IDENTIFIER, NUXT_STRING
 from retail_html_catalog import (AMAZON, KIND_WORDS, N11, PAZARAMA, brand_name, catalog_gtin, document,
-                                 jsonld, product_url, properties, read_product, select_one, text, words)
+                                 jsonld, mismatched_spec_table, product_url, properties, read_product, select_one, text, words)
 
 
 
@@ -194,7 +194,7 @@ class Transport:
         return None
 
 
-def verify(host, gtin, kind, transport):
+def selected_product(host, gtin, kind, transport):
     if host == DIYALOG:
         page = transport.get(host, f'https://{host}/arama/?src={gtin}')
         return selected_diyalog_specs(page[1], page[0], gtin) if page else None
@@ -219,6 +219,13 @@ def verify(host, gtin, kind, transport):
             if row and row['gtin'] == gtin:
                 return row
     return None
+
+
+def verify(host, gtin, kind, transport, *, catalog_name=None, part_kind=None):
+    product = selected_product(host, gtin, kind, transport)
+    if product and mismatched_spec_table(kind, product['specs'], product['name'], catalog_name, part_kind=part_kind):
+        return None
+    return product
 
 
 def main():
@@ -251,7 +258,8 @@ def main():
                         continue
                     row = {'gtin': code, 'kind': kind, 'store': host}
                     try:
-                        product = verify(host, code, kind, transport)
+                        product = verify(host, code, kind, transport, catalog_name=target.get('name'),
+                                         part_kind=target.get('partKind'))
                         if product and product['specs']:
                             row.update({k: product[k] for k in ('source', 'name', 'brand', 'specs')})
                             row['outcome'] = 'verified'

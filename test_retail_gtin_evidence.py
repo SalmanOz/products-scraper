@@ -1,8 +1,9 @@
 import json
 from unittest import TestCase
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from gaming_catalog_evidence import identity, matching_products, selected_evidence
+from retail_html_catalog import mismatched_spec_table
 from retail_gtin_evidence import AMAZON, DIYALOG, N11, OCTO, PAZARAMA, candidates, nuxt_code, selected_diyalog_specs, selected_octo_specs, selected_pazarama_specs, verify
 
 
@@ -18,6 +19,25 @@ def shop_product(number=34):
 
 
 class EvidenceTest(TestCase):
+    def test_selected_barcode_rejects_wrong_display_table_in_both_readers(self):
+        monitor = shop_product()
+        monitor['name'] = 'Acme Studio 75 inç'
+        monitor['attributes'].append({'name': 'Ekran Boyutu', 'terms': [{'name': '19 inç'}]})
+        self.assertIsNone(selected_evidence(monitor, {'gtin': GTIN, 'kind': 'monitor'}, 34))
+        verified = {'gtin': GTIN, 'name': 'Acme Studio', 'specs': {'Screen Size': '19"'}}
+        with patch('retail_gtin_evidence.selected_product', return_value=verified):
+            self.assertIsNone(verify(N11, GTIN, 'monitor', Mock(), catalog_name='Acme Studio 75"'))
+            self.assertIs(verify(N11, GTIN, 'monitor', Mock(), catalog_name='Acme Studio 19.5"'), verified)
+
+    def test_module_memory_generation_and_ambiguous_or_unrelated_claims(self):
+        self.assertTrue(mismatched_spec_table('pc-parts', {'RAM Tipi': 'DDR4'}, 'Example DDR5 CUDIMM'))
+        self.assertFalse(mismatched_spec_table('pc-parts', {'RAM Tipi': 'DDR4'}, 'Example DDR4/5 RAM'))
+        self.assertFalse(mismatched_spec_table('pc-parts', {'RAM Tipi': 'DDR4'}, 'DDR5 RAM compatible board', part_kind='motherboard'))
+        self.assertFalse(mismatched_spec_table('monitor', {'Screen Size': '19 inç'}, 'Studio 24–27 inç'))
+        self.assertFalse(mismatched_spec_table('monitor', {'Screen Size': '19 inç'}, 'Studio Monitor'))
+        self.assertFalse(mismatched_spec_table('monitor', {'Screen Size': '75 cm'}, 'Acme 32"'))
+        self.assertFalse(mismatched_spec_table('monitor', {'Tepki Süresi': '8 ms'}, 'Acme 75" 1 ms MPRT'))
+
     def test_store_collection_is_discovery_and_selected_record_is_verified_again(self):
         selected = shop_product()
         self.assertEqual(identity(selected), GTIN)

@@ -107,6 +107,51 @@ def words(value):
     return ' '.join(re.findall(r'[a-z0-9]+', ''.join(c for c in folded if not '\u0300' <= c <= '\u036f')))
 
 
+# A selected GTIN identifies the listing, but marketplace technical tables can
+# still describe a different model. Compare only unambiguous physical traits.
+INCH_SIZE = re.compile(r'(?<![\d.,])([1-9]\d{0,2}(?:[.,]\d+)?)\s*(?:["″”]|inç\b|inch(?:es)?\b)', re.I)
+DDR_GENERATION = re.compile(r'(?<![A-Z0-9])DDR\s*([345])L?(?![A-Z0-9])', re.I)
+
+
+def mismatched_spec_table(kind, specs, *names, part_kind=None):
+    titles = [name for name in names if isinstance(name, str) and name]
+    if kind in ('monitor', 'television'):
+        # An inch figure in a range or bundle can denote a different screen.
+        if any(re.search(r'\d\s*[-–/+]\s*\d+(?:[.,]\d+)?\s*(?:["″”]|inç|inch)', name, re.I)
+               for name in titles):
+            return False
+        sizes = {float(n.replace(',', '.')) for name in titles for n in INCH_SIZE.findall(name)}
+        if not sizes or max(sizes) - min(sizes) > 1:
+            return False
+        for key, value in specs.items():
+            if words(key) not in {'ekran boyutu', 'ekran buyuklugu', 'ekran boyutu inc', 'screen size', 'panel size', 'bildschirmdiagonale'}:
+                continue
+            match = INCH_SIZE.fullmatch(value.strip())
+            if match and all(abs(float(match[1].replace(',', '.')) - size) > 1 for size in sizes):
+                return True
+    if kind not in ('pc-parts', 'ram') or (part_kind and part_kind != 'ram'):
+        return False
+    # Require a RAM module; compatibility claims on PCs and motherboards can
+    # legitimately list several generations or types of memory.
+    title = ' '.join(titles)
+    if kind != 'ram' and part_kind != 'ram':
+        if not re.search(r'\b(?:RAM|(?:CU|SO-?|[UR])?DIMM)\b', title, re.I):
+            return False
+    if re.search(r'\b(?:anakart|motherboard|adapter|adaptör|converter|uyumlu|compatible)\b', title, re.I):
+        return False
+    if re.search(r'\bDDR\s*[345]L?\s*[/+–-]\s*(?:DDR\s*)?[345]\b', title, re.I):
+        return False
+    generations = {g for name in titles for g in DDR_GENERATION.findall(name)}
+    if len(generations) != 1:
+        return False
+    for key, value in specs.items():
+        if words(key) in {'ram tipi', 'ram turu', 'bellek turu', 'bellek tipi', 'memory type', 'ram type'}:
+            match = DDR_GENERATION.fullmatch(value.strip())
+            if match and match[1] not in generations:
+                return True
+    return False
+
+
 def clean(value, limit=250):
     if not isinstance(value, str):
         return ''
