@@ -662,6 +662,35 @@ def selected_ty(doc, url, kind, nodes, title):
                     product.get('images', []), specs, price, clean(as_dict(listing.get('merchant')).get('name'), 100))
 
 
+def mediamarkt_properties(schema_features, display_features, graph_features):
+    """Restore explicit units from the selected SKU before reconciling its representations."""
+    units = {}
+    for feature in graph_features:
+        value = str(feature.get('value', '')).strip()
+        if not re.fullmatch(r'[+-]?\d+(?:[.,]\d+)?', value):
+            continue
+        cells = feature.get('valuesAndUnits') or []
+        if len(cells) != 1 or not isinstance(cells[0], dict) or str(cells[0].get('value')).strip() != value:
+            continue
+        key = (words(feature.get('name')), value)
+        for unit in (feature.get('unit'), cells[0].get('unit')):
+            if isinstance(unit, str) and unit.strip():
+                units.setdefault(key, set()).add(unit.strip())
+    disputed_labels = {key for (key, value), candidates in units.items() if len(candidates) > 1}
+    rows = []
+    for row in [*schema_features, *display_features, *graph_features]:
+        if not isinstance(row, dict):
+            continue
+        label = words(row.get('name'))
+        if label in disputed_labels:
+            continue
+        matching = units.get((label, str(row.get('value')).strip()))
+        if matching and not row.get('unitText'):
+            row = {**row, 'unitText': next(iter(matching))}
+        rows.append(row)
+    return properties(rows)
+
+
 def selected_mm(doc, url, kind, nodes, title):
     product = select_one([p for node in nodes if node.get('@type') == 'BuyAction'
                           and (p := as_dict(node.get('object'))).get('url') == url and p.get('name') == title])
@@ -683,6 +712,7 @@ def selected_mm(doc, url, kind, nodes, title):
         if str(row.get('id', '')).startswith('Media:tr:' + sku + ':'):
             features.append({'name': row.get('name'), 'value': row.get('values')})
     state_match = re.match(r'window\.__PRELOADED_STATE__\s*=\s*', state)
+    graph_features = []
     if state_match:
         try:
             hydrated = json.loads(re.sub(r':undefined(?=[,}])', ':null', state[state_match.end():].strip().rstrip(';')))
@@ -690,8 +720,8 @@ def selected_mm(doc, url, kind, nodes, title):
             hydrated = {}
         apollo = as_dict(hydrated.get('apolloState'))
         graph = as_dict(apollo.get('GraphqlProductAggregate:Media:tr-TR:' + sku))
-        features += mediamarkt_product_features(apollo, graph, sku) or []
-    specs = properties(product.get('additionalProperty', []) + features)
+        graph_features = mediamarkt_product_features(apollo, graph, sku) or []
+    specs = mediamarkt_properties(product.get('additionalProperty', []), features, graph_features)
     offer = product.get('offers')
     if isinstance(offer, list):
         offer = select_one(offer)

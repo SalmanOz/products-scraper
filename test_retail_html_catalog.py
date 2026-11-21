@@ -19,6 +19,20 @@ IMAGE = 'https://cdn.dsmcdn.com/ty1000/image.jpg'
 
 
 class RetailHtmlCatalogTest(TestCase):
+    def test_mediamarkt_native_measurements_keep_units_and_discard_disagreement(self):
+        from retail_html_catalog import mediamarkt_properties
+
+        def native(name, value, unit, cell_unit=None):
+            return {'name': name, 'value': value, 'unit': unit,
+                    'valuesAndUnits': [{'value': value, 'unit': cell_unit or unit}]}
+
+        graph = [native('RAM', '16', 'GB'), native('Süre', '160', 'dk'),
+                 native('Ağırlık', '2', 'kg', 'g'), native('Saat', '12', 'Hz')]
+        schema = [{'name': 'RAM', 'value': '16'}, {'name': 'Saat', 'value': '12', 'unitText': 'MHz'}]
+        display = [{'name': 'RAM', 'value': '16 GB'}, {'name': 'Ağırlık', 'value': '2'}]
+        self.assertEqual(mediamarkt_properties(schema, display, graph), {'RAM': '16 GB', 'Süre': '160 dk'})
+        self.assertEqual(mediamarkt_properties([], [], [native('Başlık', 'Üç', 'kg')]), {'Başlık': 'Üç'})
+
     def test_mediamarkt_pc_components_possessive_category_keeps_exact_second_seller_proof(self):
         url = 'https://www.mediamarkt.com.tr/tr/product/_endorfy-spartan-5-144833294.html'
         title = 'ENDORFY Spartan 5 İşlemci Soğutucu'
